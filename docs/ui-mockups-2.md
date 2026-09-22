@@ -38,3 +38,9 @@ Copy in every study stays functional and in sentence case. There are no bit-perf
 ## Preview interactions
 
 Use the numbered direction buttons or a `?view=` URL to switch studies. Verse lines seek to sample positions. Sleeve notes recolors with the selected record and keeps a local row selection. Transistor shares playback state across both window forms. Ledger filters sample rows by genre, artist, album, and text, and supports ArrowUp, ArrowDown, Enter, and `/` in its track table. The queue and audio-path panels open from each study. Reloading clears every mock interaction.
+
+Ledger and Sleeve notes share the selected song, including its title and duration. Their previous/next controls step through the sample songs. Selecting a record from the shelf or queue starts at its first song.
+
+## Browser regression tests
+
+Run `npx playwright install chromium` once, then `npm run test:mockups`. The tests start their own preview server and cover song selection, keyboard filtering, transport, and inline seeking at desktop and narrow widths. To use an existing Chromium binary, set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to its executable path.
