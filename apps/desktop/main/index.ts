@@ -18,7 +18,7 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const started = performance.now();
 const metrics = new Metrics();
 const loop = monitorEventLoopDelay({ resolution: 20 });
-const state: AppSnapshot = { player: emptyPlayer(), diagnostics: emptyDiagnostics(), server: { connected: false, name: null } };
+const state: AppSnapshot = { player: emptyPlayer(), diagnostics: emptyDiagnostics(), server: { connected: false, name: null, sessionId: null } };
 let window: BrowserWindow | null = null;
 let host: ChildProcess | null = null;
 const retiredHosts = new WeakSet<ChildProcess>();
@@ -160,7 +160,14 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
     state.diagnostics.ipcCommands++;
     const generation = connectionGeneration;
     try {
-      const program = Effect.suspend(() => task(value, generation));
+      const program = Effect.suspend(() => {
+        // Requests queued before a disconnect or account switch must not run
+        // against a later session, even when the album IDs happen to match.
+        if (['connect', 'albums', 'play-album'].includes(channel) && generation !== connectionGeneration) {
+          return Effect.fail(new Error('Server session changed. Try again.'));
+        }
+        return task(value, generation);
+      });
       const result = await Effect.runPromise(Effect.either(metrics.measure(`ipc.${channel}`, semaphores[lane].withPermits(1)(program))));
       if (Either.isLeft(result)) return { ok: false, error: result.left instanceof Error ? result.left.message : 'Operation failed.' };
       return { ok: true, value: result.right };
@@ -197,16 +204,23 @@ function installHandlers() {
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
     const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
-    yield* candidate.ping();
+    const info = yield* candidate.ping();
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     // Credentials are session-only. No plaintext persistence or silent safeStorage fallback.
+    // Stop playback and clear every authenticated URL before replacing the account,
+    // while preserving the audio engine's volume and selected output device.
+    if (server) yield* send({ type: 'clear-session' });
     server = candidate;
-    state.server = { connected: true, name: new URL(candidate.baseUrl).host };
+    connectionGeneration++;
+    state.server = { connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID() };
   }), 'server');
   handle('albums', value => Effect.gen(function* () {
     const offset = yield* Schema.decodeUnknown(Schema.Number.pipe(Schema.int(), Schema.between(0, 1_000_000)))(value);
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
-    return yield* server.albums(offset);
+    const client = server;
+    const albums = yield* client.albums(offset);
+    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
+    return albums;
   }), 'server');
   handle('play-album', value => Effect.gen(function* () {
     const id = yield* Schema.decodeUnknown(IdSchema)(value);
@@ -220,7 +234,7 @@ function installHandlers() {
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
-    server = null; state.server = { connected: false, name: null };
+    server = null; state.server = { connected: false, name: null, sessionId: null };
     yield* Effect.tryPromise(() => launchPlayer());
   }));
   handle('export-diagnostics', () => Effect.gen(function* () {

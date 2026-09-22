@@ -22,7 +22,11 @@ const AlbumSchema = Schema.Struct({
   songCount: Schema.optional(CountSchema), song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))),
 });
 const EnvelopeSchema = Schema.Struct({ 'subsonic-response': Schema.Unknown });
-const StatusSchema = Schema.Struct({ status: Schema.Literal('ok', 'failed') });
+const StatusSchema = Schema.Struct({
+  status: Schema.Literal('ok', 'failed'),
+  type: Schema.optional(Schema.String),
+  error: Schema.optional(Schema.Struct({ code: Schema.Number })),
+});
 const AlbumsSchema = Schema.Struct({
   albumList2: Schema.Struct({ album: Schema.optional(Schema.Array(AlbumSchema).pipe(Schema.maxItems(48))) }),
 });
@@ -31,12 +35,32 @@ const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Sc
   name: Schema.String, versions: Schema.Array(CountSchema),
 })) });
 
+// Only locally authored messages can cross the desktop boundary. Server error
+// text and fetch errors may contain credentials or authenticated URLs.
+class ServerError extends Error {}
+function protocolError(code: number | undefined): ServerError {
+  const messages: Record<number, string> = {
+    20: 'This server requires a newer Subsonic API version.',
+    30: 'This server uses an older Subsonic API version. Update the server.',
+    40: 'Incorrect username or password. Check your Navidrome login and try again.',
+    41: 'This server does not support token authentication.',
+    50: 'Your account does not have permission to perform this action.',
+    70: 'This album or track is no longer available. Refresh the library.',
+  };
+  return new ServerError(messages[code ?? -1] ?? 'The server rejected the request. Check your account and server settings.');
+}
+
 export function normalizeServerUrl(input: string): string {
-  const url = new URL(input);
+  let url: URL;
+  try { url = new URL(input.trim()); }
+  catch { throw new ServerError('Enter a complete server URL, such as https://music.example.com.'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new Error('Use an HTTP or HTTPS server URL without embedded credentials, query parameters, or a fragment.');
   }
   url.search = ''; url.hash = '';
+  // Only an explicit API endpoint identifies a suffix we can remove. Bare
+  // /app and /rest may be the configured server base path, not UI/API routes.
+  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/rest\/[a-zA-Z0-9]+\.view$/, '');
   return url.href.replace(/\/+$/, '');
 }
 
@@ -83,21 +107,22 @@ export class SubsonicClient {
         });
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         try {
-          if (!response.ok) throw new Error(`Server returned HTTP ${response.status}.`);
+          if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
           // Cap response sizes before parsing untrusted server JSON.
           reader = response.body?.getReader();
-          if (!reader) throw new Error('Server returned an empty response.');
+          if (!reader) throw new ServerError('Server returned an empty response.');
           const chunks: Uint8Array[] = [];
           let total = 0;
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             total += value.byteLength;
-            if (total > 8 * 1024 * 1024) throw new Error('Server response exceeded 8 MB.');
+            if (total > 8 * 1024 * 1024) throw new ServerError('Server response exceeded 8 MB.');
             chunks.push(value);
           }
           const result = Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(Buffer.concat(chunks).toString('utf8')))['subsonic-response'];
-          if (Schema.decodeUnknownSync(StatusSchema)(result).status !== 'ok') throw new Error('Server rejected the request.');
+          const status = Schema.decodeUnknownSync(StatusSchema)(result);
+          if (status.status !== 'ok') throw protocolError(status.error?.code);
           return Schema.decodeUnknownSync(schema)(result);
         } finally {
           // Release the transfer on HTTP errors, size limits, read failures, and success.
@@ -106,14 +131,18 @@ export class SubsonicClient {
         }
       },
       // Never forward fetch errors containing authenticated URLs or server-provided text.
-      catch: () => new Error('Server request failed. Check the address, credentials, connection, and OpenSubsonic compatibility.'),
-    }).pipe(Effect.timeout('15 seconds'));
+      catch: error => error instanceof ServerError ? error : new ServerError('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.'),
+    }).pipe(Effect.timeoutFail({ duration: '15 seconds', onTimeout: () => new ServerError('The server did not respond within 15 seconds. Check your connection and try again.') }));
     return this.metrics.measure(`server.${endpoint}`, task);
   }
   private request<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Record<string, string> = {}) {
     return this.supportsFormPost.pipe(Effect.flatMap(formPost => this.exchange(endpoint, schema, extra, formPost)));
   }
-  ping() { return this.request('ping', StatusSchema); }
+  ping() {
+    return this.request('ping', StatusSchema).pipe(Effect.map(result => ({
+      name: result.type?.toLowerCase() === 'navidrome' ? 'Navidrome' : 'OpenSubsonic',
+    })));
+  }
   albums(offset: number) {
     return this.request('getAlbumList2', AlbumsSchema, { type: 'newest', size: '48', offset: String(offset) }).pipe(
       Effect.map(result => (result.albumList2.album ?? []).map((album): Album => ({
@@ -122,10 +151,14 @@ export class SubsonicClient {
     );
   }
   albumQueue(id: string) {
-    return this.request('getAlbum', AlbumResponseSchema, { id }).pipe(Effect.map(result => {
-      return (result.album.song ?? []).map((song): PlayableTrack => {
+    return this.request('getAlbum', AlbumResponseSchema, { id }).pipe(Effect.flatMap(result => {
+      const album = result.album;
+      if (album.id !== id) return Effect.fail(new ServerError('The server did not return the requested album. Refresh the library.'));
+      const songs = album.song ?? [];
+      if (!songs.length) return Effect.fail(new ServerError('This album has no playable tracks.'));
+      return Effect.succeed(songs.map((song): PlayableTrack => {
         const track: Track = {
-          id: song.id, title: song.title, artist: song.artist ?? 'Unknown artist', album: song.album ?? '',
+          id: song.id, title: song.title, artist: song.artist ?? album.artist ?? 'Unknown artist', album: song.album ?? album.name,
           duration: song.duration ?? null, source: 'navidrome', sourceFormat: song.suffix ?? null,
           sourceSampleRate: song.samplingRate ?? null, sourceBitDepth: song.bitDepth ?? null,
         };
@@ -133,7 +166,7 @@ export class SubsonicClient {
         const location = this.endpointUrl('stream');
         location.search = this.params({ id: song.id, format: 'raw' }).toString();
         return { track, location: location.href };
-      });
+      }));
     }));
   }
 }

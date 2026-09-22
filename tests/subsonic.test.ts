@@ -26,6 +26,14 @@ async function expectRedactedFailure<E>(task: Effect.Effect<unknown, E>, secret 
 
 describe('server address', () => {
   it('preserves subpaths', () => expect(normalizeServerUrl(connection.url)).toBe('https://music.example.com/navidrome'));
+  it.each(['/rest/ping.view', '/rest/getAlbumList2.view/'])('accepts an explicit API address ending in %s', suffix => {
+    expect(normalizeServerUrl(` https://music.example.com/navidrome${suffix} `)).toBe('https://music.example.com/navidrome');
+  });
+  it.each(['/app', '/rest', '/music/app', '/music/rest'])('preserves the configured base path %s', path => {
+    expect(normalizeServerUrl(` https://music.example.com${path}/ `)).toBe(`https://music.example.com${path}`);
+    expect(normalizeServerUrl(`https://music.example.com${path}/rest/ping.view`)).toBe(`https://music.example.com${path}`);
+  });
+  it('preserves ports', () => expect(normalizeServerUrl('http://localhost:4533/')).toBe('http://localhost:4533'));
   it.each(['file:///etc/passwd', 'ftp://server', 'https://user:pass@server', 'https://server?token=secret', 'https://server/#fragment'])('rejects %s', url => {
     expect(() => normalizeServerUrl(url)).toThrow();
   });
@@ -44,6 +52,10 @@ describe('server address', () => {
 });
 
 describe('OpenSubsonic', () => {
+  it.each([['navidrome', 'Navidrome'], [undefined, 'OpenSubsonic']])('identifies server type %s', async (type, name) => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(Response.json({ 'subsonic-response': { status: 'ok', type } }))));
+    expect(await Effect.runPromise(new SubsonicClient(connection, new Metrics()).ping())).toEqual({ name });
+  });
   it('discovers formPost once without credentials, then posts salted authentication', async () => {
     const fetchMock = servePayload({});
     const subject = client();
@@ -56,6 +68,7 @@ describe('OpenSubsonic', () => {
     expect(discoveryInit.method).toBe('GET');
     for (const key of ['u', 't', 's', 'p']) expect(new URL(discoveryUrl).searchParams.has(key)).toBe(false);
     const [url, init] = calls[1];
+
     expect(url).toBe('https://music.example.com/navidrome/rest/ping.view');
     expect(init.method).toBe('POST'); expect(init.redirect).toBe('error');
     const params = init.body as URLSearchParams;
@@ -109,7 +122,7 @@ describe('OpenSubsonic', () => {
   });
   it('requests raw streaming and separates private URLs from public track metadata', async () => {
     servePayload(albumPayload({ id: 's1', title: 'First track', suffix: 'flac', samplingRate: 96000, bitDepth: 24 }));
-    const [item] = await Effect.runPromise(client().albumQueue('album'));
+    const [item] = await Effect.runPromise(client().albumQueue('a'));
     expect(new URL(item.location).searchParams.get('format')).toBe('raw');
     expect(item.track).toMatchObject({ sourceFormat: 'flac', sourceSampleRate: 96000, sourceBitDepth: 24 });
     expect(JSON.stringify(item.track)).not.toContain('t=');
@@ -203,6 +216,24 @@ describe('OpenSubsonic', () => {
     })));
     await expectRedactedFailure(client().ping());
     expect(cancel).toHaveBeenCalledOnce();
+  });
+  it.each([[40, 'Incorrect username or password'], [50, 'permission'], [70, 'no longer available']])('maps protocol error %s without forwarding server text', async (code, message) => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(Response.json({ 'subsonic-response': {
+      status: 'failed', error: { code, message: 'private-password https://server?t=secret' },
+    } }))));
+    const result = await Effect.runPromise(Effect.either(new SubsonicClient(connection, new Metrics()).ping()));
+    expect(Either.isLeft(result)).toBe(true);
+    if (Either.isLeft(result)) {
+      expect(result.left.message).toContain(message);
+      expect(result.left.message).not.toMatch(/private-password|secret/);
+    }
+  });
+  it.each([
+    [{ id: 'different', name: 'Other album' }, 'requested album'],
+    [{ id: 'a', name: 'Empty album' }, 'no playable tracks'],
+  ])('rejects an unplayable album response %#', async (album, message) => {
+    servePayload({ album });
+    await expect(Effect.runPromise(client().albumQueue('a'))).rejects.toThrow(message);
   });
   it('interrupting Effect cancels the underlying request', async () => {
     let signal: AbortSignal | undefined;

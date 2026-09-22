@@ -37,11 +37,23 @@ The preview does not have an Electron bridge, does not play audio, and does not 
 - Sandboxed Electron renderer with an allowlisted, runtime-validated preload API.
 - libmpv client API through Koffi's native FFI, hosted in a separate Node process. Audio samples never pass through JavaScript.
 - Local file selection, queue replacement, track selection, play, pause, stop, previous/next, seek, attenuation, and output-device selection.
-- Session-only OpenSubsonic login, paged album browsing, and original-stream requests. No credentials are stored on disk.
+- Session-only Navidrome/OpenSubsonic login, server identification, paged album browsing, and original-stream requests. No credentials are stored on disk.
 - A native playlist configured for gapless playback. This is not yet an end-to-end gapless certification.
 - Source metadata, decoder/output formats, processing settings, MPV cache throughput and buffer time, with unknown values left unknown.
 - Process CPU/working-set memory, player-to-main IPC payload rate, bounded latency samples, pending operations, and main event-loop timing.
 - A manually exported diagnostic report that omits credentials, stream URLs, local file paths, track metadata, and server addresses.
+
+## Connect Navidrome
+
+In the desktop app, choose **Connect a server**, enter your Navidrome server address, username, and password, then connect. Include any port or reverse-proxy subpath, such as `http://localhost:4533` or `https://music.example.com/navidrome`. Use HTTPS outside a trusted local network.
+
+Use the server's base address, not its web UI route. An explicit API endpoint such as `/navidrome/rest/ping.view` is also accepted. Bare `/app` and `/rest` suffixes are preserved because either can be a configured server subpath.
+
+The Library opens after login. Browse newest albums in pages of 48, use Refresh after a server scan, and select an album to play it through libmpv. The connector uses Navidrome's OpenSubsonic API with salted token authentication and requests original audio with `format=raw`.
+
+Credentials last only for the current session. Disconnecting or replacing a connection clears the previous native playlist and its stream tokens. A failed replacement leaves the existing session connected. Browser preview cannot connect to a server or play audio.
+
+The connector tests include a local Navidrome-compatible HTTP fixture covering authentication, subpaths, album paging, metadata, and authenticated stream retrieval. They do not replace testing against a live Navidrome installation.
 
 ## Audio policy
 

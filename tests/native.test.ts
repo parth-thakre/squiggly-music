@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fork, type ChildProcess } from 'node:child_process';
 import type { HostMessage, HostRequest } from '../packages/player-mpv/protocol';
-import type { PlayerSnapshot } from '../packages/core/contracts';
+import { emptyPlayer, type PlayerSnapshot } from '../packages/core/contracts';
+import { clearPlayerSession } from '../packages/player-mpv/session';
 
 let worker: ChildProcess | undefined;
 let fixtureDirectory: string | undefined;
@@ -178,6 +179,21 @@ describe('host snapshot lifecycle', () => {
     expect(native.command).toHaveBeenCalledWith('loadfile', '/old.wav', 'replace');
   });
 
+  it('clears the private legacy playlist when replacing a server session', async () => {
+    const { sends, command, native } = await mockHost();
+    sends[0].callback(null);
+    const track = { id: 'remote', title: 'Remote', artist: '', album: '', duration: null, source: 'navidrome' as const,
+      sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null };
+    command({ id: 1, action: { type: 'queue', tracks: [{ location: 'https://server/rest/stream.view?t=secret', track }] } });
+    command({ id: 2, action: { type: 'stop' } });
+    command({ id: 3, action: { type: 'clear-session' } });
+    native.command.mockClear();
+    command({ id: 4, action: { type: 'play' } });
+    expect(native.command).not.toHaveBeenCalledWith('loadfile', expect.anything(), expect.anything());
+    const reply = sends.map(send => send.message).find(message => message.type === 'reply' && message.id === 4);
+    expect(reply).toEqual({ type: 'reply', id: 4, error: expect.stringContaining('queue') });
+  });
+
   it('uses playlist-preserving stop when the client API supports it', async () => {
     const { command, native } = await mockHost(true);
     command({ id: 1, action: { type: 'stop' } });
@@ -254,5 +270,30 @@ describe('native client API compatibility', () => {
     expect(newer.clientApiVersion).toBe('1.109');
     expect(newer.supportsStopKeepPlaylist).toBe(true);
     newer.close();
+  });
+});
+
+describe('player session cleanup', () => {
+  it('drops authenticated playlist entries without resetting volume or output device', () => {
+    const commands: string[][] = [];
+    const player = emptyPlayer();
+    player.volume = 37;
+    player.audio.requestedDevice = 'alsa/external-dac';
+    player.playing = true;
+    player.position = 12;
+    player.duration = 180;
+    player.currentIndex = 0;
+    player.queue = [{
+      id: 'remote', title: 'Remote track', artist: 'Test', album: '', duration: 180,
+      source: 'navidrome', sourceFormat: 'flac', sourceSampleRate: 96000, sourceBitDepth: 24,
+    }];
+
+    clearPlayerSession({ command: (...args) => commands.push(args) }, player);
+
+    expect(commands).toEqual([['stop'], ['playlist-clear']]);
+    expect(player).toMatchObject({
+      playing: false, position: 0, duration: 0, currentIndex: -1, queue: [], volume: 37,
+      audio: { requestedDevice: 'alsa/external-dac' },
+    });
   });
 });
