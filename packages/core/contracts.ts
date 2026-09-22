@@ -61,7 +61,7 @@ export interface Diagnostics {
 export interface AppSnapshot {
   player: PlayerSnapshot;
   diagnostics: Diagnostics;
-  server: { connected: boolean; name: string | null };
+  server: { connected: boolean; name: string | null; sessionId: string | null };
 }
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
 export interface DesktopBridge {

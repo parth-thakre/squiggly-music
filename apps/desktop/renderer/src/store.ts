@@ -4,7 +4,7 @@ import type { AppSnapshot } from '../../../../packages/core/contracts';
 
 let snapshot: AppSnapshot = {
   player: { ...emptyPlayer(), engine: 'unavailable', error: window.squiggly ? null : 'Browser preview. Open the desktop app for native playback and live diagnostics.' },
-  diagnostics: emptyDiagnostics(), server: { connected: false, name: null },
+  diagnostics: emptyDiagnostics(), server: { connected: false, name: null, sessionId: null },
 };
 const listeners = new Set<() => void>();
 const update = (next: AppSnapshot) => { snapshot = next; listeners.forEach(listener => listener()); };

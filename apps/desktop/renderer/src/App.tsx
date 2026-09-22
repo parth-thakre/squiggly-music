@@ -142,13 +142,13 @@ function ConnectionDialog({ onClose, onConnected, run }: { onClose(): void; onCo
   const [url, setUrl] = useState(''); const [username, setUsername] = useState(''); const [password, setPassword] = useState('');
   const [saving, setSaving] = useState(false); const [error, setError] = useState<string | null>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
-  return <dialog ref={ref} className="connect-dialog" onCancel={onClose} aria-labelledby="connect-title">
-    <button className="icon-button dialog-close" aria-label="Close connection settings" onClick={onClose}><X size={20} /></button>
-    <Plug size={26} className="dialog-symbol" /><h2 id="connect-title">Bring your library.</h2><p>Connect to Navidrome or an OpenSubsonic server.</p>
+  return <dialog ref={ref} className="connect-dialog" onCancel={event => { if (saving) event.preventDefault(); else onClose(); }} aria-labelledby="connect-title">
+    <button className="icon-button dialog-close" aria-label="Close connection settings" disabled={saving} onClick={onClose}><X size={20} /></button>
+    <Plug size={26} className="dialog-symbol" /><h2 id="connect-title">Connect to Navidrome</h2><p>Use your server address and Navidrome login. Other OpenSubsonic servers work too.</p>
     <form onSubmit={async event => {
-      event.preventDefault(); if (!desktop) return; setSaving(true); setError(null);
+      event.preventDefault(); if (!desktop || saving) return; setSaving(true); setError(null);
       try {
-        const result = await desktop.connect({ url, username, password });
+        const result = await desktop.connect({ url: url.trim(), username: username.trim(), password });
         setPassword('');
         if (result.ok) { onConnected(); onClose(); }
         else setError(result.error);
@@ -156,6 +156,7 @@ function ConnectionDialog({ onClose, onConnected, run }: { onClose(): void; onCo
       finally { setSaving(false); }
     }}>
       <label>Server address<input type="url" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://music.example.com" required autoFocus /></label>
+      <p className="privacy-note">Include the port or subpath if your server uses one, for example http://localhost:4533 or https://example.com/music.</p>
       <label>Username<input autoComplete="username" value={username} onChange={e => setUsername(e.target.value)} required /></label>
       <label>Password<input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required /></label>
       {url.startsWith('http:') && <p className="notice">HTTP is unencrypted. Use it only on a trusted network or an encrypted tunnel.</p>}
@@ -181,8 +182,8 @@ export default function App() {
       error => setMessage(error),
     );
   }
-  const sessionGeneration = useRef(0);
-  const [librarySession, setLibrarySession] = useState(0);
+  const librarySession = useRef(server.sessionId);
+  librarySession.current = server.sessionId;
   const track = player.queue[player.currentIndex];
   const ready = !!desktop && player.engine === 'ready';
 
@@ -192,27 +193,23 @@ export default function App() {
     catch { setMessage('Could not reach the desktop process. Restart the app and try again.'); }
   }
   function command(value: PlayerCommand) { if (desktop) void run(() => desktop!.command(value)); }
-  const resetLibrary = useCallback(() => {
-    setLibrarySession(++sessionGeneration.current);
-    setAlbums([]); setOffset(0); setLoadedLibrary(false); setBusy(false); setMessage(null);
-  }, []);
   const loadAlbums = useCallback(async (nextOffset: number) => {
     if (!desktop) return;
-    const generation = sessionGeneration.current;
+    const sessionId = server.sessionId;
     setBusy(true); setMessage(null);
     try {
       const result = await desktop.albums(nextOffset);
-      if (generation !== sessionGeneration.current) return;
+      if (librarySession.current !== sessionId) return;
       if (result.ok) { setAlbums(result.value); setOffset(nextOffset); setLoadedLibrary(true); }
       else setMessage(result.error);
     } catch {
-      if (generation === sessionGeneration.current) setMessage('Could not reach the desktop process. Restart the app and try again.');
+      if (librarySession.current === sessionId) setMessage('Could not reach the desktop process. Restart the app and try again.');
     } finally {
-      if (generation === sessionGeneration.current) setBusy(false);
+      if (librarySession.current === sessionId) setBusy(false);
     }
-  }, []);
-  useEffect(() => { if (!server.connected) resetLibrary(); }, [server.connected, resetLibrary]);
-  useEffect(() => { if (tab === 'library' && server.connected && !loadedLibrary) void loadAlbums(0); }, [tab, server.connected, loadedLibrary, librarySession, loadAlbums]);
+  }, [server.sessionId]);
+  useEffect(() => { setAlbums([]); setLoadedLibrary(false); setOffset(0); setBusy(false); setMessage(null); }, [server.sessionId]);
+  useEffect(() => { if (tab === 'library' && server.connected && !loadedLibrary) void loadAlbums(0); }, [tab, server.connected, loadedLibrary, loadAlbums]);
 
   return <div className="app-shell">
     <header className="app-header"><div className="wordmark"><Mark /><span>squiggly<span className="wordmark-dot">.</span></span><span className="prototype-label">First pressing</span></div>
@@ -248,11 +245,11 @@ export default function App() {
       {!server.connected ? <div className="library-empty"><Library size={52} strokeWidth={1} /><h2>A home for the records you keep.</h2><p>Navidrome and OpenSubsonic support, with original streaming requested by default. Local files work without a server.</p><button className="primary" onClick={() => setConnectOpen(true)}>Connect your library</button></div>
         : <><div className="album-grid">{albums.map(album => <button key={album.id} className="album-item" disabled={!ready || busy} onClick={async () => { setBusy(true); const result = await desktop!.playAlbum(album.id); setBusy(false); if (result.ok) setTab('listen'); else setMessage(result.error); }}><div className="album-art-placeholder"><Disc3 size={56} strokeWidth={.8} /><span>{album.name.slice(0, 1)}</span></div><strong>{album.name}</strong><span>{album.artist}</span><small>{album.songCount} tracks</small></button>)}</div>
           {!albums.length && <p className="notice">{busy ? 'Loading albums…' : 'No albums on this page.'}</p>}
-          <div className="pagination"><button className="secondary" disabled={busy || offset === 0} onClick={() => void loadAlbums(Math.max(0, offset - 48))}><ChevronLeft size={17} /> Previous</button><span>Page {Math.floor(offset / 48) + 1}</span><button className="secondary" disabled={busy || albums.length < 48} onClick={() => void loadAlbums(offset + 48)}>Next <ChevronRight size={17} /></button></div>
+          <div className="pagination"><button className="secondary" disabled={busy || offset === 0} onClick={() => void loadAlbums(Math.max(0, offset - 48))}><ChevronLeft size={17} /> Previous</button><button className="secondary" disabled={busy} onClick={() => void loadAlbums(offset)}><RotateCcw size={16} /> Refresh</button><span>Page {Math.floor(offset / 48) + 1}</span><button className="secondary" disabled={busy || albums.length < 48} onClick={() => void loadAlbums(offset + 48)}>Next <ChevronRight size={17} /></button></div>
         </>}
     </main>}
     {tab === 'diagnostics' && <main><DiagnosticsView snapshot={snapshot} onExport={() => void run(() => desktop!.exportDiagnostics())} /></main>}
     <footer className="app-footer"><span><Check size={13} /> No external telemetry</span><span>{desktop ? `Session ${time(snapshot.diagnostics.uptimeSeconds)}` : 'UI preview only'}<span className="strip-divider">/</span>Squiggly 0.1</span></footer>
-    {connectOpen && <ConnectionDialog onClose={() => setConnectOpen(false)} onConnected={() => { resetLibrary(); setTab('library'); }} run={run} />}
+    {connectOpen && <ConnectionDialog onClose={() => setConnectOpen(false)} onConnected={() => setTab('library')} run={run} />}
   </div>;
 }
