@@ -100,6 +100,8 @@ See [docs/ui-handoff.md](docs/ui-handoff.md). The renderer can be redesigned wit
 
 Five interactive UI design studies are available at `/mocks.html` with `npm run preview`. Use the direction buttons to compare Cove, Daylight, After hours, Studio, and Blue note. These are isolated mockups with sample records and no audio playback. The existing player is unchanged. See [docs/ui-mockups.md](docs/ui-mockups.md) for the design notes.
 
+Five more UI studies are at `/mocks-2.html` with `npm run preview`: Verse, Bench, Sleeve notes, Transistor, and Ledger. They are isolated mockups with sample records and no audio playback. See [docs/ui-mockups-2.md](docs/ui-mockups-2.md).
+
 ## References and licensing
 
 The [upstream references](references/README.md) remain separate and unchanged. No Feishin, LosslessCut, T3 Code, or Fiddle implementation was copied into this app. The seek bar is an original canvas implementation of a sine-wave progress indicator, not a port of upstream source.
