@@ -11,6 +11,50 @@ test('Ledger selects the clicked song and its duration, not the first song on it
   await expect(page.locator('.ledger-wave .progress-times span').last()).toHaveText(await row.locator('time').innerText());
 });
 
+test('Ledger activates the row reached by Tab', async ({ page }) => {
+  await page.goto('/mocks-2.html?view=ledger');
+  const firstRow = page.locator('#ledger-track-0-0');
+  await firstRow.focus();
+  await expect(firstRow).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.locator('#ledger-track-0-1')).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.ledger-player .mini-track strong')).toHaveText('Weather in the glass');
+  await expect(page.locator('#ledger-track-0-1')).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Bench contains its signal chain at intermediate desktop widths', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto('/mocks-2.html?view=bench');
+  const sizes = await page.locator('.bench-chain-wrap').evaluate(element => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+    overflowX: getComputedStyle(element).overflowX,
+  }));
+  expect(sizes.overflowX).toBe('auto');
+  expect(sizes.scrollWidth).toBeGreaterThan(sizes.clientWidth);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1024);
+});
+
+test('Ledger transport remains reachable in a short desktop window', async ({ page }) => {
+  await page.setViewportSize({ width: 900, height: 500 });
+  await page.goto('/mocks-2.html?view=ledger');
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThan(500);
+  const player = page.locator('.ledger-player');
+  await player.scrollIntoViewIfNeeded();
+  await expect(player).toBeVisible();
+  await expect(player.getByRole('button', { name: 'Preview play' })).toBeVisible();
+});
+
+test('Sleeve notes keeps audio inspection reachable on narrow screens', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/mocks-2.html?view=sleeve-notes');
+  const inspect = page.locator('.compact-signal-trigger');
+  await expect(inspect).toBeVisible();
+  await inspect.click();
+  await expect(page.getByRole('dialog', { name: 'Audio path information' })).toBeVisible();
+});
+
 test('Ledger keyboard selection and filtering preserve the selected song', async ({ page }) => {
   await page.goto('/mocks-2.html?view=ledger');
   const table = page.getByRole('grid');
