@@ -13,8 +13,17 @@ app.disableHardwareAcceleration();
 process.env.SQUIGGLY_TEST_NULL_AUDIO = '1';
 process.env.SQUIGGLY_SMOKE_TEST = '1';
 delete process.env.ELECTRON_RENDERER_URL;
-const deadline = setTimeout(() => { console.error('Desktop smoke test timed out.'); app.exit(1); }, 15000);
-app.on('will-quit', () => { clearTimeout(deadline); rmSync(temporary, { recursive: true, force: true }); });
+const deadline = setTimeout(() => { console.error('Desktop smoke test timed out.'); finish(1); }, 15000);
+function finish(code) {
+  clearTimeout(deadline);
+  try { rmSync(temporary, { recursive: true, force: true }); }
+  finally {
+    if (code !== 0) { app.exit(code); return; }
+    // Success goes through quit so main's before-quit terminates the audio host; bound it in case that stalls.
+    setTimeout(() => { console.error('Desktop smoke test did not quit.'); app.exit(1); }, 10000);
+    app.quit();
+  }
+}
 
 const fixture = join(temporary, 'fixture.wav');
 const dataSize = 48000 * 2 * 10;
@@ -28,7 +37,7 @@ dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [fixture] });
 
 app.on('browser-window-created', (_event, window) => {
   window.webContents.on('render-process-gone', (_event, details) => {
-    console.error('Renderer exited:', details.reason); app.exit(1);
+    console.error('Renderer exited:', details.reason); finish(1);
   });
   window.webContents.once('did-finish-load', async () => {
     try {
@@ -65,8 +74,8 @@ app.on('browser-window-created', (_event, window) => {
       assert.equal(result.outputBackend, 'null');
       assert.equal(result.queue, 1);
       console.log('Desktop integration passed:', JSON.stringify(result));
-      clearTimeout(deadline); app.quit();
-    } catch (error) { console.error(error); clearTimeout(deadline); app.exit(1); }
+      finish(0);
+    } catch (error) { console.error(error); finish(1); }
   });
 });
-import(pathToFileURL(join(__dirname, '../out/main/index.js')).href).catch(error => { console.error(error); app.exit(1); });
+import(pathToFileURL(join(__dirname, '../out/main/index.js')).href).catch(error => { console.error(error); finish(1); });

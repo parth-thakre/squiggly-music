@@ -6,18 +6,25 @@ export function time(seconds: number | null) {
   return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
 }
 
-export function SeekBar({ position, duration, playing, disabled, onSeek }: {
-  position: number; duration: number; playing: boolean; disabled: boolean; onSeek(value: number): void;
+export function SeekBar({ trackIdentity, position, duration, playing, disabled, onSeek }: {
+  trackIdentity: string; position: number; duration: number; playing: boolean; disabled: boolean; onSeek(value: number): void;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const clock = useRef<HTMLSpanElement>(null);
   const latest = useRef({ position, duration, playing, at: performance.now() });
   const dragging = useRef<number | null>(null);
+  const gesture = useRef<{ trackIdentity: string; cancelled: boolean } | null>(null);
   const redraw = useRef<() => void>(() => {});
   const [scrubbing, setScrubbing] = useState(false);
 
-  useEffect(() => { latest.current = { position, duration, playing, at: performance.now() }; }, [position, duration, playing]);
+  useEffect(() => { latest.current = { position, duration, playing, at: performance.now() }; }, [position, duration, playing, trackIdentity]);
+  useEffect(() => {
+    if (gesture.current && (gesture.current.trackIdentity !== trackIdentity || disabled)) {
+      // Keep the cancelled gesture until release so further input cannot retarget it.
+      gesture.current.cancelled = true; dragging.current = null; setScrubbing(false); redraw.current();
+    }
+  }, [trackIdentity, disabled]);
   useEffect(() => {
     const element = canvas.current!;
     const context = element.getContext('2d');
@@ -60,17 +67,25 @@ export function SeekBar({ position, duration, playing, disabled, onSeek }: {
     return () => { cancelAnimationFrame(frame); observer.disconnect(); document.removeEventListener('visibilitychange', refresh); reduced.removeEventListener('change', refresh); };
   }, [playing, position, duration, scrubbing]);
 
+  const cancel = () => { dragging.current = null; gesture.current = null; setScrubbing(false); redraw.current(); };
   const commit = () => {
-    if (dragging.current !== null) { onSeek(dragging.current); dragging.current = null; setScrubbing(false); }
+    if (!disabled && gesture.current?.trackIdentity === trackIdentity && !gesture.current.cancelled && dragging.current !== null) onSeek(dragging.current);
+    cancel();
   };
   return <div className="seek-control">
     <div className="seek-rail">
       <canvas ref={canvas} aria-hidden="true" />
       <input ref={input} aria-label="Playback position" aria-valuetext={`${time(position)} of ${time(duration)}`}
         type="range" min="0" max={duration || 1} step="0.1" defaultValue="0" disabled={disabled || !duration}
-        onChange={event => { dragging.current = Number(event.target.value); setScrubbing(true); redraw.current(); }}
+        onPointerDown={event => { gesture.current = { trackIdentity, cancelled: false }; event.currentTarget.setPointerCapture(event.pointerId); }}
+        onKeyDown={() => { gesture.current ??= { trackIdentity, cancelled: false }; }}
+        onChange={event => {
+          gesture.current ??= { trackIdentity, cancelled: false };
+          if (disabled || gesture.current.cancelled || gesture.current.trackIdentity !== trackIdentity) { redraw.current(); return; }
+          dragging.current = Number(event.target.value); setScrubbing(true); redraw.current();
+        }}
         onPointerUp={commit} onKeyUp={commit} onBlur={commit}
-        onPointerCancel={() => { dragging.current = null; setScrubbing(false); }} />
+        onPointerCancel={cancel} onLostPointerCapture={cancel} />
     </div>
     <div className="time-labels"><span ref={clock}>{time(position)}</span><span>{time(duration)}</span></div>
   </div>;

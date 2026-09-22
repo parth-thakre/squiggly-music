@@ -7,11 +7,13 @@ const MpvEvent = koffi.struct('squiggly_mpv_event', {
   event_id: 'int', error: 'int', reply_userdata: 'uint64_t', data: 'void *',
 });
 const EndFile = koffi.struct('squiggly_mpv_end_file', {
-  reason: 'int', error: 'int', playlist_entry_id: 'int64_t',
-  playlist_insert_id: 'int64_t', playlist_insert_num_entries: 'int',
+  // This prefix is also safe on client API 1.107, before playlist fields existed.
+  reason: 'int', error: 'int',
 });
 
 export class NativePlayer {
+  readonly clientApiVersion: string | null;
+  readonly supportsStopKeepPlaylist: boolean;
   private library;
   private handle: unknown;
   private create;
@@ -35,6 +37,16 @@ export class NativePlayer {
     }
     if (!library) throw new Error('libmpv could not be loaded. Install the libmpv runtime or set SQUIGGLY_LIBMPV_PATH, then restart the audio engine.');
     this.library = library;
+    this.clientApiVersion = null;
+    this.supportsStopKeepPlaylist = false;
+    try {
+      const version = BigInt(library.func('unsigned long mpv_client_api_version(void)')());
+      const major = version >> 16n;
+      const minor = version & 0xffffn;
+      this.clientApiVersion = `${major}.${minor}`;
+      // The stop keep-playlist flag was added with client API 1.108 (mpv 0.33).
+      this.supportsStopKeepPlaylist = major > 1n || (major === 1n && minor >= 108n);
+    } catch { /* Unknown runtimes use the compatible legacy stop path. */ }
     this.create = library.func('void *mpv_create(void)');
     this.initialize = library.func('int mpv_initialize(void *ctx)');
     this.option = library.func('int mpv_set_option_string(void *ctx, const char *name, const char *value)');
@@ -86,7 +98,7 @@ export class NativePlayer {
   command(...args: string[]) {
     if (this.commandNative(this.handle, [...args, null]) < 0) throw new Error(`Audio engine rejected ${args[0]}.`);
   }
-  drainEvents(): string | null {
+  drainEvents(): { error: string | null; shutdown: boolean } {
     let error: string | null = null;
     // Limit work per tick even if a backend floods its event queue.
     for (let i = 0; i < 100; i++) {
@@ -94,12 +106,13 @@ export class NativePlayer {
       if (!pointer) break;
       const event = koffi.decode(pointer, MpvEvent) as { event_id: number; data: unknown };
       if (event.event_id === 0) break;
+      if (event.event_id === 1) return { error, shutdown: true };
       if (event.event_id === 7 && event.data) {
         const end = koffi.decode(event.data, EndFile) as { reason: number; error: number };
         if (end.reason === 4) error = `Playback failed in libmpv (code ${end.error}). Check the file, server connection, and output device.`;
       }
     }
-    return error;
+    return { error, shutdown: false };
   }
   devices(): AudioDevice[] {
     const count = Math.min(this.number('audio-device-list/count') ?? 0, 128);

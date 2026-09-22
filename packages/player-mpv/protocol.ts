@@ -7,5 +7,5 @@ export type HostRequest = {
   action: { type: 'queue'; tracks: PlayableTrack[] } | PlayerCommand;
 };
 export type HostMessage =
-  | { type: 'snapshot'; player: PlayerSnapshot; resources: { cpuPercent: number; memoryMB: number } }
+  | { type: 'snapshot'; player: PlayerSnapshot; clientApiVersion: string | null; resources: { cpuPercent: number; memoryMB: number } }
   | { type: 'reply'; id: number; error: string | null };

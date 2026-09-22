@@ -45,7 +45,7 @@ export interface PlayerSnapshot {
   devices: AudioDevice[];
   audio: AudioPath;
 }
-export interface OperationMetric { name: string; count: number; errors: number; p50Ms: number; p95Ms: number }
+export interface OperationMetric { name: string; count: number; errors: number; cancelled?: number; p50Ms: number; p95Ms: number }
 export interface ProcessMetric { name: string; cpuPercent: number; memoryMB: number }
 export interface Diagnostics {
   uptimeSeconds: number;
