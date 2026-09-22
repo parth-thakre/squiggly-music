@@ -98,6 +98,8 @@ React Native is reserved for a future mobile client. Shared domain contracts and
 
 See [docs/ui-handoff.md](docs/ui-handoff.md). The renderer can be redesigned without changing the playback or credential boundaries.
 
+Five interactive UI design studies are available at `/mocks.html` with `npm run preview`. Use the direction buttons to compare Cove, Daylight, After hours, Studio, and Blue note. These are isolated mockups with sample records and no audio playback. The existing player is unchanged. See [docs/ui-mockups.md](docs/ui-mockups.md) for the design notes.
+
 ## References and licensing
 
 The [upstream references](references/README.md) remain separate and unchanged. No Feishin, LosslessCut, T3 Code, or Fiddle implementation was copied into this app. The seek bar is an original canvas implementation of a sine-wave progress indicator, not a port of upstream source.
