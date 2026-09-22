@@ -1,0 +1,15 @@
+# Local upstream checkouts. Keep references/README.md in Squiggly's source.
+/references/feishin/
+/references/t3code/
+/references/lossless-cut/
+/references/electron-fiddle/
+
+node_modules/
+out/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+.local/
+*.log
