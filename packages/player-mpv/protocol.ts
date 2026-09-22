@@ -4,7 +4,7 @@ import type { PlayerCommand, PlayerSnapshot, Track } from '../core/contracts';
 export interface PlayableTrack { track: Track; location: string }
 export type HostRequest = {
   id: number;
-  action: { type: 'queue'; tracks: PlayableTrack[] } | PlayerCommand;
+  action: { type: 'queue'; tracks: PlayableTrack[] } | { type: 'clear-session' } | PlayerCommand;
 };
 export type HostMessage =
   | { type: 'snapshot'; player: PlayerSnapshot; clientApiVersion: string | null; resources: { cpuPercent: number; memoryMB: number } }

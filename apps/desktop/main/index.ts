@@ -207,8 +207,9 @@ function installHandlers() {
     const info = yield* candidate.ping();
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     // Credentials are session-only. No plaintext persistence or silent safeStorage fallback.
-    // Replacing a session must also discard the previous account's stream tokens.
-    if (server) launchPlayer();
+    // Stop playback and clear every authenticated URL before replacing the account,
+    // while preserving the audio engine's volume and selected output device.
+    if (server) yield* send({ type: 'clear-session' });
     server = candidate;
     connectionGeneration++;
     state.server = { connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID() };

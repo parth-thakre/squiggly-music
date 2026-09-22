@@ -1,5 +1,6 @@
 import { emptyAudio, emptyPlayer } from '../core/contracts';
 import { NativePlayer } from './native';
+import { clearPlayerSession } from './session';
 import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 
 // A standalone Node process keeps Chromium and its native libraries out of this
@@ -107,6 +108,14 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         native.set('pause', 'no');
         break;
       }
+      case 'clear-session':
+        // Discard both mpv's playlist and the private fallback copy used by
+        // older clients after stop, while retaining engine-level settings.
+        playableQueue = [];
+        reloadPlaylistAfterStop = false;
+        clearPlayerSession(native, player);
+        resetTrack();
+        break;
       case 'play':
         if (!player.queue.length) throw new Error('Add music to the queue first.');
         if (reloadPlaylistAfterStop) loadPlayableQueue();
