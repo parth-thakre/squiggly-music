@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -16,6 +16,8 @@ afterEach(async () => {
   worker = undefined;
   if (fixtureDirectory) await rm(fixtureDirectory, { recursive: true });
   fixtureDirectory = undefined;
+  vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+  vi.doUnmock('../packages/player-mpv/native'); vi.doUnmock('koffi'); vi.resetModules();
 });
 
 function start(libraryPath: string) {
@@ -56,10 +58,10 @@ describe('isolated audio host', () => {
     await writeFile(file, wav);
     const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
     await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
-    send({ id: 1, action: { type: 'queue', tracks: [{ location: file, track: {
-      id: 'test', title: 'Generated PCM', artist: 'Test', album: '', duration: 4, source: 'local',
+    send({ id: 1, action: { type: 'queue', tracks: ['test', 'second'].map(id => ({ location: file, track: {
+      id, title: 'Generated PCM', artist: 'Test', album: '', duration: 4, source: 'local',
       sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null,
-    } }] } });
+    } })) } });
     await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
     expect(replies.get(1)).toBeNull();
     expect(snapshots.at(-1)?.audio.decoderRate).toBe(48000);
@@ -76,5 +78,137 @@ describe('isolated audio host', () => {
     await expect.poll(() => snapshots.at(-1)?.volume).toBe(50);
     send({ id: 5, action: { type: 'stop' } });
     await expect.poll(() => snapshots.at(-1)?.currentIndex).toBe(-1);
+    expect(replies.get(5)).toBeNull();
+    expect(snapshots.at(-1)?.queue).toHaveLength(2);
+    send({ id: 6, action: { type: 'play' } });
+    await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
+    expect(replies.get(6)).toBeNull();
+    expect(snapshots.at(-1)?.currentIndex).toBe(0);
+    send({ id: 7, action: { type: 'stop' } });
+    await expect.poll(() => snapshots.at(-1)?.currentIndex).toBe(-1);
+    send({ id: 8, action: { type: 'select', id: 'second' } });
+    await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
+    expect(replies.get(7)).toBeNull();
+    expect(replies.get(8)).toBeNull();
+    expect(snapshots.at(-1)?.currentIndex).toBe(1);
+  });
+});
+
+async function mockHost() {
+  vi.useFakeTimers();
+  const { emptyAudio } = await import('../packages/core/contracts');
+  const native = {
+    clientApiVersion: '1.107', devices: vi.fn(() => []), close: vi.fn(),
+    command: vi.fn(), set: vi.fn(),
+    property: vi.fn(() => 'no'),
+    number: vi.fn((name: string) => ({ 'playlist-pos': 2, 'time-pos': 12, duration: 90, volume: 100 })[name] ?? null),
+    audio: vi.fn(() => ({ ...emptyAudio(), codec: 'pcm', decoderRate: 48000, outputRate: 48000 })),
+    drainEvents: vi.fn(() => ({ error: null as string | null, shutdown: false })),
+  };
+  vi.doMock('../packages/player-mpv/native', () => ({ NativePlayer: vi.fn(function () { return native; }) }));
+  const sends: { message: HostMessage; callback: (error: Error | null) => void }[] = [];
+  const listeners = new Map<string, (data: HostRequest) => void>();
+  const exit = vi.fn();
+  vi.stubGlobal('process', { ...process, connected: true, exit,
+    send: vi.fn((message: HostMessage, callback: (error: Error | null) => void) => {
+      sends.push({ message, callback }); return false;
+    }),
+    on: vi.fn((event: string, callback: (data: HostRequest) => void) => listeners.set(event, callback)),
+  });
+  await import('../packages/player-mpv/host');
+  const snapshots = () => sends.map(send => send.message).filter(message => message.type === 'snapshot');
+  return { native, sends, snapshots, exit, command: (request: HostRequest) => listeners.get('message')!(request) };
+}
+
+describe('host snapshot lifecycle', () => {
+  it('coalesces blocked snapshots to the latest and sends replies separately', async () => {
+    const { sends, snapshots, command, native } = await mockHost();
+    vi.advanceTimersByTime(250);
+    native.number.mockImplementation(name => name === 'time-pos' ? 25 : null);
+    vi.advanceTimersByTime(2500);
+    expect(snapshots()).toHaveLength(1);
+    command({ id: 1, action: { type: 'pause' } });
+    expect(sends[1].message).toEqual({ type: 'reply', id: 1, error: null });
+    sends[0].callback(null);
+    expect(snapshots()).toHaveLength(2);
+    expect(snapshots()[1].player.position).toBe(25);
+    sends[2].callback(null);
+    expect(snapshots()).toHaveLength(2);
+    expect(snapshots()[0].clientApiVersion).toBe('1.107');
+  });
+
+  it('releases the native handle and exits on an IPC callback error', async () => {
+    const { sends, native, exit } = await mockHost();
+    sends[0].callback(new Error('IPC channel closed'));
+    expect(native.close).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(1);
+    const polls = native.drainEvents.mock.calls.length;
+    vi.advanceTimersByTime(1000);
+    expect(native.drainEvents).toHaveBeenCalledTimes(polls);
+  });
+
+  it('clears old track measurements before publishing a replacement queue', async () => {
+    const { sends, snapshots, command } = await mockHost();
+    sends[0].callback(null);
+    vi.advanceTimersByTime(250);
+    expect(snapshots()[1].player.audio.decoderRate).toBe(48000);
+    sends[1].callback(null);
+    command({ id: 1, action: { type: 'queue', tracks: [{ location: '/new.wav', track: {
+      id: 'new', title: 'New', artist: '', album: '', duration: null, source: 'local',
+      sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null,
+    } }] } });
+    const snapshot = snapshots().at(-1)!.player;
+    expect(snapshot.queue[0].id).toBe('new');
+    expect(snapshot).toMatchObject({ currentIndex: -1, playing: false, position: 0, duration: 0 });
+    expect(snapshot.audio).toMatchObject({ codec: null, decoderRate: null, outputRate: null, bufferSeconds: null });
+  });
+
+  it('stops polling on core shutdown, publishes failure, and exits nonzero', async () => {
+    const { sends, snapshots, native, exit } = await mockHost();
+    sends[0].callback(null);
+    native.drainEvents.mockReturnValue({ error: null, shutdown: true });
+    vi.advanceTimersByTime(250);
+    expect(native.close).toHaveBeenCalledOnce();
+    expect(snapshots().at(-1)!.player).toMatchObject({ engine: 'crashed', playing: false });
+    expect(snapshots().at(-1)!.player.error).toContain('shut down');
+    expect(native.audio).not.toHaveBeenCalled();
+    sends[1].callback(null);
+    expect(exit).toHaveBeenCalledWith(1);
+    vi.advanceTimersByTime(500);
+    expect(native.drainEvents).toHaveBeenCalledOnce();
+  });
+
+  it('still exits when a shutdown snapshot cannot flush', async () => {
+    const { native, exit } = await mockHost();
+    native.drainEvents.mockReturnValue({ error: null, shutdown: true });
+    vi.advanceTimersByTime(1250);
+    expect(native.close).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe('native client API compatibility', () => {
+  it('decodes only the old end-file prefix and reports shutdown separately', async () => {
+    const events = [
+      { event_id: 7, data: { reason: 4, error: -13 } },
+      { event_id: 1, data: null },
+    ];
+    const struct = vi.fn((_name: string, fields: Record<string, string>) => fields);
+    vi.doMock('koffi', () => ({ default: {
+      struct, decode: vi.fn(value => value),
+      load: () => ({ func: (signature: string) => {
+        if (signature.includes('mpv_client_api_version')) return () => (1 << 16) | 107;
+        if (signature.includes('mpv_create')) return () => ({});
+        if (signature.includes('mpv_wait_event')) return () => events.shift();
+        return () => 0;
+      } }),
+    } }));
+    const { NativePlayer } = await import('../packages/player-mpv/native');
+    const native = new NativePlayer();
+    expect(native.clientApiVersion).toBe('1.107');
+    expect(struct).toHaveBeenCalledWith('squiggly_mpv_end_file', { reason: 'int', error: 'int' });
+    expect(native.drainEvents()).toEqual({ error: expect.stringContaining('code -13'), shutdown: true });
+    expect(native.drainEvents()).toEqual({ error: null, shutdown: false });
+    native.close();
   });
 });

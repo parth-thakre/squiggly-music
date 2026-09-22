@@ -8,7 +8,7 @@ import { writeFile } from 'node:fs/promises';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Effect, Either, Schema } from 'effect';
 import { emptyPlayer, emptyDiagnostics } from '../../../packages/core/contracts';
-import { CommandSchema, ConnectionSchema } from '../../../packages/core/validation';
+import { CommandSchema, ConnectionSchema, IdSchema } from '../../../packages/core/validation';
 import type { AppSnapshot, Result, PlayerCommand } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
@@ -21,6 +21,10 @@ const loop = monitorEventLoopDelay({ resolution: 20 });
 const state: AppSnapshot = { player: emptyPlayer(), diagnostics: emptyDiagnostics(), server: { connected: false, name: null } };
 let window: BrowserWindow | null = null;
 let host: ChildProcess | null = null;
+const retiredHosts = new WeakSet<ChildProcess>();
+const unresponsiveHosts = new WeakSet<ChildProcess>();
+const terminations = new WeakMap<ChildProcess, Promise<void>>();
+const unresponsiveError = 'Audio engine is not responding. Restart the engine.';
 let hostResources = { cpuPercent: 0, memoryMB: 0 };
 let server: SubsonicClient | null = null;
 let sequence = 0;
@@ -43,11 +47,40 @@ function rejectPending(message: string) {
   for (const request of pending.values()) { clearTimeout(request.timer); request.reject(new Error(message)); }
   pending.clear();
 }
-function launchPlayer() {
+function terminateHost(child: ChildProcess): Promise<void> {
+  const existing = terminations.get(child);
+  if (existing) return existing;
+  retiredHosts.add(child);
+  const termination = new Promise<void>((resolve, reject) => {
+    if (child.exitCode !== null || child.signalCode !== null || !child.pid) { resolve(); return; }
+    let timer: ReturnType<typeof setTimeout>;
+    const onExit = () => { clearTimeout(timer); resolve(); };
+    const fail = () => {
+      clearTimeout(timer); child.off('exit', onExit);
+      reject(new Error('Audio process did not exit. Close the app before trying again.'));
+    };
+    child.once('exit', onExit);
+    timer = setTimeout(() => {
+      // Native calls can block the host's JavaScript SIGTERM handler.
+      timer = setTimeout(fail, 2500);
+      try { child.kill('SIGKILL'); } catch { fail(); }
+    }, 2500);
+    try { child.kill('SIGTERM'); } catch { fail(); }
+  }).then(() => {
+    if (host === child) host = null;
+  }, error => {
+    // Keep the child reference and permit another cleanup attempt, never spawn over it.
+    terminations.delete(child);
+    throw error;
+  });
+  terminations.set(child, termination);
+  return termination;
+}
+async function launchPlayer() {
   const previous = host;
-  host = null;
-  previous?.kill();
   rejectPending('Audio engine restarted.');
+  if (previous) await terminateHost(previous);
+  if (quitting) return;
   state.player = emptyPlayer();
   const child = fork(join(directory, 'player.js'), [], {
     execPath: process.env.SQUIGGLY_NODE_PATH || 'node', execArgv: [], windowsHide: true,
@@ -56,7 +89,7 @@ function launchPlayer() {
   if (process.env.SQUIGGLY_SMOKE_TEST === '1') child.stderr?.on('data', data => process.stderr.write(data));
   host = child;
   child.on('message', (message: HostMessage) => {
-    if (host !== child) return;
+    if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
     messages++; bytes += Buffer.byteLength(JSON.stringify(message));
     if (message.type === 'snapshot') { state.player = message.player; hostResources = message.resources; broadcast(); }
     else {
@@ -68,7 +101,7 @@ function launchPlayer() {
   });
   child.on('exit', code => {
     if (process.env.SQUIGGLY_SMOKE_TEST === '1') console.error('Audio process exit code:', code);
-    if (host !== child || quitting) return;
+    if (host !== child || retiredHosts.has(child) || quitting) return;
     host = null;
     rejectPending('Audio process exited.');
     state.player.engine = 'crashed'; state.player.playing = false;
@@ -76,8 +109,8 @@ function launchPlayer() {
     broadcast();
   });
   child.on('error', () => {
-    if (host !== child || quitting) return;
-    host = null; rejectPending('Audio host could not start.');
+    if (host !== child || retiredHosts.has(child) || quitting) return;
+    retiredHosts.add(child); rejectPending('Audio host could not start.');
     state.player.engine = 'unavailable'; state.player.playing = false;
     state.player.error = 'Could not start the Node audio host. Install Node 22.16+ or set SQUIGGLY_NODE_PATH to its executable.';
     broadcast();
@@ -88,13 +121,18 @@ function launchPlayer() {
 function send(action: HostRequest['action']) {
   return Effect.tryPromise({
     try: () => new Promise<void>((resolve, reject) => {
-      if (!host) return reject(new Error('Audio process is not running. Restart the audio engine.'));
+      const child = host;
+      if (child && unresponsiveHosts.has(child)) return reject(new Error(unresponsiveError));
+      if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
       const timer = setTimeout(() => {
-        pending.delete(id); reject(new Error('Audio command timed out. Restart the audio engine.'));
+        unresponsiveHosts.add(child);
+        state.player.engine = 'unavailable'; state.player.playing = false;
+        state.player.error = unresponsiveError;
+        rejectPending(unresponsiveError); broadcast();
       }, 8000);
       pending.set(id, { resolve, reject, timer });
-      try { host.send({ id, action } satisfies HostRequest, error => {
+      try { child.send({ id, action } satisfies HostRequest, error => {
         if (error && pending.has(id)) { clearTimeout(timer); pending.delete(id); reject(new Error('Could not reach the audio process.')); }
       }); }
       catch { clearTimeout(timer); pending.delete(id); reject(new Error('Could not reach the audio process.')); }
@@ -108,14 +146,15 @@ function assertSender(event: IpcMainInvokeEvent) {
     throw new Error('Untrusted IPC sender.');
   }
 }
-function handle<A>(channel: string, task: (value: unknown) => Effect.Effect<A, unknown>, lane: keyof typeof semaphores = 'audio') {
+function handle<A>(channel: string, task: (value: unknown, generation: number) => Effect.Effect<A, unknown>, lane: keyof typeof semaphores = 'audio') {
   ipcMain.handle(`squiggly:${channel}`, async (event, value): Promise<Result<A>> => {
     assertSender(event);
     ipcCount++;
     if (ipcCount > 32) { ipcCount--; return { ok: false, error: 'Too many pending operations. Try again shortly.' }; }
     state.diagnostics.ipcCommands++;
+    const generation = connectionGeneration;
     try {
-      const program = Effect.suspend(() => task(value));
+      const program = Effect.suspend(() => task(value, generation));
       const result = await Effect.runPromise(Effect.either(metrics.measure(`ipc.${channel}`, semaphores[lane].withPermits(1)(program))));
       if (Either.isLeft(result)) return { ok: false, error: result.left instanceof Error ? result.left.message : 'Operation failed.' };
       return { ok: true, value: result.right };
@@ -128,7 +167,7 @@ function installHandlers() {
   ipcMain.handle('squiggly:get-snapshot', event => { assertSender(event); return state; });
   handle('command', value => Effect.gen(function* () {
     const command = yield* Schema.decodeUnknown(CommandSchema)(value).pipe(Effect.mapError(() => new Error('Invalid player command.')));
-    if (command.type === 'restart') { launchPlayer(); return; }
+    if (command.type === 'restart') { yield* Effect.tryPromise(() => launchPlayer()); return; }
     yield* send(command);
   }));
   handle('open-files', () => Effect.gen(function* () {
@@ -148,12 +187,12 @@ function installHandlers() {
     }));
     yield* send({ type: 'queue', tracks });
   }), 'dialog');
-  handle('connect', value => Effect.gen(function* () {
-    const generation = connectionGeneration;
+  handle('connect', (value, generation) => Effect.gen(function* () {
+    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
     const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
     yield* candidate.ping();
-    if (generation !== connectionGeneration) return yield* Effect.fail(new Error('Connection canceled.'));
+    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     // Credentials are session-only. No plaintext persistence or silent safeStorage fallback.
     server = candidate;
     state.server = { connected: true, name: new URL(candidate.baseUrl).host };
@@ -164,7 +203,7 @@ function installHandlers() {
     return yield* server.albums(offset);
   }), 'server');
   handle('play-album', value => Effect.gen(function* () {
-    const id = yield* Schema.decodeUnknown(Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)))(value);
+    const id = yield* Schema.decodeUnknown(IdSchema)(value);
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
     const client = server;
     const tracks = yield* client.albumQueue(id);
@@ -175,7 +214,8 @@ function installHandlers() {
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
-    server = null; state.server = { connected: false, name: null }; launchPlayer();
+    server = null; state.server = { connected: false, name: null };
+    yield* Effect.tryPromise(() => launchPlayer());
   }));
   handle('export-diagnostics', () => Effect.gen(function* () {
     const result = yield* Effect.promise(() => dialog.showSaveDialog(window!, {
@@ -191,7 +231,7 @@ function installHandlers() {
   }), 'dialog');
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setName('Squiggly Music');
   installHandlers(); loop.enable();
   window = new BrowserWindow({
@@ -211,7 +251,7 @@ app.whenReady().then(() => {
   });
   if (process.env.ELECTRON_RENDERER_URL) void window.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void window.loadFile(join(directory, '../renderer/index.html'));
-  launchPlayer();
+  await launchPlayer();
   let sampledAt = performance.now();
   const timer = setInterval(() => {
     const now = performance.now(); const seconds = (now - sampledAt) / 1000; sampledAt = now;
@@ -227,8 +267,13 @@ app.whenReady().then(() => {
     };
     messages = 0; bytes = 0; loop.reset(); broadcast();
   }, 1000);
-  app.once('before-quit', () => {
-    quitting = true; clearInterval(timer); loop.disable(); host?.kill(); rejectPending('Application closing.');
+  app.on('before-quit', event => {
+    event.preventDefault();
+    if (quitting) return;
+    quitting = true; connectionGeneration++;
+    server = null; clearInterval(timer); loop.disable(); rejectPending('Application closing.');
+    // Also covers a cleanup already in progress during a restart or disconnect.
+    void (host ? terminateHost(host) : Promise.resolve()).then(() => app.exit(0), () => app.exit(1));
   });
 });
 app.on('window-all-closed', () => app.quit());

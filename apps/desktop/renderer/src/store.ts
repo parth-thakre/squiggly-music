@@ -10,8 +10,10 @@ const listeners = new Set<() => void>();
 const update = (next: AppSnapshot) => { snapshot = next; listeners.forEach(listener => listener()); };
 if (window.squiggly) {
   let receivedEvent = false;
-  window.squiggly.subscribe(next => { receivedEvent = true; update(next); });
-  void window.squiggly.snapshot().then(next => { if (!receivedEvent) update(next); });
+  let disposed = false;
+  const unsubscribe = window.squiggly.subscribe(next => { receivedEvent = true; update(next); });
+  void window.squiggly.snapshot().then(next => { if (!disposed && !receivedEvent) update(next); });
+  import.meta.hot?.dispose(() => { disposed = true; unsubscribe(); });
 }
 export const useSnapshot = () => useSyncExternalStore(
   listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },

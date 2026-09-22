@@ -11,11 +11,11 @@ npm ci
 npm run dev
 ```
 
-The player searches for `libmpv.so.2` or `.1` on Linux, `libmpv.2.dylib` on macOS, and `mpv-2.dll` or `libmpv-2.dll` on Windows. Set `SQUIGGLY_LIBMPV_PATH` to an absolute library path if it is not discoverable. Its dependent libraries must also be available to the OS loader. A standalone `mpv` executable is not sufficient.
+The player searches for `libmpv.so.2` or `.1` on Linux, `libmpv.2.dylib` on macOS, and `mpv-2.dll` or `libmpv-2.dll` on Windows. Set `SQUIGGLY_LIBMPV_PATH` to an absolute library path if it is not discoverable. Omit this override on systems with a normal libmpv installation. Setting it to a missing path makes the engine unavailable; it does not fall back to system libraries. Its dependent libraries must also be available to the OS loader. A standalone `mpv` executable is not sufficient.
 
 The audio host launches `node` from PATH, or the absolute executable in `SQUIGGLY_NODE_PATH`. This development dependency is deliberate. Loading the Fedora libmpv build into Electron 44's utility process crashed during native initialization, while standalone Node succeeded. A release must ship a separately validated host runtime instead of assuming users have Node installed.
 
-On Fedora, the runtime package is `mpv-libs`. This workspace also has a locally extracted Fedora runtime under `.local/runtime`; no system packages were installed. To use that extraction on this machine:
+On Fedora, the runtime package is `mpv-libs`. An optional developer setup is to extract a Fedora runtime under `.local/runtime`. This per-machine setup is untracked and absent in a fresh checkout. If you have created that extraction, run:
 
 ```bash
 SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \
@@ -60,9 +60,9 @@ MPV's `cache-speed` is a cache input rate. It is not the track's encoded bitrate
 - `packages/player-mpv`: private playback transport and native library calls.
 - `packages/adapter-opensubsonic`: token authentication, validated responses, cancellation, and server mapping.
 
-Effect runs at asynchronous service boundaries. Audio commands and server requests use separate concurrency lanes so slow network requests do not hold the playback permit. Network requests have a 15-second timeout and an 8-MB response cap. The prototype bounds queues at 500 tracks and album pages at 48 entries. These bounds are not evidence of 100k-track scalability.
+Effect runs at asynchronous service boundaries. Audio commands and server requests use separate concurrency lanes so slow network requests do not hold the playback permit. OpenSubsonic metadata requests have a 15-second timeout and an 8 MiB response cap; audio streaming uses libmpv's own network behavior. The prototype bounds queues at 500 tracks and album pages at 48 entries. These bounds are not evidence of 100k-track scalability.
 
-The player emits four authoritative snapshots per second. Only the seek control interpolates playback position. It stops its animation while paused, hidden, or reduced motion is enabled. Detailed traces are not persisted or sent externally; Effect spans exist for future opt-in trace export.
+The player polls native state every 250 ms and publishes immediate updates at startup and after commands. Renderer subscriptions also receive once-per-second diagnostic updates and operation-completion updates. Only the seek control interpolates playback position. It stops its animation while paused, hidden, or reduced motion is enabled. Detailed traces are not persisted or sent externally; Effect spans exist for future opt-in trace export.
 
 ## Verification
 
@@ -72,14 +72,14 @@ npm run check
 
 This typechecks, builds, and runs the tests. Without `SQUIGGLY_LIBMPV_PATH`, the native decoding test is explicitly skipped; the missing-library test still runs.
 
-To run the native decoding test with the local Fedora runtime:
+If you created the optional local Fedora runtime extraction, run the native decoding test with:
 
 ```bash
 SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \
 LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run check
 ```
 
-For the actual Electron preload/process integration test, run in a graphical session or supply a private Xvfb display on Linux:
+For the actual Electron preload/process integration test, run in a graphical session or supply a private Xvfb display on Linux. The example below assumes you created the optional local Fedora runtime extraction. With a normal libmpv installation, omit both environment overrides and run `npm run test:desktop`:
 
 ```bash
 SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Effect, Schema } from 'effect';
+import { Cause, Deferred, Effect, Either, Exit, Fiber, Option, Schema } from 'effect';
 import { CommandSchema, ConnectionSchema } from '../packages/core/validation';
 import { emptyAudio, emptyPlayer } from '../packages/core/contracts';
 import { Metrics } from '../packages/core/metrics';
@@ -45,12 +45,36 @@ describe('bounded operation metrics', () => {
   it('retains only 256 timings but lifetime counts', () => {
     const metrics = new Metrics();
     for (let i = 0; i < 1000; i++) metrics.record('test', i, i % 10 === 0);
-    expect(metrics.snapshot()).toEqual([{ name: 'test', count: 1000, errors: 100, p50Ms: 871, p95Ms: 987 }]);
+    expect(metrics.snapshot()).toEqual([{ name: 'test', count: 1000, errors: 100, cancelled: 0, p50Ms: 871, p95Ms: 987 }]);
   });
   it('preserves Effect success and failure and records both', async () => {
     const metrics = new Metrics();
     expect(await Effect.runPromise(metrics.measure('load', Effect.succeed(42)))).toBe(42);
-    await Effect.runPromise(metrics.measure('load', Effect.fail('failed')).pipe(Effect.either));
-    expect(metrics.snapshot()[0]).toMatchObject({ count: 2, errors: 1 });
+    const result = await Effect.runPromise(metrics.measure('load', Effect.fail('failed')).pipe(Effect.either));
+    expect(result).toEqual(Either.left('failed'));
+    expect(metrics.snapshot()[0]).toMatchObject({ count: 2, errors: 1, cancelled: 0 });
+  });
+  it('preserves defects and records an error and latency sample', async () => {
+    const metrics = new Metrics();
+    const defect = 'defect';
+    const exit = await Effect.runPromiseExit(metrics.measure('defect', Effect.die(defect)));
+    expect(Exit.isFailure(exit)).toBe(true);
+    if (Exit.isFailure(exit)) expect(Option.getOrThrow(Cause.dieOption(exit.cause))).toBe(defect);
+    expect(metrics.snapshot()[0]).toMatchObject({ name: 'defect', count: 1, errors: 1, cancelled: 0 });
+    expect(metrics.snapshot()[0].p50Ms).toBeGreaterThanOrEqual(0);
+    expect(metrics.snapshot()[0].p95Ms).toBe(metrics.snapshot()[0].p50Ms);
+  });
+  it('preserves interruption and records a cancellation and latency sample', async () => {
+    const metrics = new Metrics();
+    const exit = await Effect.runPromise(Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const fiber = yield* Effect.fork(metrics.measure('cancelled', Deferred.succeed(started, undefined).pipe(Effect.zipRight(Effect.never))));
+      yield* Deferred.await(started);
+      return yield* Fiber.interrupt(fiber);
+    }));
+    expect(Exit.isFailure(exit) && Cause.isInterruptedOnly(exit.cause)).toBe(true);
+    expect(metrics.snapshot()[0]).toMatchObject({ name: 'cancelled', count: 1, errors: 0, cancelled: 1 });
+    expect(metrics.snapshot()[0].p50Ms).toBeGreaterThanOrEqual(0);
+    expect(metrics.snapshot()[0].p95Ms).toBe(metrics.snapshot()[0].p50Ms);
   });
 });
