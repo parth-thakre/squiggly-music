@@ -26,8 +26,12 @@ async function expectRedactedFailure<E>(task: Effect.Effect<unknown, E>, secret 
 
 describe('server address', () => {
   it('preserves subpaths', () => expect(normalizeServerUrl(connection.url)).toBe('https://music.example.com/navidrome'));
-  it.each(['/app/', '/rest', '/rest/ping.view'])('accepts a copied Navidrome address ending in %s', suffix => {
+  it.each(['/rest/ping.view', '/rest/getAlbumList2.view/'])('accepts an explicit API address ending in %s', suffix => {
     expect(normalizeServerUrl(` https://music.example.com/navidrome${suffix} `)).toBe('https://music.example.com/navidrome');
+  });
+  it.each(['/app', '/rest', '/music/app', '/music/rest'])('preserves the configured base path %s', path => {
+    expect(normalizeServerUrl(` https://music.example.com${path}/ `)).toBe(`https://music.example.com${path}`);
+    expect(normalizeServerUrl(`https://music.example.com${path}/rest/ping.view`)).toBe(`https://music.example.com${path}`);
   });
   it('preserves ports', () => expect(normalizeServerUrl('http://localhost:4533/')).toBe('http://localhost:4533'));
   it.each(['file:///etc/passwd', 'ftp://server', 'https://user:pass@server', 'https://server?token=secret', 'https://server/#fragment'])('rejects %s', url => {

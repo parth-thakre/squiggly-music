@@ -47,6 +47,8 @@ The preview does not have an Electron bridge, does not play audio, and does not 
 
 In the desktop app, choose **Connect a server**, enter your Navidrome server address, username, and password, then connect. Include any port or reverse-proxy subpath, such as `http://localhost:4533` or `https://music.example.com/navidrome`. Use HTTPS outside a trusted local network.
 
+Use the server's base address, not its web UI route. An explicit API endpoint such as `/navidrome/rest/ping.view` is also accepted. Bare `/app` and `/rest` suffixes are preserved because either can be a configured server subpath.
+
 The Library opens after login. Browse newest albums in pages of 48, use Refresh after a server scan, and select an album to play it through libmpv. The connector uses Navidrome's OpenSubsonic API with salted token authentication and requests original audio with `format=raw`.
 
 Credentials last only for the current session. Disconnecting or replacing a connection clears the previous native playlist and its stream tokens. A failed replacement leaves the existing session connected. Browser preview cannot connect to a server or play audio.

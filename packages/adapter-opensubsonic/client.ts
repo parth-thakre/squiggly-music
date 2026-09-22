@@ -58,8 +58,9 @@ export function normalizeServerUrl(input: string): string {
     throw new Error('Use an HTTP or HTTPS server URL without embedded credentials, query parameters, or a fragment.');
   }
   url.search = ''; url.hash = '';
-  // Accept the web UI address or a copied Subsonic API address as well as the root.
-  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/app$/, '').replace(/\/rest(?:\/[a-zA-Z0-9]+\.view)?$/, '');
+  // Only an explicit API endpoint identifies a suffix we can remove. Bare
+  // /app and /rest may be the configured server base path, not UI/API routes.
+  url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/rest\/[a-zA-Z0-9]+\.view$/, '');
   return url.href.replace(/\/+$/, '');
 }
 
