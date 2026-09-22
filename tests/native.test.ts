@@ -70,7 +70,7 @@ describe('isolated audio host', () => {
     expect(JSON.stringify(snapshots)).not.toContain(fixtureDirectory);
     send({ id: 2, action: { type: 'pause' } });
     await expect.poll(() => snapshots.at(-1)?.playing).toBe(false);
-    send({ id: 3, action: { type: 'seek', seconds: 1 } });
+    send({ id: 3, action: { type: 'seek', seconds: 1, queueIndex: 0, trackId: 'test' } });
     await expect.poll(() => replies.has(3)).toBe(true);
     expect(replies.get(3)).toBeNull();
     await expect.poll(() => snapshots.at(-1)?.position).toBeCloseTo(1, 1);
@@ -94,11 +94,12 @@ describe('isolated audio host', () => {
   });
 });
 
-async function mockHost() {
+async function mockHost(supportsStopKeepPlaylist = false) {
   vi.useFakeTimers();
   const { emptyAudio } = await import('../packages/core/contracts');
   const native = {
-    clientApiVersion: '1.107', devices: vi.fn(() => []), close: vi.fn(),
+    clientApiVersion: supportsStopKeepPlaylist ? '1.109' : '1.107', supportsStopKeepPlaylist,
+    devices: vi.fn(() => []), close: vi.fn(),
     command: vi.fn(), set: vi.fn(),
     property: vi.fn(() => 'no'),
     number: vi.fn((name: string) => ({ 'playlist-pos': 2, 'time-pos': 12, duration: 90, volume: 100 })[name] ?? null),
@@ -163,16 +164,52 @@ describe('host snapshot lifecycle', () => {
     expect(snapshot.audio).toMatchObject({ codec: null, decoderRate: null, outputRate: null, bufferSeconds: null });
   });
 
+  it('uses legacy stop without arguments and reloads its private playlist on play', async () => {
+    const { sends, command, native } = await mockHost();
+    sends[0].callback(null);
+    const track = { id: 'old', title: 'Old', artist: '', album: '', duration: null, source: 'local' as const,
+      sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null };
+    command({ id: 1, action: { type: 'queue', tracks: [{ location: '/old.wav', track }] } });
+    command({ id: 2, action: { type: 'stop' } });
+    expect(native.command).toHaveBeenCalledWith('stop');
+    expect(native.command).not.toHaveBeenCalledWith('stop', 'keep-playlist');
+    native.command.mockClear();
+    command({ id: 3, action: { type: 'play' } });
+    expect(native.command).toHaveBeenCalledWith('loadfile', '/old.wav', 'replace');
+  });
+
+  it('uses playlist-preserving stop when the client API supports it', async () => {
+    const { command, native } = await mockHost(true);
+    command({ id: 1, action: { type: 'stop' } });
+    expect(native.command).toHaveBeenCalledWith('stop', 'keep-playlist');
+  });
+
+  it('rejects a seek after native playback advances to another track', async () => {
+    const { sends, command, native } = await mockHost();
+    sends[0].callback(null);
+    const tracks = ['first', 'second'].map(id => ({ location: `/${id}.wav`, track: {
+      id, title: id, artist: '', album: '', duration: null, source: 'local' as const,
+      sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null,
+    } }));
+    command({ id: 1, action: { type: 'queue', tracks } });
+    native.number.mockImplementation(name => name === 'playlist-pos' ? 1 : null);
+    command({ id: 2, action: { type: 'seek', seconds: 10, queueIndex: 0, trackId: 'first' } });
+    const reply = sends.map(send => send.message).find(message => message.type === 'reply' && message.id === 2);
+    expect(reply).toEqual({ type: 'reply', id: 2, error: expect.stringContaining('track changed') });
+    expect(native.command).not.toHaveBeenCalledWith('seek', '10', 'absolute+exact');
+  });
+
   it('stops polling on core shutdown, publishes failure, and exits nonzero', async () => {
     const { sends, snapshots, native, exit } = await mockHost();
     sends[0].callback(null);
     native.drainEvents.mockReturnValue({ error: null, shutdown: true });
     vi.advanceTimersByTime(250);
-    expect(native.close).toHaveBeenCalledOnce();
+    expect(native.close).not.toHaveBeenCalled();
     expect(snapshots().at(-1)!.player).toMatchObject({ engine: 'crashed', playing: false });
     expect(snapshots().at(-1)!.player.error).toContain('shut down');
     expect(native.audio).not.toHaveBeenCalled();
     sends[1].callback(null);
+    expect(native.close).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledWith(1);
     vi.advanceTimersByTime(500);
     expect(native.drainEvents).toHaveBeenCalledOnce();
@@ -189,6 +226,7 @@ describe('host snapshot lifecycle', () => {
 
 describe('native client API compatibility', () => {
   it('decodes only the old end-file prefix and reports shutdown separately', async () => {
+    let apiVersion = (1 << 16) | 107;
     const events = [
       { event_id: 7, data: { reason: 4, error: -13 } },
       { event_id: 1, data: null },
@@ -197,7 +235,7 @@ describe('native client API compatibility', () => {
     vi.doMock('koffi', () => ({ default: {
       struct, decode: vi.fn(value => value),
       load: () => ({ func: (signature: string) => {
-        if (signature.includes('mpv_client_api_version')) return () => (1 << 16) | 107;
+        if (signature.includes('mpv_client_api_version')) return () => apiVersion;
         if (signature.includes('mpv_create')) return () => ({});
         if (signature.includes('mpv_wait_event')) return () => events.shift();
         return () => 0;
@@ -206,9 +244,15 @@ describe('native client API compatibility', () => {
     const { NativePlayer } = await import('../packages/player-mpv/native');
     const native = new NativePlayer();
     expect(native.clientApiVersion).toBe('1.107');
+    expect(native.supportsStopKeepPlaylist).toBe(false);
     expect(struct).toHaveBeenCalledWith('squiggly_mpv_end_file', { reason: 'int', error: 'int' });
     expect(native.drainEvents()).toEqual({ error: expect.stringContaining('code -13'), shutdown: true });
     expect(native.drainEvents()).toEqual({ error: null, shutdown: false });
     native.close();
+    apiVersion = (1 << 16) | 109;
+    const newer = new NativePlayer();
+    expect(newer.clientApiVersion).toBe('1.109');
+    expect(newer.supportsStopKeepPlaylist).toBe(true);
+    newer.close();
   });
 });

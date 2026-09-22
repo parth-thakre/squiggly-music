@@ -3,6 +3,7 @@ import { Activity, ArrowDownToLine, AudioLines, Check, ChevronLeft, ChevronRight
 import type { Album, AppSnapshot, AudioPath, PlayerCommand, Result, Track } from '../../../../packages/core/contracts';
 import { desktop, useSnapshot } from './store';
 import { SeekBar, time } from './SeekBar';
+import { VolumeCommandCoalescer } from './volumeCommands';
 
 const hz = (value: number | null) => value === null ? 'Unknown' : `${Number((value / 1000).toFixed(2))} kHz`;
 const number = (value: number, digits = 1) => value.toLocaleString(undefined, { maximumFractionDigits: digits });
@@ -58,56 +59,17 @@ const Queue = memo(function Queue({ tracks, index, onSelect }: { tracks: Track[]
   </div>;
 });
 
-function VolumeControl({ volume, disabled, onError }: { volume: number; disabled: boolean; onError(message: string): void }) {
-  const [draft, setDraft] = useState<number | null>(null);
-  const interacting = useRef(false); const sending = useRef(false); const mounted = useRef(false);
-  const pending = useRef<number | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  function clearTimer() { if (timer.current !== null) clearTimeout(timer.current); timer.current = null; }
-  useEffect(() => {
-    mounted.current = true;
-    return () => { mounted.current = false; clearTimer(); pending.current = null; };
-  }, []);
-  useEffect(() => {
-    if (disabled) { clearTimer(); pending.current = null; interacting.current = false; setDraft(null); }
-  }, [disabled]);
-  async function flush() {
-    clearTimer();
-    if (!desktop || sending.current || pending.current === null) return;
-    const percent = pending.current; pending.current = null; sending.current = true;
-    try {
-      const result = await desktop.command({ type: 'volume', percent });
-      if (!result.ok) throw new Error(result.error);
-    } catch (error) {
-      if (mounted.current) {
-        pending.current = null; setDraft(null);
-        onError(error instanceof Error ? error.message : 'Could not reach the desktop process.');
-      }
-    } finally {
-      sending.current = false;
-      if (mounted.current) {
-        if (pending.current !== null) {
-          if (interacting.current) timer.current = setTimeout(() => void flush(), 80);
-          else void flush();
-        } else if (!interacting.current) setDraft(null);
-      }
-    }
-  }
-  function begin() { interacting.current = true; setDraft(value => value ?? volume); }
-  function finish() {
-    interacting.current = false;
-    void flush();
-    if (!sending.current && pending.current === null) setDraft(null);
-  }
-  const value = Math.round(draft ?? volume);
+function VolumeControl({ volume, disabled, commands }: { volume: number; disabled: boolean; commands: VolumeCommandCoalescer | null }) {
+  const [, redraw] = useState(0);
+  useEffect(() => commands?.subscribe(() => redraw(value => value + 1)), [commands]);
+  useEffect(() => { commands?.confirm(volume); }, [commands, volume]);
+  useEffect(() => { if (disabled) commands?.cancel(); }, [commands, disabled]);
+  const value = Math.round(commands?.value ?? volume);
   return <div className="volume-control"><Volume2 size={17} /><input aria-label="Player volume" type="range" min="0" max="100" value={value} disabled={disabled}
-    onPointerDown={event => { begin(); event.currentTarget.setPointerCapture(event.pointerId); }}
-    onKeyDown={begin}
-    onChange={event => {
-      const percent = Number(event.target.value); setDraft(percent); pending.current = percent;
-      if (!sending.current && timer.current === null) timer.current = setTimeout(() => void flush(), 80);
-    }}
-    onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish} onKeyUp={finish} onBlur={finish} /><span>{value}%</span></div>;
+    onPointerDown={event => event.currentTarget.setPointerCapture(event.pointerId)}
+    onChange={event => commands?.enqueue(Number(event.target.value))}
+    onPointerUp={() => commands?.finish()} onPointerCancel={() => commands?.finish()} onLostPointerCapture={() => commands?.finish()}
+    onKeyUp={() => commands?.finish()} onBlur={() => commands?.finish()} /><span>{value}%</span></div>;
 }
 
 function PathStage({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
@@ -211,6 +173,14 @@ export default function App() {
   const [message, setMessage] = useState<string | null>(null); const [busy, setBusy] = useState(false);
   const [albums, setAlbums] = useState<Album[]>([]); const [offset, setOffset] = useState(0);
   const [loadedLibrary, setLoadedLibrary] = useState(false);
+  const volumeCommands = useRef<VolumeCommandCoalescer | null>(null);
+  if (desktop && volumeCommands.current === null) {
+    const bridge = desktop;
+    volumeCommands.current = new VolumeCommandCoalescer(
+      percent => bridge.command({ type: 'volume', percent }),
+      error => setMessage(error),
+    );
+  }
   const sessionGeneration = useRef(0);
   const [librarySession, setLibrarySession] = useState(0);
   const track = player.queue[player.currentIndex];
@@ -259,13 +229,14 @@ export default function App() {
       </aside>
       <section className="now-playing"><div className="listening-heading"><span><AudioLines size={15} />{player.playing ? 'Now playing' : track ? 'Ready when you are' : 'Your listening room'}</span><span>{track?.sourceFormat?.toUpperCase() ?? 'Native libmpv'}</span></div>
         <RecordSleeve track={track} /><div className="track-heading"><h1>{track?.title ?? 'Good music. Nothing in the way.'}</h1><p>{track ? `${track.artist}${track.album ? ` / ${track.album}` : ''}` : 'Start with a local file or your own music server.'}</p></div>
-        <SeekBar trackIdentity={JSON.stringify([player.currentIndex, track?.source, track?.id])} position={player.position} duration={player.duration} playing={player.playing} disabled={!ready || !track} onSeek={seconds => command({ type: 'seek', seconds })} />
+        <SeekBar trackIdentity={JSON.stringify([player.currentIndex, track?.source, track?.id])} position={player.position} duration={player.duration} playing={player.playing} disabled={!ready || !track}
+          onSeek={seconds => track && command({ type: 'seek', seconds, queueIndex: player.currentIndex, trackId: track.id })} />
         <div className="transport"><button className="icon-button" aria-label="Stop" disabled={!ready || !track} onClick={() => command({ type: 'stop' })}><Square size={16} /></button><div className="main-transport">
           <button className="icon-button" aria-label="Previous track" disabled={!ready || player.currentIndex <= 0} onClick={() => command({ type: 'previous' })}><SkipBack size={24} fill="currentColor" /></button>
           <button className="play-button" aria-label={player.playing ? 'Pause' : 'Play'} disabled={!ready || !player.queue.length} onClick={() => command({ type: player.playing ? 'pause' : 'play' })}>{player.playing ? <Pause size={25} fill="currentColor" /> : <Play size={25} fill="currentColor" />}</button>
           <button className="icon-button" aria-label="Next track" disabled={!ready || player.currentIndex >= player.queue.length - 1 || !track} onClick={() => command({ type: 'next' })}><SkipForward size={24} fill="currentColor" /></button>
         </div><span className="transport-spacer" /></div>
-        <VolumeControl volume={player.volume} disabled={!ready} onError={setMessage} />
+        <VolumeControl volume={player.volume} disabled={!ready} commands={volumeCommands.current} />
         <div className="device-control"><Headphones size={19} /><div><label htmlFor="output-device">Output device</label><select id="output-device" value={player.audio.requestedDevice} disabled={!ready} onChange={event => command({ type: 'device', id: event.target.value })}>
           <option value="auto">System default</option>{player.devices.filter(device => device.name !== 'auto').map(device => <option key={device.name} value={device.name}>{device.description}</option>)}
         </select></div><span>Shared / exclusive<br />not verified</span></div>

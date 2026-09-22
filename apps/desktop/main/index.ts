@@ -91,8 +91,14 @@ async function launchPlayer() {
   child.on('message', (message: HostMessage) => {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
     messages++; bytes += Buffer.byteLength(JSON.stringify(message));
-    if (message.type === 'snapshot') { state.player = message.player; hostResources = message.resources; broadcast(); }
-    else {
+    if (message.type === 'snapshot') {
+      state.player = message.player; hostResources = message.resources; broadcast();
+      if (message.player.engine === 'crashed') {
+        // The host publishes its reason before native teardown. Enforce a bound
+        // here because mpv_terminate_destroy may block inside the child.
+        void terminateHost(child).catch(() => undefined);
+      }
+    } else {
       const request = pending.get(message.id);
       if (!request) return;
       clearTimeout(request.timer); pending.delete(message.id);

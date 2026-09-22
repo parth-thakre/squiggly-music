@@ -13,6 +13,7 @@ const EndFile = koffi.struct('squiggly_mpv_end_file', {
 
 export class NativePlayer {
   readonly clientApiVersion: string | null;
+  readonly supportsStopKeepPlaylist: boolean;
   private library;
   private handle: unknown;
   private create;
@@ -37,10 +38,15 @@ export class NativePlayer {
     if (!library) throw new Error('libmpv could not be loaded. Install the libmpv runtime or set SQUIGGLY_LIBMPV_PATH, then restart the audio engine.');
     this.library = library;
     this.clientApiVersion = null;
+    this.supportsStopKeepPlaylist = false;
     try {
       const version = BigInt(library.func('unsigned long mpv_client_api_version(void)')());
-      this.clientApiVersion = `${version >> 16n}.${version & 0xffffn}`;
-    } catch { /* Leave the API version unknown if the runtime cannot report it. */ }
+      const major = version >> 16n;
+      const minor = version & 0xffffn;
+      this.clientApiVersion = `${major}.${minor}`;
+      // The stop keep-playlist flag was added with client API 1.108 (mpv 0.33).
+      this.supportsStopKeepPlaylist = major > 1n || (major === 1n && minor >= 108n);
+    } catch { /* Unknown runtimes use the compatible legacy stop path. */ }
     this.create = library.func('void *mpv_create(void)');
     this.initialize = library.func('int mpv_initialize(void *ctx)');
     this.option = library.func('int mpv_set_option_string(void *ctx, const char *name, const char *value)');

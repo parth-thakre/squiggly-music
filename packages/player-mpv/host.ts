@@ -1,12 +1,14 @@
 import { emptyAudio, emptyPlayer } from '../core/contracts';
 import { NativePlayer } from './native';
-import type { HostMessage, HostRequest } from './protocol';
+import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 
 // A standalone Node process keeps Chromium and its native libraries out of this
 // address space. Do not move this binding into Electron's main or utility process.
 let native: NativePlayer | null = null;
 let player = emptyPlayer();
 let clientApiVersion: string | null = null;
+let playableQueue: PlayableTrack[] = [];
+let reloadPlaylistAfterStop = false;
 let timer: ReturnType<typeof setInterval> | undefined;
 let exiting = false;
 let snapshotInFlight = false;
@@ -48,13 +50,22 @@ function resetTrack() {
       replayGain: player.audio.replayGain, filters: player.audio.filters },
   };
 }
+
+function loadPlayableQueue() {
+  if (!native) return;
+  for (const [index, item] of playableQueue.entries()) {
+    native.command('loadfile', item.location, index === 0 ? 'replace' : 'append');
+  }
+  reloadPlaylistAfterStop = false;
+}
 function failEngine(message: string) {
-  clearInterval(timer); native?.close(); native = null;
+  clearInterval(timer);
   resetTrack(); player.engine = 'crashed'; player.error = message;
   exiting = true;
-  // Give the final snapshot a chance to flush, but still exit if IPC is blocked.
-  setTimeout(() => exit(1), 1000).unref();
+  // Publish before mpv_terminate_destroy: native teardown may block indefinitely.
   publish();
+  // Main also enforces a process deadline after receiving the crash snapshot.
+  setTimeout(() => exit(1), 1000).unref();
 }
 let deviceTicks = 0;
 let sampledAt = performance.now();
@@ -88,21 +99,31 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         native.command('stop');
         native.command('playlist-clear');
         resetTrack();
-        // One native playlist lets libmpv prepare the next track without a JS EOF handoff.
-        for (const [index, item] of action.tracks.entries()) {
-          native.command('loadfile', item.location, index === 0 ? 'replace' : 'append');
-        }
+        // Retain locations only inside the isolated host so old mpv versions can
+        // rebuild the native playlist after their argument-less stop command.
+        playableQueue = action.tracks;
+        loadPlayableQueue();
         player.queue = action.tracks.map(item => item.track);
         native.set('pause', 'no');
         break;
       }
       case 'play':
         if (!player.queue.length) throw new Error('Add music to the queue first.');
+        if (reloadPlaylistAfterStop) loadPlayableQueue();
         if (native.property('idle-active') === 'yes') native.set('playlist-pos', '0');
         native.set('pause', 'no'); break;
       case 'pause': native.set('pause', 'yes'); break;
-      case 'stop': native.command('stop', 'keep-playlist'); break;
-      case 'seek': native.command('seek', String(action.seconds), 'absolute+exact'); break;
+      case 'stop':
+        if (native.supportsStopKeepPlaylist) native.command('stop', 'keep-playlist');
+        else { native.command('stop'); reloadPlaylistAfterStop = true; }
+        resetTrack(); break;
+      case 'seek': {
+        const nativeIndex = native.number('playlist-pos') ?? -1;
+        if (nativeIndex !== action.queueIndex || player.queue[action.queueIndex]?.id !== action.trackId) {
+          throw new Error('The track changed before the seek completed. Try again.');
+        }
+        native.command('seek', String(action.seconds), 'absolute+exact'); break;
+      }
       case 'volume': native.set('volume', String(action.percent)); break;
       case 'device': native.set('audio-device', action.id); break;
       case 'next': native.command('playlist-next', 'weak'); break;
@@ -110,6 +131,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
       case 'select': {
         const index = player.queue.findIndex(track => track.id === action.id);
         if (index < 0) throw new Error('Track is no longer in the queue.');
+        if (reloadPlaylistAfterStop) loadPlayableQueue();
         native.set('playlist-pos', String(index)); native.set('pause', 'no'); break;
       }
       case 'restart': throw new Error('Restart must be handled by the desktop process.');

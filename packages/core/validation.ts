@@ -4,7 +4,12 @@ import { Schema } from 'effect';
 export const IdSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256));
 export const CommandSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('play', 'pause', 'stop', 'next', 'previous', 'restart') }),
-  Schema.Struct({ type: Schema.Literal('seek'), seconds: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()) }),
+  Schema.Struct({
+    type: Schema.Literal('seek'),
+    seconds: Schema.Number.pipe(Schema.finite(), Schema.nonNegative()),
+    queueIndex: Schema.Number.pipe(Schema.int(), Schema.between(0, 499)),
+    trackId: IdSchema,
+  }),
   Schema.Struct({ type: Schema.Literal('volume'), percent: Schema.Number.pipe(Schema.finite(), Schema.between(0, 100)) }),
   Schema.Struct({ type: Schema.Literal('select'), id: IdSchema }),
   Schema.Struct({ type: Schema.Literal('device'), id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024)) }),

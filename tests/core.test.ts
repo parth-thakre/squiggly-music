@@ -10,7 +10,14 @@ describe('command boundary', () => {
     expect(() => decode({ type: 'volume', percent })).toThrow();
   });
   it.each([NaN, Infinity, -1, '10'])('rejects unsafe seek %s', seconds => {
-    expect(() => decode({ type: 'seek', seconds })).toThrow();
+    expect(() => decode({ type: 'seek', seconds, queueIndex: 0, trackId: 'track' })).toThrow();
+  });
+  it('requires a bounded queue identity for seeks', () => {
+    expect(() => decode({ type: 'seek', seconds: 10, queueIndex: -1, trackId: 'track' })).toThrow();
+    expect(() => decode({ type: 'seek', seconds: 10, queueIndex: 500, trackId: 'track' })).toThrow();
+    expect(() => decode({ type: 'seek', seconds: 10, queueIndex: 0, trackId: '' })).toThrow();
+    expect(decode({ type: 'seek', seconds: 10, queueIndex: 0, trackId: 'track' }))
+      .toEqual({ type: 'seek', seconds: 10, queueIndex: 0, trackId: 'track' });
   });
   it('allows unity and attenuation, not amplification', () => {
     expect(decode({ type: 'volume', percent: 100 })).toEqual({ type: 'volume', percent: 100 });
