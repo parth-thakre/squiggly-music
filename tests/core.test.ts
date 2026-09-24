@@ -33,6 +33,7 @@ describe('command boundary', () => {
   });
   it('requires credentials without accepting unlimited payloads', () => {
     const connection = Schema.decodeUnknownSync(ConnectionSchema);
+    expect(() => connection({ url: '', username: 'u', password: 'a' })).toThrow();
     expect(() => connection({ url: 'https://example.com', username: '', password: 'a' })).toThrow();
     expect(() => connection({ url: 'https://example.com', username: 'u', password: 'x'.repeat(4097) })).toThrow();
   });

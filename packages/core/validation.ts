@@ -15,7 +15,7 @@ export const CommandSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('device'), id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024)) }),
 );
 export const ConnectionSchema = Schema.Struct({
-  url: Schema.String.pipe(Schema.maxLength(2048)),
+  url: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2048)),
   username: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
   password: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096)),
 });

@@ -203,7 +203,7 @@ function installHandlers() {
   handle('connect', (value, generation) => Effect.gen(function* () {
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
-    const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
+    const candidate = yield* SubsonicClient.create(connection, metrics);
     const info = yield* candidate.ping();
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     // Credentials are session-only. No plaintext persistence or silent safeStorage fallback.
