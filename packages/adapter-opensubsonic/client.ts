@@ -85,6 +85,13 @@ export class SubsonicClient {
       ),
     ));
   }
+  // Address errors are locally authored and safe to show; keep their messages.
+  static create(connection: Connection, metrics: Metrics) {
+    return Effect.try({
+      try: () => new SubsonicClient(connection, metrics),
+      catch: error => error instanceof Error ? error : new Error('Enter a valid server address.'),
+    });
+  }
   private endpointUrl(endpoint: string) {
     const url = new URL(this.baseUrl);
     url.pathname = `${url.pathname.replace(/\/+$/, '')}/rest/${endpoint}.view`;

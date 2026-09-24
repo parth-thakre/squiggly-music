@@ -34,6 +34,11 @@ describe('server address', () => {
     expect(normalizeServerUrl(`https://music.example.com${path}/rest/ping.view`)).toBe(`https://music.example.com${path}`);
   });
   it('preserves ports', () => expect(normalizeServerUrl('http://localhost:4533/')).toBe('http://localhost:4533'));
+  it('keeps locally authored address errors when creating a client', () => {
+    const result = Effect.runSync(Effect.either(SubsonicClient.create({ ...connection, url: 'not a URL' }, new Metrics())));
+    expect(Either.isLeft(result)).toBe(true);
+    if (Either.isLeft(result)) expect(result.left.message).toBe('Enter a complete server URL, such as https://music.example.com.');
+  });
   it.each(['file:///etc/passwd', 'ftp://server', 'https://user:pass@server', 'https://server?token=secret', 'https://server/#fragment'])('rejects %s', url => {
     expect(() => normalizeServerUrl(url)).toThrow();
   });
