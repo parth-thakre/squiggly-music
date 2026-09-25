@@ -34,4 +34,4 @@ gh attestation verify squiggly-music-{{VERSION}}.x86_64.rpm -R {{REPO}}
 
 ## Third-party software
 
-The packages include third-party software under their own licenses. The notices are installed in `resources/licenses/` inside the app directory; see [THIRD-PARTY-NOTICES.md](https://github.com/{{REPO}}/blob/{{TAG}}/THIRD-PARTY-NOTICES.md). The Windows packages include libmpv, licensed under the GPL version 3 or later. Its source links and written source offer are in [licenses/libmpv-windows/NOTICE.md](https://github.com/{{REPO}}/blob/{{TAG}}/licenses/libmpv-windows/NOTICE.md).
+The packages include third-party software under their own licenses. The notices are installed in `resources/licenses/` inside the app directory; see [THIRD-PARTY-NOTICES.md](https://github.com/{{REPO}}/blob/{{TAG}}/THIRD-PARTY-NOTICES.md). The Windows packages include an audio-only build of libmpv, licensed under the LGPL version 2.1 or later. `Squiggly-Music-{{VERSION}}-libmpv-windows-x64-source.tar` below holds its complete source and build recipe; see [licenses/libmpv-windows/NOTICE.md](https://github.com/{{REPO}}/blob/{{TAG}}/licenses/libmpv-windows/NOTICE.md).

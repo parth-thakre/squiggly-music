@@ -2,8 +2,27 @@ appId: dev.squiggly.music
 productName: Squiggly Music
 directories:
   output: dist
-# The audio host runs under a separate Node executable, which cannot read asar archives.
-asar: false
+# The app ships in resources/app.asar: one file instead of thousands, which matters most for
+# the portable build, which extracts the whole app on every launch.
+asar: true
+# Files that run outside Electron's asar support stay unpacked in app.asar.unpacked:
+# - The audio host runs under the bundled Node executable, which cannot read asar. It loads
+#   out/main/player.js, its chunks, and out/main/package.json ("type": "module"), then Koffi
+#   and Koffi's platform binary. Keep this in step with what player.js imports:
+#   scripts/smoke-runtime.mjs fails if the host can't start from app.asar.unpacked.
+# - esbuild's native binary, which the extension loader spawns (ESBUILD_BINARY_PATH is set
+#   in apps/desktop/main/extensions/electron.ts). esbuild's JavaScript stays in app.asar.
+# Windows maps the Koffi and esbuild binaries in from .local/windows-runtime (see win.files);
+# asarUnpack matches those mapped copies by their source directory names.
+asarUnpack:
+  - out/main/**
+  - node_modules/koffi/**
+  - '**/node_modules/@koromix/koffi-*/**'
+  - '**/node_modules/@esbuild/**'
+  - '**/koffi-win32-x64/**'
+  - '**/esbuild-win32-x64/**'
+# The UI is English-only. Chromium's other 54 locale packs are about 49 MB.
+electronLanguages: [en-US]
 # Koffi ships prebuilt binaries and runs in the Node host, not Electron. Do not rebuild it.
 npmRebuild: false
 files:
@@ -11,6 +30,12 @@ files:
   - package.json
   # The renderer bundles these; main and preload never load them.
   - '!node_modules/{react,react-dom,lucide-react,scheduler}/**'
+  # Source maps and effect's TypeScript sources are not loaded at run time.
+  - '!node_modules/**/*.map'
+  - '!node_modules/effect/src/**'
+  # esbuild's install script copies the host's native binary here. Packages run the
+  # @esbuild/<platform> binary through ESBUILD_BINARY_PATH instead.
+  - '!node_modules/esbuild/bin/**'
 # Third-party notices ship in resources/licenses on every platform. Electron's own
 # LICENSE.electron.txt and LICENSES.chromium.html sit beside the executable.
 extraResources:
@@ -47,14 +72,22 @@ win:
     - out/**
     - package.json
     - '!node_modules/{react,react-dom,lucide-react,scheduler}/**'
+    - '!node_modules/**/*.map'
+    - '!node_modules/effect/src/**'
+    - '!node_modules/esbuild/bin/**'
+    # Koffi's and esbuild's win32-x64 binaries come from scripts/fetch-windows-runtime.mjs,
+    # pinned to the lockfile's integrity, so a Linux host can build the Windows package.
     - '!node_modules/@koromix/koffi-{linux,darwin,freebsd,openbsd}-*/**'
+    - '!node_modules/@esbuild/**'
     - from: .local/windows-runtime/koffi-win32-x64
       to: node_modules/@koromix/koffi-win32-x64
+    - from: .local/windows-runtime/esbuild-win32-x64
+      to: node_modules/@esbuild/win32-x64
   extraResources:
     - from: .local/windows-runtime
       to: runtime
       filter: [node.exe, libmpv-2.dll, LICENSE.node.txt]
-    # libmpv's GPL notices, build provenance, and written source offer.
+    # libmpv's LGPL notice, component licenses, and where to get its source.
     - from: licenses/libmpv-windows
       to: licenses/libmpv-windows
 linux:
@@ -77,10 +110,16 @@ linux:
     - out/**
     - package.json
     - '!node_modules/{react,react-dom,lucide-react,scheduler}/**'
+    - '!node_modules/**/*.map'
+    - '!node_modules/effect/src/**'
+    - '!node_modules/esbuild/bin/**'
     # Keep only the linux-x64 glibc Koffi binary. The system provides libmpv.
     - '!node_modules/@koromix/koffi-{win32,darwin,freebsd,openbsd,android}-*/**'
     - '!node_modules/@koromix/koffi-linux-{arm,arm64,ia32,riscv64,loong64,ppc64}/**'
     - '!node_modules/@koromix/koffi-linux-x64/musl_x64/**'
+    # Keep only esbuild's linux-x64 binary.
+    - '!node_modules/@esbuild/{aix,android,darwin,freebsd,netbsd,openbsd,openharmony,sunos,win32}-*/**'
+    - '!node_modules/@esbuild/linux-{arm,arm64,ia32,loong64,mips64el,ppc64,riscv64,s390x}/**'
   extraResources:
     - from: .local/linux-runtime
       to: runtime

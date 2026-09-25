@@ -197,7 +197,10 @@ async function launchPlayer() {
   if (previous) await terminateHost(previous);
   if (quitting) return;
   endRadio(); state.player = emptyPlayer();
-  const child = fork(join(directory, 'player.js'), [], {
+  // Packaged builds keep the app in app.asar, which the bundled Node can't read; the audio host
+  // and its imports are unpacked beside it (see asarUnpack in electron-builder.yml).
+  const hostDirectory = directory.replace(/app\.asar(?=[\\/]|$)/, 'app.asar.unpacked');
+  const child = fork(join(hostDirectory, 'player.js'), [], {
     execPath: process.env.SQUIGGLY_NODE_PATH || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
     env: {
       ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
