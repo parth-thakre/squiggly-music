@@ -4,6 +4,7 @@ import { api, useResource } from './library';
 import { current, getPlayer, player, usePlayer } from './player';
 import { nav } from './route';
 import { updateSettings, useSettings } from './settings';
+import { reducedMotion } from './theme';
 import { splitTitle } from './ui';
 
 // The lyric sheet. The current line is the only thing in the accent colour; it follows the
@@ -27,7 +28,7 @@ function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
   useEffect(() => {
     if (active < 0 || Date.now() - touched.current < 4000) return;
     const line = sheet.current?.querySelector<HTMLElement>(`[data-line="${active}"]`);
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const reduced = reducedMotion.matches;
     line?.scrollIntoView({ block: 'center', behavior: reduced ? 'auto' : 'smooth' });
   }, [active]);
 

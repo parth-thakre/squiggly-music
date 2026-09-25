@@ -4,9 +4,11 @@ import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
 import { nav } from './route';
+import { useActiveTheme } from './theme';
 import { Glyph, splitTitle, time, Wave } from './ui';
 
-const ROW = 44;
+// Song rows are --row-height tall (compact themes shorten them); windowing uses the same number.
+const rowHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height')) || 44;
 const WINDOWED = 120;
 
 // Rows outside the queue are known by song id and occurrence ("a", "a#2"), so a fresh array
@@ -28,6 +30,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   onMove?(from: number, to: number): void;
   onRemove?(indexes: number[]): void;
 }) {
+  useActiveTheme();
+  const ROW = rowHeight();
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);
   const playing = usePlayer(s => s.playing);
@@ -73,7 +77,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     scroller.addEventListener('scroll', update, { passive: true });
     addEventListener('resize', update);
     return () => { scroller.removeEventListener('scroll', update); removeEventListener('resize', update); };
-  }, [windowed, tracks.length]);
+  }, [windowed, tracks.length, ROW]);
 
   const [first, last] = windowed ? range : [0, tracks.length];
   const selectedIndexes = () => [...selected].map(key => positions.get(key)).filter((i): i is number => i !== undefined).sort((a, b) => a - b);

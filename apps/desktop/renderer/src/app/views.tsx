@@ -10,6 +10,8 @@ import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
 import { TrackTable } from './TrackTable';
 import { Cover, Glyph, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
+import { KeySettings } from './commands/KeySettings';
+import { ThemeSettings } from './theme/ThemeSettings';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -605,6 +607,8 @@ export function SettingsView() {
         {row('miniOnTop', 'Keep the mini player on top', 'The mini player stays above other windows.')}
       </>}
       {error && <p className="note" role="alert">{error}</p>}
+      <ThemeSettings />
+      <KeySettings />
     </section>
   </>;
 }

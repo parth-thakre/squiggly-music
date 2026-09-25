@@ -40,7 +40,24 @@ export interface MenuItem {
   danger?: boolean;
 }
 
-export interface Command { id: string; owner?: string; title: string; run(): void | Promise<void> }
+// Commands appear in the command palette (Ctrl+K) and can be bound to keys.
+export interface Command {
+  id: string;
+  owner?: string;
+  // Sentence case, starting with a verb where it can: “Play or pause”, “Go to records”.
+  title: string;
+  // Groups the palette and the key list in Settings: Playback, Go to, Queue, Radio, View, Library, App.
+  category?: string;
+  // Hidden from the palette, and its keys do nothing, while this returns false. A predicate
+  // that throws counts as false.
+  when?(): boolean;
+  // Default keys, such as "ctrl+k", "shift+right", or the chord "g r". The user's
+  // keybindings.json can add to or remove them.
+  keys?: string[];
+  // Whether holding the key down repeats the command (seeking and volume do; play/pause doesn't).
+  repeat?: boolean;
+  run(): void | Promise<void>;
+}
 
 export class RegistryCollision extends Error {
   constructor(kind: 'menu item' | 'command', id: string, owner: string) {
@@ -74,7 +91,18 @@ function addCommand(command: Command, owner: string): Dispose {
   const live = commands.get(entry.id);
   if (live) throw new RegistryCollision('command', entry.id, live.owner ?? 'unknown');
   commands.set(entry.id, entry);
-  return () => { if (commands.get(entry.id) === entry) commands.delete(entry.id); };
+  changed();
+  return () => { if (commands.get(entry.id) === entry) { commands.delete(entry.id); changed(); } };
+}
+// Command changes (a theme file added or removed) rebuild the key table and the palette.
+// Notified in a microtask, so registering fifty commands rebuilds once.
+const commandListeners = new Set<() => void>();
+let commandVersion = 0, notifying = false;
+function changed() {
+  commandVersion++;
+  if (notifying) return;
+  notifying = true;
+  queueMicrotask(() => { notifying = false; commandListeners.forEach(listener => listener()); });
 }
 
 export interface Scope {
@@ -100,6 +128,15 @@ export const registry = {
     add: (command: Command, owner = 'builtin') => addCommand(command, owner),
     get: (id: string) => commands.get(id),
     all: () => [...commands.values()],
+    // Whether the command may run now: registered, and its `when` (if any) says yes.
+    available(id: string) {
+      const command = commands.get(id);
+      if (!command) return false;
+      try { return command.when ? command.when() : true; } catch { return false; }
+    },
+    subscribe(listener: () => void) { commandListeners.add(listener); return () => { commandListeners.delete(listener); }; },
+    // Bumps on every add and dispose, for useSyncExternalStore.
+    version: () => commandVersion,
   },
   scope(owner: string): Scope {
     namespaced(owner, 'check');
