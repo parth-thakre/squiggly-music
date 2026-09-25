@@ -14,5 +14,5 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["apps", "packages", "tests", "*.config.ts"]
+  "include": ["apps", "packages", "tests", "scripts/*.ts", "*.config.ts"]
 }

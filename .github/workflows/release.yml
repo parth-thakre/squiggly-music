@@ -1,0 +1,251 @@
+# Builds release packages and publishes a GitHub Release.
+# - Push a tag `v<package.json version>` (made by `npm version`) to build and publish.
+# - Run manually (workflow_dispatch) to build and download the packages as workflow
+#   artifacts without publishing anything.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  check:
+    name: Typecheck and test
+    runs-on: ubuntu-24.04
+    # Fedora provides mpv-libs, so the native libmpv decoding test runs instead of skipping.
+    container: fedora:44
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - name: Install system packages
+        run: dnf -y install git-core tar zstd mpv-libs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Check tag matches package.json version
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="v$(node -p "require('./package.json').version")"
+          if [ "$version" != "$TAG" ]; then
+            echo "::error::Tag $TAG does not match package.json version $version. Cut releases with npm version."
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run typecheck
+      # tests/native.test.ts forks the compiled audio host (out/main/player.js), so build first.
+      - run: npm run build
+      - run: npm run test:source
+        env:
+          SQUIGGLY_LIBMPV_PATH: /usr/lib64/libmpv.so.2
+
+  # Playwright UI tests. They run on the Ubuntu runner, not the Fedora container, because
+  # `playwright install --with-deps` installs browser dependencies with apt. Every step is
+  # skipped until package.json has a test:ui script.
+  ui:
+    name: UI tests
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+        env:
+          CI: '1'
+      - name: Keep the test report when something fails
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  linux:
+    name: Linux RPM
+    needs: [check, ui]
+    runs-on: ubuntu-24.04
+    # rpmbuild, and libcrypt.so.1 for electron-builder's bundled fpm, come from Fedora packages.
+    container: fedora:44
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - name: Install system packages
+        run: dnf -y install git-core tar zstd xz rpm-build libxcrypt-compat
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      # Caches only the downloaded archives. The fetch script rehashes them against the
+      # digests pinned in the script on every run and rebuilds .local/linux-runtime from them.
+      - name: Cache runtime downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local/downloads
+          key: linux-downloads-${{ hashFiles('scripts/fetch-linux-runtime.mjs', 'scripts/fetch-common.mjs') }}
+      - run: npm ci
+      - run: npm run package:linux
+      # Installs the RPM the way users do, so dnf resolves mpv-libs from its Requires, then
+      # runs the installed audio host with its bundled Node against the system libmpv.
+      - name: Install the RPM and smoke-test its audio runtime
+        run: |
+          dnf -y install ./dist/squiggly-music-*.x86_64.rpm
+          "/opt/Squiggly Music/resources/runtime/node" scripts/smoke-runtime.mjs "/opt/Squiggly Music" --expect-system-libmpv
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: linux-x64
+          path: |
+            dist/*.rpm
+            dist/latest-linux.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  windows:
+    name: Windows installer and portable
+    needs: [check, ui]
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      # Caches only the downloaded archives. The fetch script rehashes them against the
+      # digests pinned in the script on every run and rebuilds .local/windows-runtime from them.
+      - name: Cache runtime downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local/downloads
+          key: windows-downloads-${{ hashFiles('scripts/fetch-windows-runtime.mjs', 'scripts/fetch-common.mjs') }}
+      - run: npm ci
+      - run: npm run package:win
+      # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll.
+      - name: Smoke-test the packaged audio runtime
+        run: node scripts/smoke-runtime.mjs dist/win-unpacked
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-x64
+          path: |
+            dist/*.exe
+            dist/*.exe.blockmap
+            dist/latest.yml
+          if-no-files-found: error
+          retention-days: 14
+
+  # linux and windows each fail before uploading if their packaged smoke test fails, so
+  # assemble and publish only run on packages whose audio runtime started and decoded audio.
+  assemble:
+    name: Collect assets and checksums
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts
+            .github
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: '*-x64'
+          path: release
+          merge-multiple: true
+      - run: node scripts/release-checksums.mjs release
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-assets
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub Release
+    needs: assemble
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create the release and upload assets
+      id-token: write # sign build provenance
+      attestations: write # store build provenance
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: .github
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: release
+      - name: Verify checksums
+        working-directory: release
+        run: sha256sum -c SHA256SUMS
+      # Artifact attestations need a public repository, or GitHub Enterprise Cloud for
+      # private ones. Set the ATTEST_PRIVATE repository variable to "true" on Enterprise Cloud.
+      - name: Attest build provenance
+        id: attest
+        if: github.event.repository.visibility == 'public' || vars.ATTEST_PRIVATE == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          ATTESTED: ${{ steps.attest.outcome == 'success' }}
+        run: |
+          version="${TAG#v}"
+          notes="$RUNNER_TEMP/release-notes.md"
+          sed -e "s|{{VERSION}}|$version|g" -e "s|{{TAG}}|$TAG|g" -e "s|{{REPO}}|$GH_REPO|g" \
+            .github/release-notes-header.md > "$notes"
+          if [ "$ATTESTED" != "true" ]; then
+            sed -i '/<!-- attestation:start -->/,/<!-- attestation:end -->/d' "$notes"
+          fi
+          prerelease=()
+          case "$version" in *-*) prerelease=(--prerelease) ;; esac
+          gh release create "$TAG" release/* \
+            --verify-tag \
+            --title "Squiggly Music $version" \
+            --notes-file "$notes" \
+            --generate-notes \
+            "${prerelease[@]}"

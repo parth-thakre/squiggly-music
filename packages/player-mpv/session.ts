@@ -15,4 +15,5 @@ export function clearPlayerSession(native: SessionPlayer, player: PlayerSnapshot
   player.duration = 0;
   player.currentIndex = -1;
   player.queue = [];
+  player.entryIds = [];
 }
