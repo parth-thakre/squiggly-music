@@ -291,7 +291,7 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
       const program = Effect.suspend(() => {
         // Requests queued before a disconnect or account switch must not run
         // against a later session, even when the album IDs happen to match.
-        if ((['connect', 'albums', 'play-album', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start'].includes(channel) || channel.startsWith('library:')) && generation !== connectionGeneration) {
+        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start'].includes(channel) || channel.startsWith('library:')) && generation !== connectionGeneration) {
           return Effect.fail(new Error('Server session changed. Try again.'));
         }
         return task(value, generation);
@@ -343,24 +343,6 @@ function installHandlers() {
     server = candidate; knownTracks.clear();
     connectionGeneration++; resetSessionState();
     state.server = { connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID() };
-  }), 'server');
-  handle('albums', value => Effect.gen(function* () {
-    const offset = yield* Schema.decodeUnknown(Schema.Number.pipe(Schema.int(), Schema.between(0, 1_000_000)))(value);
-    if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
-    const client = server;
-    const albums = yield* client.albums(offset);
-    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
-    return albums;
-  }), 'server');
-  handle('play-album', value => Effect.gen(function* () {
-    const id = yield* Schema.decodeUnknown(IdSchema)(value);
-    if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
-    const client = server;
-    const tracks = yield* client.albumQueue(id);
-    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Select the album again.'));
-    if (tracks.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`The queue holds up to ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`));
-    endRadio();
-    yield* send({ type: 'queue', tracks });
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));

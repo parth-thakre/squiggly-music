@@ -87,7 +87,7 @@ describe('isolated audio host', () => {
     expect(snapshots.at(-1)?.currentIndex).toBe(0);
     send({ id: 7, action: { type: 'stop' } });
     await expect.poll(() => snapshots.at(-1)?.currentIndex).toBe(-1);
-    send({ id: 8, action: { type: 'select', id: 'second' } });
+    send({ id: 8, action: { type: 'queue-jump', index: 1, entryId: snapshots.at(-1)!.entryIds[1] } });
     await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
     expect(replies.get(7)).toBeNull();
     expect(replies.get(8)).toBeNull();
@@ -639,12 +639,6 @@ describe('queue entry identity', () => {
     expect(reply(run({ type: 'queue-jump', index: 1, entryId: b }))).toMatchObject(ok);
     expect(native.command.mock.calls.filter(([name]) => name === 'loadfile').map(([, location]) => location)).toEqual(['/a.flac', '/b.flac']);
     expect(native.set).toHaveBeenLastCalledWith('pause', 'no');
-  });
-
-  it('keeps the legacy select-by-song command working', async () => {
-    const { run, reply, mpv } = await editableHost(['a', 'b', 'a'], 1);
-    expect(reply(run({ type: 'select', id: 'a' }))).toMatchObject(ok);
-    expect(mpv.current()).toBe(0);
   });
 
   it('refuses a seek whose entry is no longer current', async () => {

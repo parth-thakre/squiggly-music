@@ -11,6 +11,8 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in two places: t
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions will |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows |
+| `transport.tsx` | Palette CSS variables, transport buttons, and the position squiggle, shared by the deck and the mini player |
+| `ui.tsx` | Small shared pieces: covers, glyphs, palettes from sleeves, title splitting, `time()`, `shuffled()`, formatting |
 | `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites |
 
 ## Desktop contract
@@ -20,8 +22,8 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | Method | Purpose |
 | --- | --- |
 | `snapshot()`, `subscribe(listener)` | Authoritative player, diagnostics, and server state |
-| `command(command)` | Play, pause, stop, previous/next, seek, volume, select track/device, restart |
-| `openFiles()`, `connect(connection)`, `disconnect()` | Local files; session-only server login |
+| `command(command)` | Play, pause, stop, previous/next, seek, volume, output device, restart |
+| `openFiles()`, `connect(connection)`, `disconnect()` | Local files; session-only server login. Settings › Disconnect calls `disconnect()`, which stops playback and returns to the connect screen |
 | `playTracks(trackIds, startIndex)` | Replace the queue with up to 500 library tracks the main process has returned |
 | `queue.add(ids, 'next' \| 'end')`, `queue.move`, `queue.remove`, `queue.clear` | Edit the queue (up to 1000). The playing song cannot be removed. Indexes refer to the latest snapshot |
 | `queue.jump(index, entryId)` | Play a queue entry. The entry id makes the jump land on that exact entry, even when the same song appears twice |
@@ -41,7 +43,7 @@ Mutations return `{ ok: true, value }` or `{ ok: false, error }` and every failu
 
 ## Renderer conventions
 
-- **Playlist edits** go through `playlistEditor(id)` in `library.ts`, or `usePlaylist(id)` in components. There is one editor per playlist, shared by its page and every menu. It queues edits and sends them to the server one at a time, then reconciles the local list with the server's read-back. Don't call the playlist mutations in `library.*` directly from views.
+- **Playlist edits** go through `playlistEditor(id)` in `library.ts`, or `usePlaylist(id)` in components. There is one editor per playlist, shared by its page and every menu. It queues edits and sends them to the server one at a time, then reconciles the local list with the server's read-back. Don't call the playlist mutations in `library.*` directly from views. New playlists go through `createPlaylist()` in `menu.tsx`, which refreshes the playlist list and opens the new one.
 - **Menus and commands** register through `registry.ts`. Ids are namespaced by owner (`builtin:play`). Registering an id that is still live throws `RegistryCollision`; dispose the old registration first. Disposers are idempotent and never remove a newer registration with the same id. `registry.scope(owner)` gives an extension its own add functions and one `dispose()` for everything it added.
 - `tracksOf(target)` in `menu.tsx` returns a `Result`. Show its error; don't assume the tracks loaded.
 - **Navigation state** lives in the route. The Records sort is part of the route, so Back returns to the same order and scroll offset.

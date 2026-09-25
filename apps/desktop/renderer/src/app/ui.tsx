@@ -72,6 +72,18 @@ export function splitTitle(title: string, album?: string): { main: string; extra
   return { main: main || title, extra };
 }
 
+// Minutes and seconds, "--:--" when unknown.
+export function time(seconds: number | null) {
+  if (seconds === null || !Number.isFinite(seconds)) return '--:--';
+  const value = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`;
+}
+// Fisher-Yates, on a copy.
+export function shuffled<T>(items: readonly T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
+  return copy;
+}
 export const plural = (n: number, word: string) => `${n.toLocaleString()} ${n === 1 ? word : `${word}s`}`;
 export function length(seconds: number) {
   const minutes = Math.round(seconds / 60);

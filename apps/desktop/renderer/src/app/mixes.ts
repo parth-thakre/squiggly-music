@@ -1,15 +1,11 @@
 import type { Genre, Result, Track } from '../../../../../packages/core/contracts';
 import { api, load, onLibraryReset } from './library';
+import { shuffled } from './ui';
 
 // Automatic playlists, built from the library itself. They work on a fresh server with
 // no listening history; history-based ones appear once the server has something to say.
 export interface Mix { id: string; name: string; description: string; tracks(): Promise<Result<Track[]>> }
 
-const shuffle = <T,>(items: T[]) => {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
-  return copy;
-};
 async function fromAlbums(type: 'newest' | 'frequent' | 'recent', count: number, mix: boolean): Promise<Result<Track[]>> {
   const albums = await load(`albums:${type}:0:${count}`, () => api.albums(type, 0, count));
   if (!albums.ok) return albums;
@@ -17,7 +13,7 @@ async function fromAlbums(type: 'newest' | 'frequent' | 'recent', count: number,
   const failed = details.find(detail => !detail.ok);
   if (failed && !failed.ok) return failed;
   const tracks = details.flatMap(detail => detail.ok ? detail.value.tracks : []);
-  return { ok: true, value: mix ? shuffle(tracks).slice(0, 80) : tracks };
+  return { ok: true, value: mix ? shuffled(tracks).slice(0, 80) : tracks };
 }
 
 export function buildMixes(genres: Genre[], decades: number[], history: boolean): Mix[] {

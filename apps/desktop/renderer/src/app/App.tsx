@@ -1,26 +1,15 @@
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
 import type { AudioDevice, Track } from '../../../../../packages/core/contracts';
-import { Squiggle } from './Squiggle';
-import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
+import { current, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import type { Palette } from './palette';
 import { Cover, Glyph, kHz, neutral, splitTitle, usePalette } from './ui';
+import { paletteStyle, Position, TransportButtons } from './transport';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView } from './views';
 
 onMenuError(message => player.showError(message));
 
-const alpha = (hex: string, a: number) => {
-  const n = parseInt(hex.slice(1), 16);
-  return `rgba(${n >> 16}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-};
-// The room's colours as CSS variables. accentText is for normal-weight text; palettes that
-// don't carry one fall back to the accent.
-const paletteStyle = (palette: Palette) => ({
-  '--ground': palette.ground, '--ink': palette.ink, '--soft': palette.soft, '--accent': palette.accent,
-  '--accent-text': palette.accentText ?? palette.accent, '--line': alpha(palette.ink, .16),
-}) as CSSProperties;
 const sections: { view: 'records' | 'artists' | 'playlists' | 'favorites'; label: string }[] = [
   { view: 'records', label: 'Records' }, { view: 'artists', label: 'Artists' }, { view: 'playlists', label: 'Playlists' }, { view: 'favorites', label: 'Favorites' },
 ];
@@ -155,6 +144,7 @@ const Deck = memo(function Deck() {
   const [expanded, setExpanded] = useState(false);
   const [sheetLyrics, setSheetLyrics] = useState(false);
   const route = useRoute();
+  const palette = useContext(PaletteContext);
   if (!track) return <aside className="deck" aria-label="Now playing">
     <div className="cover cover-empty" aria-hidden="true" />
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
@@ -189,11 +179,9 @@ const Deck = memo(function Deck() {
         </p>
       </div>
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
-      <DeckPosition track={track} />
+      <Position track={track} palette={palette} />
       <div className="transport">
-        <button type="button" className="glyph" aria-label="Previous" onClick={player.previous}><Glyph kind="prev" /></button>
-        <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={player.toggle}><Glyph kind={playing ? 'pause' : 'play'} /></button>
-        <button type="button" className="glyph" aria-label="Next" onClick={player.next}><Glyph kind="next" /></button>
+        <TransportButtons playing={playing} />
         <Volume />
       </div>
       <div className="deck-actions">
@@ -210,17 +198,6 @@ const Deck = memo(function Deck() {
     </div>
   </aside>;
 });
-
-// The only part of the deck that follows position snapshots.
-function DeckPosition({ track }: { track: Track }) {
-  const position = usePlayer(s => s.position);
-  const duration = usePlayer(s => s.duration);
-  const playing = usePlayer(s => s.playing);
-  const entry = usePlayer(currentEntry);
-  const palette = useContext(PaletteContext);
-  return <Squiggle label={`Position in ${track.title}`} identity={entry ?? track.id} position={position} duration={duration || (track.duration ?? 0)} playing={playing}
-    color={palette.accent} rest={alpha(palette.ink, .22)} onSeek={player.seek} />;
-}
 
 function DeckLinks() {
   const signedIn = usePlayer(s => s.access === 'signed-in');

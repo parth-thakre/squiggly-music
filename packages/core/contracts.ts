@@ -174,8 +174,6 @@ export interface DesktopBridge {
   command(command: PlayerCommand): Promise<Result>;
   openFiles(): Promise<Result>;
   connect(connection: Connection): Promise<Result>;
-  albums(offset: number): Promise<Result<Album[]>>;
-  playAlbum(id: string): Promise<Result>;
   // Replaces the queue with library tracks the main process has already seen, then plays from startIndex.
   playTracks(trackIds: string[], startIndex: number): Promise<Result>;
   // Resumes a queue saved on the server (from this or another device) at its song and position.

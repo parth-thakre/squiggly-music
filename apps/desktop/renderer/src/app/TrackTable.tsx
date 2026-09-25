@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
-import { time } from '../SeekBar';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
 import { nav } from './route';
-import { Glyph, splitTitle, Wave } from './ui';
+import { Glyph, splitTitle, time, Wave } from './ui';
 
 const ROW = 44;
 const WINDOWED = 120;

@@ -1,26 +1,21 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track } from '../../../../../packages/core/contracts';
-import { api, invalidate, load, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
+import { api, load, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
-import { openMenu, tracksOf } from './menu';
+import { createPlaylist, openMenu, tracksOf } from './menu';
 import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
 import { TrackTable } from './TrackTable';
-import { Cover, Glyph, length, plural, splitTitle, Status, Wave } from './ui';
+import { Cover, Glyph, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
   morph.id = id;
   document.querySelectorAll('.morph').forEach(element => element.classList.remove('morph'));
   (target as HTMLElement).querySelector('.cover')?.classList.add('morph');
-};
-const shuffled = <T,>(items: T[]) => {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
-  return copy;
 };
 function Pending<T>({ result, children, waiting }: { result: Result<T> | undefined; children(value: T): ReactNode; waiting: string }) {
   if (!result) return <p className="status loading">{waiting}</p>;
@@ -404,10 +399,7 @@ function NewPlaylist() {
     event.preventDefault();
     const name = String(new FormData(event.currentTarget).get('name') ?? '').trim();
     if (!name) return;
-    const created = await api.createPlaylist(name, []);
-    if (!created.ok) { setError(created.error); return; }
-    invalidate('playlists');
-    nav.go({ view: 'playlist', id: created.value.id });
+    setError(await createPlaylist(name, []));
   }}>
     <input name="name" autoFocus placeholder="Name the playlist" aria-label="New playlist name" onKeyDown={event => { if (event.key === 'Escape') setNaming(false); }} />
     <button type="submit" className="text-button">Create</button>
@@ -511,10 +503,7 @@ export function MixPage({ id }: { id: string }) {
         {mix.id !== 'recent' && <button type="button" className="text-button" onClick={() => setDraw(d => d + 1)}>Draw again</button>}
         <button type="button" className="text-button" disabled={!tracks?.length} onClick={async () => {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-          const created = await api.createPlaylist(`${mix.name}, ${date}`, tracks!.map(t => t.id));
-          if (!created.ok) { setSaved(created.error); return; }
-          invalidate('playlists');
-          nav.go({ view: 'playlist', id: created.value.id });
+          setSaved(await createPlaylist(`${mix.name}, ${date}`, tracks!.map(t => t.id)));
         }}>Save as playlist</button>
       </Actions>
       {saved && <p className="note">{saved}</p>}
@@ -577,9 +566,7 @@ export function Queue() {
         <button type="button" className="text-button" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
         <button type="button" className="text-button" onClick={async () => {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
-          const created = await api.createPlaylist(`Queue, ${date}`, queue.filter(t => t.source === 'navidrome').map(t => t.id));
-          if (!created.ok) { setSaved(created.error); return; }
-          invalidate('playlists'); nav.go({ view: 'playlist', id: created.value.id });
+          setSaved(await createPlaylist(`Queue, ${date}`, queue.filter(t => t.source === 'navidrome').map(t => t.id)));
         }}>Save as playlist</button>
       </div>
       {saved && <p className="note" role="alert">{saved}</p>}
@@ -609,6 +596,7 @@ export function SettingsView() {
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
+      {mode === 'desktop' && <Disconnect />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows supports this; many Linux setups ignore it.')}
@@ -619,6 +607,27 @@ export function SettingsView() {
       {error && <p className="note" role="alert">{error}</p>}
     </section>
   </>;
+}
+
+// Desktop only; the browser build signs out from the deck. The main process forgets the
+// server and restarts the audio engine, and the app returns to the connect screen.
+function Disconnect() {
+  const serverName = usePlayer(s => s.serverName);
+  const connected = usePlayer(s => s.connected);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  if (!connected) return null;
+  return <div className="setting-action">
+    <p><strong>Disconnect or switch server</strong>
+      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. Squiggly doesn't save your password, so have it ready.</span></p>
+    <button type="button" className="text-button" disabled={busy} onClick={async () => {
+      setBusy(true); setError(null);
+      const result = await window.squiggly!.disconnect();
+      setBusy(false);
+      if (!result.ok) setError(result.error);
+    }}>{busy ? 'Disconnecting' : 'Disconnect'}</button>
+    {error && <p className="note" role="alert">{error}</p>}
+  </div>;
 }
 
 export function DiagnosticsView() {

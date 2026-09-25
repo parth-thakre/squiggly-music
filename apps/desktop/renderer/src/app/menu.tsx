@@ -5,7 +5,7 @@ import { api, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, player, type PlayerState } from './player';
 import { nav } from './route';
 import { labelOf, registry, type MenuItem, type MenuTarget } from './registry';
-import { kHz, length, plural, splitTitle } from './ui';
+import { kHz, length, plural, shuffled, splitTitle } from './ui';
 
 // One menu for right-click on desktop and long-press on phones (Chrome fires contextmenu for both).
 // Every call into an item (its label, predicate, submenu, action, or text field) goes through
@@ -63,6 +63,16 @@ export function closeMenu(): Promise<void> {
   return new Promise(resolve => { closed = resolve; nav.closeOverlay(); });
 }
 const popLevel = (menu: OpenMenu) => setOpen({ ...menu, levels: menu.levels.slice(0, -1), error: null });
+
+// Creates a playlist, refreshes the playlist list, and opens the new playlist unless `open` is
+// false. Returns the error to show, or null.
+export async function createPlaylist(name: string, trackIds: string[], open = true): Promise<string | null> {
+  const created = await api.createPlaylist(name, trackIds);
+  if (!created.ok) return created.error;
+  invalidate('playlists');
+  if (open) nav.go({ view: 'playlist', id: created.value.id });
+  return null;
+}
 
 // The songs behind any target, for play, queue, and add-to-playlist. A record that fails to
 // load fails the whole request, so nothing is played or added with songs silently missing.
@@ -220,11 +230,6 @@ const builtin = registry.scope('builtin');
 import.meta.hot?.dispose(() => builtin.dispose());
 
 const one = (t: MenuTarget) => t.kind === 'tracks' && t.tracks.length === 1 ? t.tracks[0] : null;
-const shuffled = <T,>(items: T[]) => {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
-  return copy;
-};
 // Errors from menu actions surface in the deck, where playback errors already appear.
 let alertLine: (message: string) => void = () => {};
 export const onMenuError = (show: (message: string) => void) => { alertLine = show; };
@@ -259,9 +264,7 @@ builtin.menu({
     const create: MenuItem = { id: 'new-playlist', section: 0, label: 'New playlist', input: { placeholder: 'Name the new playlist', async submit(target, name) {
       const tracks = await tracksOf(target);
       if (!tracks.ok) return tracks.error;
-      const created = await api.createPlaylist(name, tracks.value.map(track => track.id));
-      if (!created.ok) return created.error;
-      invalidate('playlists');
+      return await createPlaylist(name, tracks.value.map(track => track.id), false) ?? undefined;
     } } };
     const playlists = await load('playlists', () => api.playlists());
     if (!playlists.ok) return [create, { id: 'playlists-error', section: 1, note: true, label: `Your playlists could not be loaded. ${playlists.error}` }];

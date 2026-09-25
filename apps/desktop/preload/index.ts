@@ -41,8 +41,6 @@ const bridge: DesktopBridge = {
   command: command => ipcRenderer.invoke('squiggly:command', command),
   openFiles: () => ipcRenderer.invoke('squiggly:open-files'),
   connect: connection => ipcRenderer.invoke('squiggly:connect', connection),
-  albums: offset => ipcRenderer.invoke('squiggly:albums', offset),
-  playAlbum: id => ipcRenderer.invoke('squiggly:play-album', id),
   playTracks: (trackIds, startIndex) => ipcRenderer.invoke('squiggly:play-tracks', [trackIds, startIndex]),
   resumeQueue: () => ipcRenderer.invoke('squiggly:resume-queue'),
   queue: {

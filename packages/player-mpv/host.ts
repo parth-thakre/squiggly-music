@@ -143,7 +143,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
   try {
     if (!native) throw new Error(player.error ?? 'Audio engine unavailable.');
     player.error = null;
-    if (['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous', 'select'].includes(action.type)) pendingSeek = null;
+    if (['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous'].includes(action.type)) pendingSeek = null;
     switch (action.type) {
       case 'queue': {
         if (!action.tracks.length) throw new Error('Choose at least one track.');
@@ -210,13 +210,6 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         if (playableQueue[action.index]?.entry !== action.entryId) throw new Error('The queue changed before that song could play. Try again.');
         if (reloadPlaylistAfterStop) loadPlayableQueue();
         native.set('playlist-pos', String(action.index)); native.set('pause', 'no'); break;
-      }
-      // Legacy selection by song id (first match). Queue clicks use queue-jump.
-      case 'select': {
-        const index = player.queue.findIndex(track => track.id === action.id);
-        if (index < 0) throw new Error('Track is no longer in the queue.');
-        if (reloadPlaylistAfterStop) loadPlayableQueue();
-        native.set('playlist-pos', String(index)); native.set('pause', 'no'); break;
       }
       case 'restart': throw new Error('Restart must be handled by the desktop process.');
     }

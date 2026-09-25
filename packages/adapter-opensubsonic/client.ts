@@ -266,7 +266,6 @@ export class SubsonicClient {
       name: result.type?.toLowerCase() === 'navidrome' ? 'Navidrome' : 'OpenSubsonic',
     })));
   }
-  albums(offset: number) { return this.albumList('newest', offset, 48); }
   albumList(type: AlbumListType, offset: number, size: number) {
     const count = clamp(size, 1, 500);
     return this.request('getAlbumList2', AlbumsSchema, { type, size: String(count), offset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)) }).pipe(Effect.flatMap(result => {
@@ -429,11 +428,6 @@ export class SubsonicClient {
     return location.href;
   }
   playable(track: Track): PlayableTrack { return { track, location: this.streamLocation(track.id) }; }
-  albumQueue(id: string) {
-    return this.album(id).pipe(Effect.flatMap(({ tracks }) => tracks.length
-      ? Effect.succeed(tracks.map(track => this.playable(track)))
-      : Effect.fail(new ServerError('This album has no playable tracks.'))));
-  }
 }
 
 export type LibraryMethod = Exclude<keyof LibraryApi, 'coverUrl'>;

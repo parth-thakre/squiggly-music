@@ -268,6 +268,11 @@ button:disabled { cursor: default; opacity: .45; }
 .setting input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--ink); }
 .setting strong { display: block; font-size: 15.5px; font-weight: 600; }
 .setting span span { display: block; margin-top: 2px; font-size: 14px; color: var(--soft); max-width: 60ch; }
+/* A setting that is an action rather than a switch: text in the switches' column, the button under it. */
+.setting-action { padding: 10px 0 10px 36px; }
+.setting-action p { margin: 0 0 4px; }
+.setting-action strong { display: block; font-size: 15.5px; font-weight: 600; }
+.setting-action span { display: block; margin-top: 2px; font-size: 14px; color: var(--soft); max-width: 60ch; }
 
 /* Lyrics: the current line is the only thing in the accent colour. */
 .lyrics { max-width: 780px; }

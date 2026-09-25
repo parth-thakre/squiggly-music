@@ -48,12 +48,13 @@ it.each(['/music', '/app', '/rest', '/music/app', '/music/rest'])('connects, bro
     const connection = { url: `http://127.0.0.1:${address.port}${basePath}`, username: 'listener', password };
     const client = new SubsonicClient(connection, new Metrics());
     expect(await Effect.runPromise(client.ping())).toEqual({ name: 'Navidrome' });
-    expect(await Effect.runPromise(client.albums(0))).toEqual([{
+    expect(await Effect.runPromise(client.albumList('newest', 0, 48))).toEqual([{
       id: 'a1', name: 'Record', artist: 'Artist', songCount: 1,
       artistId: null, year: null, genre: null, duration: null, coverArt: null, starred: false,
     }]);
-    expect(await Effect.runPromise(client.albums(48))).toEqual([]);
-    const [item] = await Effect.runPromise(client.albumQueue('a1'));
+    expect(await Effect.runPromise(client.albumList('newest', 48, 48))).toEqual([]);
+    const { tracks: [track] } = await Effect.runPromise(client.album('a1'));
+    const item = client.playable(track);
     expect(item.track).toMatchObject({ source: 'navidrome', album: 'Record', artist: 'Artist', sourceSampleRate: 96000, sourceBitDepth: 24 });
     const stream = await fetch(item.location);
     expect(stream.status).toBe(200);

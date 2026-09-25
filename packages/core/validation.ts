@@ -16,7 +16,6 @@ export const CommandSchema = Schema.Union(
     entryId: Schema.optional(IdSchema),
   }),
   Schema.Struct({ type: Schema.Literal('volume'), percent: Schema.Number.pipe(Schema.finite(), Schema.between(0, 100)) }),
-  Schema.Struct({ type: Schema.Literal('select'), id: IdSchema }),
   Schema.Struct({ type: Schema.Literal('device'), id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024)) }),
 );
 export const ConnectionSchema = Schema.Struct({

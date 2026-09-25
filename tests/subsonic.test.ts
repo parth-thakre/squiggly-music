@@ -3,7 +3,7 @@ import { Effect, Either, Schema } from 'effect';
 import { createHash } from 'node:crypto';
 import { SubsonicClient, normalizeServerUrl } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
-import { CommandSchema, LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
+import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 
 afterEach(() => vi.unstubAllGlobals());
 const connection = { url: 'https://music.example.com/navidrome/', username: 'listener', password: 'do-not-export' };
@@ -17,6 +17,9 @@ function serve(response: () => Response, discovery = discoveryResponse) {
 }
 const servePayload = (payload: object) => serve(() => Response.json(envelope(payload)));
 const client = () => new SubsonicClient(connection, new Metrics());
+// An album's songs as the player gets them: public track metadata plus a private stream URL.
+const albumTracks = (subject: SubsonicClient, id: string) => subject.album(id).pipe(Effect.map(({ tracks }) => tracks.map(track => subject.playable(track))));
+const newest = (offset: number) => client().albumList('newest', offset, 48);
 async function expectRedactedFailure<E>(task: Effect.Effect<unknown, E>, secret = 'secret-marker') {
   const result = await Effect.runPromise(Effect.either(task));
   expect(Either.isLeft(result)).toBe(true);
@@ -42,7 +45,7 @@ describe('server address', () => {
     const subject = new SubsonicClient({ ...connection, url: connection.url + suffix }, new Metrics());
     expect(subject.baseUrl).toBe('https://music.example.com/navidrome');
     await Effect.runPromise(subject.ping());
-    const [item] = await Effect.runPromise(subject.albumQueue('a'));
+    const [item] = await Effect.runPromise(albumTracks(subject, 'a'));
     expect(mock.mock.calls.map(([url]) => new URL(url).pathname)).toEqual([
       '/navidrome/rest/getOpenSubsonicExtensions.view', '/navidrome/rest/ping.view', '/navidrome/rest/getAlbum.view',
     ]);
@@ -97,32 +100,32 @@ describe('OpenSubsonic', () => {
   });
   it('bounds album requests and accepts a genuinely empty library', async () => {
     const fetchMock = servePayload({ albumList2: {} });
-    expect(await Effect.runPromise(client().albums(48))).toEqual([]);
+    expect(await Effect.runPromise(newest(48))).toEqual([]);
     const calls = fetchMock.mock.calls;
     const params = calls[1][1].body as URLSearchParams;
     expect(params.get('size')).toBe('48'); expect(params.get('offset')).toBe('48');
   });
   it('rejects an oversized album page rather than truncating it', async () => {
     servePayload({ albumList2: { album: Array.from({ length: 49 }, (_, id) => ({ id: String(id), name: 'a' })) } });
-    await expectRedactedFailure(client().albums(0));
+    await expectRedactedFailure(newest(0));
   });
   it('rejects an oversized song array rather than truncating it', async () => {
     servePayload({ album: { id: 'a', name: 'a', song: Array.from({ length: 501 }, (_, id) => ({ id: String(id), title: 's' })) } });
-    await expectRedactedFailure(client().albumQueue('a'));
+    await expectRedactedFailure(albumTracks(client(), 'a'));
   });
   it('accepts the maximum album page and queue sizes', async () => {
     servePayload({ albumList2: { album: Array.from({ length: 48 }, (_, id) => ({ id: String(id), name: 'a' })) } });
-    expect(await Effect.runPromise(client().albums(0))).toHaveLength(48);
+    expect(await Effect.runPromise(newest(0))).toHaveLength(48);
     servePayload({ album: { id: 'a', name: 'a', song: Array.from({ length: 500 }, (_, id) => ({ id: String(id), title: 's' })) } });
-    expect(await Effect.runPromise(client().albumQueue('a'))).toHaveLength(500);
+    expect(await Effect.runPromise(albumTracks(client(), 'a'))).toHaveLength(500);
   });
-  it.each(['albums', 'queue'])('requires the endpoint-specific payload for %s', async endpoint => {
+  it.each(['albums', 'album'])('requires the endpoint-specific payload for %s', async endpoint => {
     servePayload({});
-    await expectRedactedFailure(endpoint === 'albums' ? client().albums(0) : client().albumQueue('a'));
+    await expectRedactedFailure(endpoint === 'albums' ? newest(0) : albumTracks(client(), 'a'));
   });
   it('requests raw streaming and separates private URLs from public track metadata', async () => {
     servePayload(albumPayload({ id: 's1', title: 'First track', suffix: 'flac', samplingRate: 96000, bitDepth: 24 }));
-    const [item] = await Effect.runPromise(client().albumQueue('a'));
+    const [item] = await Effect.runPromise(albumTracks(client(), 'a'));
     expect(new URL(item.location).searchParams.get('format')).toBe('raw');
     expect(item.track).toMatchObject({ sourceFormat: 'flac', sourceSampleRate: 96000, sourceBitDepth: 24 });
     expect(JSON.stringify(item.track)).not.toContain('t=');
@@ -130,29 +133,29 @@ describe('OpenSubsonic', () => {
   });
   it('does not manufacture missing source resolution', async () => {
     servePayload(albumPayload());
-    const [item] = await Effect.runPromise(client().albumQueue('a'));
+    const [item] = await Effect.runPromise(albumTracks(client(), 'a'));
     expect(item.track.sourceSampleRate).toBeNull(); expect(item.track.sourceBitDepth).toBeNull();
     expect(item.track.duration).toBeNull();
   });
   it.each([0, null])('maps unknown resolution %s to null', async resolution => {
     servePayload(albumPayload({ id: 's', title: 's', samplingRate: resolution, bitDepth: resolution }));
-    const [item] = await Effect.runPromise(client().albumQueue('a'));
+    const [item] = await Effect.runPromise(albumTracks(client(), 'a'));
     expect(item.track.sourceSampleRate).toBeNull(); expect(item.track.sourceBitDepth).toBeNull();
   });
   it.each([0, 257])('rejects server IDs of length %i', async length => {
     const id = 'x'.repeat(length);
     servePayload({ albumList2: { album: [{ id, name: 'a' }] } });
-    await expectRedactedFailure(client().albums(0));
+    await expectRedactedFailure(newest(0));
     servePayload({ album: { id, name: 'a' } });
-    await expectRedactedFailure(client().albumQueue('a'));
+    await expectRedactedFailure(albumTracks(client(), 'a'));
     servePayload(albumPayload({ id, title: 's' }));
-    await expectRedactedFailure(client().albumQueue('a'));
+    await expectRedactedFailure(albumTracks(client(), 'a'));
   });
-  it('accepts a maximum-length ingested ID in select commands', async () => {
+  it('accepts a maximum-length ingested ID in play requests', async () => {
     const id = 'x'.repeat(256);
     servePayload(albumPayload({ id, title: 's' }));
-    const [item] = await Effect.runPromise(client().albumQueue('a'));
-    expect(Schema.decodeUnknownSync(CommandSchema)({ type: 'select', id: item.track.id })).toEqual({ type: 'select', id });
+    const [item] = await Effect.runPromise(albumTracks(client(), 'a'));
+    expect(Schema.decodeUnknownSync(PlayTracksSchema)([[item.track.id], 0])).toEqual([[id], 0]);
   });
   it.each([
     ['duration', -1], ['duration', Infinity], ['samplingRate', -96000], ['samplingRate', 44100.5],
@@ -160,19 +163,19 @@ describe('OpenSubsonic', () => {
   ])('rejects invalid song metadata %s=%s', async (key, value) => {
     const json = JSON.stringify(envelope(albumPayload({ id: 's', title: 's', [key]: value })), (_key, item) => item === Infinity ? '__overflow__' : item).replace('"__overflow__"', '1e400');
     serve(() => new Response(json));
-    await expectRedactedFailure(client().albumQueue('a'));
+    await expectRedactedFailure(albumTracks(client(), 'a'));
   });
   it.each([-1, 1.5, Infinity])('rejects invalid songCount %s', async songCount => {
     const json = JSON.stringify(envelope({ albumList2: { album: [{ id: 'a', name: 'a', songCount }] } }), (_key, item) => item === Infinity ? '__overflow__' : item).replace('"__overflow__"', '1e400');
     serve(() => new Response(json));
-    await expectRedactedFailure(client().albums(0));
+    await expectRedactedFailure(newest(0));
   });
   it('accepts zero counts and nonnegative fractional durations', async () => {
     servePayload({ albumList2: { album: [{ id: 'a', name: 'a', songCount: 0 }] } });
-    expect(await Effect.runPromise(client().albums(0))).toMatchObject([{ songCount: 0 }]);
+    expect(await Effect.runPromise(newest(0))).toMatchObject([{ songCount: 0 }]);
     for (const duration of [0, 1.25]) {
       servePayload(albumPayload({ id: 's', title: 's', duration }));
-      expect((await Effect.runPromise(client().albumQueue('a')))[0].track.duration).toBe(duration);
+      expect((await Effect.runPromise(albumTracks(client(), 'a')))[0].track.duration).toBe(duration);
     }
   });
   it('redacts authenticated GET URLs from transport errors and metrics', async () => {
@@ -207,7 +210,7 @@ describe('OpenSubsonic', () => {
   });
   it('rejects album payloads that do not match the response schema', async () => {
     servePayload({ album: { id: 1 } });
-    await expectRedactedFailure(client().albumQueue('a'));
+    await expectRedactedFailure(albumTracks(client(), 'a'));
   });
   it('cancels responses above the byte limit', async () => {
     const cancel = vi.fn();
@@ -228,12 +231,9 @@ describe('OpenSubsonic', () => {
       expect(result.left.message).not.toMatch(/private-password|secret/);
     }
   });
-  it.each([
-    [{ id: 'different', name: 'Other album' }, 'requested album'],
-    [{ id: 'a', name: 'Empty album' }, 'no playable tracks'],
-  ])('rejects an unplayable album response %#', async (album, message) => {
-    servePayload({ album });
-    await expect(Effect.runPromise(client().albumQueue('a'))).rejects.toThrow(message);
+  it('rejects a response for a different album', async () => {
+    servePayload({ album: { id: 'different', name: 'Other album' } });
+    await expect(Effect.runPromise(client().album('a'))).rejects.toThrow('requested album');
   });
   it('interrupting Effect cancels the underlying request', async () => {
     let signal: AbortSignal | undefined;

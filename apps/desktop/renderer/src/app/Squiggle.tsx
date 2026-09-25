@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
-import { time } from '../SeekBar';
+import { time } from './ui';
 
 // The squiggle is the app's "now playing" mark and its seek bar. It keeps squiggling while
 // the window is visible: every frame while playing, a calmer 30 frames a second while paused.

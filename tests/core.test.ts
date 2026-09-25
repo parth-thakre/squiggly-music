@@ -34,7 +34,7 @@ describe('command boundary', () => {
     expect(() => decode({ type: 'loadfile', path: '/secret' })).toThrow();
   });
   it('bounds string payloads', () => {
-    expect(() => decode({ type: 'select', id: 'x'.repeat(257) })).toThrow();
+    expect(() => decode({ type: 'seek', seconds: 0, queueIndex: 0, trackId: 'x'.repeat(257) })).toThrow();
     expect(() => decode({ type: 'device', id: '' })).toThrow();
   });
   it('requires credentials without accepting unlimited payloads', () => {

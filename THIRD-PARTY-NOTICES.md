@@ -48,35 +48,4 @@ This is a summary of what these licenses usually require, not legal advice.
   let users replace the library. Electron loads FFmpeg as a separate shared library.
 - **GPL-3.0-or-later (libmpv-2.dll):** provide the license text, and either ship the complete
   Corresponding Source with the binary or include a written offer valid for at least three
-  years. GPL terms also raise questions about the program that loads the library; see below.
-
-## Open questions for the maintainers
-
-These need a decision, and possibly legal review, before a public release:
-
-1. **Corresponding Source for libmpv.** The shinchiro build compiles most of its ~60
-   components from upstream Git heads and does not record their revisions. Only mpv, FFmpeg,
-   and the build scripts are pinned to exact commits. The written offer in
-   `licenses/libmpv-windows/NOTICE.md` commits the maintainers to supply the complete source,
-   which they can't reproduce for the other components today. Options: build libmpv in this
-   repository from pinned sources and publish the source archive with each release, or pick a
-   build that publishes its complete source.
-2. **libdvdcss is statically linked into `libmpv-2.dll`.** It decrypts CSS-protected DVDs,
-   and distributing it is legally restricted in some jurisdictions. An audio player doesn't
-   need it. A custom build could leave it out, along with DVD, Blu-ray, video encoders (x264,
-   x265), and other code the app doesn't use.
-3. **GPL and the rest of the app.** `libmpv-2.dll` is GPL-3.0-or-later as built. The app loads
-   it through Koffi in a separate Node process. Whether that makes the audio host, or the whole
-   app, subject to the GPL is a legal question. An LGPL build of libmpv (`-Dgpl=false`, FFmpeg
-   without `--enable-gpl`, no GPL-only libraries) would avoid it. Choosing the project's own
-   license depends on the answer.
-4. **Unverified component licenses.** The component table in `NOTICE.md` lists licenses the
-   upstream projects commonly publish. Nobody has checked them against the revisions actually
-   built, and `subrandr`'s license was not determined. The BSD/MIT-style components also
-   require their own copyright notices, which are not yet collected.
-5. **Patent-encumbered codecs.** Electron's default FFmpeg and the libmpv build include
-   decoders for patent-encumbered formats (for example H.264 and AAC). Copyright licenses don't
-   cover patents.
-6. **Installer tooling.** electron-builder adds `elevate.exe` and the NSIS installer stub
-   (zlib/libpng license, with bzip2 portions) to the Windows installer and portable executable.
-   Neither license text is included yet.
+  years.

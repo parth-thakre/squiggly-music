@@ -7,7 +7,7 @@
 
 Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-It's early software. It runs on Windows and Fedora, and a browser version works on phones. The [audit](docs/audit-2026-09-25.md) lists what's still rough.
+It's early software. It runs on Windows and Fedora, and a browser version works on phones.
 
 ## What it does
 
@@ -72,7 +72,6 @@ The libmpv tests only decode audio when `SQUIGGLY_LIBMPV_PATH` points at a libra
 - [docs/packaging.md](docs/packaging.md) covers installers, pinned runtimes, releases, and checksums.
 - [docs/audio.md](docs/audio.md) explains what the signal-path readout can and can't tell you.
 - [docs/ui-handoff.md](docs/ui-handoff.md) describes how the interface is put together.
-- [docs/extensions.md](docs/extensions.md) covers writing extensions and what trusting one means.
 
 ## License
 
