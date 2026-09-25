@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ConfigFiles, ThemeFile } from '../../../packages/core/contracts';
 
-// The user's config folder: keybindings and themes, edited by hand and applied live.
+// The user's config folder: keybindings, themes, and extensions, edited by hand and applied live.
 // Linux follows XDG (~/.config/squiggly); Windows uses %APPDATA%\Squiggly; macOS uses Application Support.
 export function configDirectory(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
   if (env.SQUIGGLY_CONFIG_DIR) return env.SQUIGGLY_CONFIG_DIR;
@@ -21,11 +21,20 @@ export const README = `Squiggly Music configuration
 Everything in this folder is read by Squiggly while it runs. Save a file and the change
 applies; there is nothing to restart.
 
-  keybindings.json      Your keyboard shortcuts. They win over the app's defaults.
+  keybindings.json      Your keyboard shortcuts. They win over the app's and extensions' defaults.
   themes/<name>.json    Colour themes: { "name": "Night", "colors": { "ground": "#101418", ... } }.
                         Settings > Theme lists them, with any problems in a file.
+  extensions/<name>/    Extensions: a folder with a package.json that has a "squiggly" field.
+                        Edit one and it reloads.
+  extensions.json       Which extensions are turned off.
 
 Settings > Keys lists every command and its keys.
+
+Extensions are not sandboxed. One runs inside Squiggly's window with everything the window can
+do: your library, playback, and your music server account, including changing playlists.
+Only add extensions you trust.
+
+Guide: https://github.com/parth-thakre/squiggly-music/blob/main/docs/extensions.md
 `;
 
 // Creates the folder and its layout. Existing files are never touched.

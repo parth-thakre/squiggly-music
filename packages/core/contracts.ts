@@ -182,6 +182,29 @@ export interface ConfigApi {
   subscribe(listener: (files: ConfigFiles) => void): () => void;
   openDir(): Promise<Result>;
 }
+// Extensions: folders in <config>/extensions, full trust (see docs/extensions.md, "Trust model").
+export interface ExtensionInfo {
+  id: string; name: string; version: string; description: string | null;
+  // The extension's folder name inside <config>/extensions.
+  folder: string;
+  enabled: boolean;
+  // A squiggly-ext:// URL for the compiled renderer entry, while the extension is on and compiles.
+  rendererUrl: string | null;
+  // package.json or compile problems, in plain words.
+  error: string | null;
+}
+export interface ExtensionsApi {
+  list(): Promise<ExtensionInfo[]>;
+  subscribe(listener: (list: ExtensionInfo[]) => void): () => void;
+  setEnabled(id: string, enabled: boolean): Promise<Result>;
+  // Compiles every extension again and gives each a new URL, so the window starts it afresh.
+  reload(): Promise<Result>;
+  // Moves the extension's folder to the system trash.
+  remove(id: string): Promise<Result>;
+  openDir(): Promise<Result>;
+  // For ctx.clipboard: the window's own clipboard API needs a permission the app doesn't grant.
+  writeClipboard(text: string): Promise<Result>;
+}
 
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
@@ -197,6 +220,7 @@ export interface DesktopBridge {
   radio: RadioApi;
   library: LibraryApi;
   config: ConfigApi;
+  extensions: ExtensionsApi;
   settings(): Promise<Settings>;
   updateSettings(changes: Partial<Settings>): Promise<Result<Settings>>;
   // The compact always-on-top window. Opening it from the mini player's own button returns to the full window.

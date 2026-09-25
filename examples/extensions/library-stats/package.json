@@ -1,0 +1,11 @@
+{
+  "name": "library-stats",
+  "version": "1.0.0",
+  "description": "A page with counts and totals for your library.",
+  "private": true,
+  "type": "module",
+  "squiggly": {
+    "displayName": "Library stats",
+    "renderer": "src/index.tsx"
+  }
+}

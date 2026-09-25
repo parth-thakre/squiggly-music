@@ -4,8 +4,12 @@ import type { Page } from '@playwright/test';
 // stand-in for the preload bridge before the page loads, so desktop-only UI can be checked in
 // the browser suite. Nothing here reaches a main process or libmpv. window.bridgeCalls lists
 // the calls a test may want to check.
-export async function installDesktopBridge(page: Page) {
-  await page.addInitScript(() => {
+//
+// `extensions` are listed by window.squiggly.extensions, each with the URL its module is served
+// from (the test routes that URL to a compiled bundle).
+export interface FakeExtension { id: string; name: string; url: string; error?: string }
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[] } = {}) {
+  await page.addInitScript(({ extensions: given }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -25,6 +29,14 @@ export async function installDesktopBridge(page: Page) {
     const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true };
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
+    const disabled = new Set<string>(), removed = new Set<string>();
+    const extensionListeners = new Set<(list: unknown) => void>();
+    const extensionList = () => given.filter(extension => !removed.has(extension.id)).map(extension => ({
+      id: extension.id, name: extension.name, version: '1.0.0', description: null, folder: extension.id,
+      enabled: !disabled.has(extension.id), error: extension.error ?? null,
+      rendererUrl: disabled.has(extension.id) || extension.error ? null : extension.url,
+    }));
+    const pushExtensions = () => { const list = extensionList(); extensionListeners.forEach(listener => listener(list)); };
     Object.assign(window, { squiggly: {
       snapshot: async () => snapshot(),
       subscribe: (listener: (snapshot: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
@@ -33,6 +45,15 @@ export async function installDesktopBridge(page: Page) {
       updateSettings: async () => ({ ok: true, value: settings }),
       library,
       window: { isMini: false, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }) },
+      extensions: {
+        list: async () => extensionList(),
+        subscribe: (listener: (list: unknown) => void) => { extensionListeners.add(listener); return () => extensionListeners.delete(listener); },
+        setEnabled: async (id: string, on: boolean) => { calls.push(`set-enabled:${id}:${on}`); if (on) disabled.delete(id); else disabled.add(id); pushExtensions(); return { ok: true, value: undefined }; },
+        reload: async () => { calls.push('reload'); return { ok: true, value: undefined }; },
+        remove: async (id: string) => { calls.push(`remove:${id}`); removed.add(id); pushExtensions(); return { ok: true, value: undefined }; },
+        openDir: async () => ({ ok: true, value: undefined }),
+        writeClipboard: async (text: string) => { calls.push(`clipboard:${text}`); return { ok: true, value: undefined }; },
+      },
       disconnect: async () => {
         calls.push('disconnect');
         server = { connected: false, name: null, sessionId: null };
@@ -41,5 +62,5 @@ export async function installDesktopBridge(page: Page) {
         return { ok: true, value: undefined };
       },
     } });
-  });
+  }, { extensions: options.extensions ?? [] });
 }

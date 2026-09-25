@@ -99,6 +99,10 @@ add({ id: 'refresh', title: 'Refresh the library', category: 'Library', when: ()
 
 // App
 add({ id: 'open-config', title: 'Open the config folder', category: 'App', when: () => !!window.squiggly?.config, run: async () => fail(await openConfigFolder()) });
+add({
+  id: 'reload-extensions', title: 'Reload extensions', category: 'App', when: () => !!window.squiggly?.extensions,
+  async run() { const result = await window.squiggly!.extensions.reload(); if (!result.ok) fail(result.error); },
+});
 
 // One command per theme, so "Theme: Night" is a keystroke away and can be bound.
 const themeScope = registry.scope('theme');

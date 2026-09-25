@@ -60,7 +60,7 @@ export interface Command {
 }
 
 export class RegistryCollision extends Error {
-  constructor(kind: 'menu item' | 'command', id: string, owner: string) {
+  constructor(kind: 'menu item' | 'command' | 'theme' | 'page', id: string, owner: string) {
     super(`The ${kind} “${id}” is already registered by ${owner}. Dispose it before registering it again.`);
     this.name = 'RegistryCollision';
   }
@@ -94,7 +94,8 @@ function addCommand(command: Command, owner: string): Dispose {
   changed();
   return () => { if (commands.get(entry.id) === entry) { commands.delete(entry.id); changed(); } };
 }
-// Command changes (a theme file added or removed) rebuild the key table and the palette.
+// Command changes (an extension loading or unloading, a theme file added or removed) rebuild
+// the key table and the palette.
 // Notified in a microtask, so registering fifty commands rebuilds once.
 const commandListeners = new Set<() => void>();
 let commandVersion = 0, notifying = false;
