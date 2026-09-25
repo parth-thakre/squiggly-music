@@ -30,9 +30,8 @@ This project should provide all four without becoming another monolithic player.
 
 ## Initial development server
 
-A Navidrome development server is available at:
+A Navidrome development server on the maintainer's private network was used during development:
 
-- URL: `http://100.72.88.79:4533`
 - Navidrome: `0.63.2`
 - Subsonic API: `1.16.1`
 - OpenSubsonic: enabled
@@ -74,7 +73,7 @@ packages/
   player-mpv/             libmpv native bridge and playback process
   core/                   Queue, playback, library, and domain contracts
   plugin-sdk/             Stable public plugin API and types
-  plugin-runtime/         Discovery, permissions, lifecycle, isolation
+  plugin-runtime/         Discovery, lifecycle, crash isolation
   adapter-opensubsonic/   Navidrome/OpenSubsonic implementation
   adapter-jellyfin/       Later Jellyfin implementation
   shared/                 Shared primitives with no platform coupling
@@ -123,17 +122,18 @@ The goal is **Jellyfin-style plugin repositories and installation**, not binary 
 
 1. **Service plugins** — lyrics, metadata, scrobbling, integrations, automation.
 2. **UI plugins** — pages, panels, sidebar destinations, commands, settings.
-3. **Playback plugins** — restricted MPV controls, filters, events, and visualizers.
+3. **Playback plugins** — MPV controls, filters, events, and visualizers through the typed playback API.
 4. **Server adapters** — OpenSubsonic, Jellyfin, and possible future protocols.
 
-### Isolation model
+### Trust model
 
-- Service plugins run in isolated Node child/utility processes.
-- UI plugins render through sandboxed iframes or Web Components.
-- Plugins never receive direct Node, Electron, database, credential, or libmpv access.
-- All access uses capability-scoped, versioned APIs.
-- Plugins have declared permissions, lifecycle limits, structured logs, and storage quotas.
-- A misbehaving plugin must not freeze the main renderer or playback process.
+Extensions are **full-trust TypeScript**, in the same spirit as pi.dev extensions. They are not sandboxed.
+
+- An installed extension runs with the app's privileges. It can use Node and Electron APIs, read and write the user's files, make network requests, and reach anything the app can reach, including server credentials held in memory.
+- Running an extension in its own process or window is for **crash and hang isolation only**: a misbehaving extension should not freeze the renderer or stop playback. Process separation is not a security boundary, and documentation must not describe it as one.
+- The extension API is typed and versioned so extensions keep working across app releases. Manifest fields such as `permissions` describe what an extension intends to use, for review and compatibility checks. The app does not enforce them.
+- Installing a third-party extension shows a clear warning that it gets full access to the app, the user's account on connected servers, and the computer, and asks for explicit confirmation. First-party extensions shipped with the app skip the warning.
+- Checksums and optional publisher signatures confirm that a package is the one the catalog lists. They say nothing about whether its code is safe.
 
 Avoid exposing React as the plugin ABI. React version changes would otherwise break third-party UI plugins. Prefer framework-neutral web entry points and Web Components.
 
@@ -164,7 +164,7 @@ Repositories expose a signed JSON catalog. The application provides:
 - Install, update, disable, and uninstall
 - Stable/beta channels
 - API and application compatibility checks
-- Permission review before installation
+- A full-trust warning and explicit confirmation before installing a third-party extension
 - Checksums and optional publisher signatures
 - Failed-update rollback
 - Per-plugin logs and resource usage
@@ -185,7 +185,7 @@ The SDK should include:
 - Manifest schema and validation
 - Hot reload against a running development client
 - Mock playback/library APIs
-- Permission linting
+- Manifest linting for declared API usage
 - Plugin inspector and structured logs
 - Small, complete example plugins
 
@@ -255,10 +255,8 @@ Architectural rules:
 - Strict Content Security Policy
 - Typed allowlisted IPC only
 - Credentials encrypted through OS-backed storage
-- Plugin permissions deny by default
-- Network access mediated and domain-aware
-- Signed/checksummed plugin packages where available
-- No plugin access to authentication secrets
+- Extensions are full trust (see Trust model): install them only after a clear warning, never silently
+- Signed/checksummed plugin packages where available, to verify origin, not safety
 
 ## Delivery milestones
 
@@ -282,8 +280,9 @@ Architectural rules:
 ### Milestone 2 — Plugin foundation
 
 - Finalize plugin manifest and API v1.
-- Implement isolated service-plugin host.
-- Implement sandboxed UI-plugin surface.
+- Implement an extension host process for crash and hang isolation (not a sandbox).
+- Implement UI extension points (pages, panels, commands, settings).
+- Show the full-trust warning when installing a third-party extension.
 - Add installation from a local ZIP/folder.
 - Build hot reload, inspector, and one tiny example plugin.
 
@@ -297,10 +296,10 @@ Architectural rules:
 ### Milestone 4 — Catalog and polish
 
 - Jellyfin-style plugin repositories.
-- Updates, permissions, checksums, rollback, and logs.
+- Updates, install warnings, checksums, rollback, and logs.
 - Full visual system and responsive desktop layouts.
 - Accessibility and keyboard-navigation pass.
-- Large-library and plugin-abuse performance testing.
+- Large-library and slow- or crashing-extension performance testing.
 
 ### Milestone 5 — Jellyfin
 
