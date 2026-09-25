@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { contrast, MARK_CONTRAST, TEXT_CONTRAST } from '../apps/desktop/renderer/src/app/palette';
 import { BUILTIN_THEMES, checkTokens, DEFAULT_TOKENS, fontStack, tintOf, type ThemeColors } from '../apps/desktop/renderer/src/app/theme/tokens';
-import { getThemes, loadUserThemes, selectTheme, themePalette } from '../apps/desktop/renderer/src/app/theme';
+import { RegistryCollision } from '../apps/desktop/renderer/src/app/registry';
+import { getThemes, loadUserThemes, registerTheme, selectTheme, ThemeError, themePalette } from '../apps/desktop/renderer/src/app/theme';
 
 const fixed = (tokens: unknown) => {
   const checked = checkTokens(tokens);
@@ -116,5 +117,34 @@ describe('theme files', () => {
     expect(state.notes).toEqual([expect.stringMatching(/^Dusk: colors\.soft #6a5f78 reads at/)]);
     loadUserThemes([]);
     expect(getThemes().problems).toEqual([]);
+  });
+});
+
+describe('extension themes', () => {
+  const harbour = { id: 'harbour', name: 'Harbour', tokens: { colors: { ground: '#dfe6ea', ink: '#10202b', accent: '#c2410c' } } };
+
+  it('namespaces extension themes, refuses collisions, and disposes only its own', () => {
+    const dispose = registerTheme(harbour, 'org.example');
+    expect(getThemes().themes.find(theme => theme.id === 'org.example:harbour')).toMatchObject({ name: 'Harbour', owner: 'org.example', source: 'extension' });
+    expect(() => registerTheme(harbour, 'org.example')).toThrow(RegistryCollision);
+    expect(() => registerTheme(harbour, 'org.example')).toThrow(/The theme “org\.example:harbour” is already registered by org\.example/);
+    dispose();
+    const again = registerTheme({ ...harbour, name: 'Harbour 2' }, 'org.example');
+    dispose();
+    expect(getThemes().themes.find(theme => theme.id === 'org.example:harbour')?.name).toBe('Harbour 2');
+    again(); again();
+    expect(getThemes().themes.some(theme => theme.id === 'org.example:harbour')).toBe(false);
+  });
+
+  it('refuses a broken theme with every problem listed', () => {
+    let thrown: unknown;
+    try { registerTheme({ id: 'Bad Id', name: '', tokens: { radius: 99 } }, 'org.example'); } catch (error) { thrown = error; }
+    expect(thrown).toBeInstanceOf(ThemeError);
+    expect((thrown as ThemeError).problems).toEqual([
+      'The id "Bad Id" isn\'t usable. Use lowercase letters, digits, dots, dashes, or underscores.',
+      'The name must be text, 1 to 60 characters.',
+      'radius is 99. Use a number of pixels from 0 to 16.',
+    ]);
+    expect(() => registerTheme(harbour, 'Not An Owner')).toThrow(/valid owner name/);
   });
 });

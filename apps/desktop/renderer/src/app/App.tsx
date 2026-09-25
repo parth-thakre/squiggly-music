@@ -7,6 +7,7 @@ import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
+import { ExtensionNotices, ExtensionPage } from './extensions';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView } from './views';
 
 onMenuError(message => player.showError(message));
@@ -41,6 +42,7 @@ export function App() {
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : mode === 'desktop' ? <Connect /> : access === 'checking' ? null : <SignIn />}
     <ContextMenu />
+    <ExtensionNotices />
     <CommandPalette />
   </div></PaletteContext.Provider>;
 }
@@ -116,6 +118,7 @@ const View = memo(function View() {
     case 'lyrics': return <LyricsPage />;
     case 'settings': return <SettingsView />;
     case 'diagnostics': return <DiagnosticsView />;
+    case 'extension': return <ExtensionPage key={route.id} id={route.id} />;
   }
 });
 

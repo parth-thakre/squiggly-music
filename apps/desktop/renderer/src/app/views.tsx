@@ -11,6 +11,7 @@ import { Lyrics } from './lyrics';
 import { TrackTable } from './TrackTable';
 import { Cover, Glyph, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 import { KeySettings } from './commands/KeySettings';
+import { ExtensionsSettings } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
@@ -609,6 +610,7 @@ export function SettingsView() {
       {error && <p className="note" role="alert">{error}</p>}
       <ThemeSettings />
       <KeySettings />
+      {mode === 'desktop' && <ExtensionsSettings />}
     </section>
   </>;
 }

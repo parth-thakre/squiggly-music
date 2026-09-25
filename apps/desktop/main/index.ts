@@ -27,6 +27,7 @@ import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
+import { extensionScheme, startExtensions } from './extensions/electron';
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
@@ -55,6 +56,7 @@ let messages = 0;
 let bytes = 0;
 let quitting = false;
 let config: ReturnType<typeof startConfigFolder> | null = null;
+let extensions: ReturnType<typeof startExtensions> | null = null;
 const pending = new Map<number, { resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
 const semaphores = {
   audio: Effect.runSync(Effect.makeSemaphore(1)),
@@ -104,7 +106,8 @@ const endRadio = () => radio.end();
 
 // Must precede app ready. Covers are fetched here so server credentials never reach the renderer.
 // CORS lets the renderer read cover pixels on a canvas for its palette.
-protocol.registerSchemesAsPrivileged([{ scheme: 'squiggly-art', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
+// squiggly-ext serves extension renderer modules (see extensions/electron.ts).
+protocol.registerSchemesAsPrivileged([{ scheme: 'squiggly-art', privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }, extensionScheme]);
 async function serveCover(request: Request): Promise<Response> {
   const cors = { 'access-control-allow-origin': '*' };
   const missing = () => new Response(null, { status: 404, headers: cors });
@@ -644,7 +647,9 @@ app.whenReady().then(async () => {
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
   await Promise.all([settings.load(), windowState.load()]);
   installHandlers(); loop.enable();
-  config = startConfigFolder({ assertSender, windows: () => appWindows().map(target => target.webContents) });
+  const windowContents = () => appWindows().map(target => target.webContents);
+  config = startConfigFolder({ assertSender, windows: windowContents });
+  extensions = startExtensions({ configDir: config.dir, assertSender, windows: windowContents });
   protocol.handle('squiggly-art', serveCover);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   createMainWindow();
@@ -680,7 +685,8 @@ app.whenReady().then(async () => {
     // Also covers a cleanup already in progress during a restart or disconnect.
     const stopped = host ? terminateHost(host) : Promise.resolve();
     config?.close();
-    void Promise.all([bounded, stopped]).then(() => app.exit(0), () => app.exit(1));
+    const closed = extensions?.close().catch(() => undefined);
+    void Promise.all([bounded, stopped, closed]).then(() => app.exit(0), () => app.exit(1));
   });
 });
 app.on('window-all-closed', () => app.quit());

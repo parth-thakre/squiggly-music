@@ -1,0 +1,7 @@
+{
+  // For editors: resolves @squiggly/extension-api to this repository's copy. An extension in your
+  // config folder can do the same with a path to packages/extension-api/index.ts.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "paths": { "@squiggly/extension-api": ["../../packages/extension-api/index.ts"] } },
+  "include": ["."]
+}

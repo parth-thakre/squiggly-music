@@ -8,7 +8,9 @@ export type Route =
   | { view: 'records'; sort?: AlbumListType } | { view: 'artists' } | { view: 'playlists' } | { view: 'favorites' }
   | { view: 'album'; id: string } | { view: 'artist'; id: string }
   | { view: 'playlist'; id: string } | { view: 'mix'; id: string }
-  | { view: 'search'; query: string } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' };
+  | { view: 'search'; query: string } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' }
+  // A page an extension added; id is the page's namespaced id.
+  | { view: 'extension'; id: string };
 
 // Navigation rides on the browser's own history, so a phone's back gesture (and Forward)
 // steps through the app instead of leaving it. Each history entry carries its route, a
@@ -16,7 +18,7 @@ export type Route =
 // however long the session runs; the app itself only remembers the current place and the
 // scroll offsets of the most recent places.
 interface Place { id: string; depth: number; route: Route; overlay?: boolean }
-const views = new Set(['records', 'artists', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics']);
+const views = new Set(['records', 'artists', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension']);
 function placeOf(state: unknown): Place | null {
   const s = state as { squiggly?: unknown; depth?: unknown; route?: { view?: unknown }; overlay?: unknown } | null;
   if (!s || typeof s.squiggly !== 'string' || typeof s.depth !== 'number' || !views.has(String(s.route?.view))) return null;
