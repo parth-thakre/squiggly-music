@@ -1,0 +1,9 @@
+{
+  "name": "Squiggly",
+  "short_name": "Squiggly",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#d8d7d1",
+  "theme_color": "#d8d7d1",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

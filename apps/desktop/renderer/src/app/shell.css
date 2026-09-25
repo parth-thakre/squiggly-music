@@ -1,0 +1,3 @@
+/* The connect form standing in for a library page while songs from this computer play. */
+.page .connect { width: min(420px, 100%); margin-top: 6px; }
+.page .connect h1 { font-size: 40px; line-height: 1.05; }
