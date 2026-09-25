@@ -1,6 +1,8 @@
+import { randomBytes } from 'node:crypto';
 import { emptyAudio, emptyPlayer } from '../core/contracts';
 import { NativePlayer } from './native';
 import { clearPlayerSession } from './session';
+import { editQueue, QUEUE_LIMIT } from './queue';
 import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 
 // A standalone Node process keeps Chromium and its native libraries out of this
@@ -8,8 +10,24 @@ import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 let native: NativePlayer | null = null;
 let player = emptyPlayer();
 let clientApiVersion: string | null = null;
-let playableQueue: PlayableTrack[] = [];
+// Each queue entry carries an id, unique within the queue and kept through moves, so two
+// copies of one song stay distinguishable. The random prefix keeps ids from an earlier host
+// process from matching entries in this one.
+interface Entry extends PlayableTrack { entry: string }
+const entryPrefix = randomBytes(3).toString('hex');
+let entrySequence = 0;
+const toEntry = (item: PlayableTrack): Entry => ({ ...item, entry: `${entryPrefix}.${(++entrySequence).toString(36)}` });
+let playableQueue: Entry[] = [];
+// The snapshot's queue and entry ids always come from the private list, in one place.
+function publishQueue() {
+  player.queue = playableQueue.map(item => item.track);
+  player.entryIds = playableQueue.map(item => item.entry);
+}
 let reloadPlaylistAfterStop = false;
+// The exclusive-output option last accepted by mpv. Requested, not verified.
+let exclusive = false;
+// A restored queue seeks once its entry is loaded and seekable. Changing the track or position cancels it.
+let pendingSeek: { id: string; seconds: number; polls: number } | null = null;
 let timer: ReturnType<typeof setInterval> | undefined;
 let exiting = false;
 let snapshotInFlight = false;
@@ -48,8 +66,36 @@ const port = {
 function resetTrack() {
   player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0,
     audio: { ...emptyAudio(), requestedDevice: player.audio.requestedDevice,
-      replayGain: player.audio.replayGain, filters: player.audio.filters },
+      replayGain: player.audio.replayGain, filters: player.audio.filters, exclusiveRequested: player.audio.exclusiveRequested },
   };
+}
+const exclusiveError = 'The audio output rejected exclusive mode. Output stays shared with the system mixer.';
+// Exclusive access is an AO open-time flag, so a loaded file needs its output reopened.
+// Windows WASAPI and macOS CoreAudio honor it. On Linux, mpv's ALSA and PulseAudio outputs
+// ignore it and PipeWire support depends on the mpv build, so it may change nothing there.
+// Acceptance by mpv does not prove the OS granted exclusive access; snapshots report the request only.
+function applyExclusive(on: boolean) {
+  if (!native) return;
+  try {
+    native.set('audio-exclusive', on ? 'yes' : 'no');
+    if (native.property('idle-active') === 'no') native.command('ao-reload');
+    exclusive = on;
+  } catch {
+    try {
+      native.set('audio-exclusive', exclusive ? 'yes' : 'no');
+      if (native.property('idle-active') === 'no') native.command('ao-reload');
+    } catch { /* The original error below is the actionable one. */ }
+    throw new Error(on ? exclusiveError : 'The audio output could not leave exclusive mode. Restart the audio engine.');
+  }
+}
+function restoreSeek() {
+  const seek = pendingSeek;
+  if (!native || !seek) return;
+  // About ten seconds of polls; slow servers may not have opened the stream yet.
+  if (++seek.polls > 40) { pendingSeek = null; player.error = 'Could not restore the saved position. The song starts from the beginning.'; return; }
+  if (player.queue[player.currentIndex]?.id !== seek.id || native.property('seekable') !== 'yes') return;
+  try { native.command('seek', String(seek.seconds), 'absolute+exact'); pendingSeek = null; }
+  catch { /* Not seekable yet. Retry on the next poll. */ }
 }
 
 function loadPlayableQueue() {
@@ -84,6 +130,9 @@ try {
   clientApiVersion = native.clientApiVersion;
   player.engine = 'ready';
   player.devices = native.devices();
+  if (process.env.SQUIGGLY_AUDIO_EXCLUSIVE === '1') {
+    try { applyExclusive(true); } catch (error) { exclusive = false; player.error = error instanceof Error ? error.message : exclusiveError; }
+  }
 } catch (error) {
   player.engine = 'unavailable';
   player.error = error instanceof Error ? error.message : 'Audio engine unavailable.';
@@ -94,27 +143,45 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
   try {
     if (!native) throw new Error(player.error ?? 'Audio engine unavailable.');
     player.error = null;
+    if (['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous', 'select'].includes(action.type)) pendingSeek = null;
     switch (action.type) {
       case 'queue': {
         if (!action.tracks.length) throw new Error('Choose at least one track.');
+        if (action.tracks.length > QUEUE_LIMIT) throw new Error(`The queue holds up to ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`);
+        const start = action.startIndex ?? 0;
+        if (!Number.isInteger(start) || start < 0 || start >= action.tracks.length) throw new Error('Choose a track in the queue.');
         native.command('stop');
         native.command('playlist-clear');
         resetTrack();
+        // Pause before loading so a restored queue never plays its first moments.
+        if (action.paused) native.set('pause', 'yes');
         // Retain locations only inside the isolated host so old mpv versions can
         // rebuild the native playlist after their argument-less stop command.
-        playableQueue = action.tracks;
+        playableQueue = action.tracks.map(toEntry);
         loadPlayableQueue();
-        player.queue = action.tracks.map(item => item.track);
-        native.set('pause', 'no');
+        // The first loadfile only queues a load; moving now starts at the chosen entry instead.
+        if (start > 0) native.set('playlist-pos', String(start));
+        publishQueue();
+        if (!action.paused) native.set('pause', 'no');
+        const seconds = action.startPosition ?? 0;
+        if (Number.isFinite(seconds) && seconds > 0) pendingSeek = { id: action.tracks[start].track.id, seconds, polls: 0 };
         break;
       }
+      case 'queue-add': case 'queue-move': case 'queue-remove': case 'queue-clear':
+        try { editQueue(native, playableQueue, !reloadPlaylistAfterStop, action.type === 'queue-add' ? { ...action, tracks: action.tracks.map(toEntry) } : action); }
+        finally {
+          publishQueue();
+          player.currentIndex = reloadPlaylistAfterStop ? -1 : native.number('playlist-pos') ?? -1;
+        }
+        break;
+      case 'exclusive': applyExclusive(action.on); break;
       case 'clear-session':
         // Discard both mpv's playlist and the private fallback copy used by
         // older clients after stop, while retaining engine-level settings.
         playableQueue = [];
         reloadPlaylistAfterStop = false;
         clearPlayerSession(native, player);
-        resetTrack();
+        publishQueue(); resetTrack();
         break;
       case 'play':
         if (!player.queue.length) throw new Error('Add music to the queue first.');
@@ -128,7 +195,8 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         resetTrack(); break;
       case 'seek': {
         const nativeIndex = native.number('playlist-pos') ?? -1;
-        if (nativeIndex !== action.queueIndex || player.queue[action.queueIndex]?.id !== action.trackId) {
+        if (nativeIndex !== action.queueIndex || player.queue[action.queueIndex]?.id !== action.trackId
+          || (action.entryId !== undefined && playableQueue[action.queueIndex]?.entry !== action.entryId)) {
           throw new Error('The track changed before the seek completed. Try again.');
         }
         native.command('seek', String(action.seconds), 'absolute+exact'); break;
@@ -137,6 +205,13 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
       case 'device': native.set('audio-device', action.id); break;
       case 'next': native.command('playlist-next', 'weak'); break;
       case 'previous': native.command('playlist-prev', 'weak'); break;
+      case 'queue-jump': {
+        // By entry, not song id: in [A, B, A] the second A is a different entry from the first.
+        if (playableQueue[action.index]?.entry !== action.entryId) throw new Error('The queue changed before that song could play. Try again.');
+        if (reloadPlaylistAfterStop) loadPlayableQueue();
+        native.set('playlist-pos', String(action.index)); native.set('pause', 'no'); break;
+      }
+      // Legacy selection by song id (first match). Queue clicks use queue-jump.
       case 'select': {
         const index = player.queue.findIndex(track => track.id === action.id);
         if (index < 0) throw new Error('Track is no longer in the queue.');
@@ -170,6 +245,7 @@ timer = setInterval(() => {
       currentIndex: native.number('playlist-pos') ?? -1,
       audio: native.audio(),
     };
+    restoreSeek();
     if (++deviceTicks % 20 === 0) player.devices = native.devices();
     publish();
   } catch {
