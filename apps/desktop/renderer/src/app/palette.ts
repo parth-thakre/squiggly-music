@@ -1,6 +1,7 @@
 // accent: marks and large type (3:1 against ground). accentText: normal-weight text such as
 // the current lyric line (4.5:1 against ground and against the selected-row tint).
-export interface Palette { ground: string; ink: string; soft: string; accent: string; accentText?: string }
+// line: a fixed theme may set its own rule and selected-row colour; otherwise it is ink over the ground.
+export interface Palette { ground: string; ink: string; soft: string; accent: string; accentText?: string; line?: string }
 
 // Lines and selected rows are ink laid over the ground at this opacity (App's --line).
 export const LINE_ALPHA = .16;
@@ -97,6 +98,15 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   // The same hue, pushed further when needed, for normal-weight text such as the current lyric line.
   const accentText = hue ? readable([hue[0], hue[1], hslOf(accent)[2]], [ground, tint], TEXT_CONTRAST + .1, dark) : ink;
   return { ground, ink, soft, accent, accentText };
+}
+
+// For fixed theme colours: the colour itself when it already reads at `minimum` on every
+// ground, otherwise the same hue walked away from the grounds (lighter on a dark ground,
+// darker on a light one) until it does. Check the result: a ground can be beyond rescue.
+export function ensureContrast(color: string, grounds: string[], minimum: number): string {
+  if (grounds.every(ground => contrast(color, ground) >= minimum)) return color;
+  const dark = contrast('#ffffff', grounds[0]) > contrast('#000000', grounds[0]);
+  return readable(hslOf(color), grounds, minimum, dark);
 }
 
 export async function paletteFromImage(url: string): Promise<Palette> {

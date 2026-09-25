@@ -4,8 +4,9 @@ import { current, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import { Cover, Glyph, kHz, neutral, splitTitle, usePalette } from './ui';
-import { paletteStyle, Position, TransportButtons } from './transport';
+import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
+import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
+import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView } from './views';
 
 onMenuError(message => player.showError(message));
@@ -26,10 +27,9 @@ export function App() {
   const connected = usePlayer(s => s.connected);
   const access = usePlayer(s => s.access);
   const hasQueue = usePlayer(s => s.queue.length > 0);
-  // The room takes the colour of the record that is playing.
-  const coverArt = usePlayer(s => current(s)?.coverArt ?? null);
-  const palette = usePalette(coverArt);
-  useKeys();
+  // The room takes the colour of the record that is playing, unless the theme fixes its colours.
+  const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
+  useCommandKeys();
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
@@ -41,22 +41,8 @@ export function App() {
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : mode === 'desktop' ? <Connect /> : access === 'checking' ? null : <SignIn />}
     <ContextMenu />
+    <CommandPalette />
   </div></PaletteContext.Provider>;
-}
-
-function useKeys() {
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      const typing = (event.target as HTMLElement).closest('input, select, textarea');
-      if (event.altKey && event.key === 'ArrowLeft') { event.preventDefault(); nav.back(); return; }
-      if (typing) return;
-      if (event.key === '/') { event.preventDefault(); document.querySelector<HTMLInputElement>('.search')?.focus(); }
-      else if (event.code === 'Space' && !(event.target as HTMLElement).closest('button, a')) { event.preventDefault(); player.toggle(); }
-    };
-    const onMouse = (event: MouseEvent) => { if (event.button === 3) nav.back(); };
-    addEventListener('keydown', onKey); addEventListener('mouseup', onMouse);
-    return () => { removeEventListener('keydown', onKey); removeEventListener('mouseup', onMouse); };
-  }, []);
 }
 
 // The mark: the app's own seek bar. Played squiggle, the thumb, the unplayed rest.
@@ -100,6 +86,8 @@ const Bar = memo(function Bar() {
         }, 250);
       }} />
     {mode === 'desktop' && <button type="button" className="text-button" onClick={() => void openFiles()}>Open files</button>}
+    {/* Phones have no Ctrl+K; the palette opens from here. */}
+    <button type="button" className="text-button bar-commands" onClick={openPalette}>Commands</button>
     </div>
     {/* On phones this row moves to the bottom of the screen, under the thumb. */}
     <nav className="sections" aria-label="Library">
@@ -156,6 +144,7 @@ const Deck = memo(function Deck() {
   const name = splitTitle(track.title, track.album);
   // Phones show a strip; tapping it opens the full deck as a sheet the back gesture closes.
   const open = () => nav.openOverlay(() => setExpanded(true), () => setExpanded(false));
+  shell.openNowPlaying = expanded ? null : open;
   const toggleLyrics = () => route.view === 'lyrics' ? nav.back() : nav.go({ view: 'lyrics' });
   return <aside className={`deck${expanded ? ' open' : ''}${expanded && sheetLyrics ? ' lyrics-open' : ''}`} aria-label="Now playing"
     onContextMenu={event => { if (!(event.target as HTMLElement).closest('input, select')) openMenu(event, { kind: 'tracks', tracks: [track] }); }}>
@@ -201,7 +190,9 @@ const Deck = memo(function Deck() {
 
 function DeckLinks() {
   const signedIn = usePlayer(s => s.access === 'signed-in');
+  const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
+    <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
     {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}

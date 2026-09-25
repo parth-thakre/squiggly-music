@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSnapshot, DesktopBridge, LibraryApi } from '../../../packages/core/contracts';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, LibraryApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
@@ -31,6 +31,20 @@ const library: LibraryApi = {
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', trackIds, currentIndex, positionSeconds),
   coverUrl: (coverArt, size) => `squiggly-art://cover/${encodeURIComponent(String(coverArt))}?size=${Math.min(1200, Math.max(32, Math.round(Number(size)) || 300))}`,
 };
+// Push channels from the main process, as subscribe functions.
+function listen<T>(channel: string, listener: (value: T) => void) {
+  const handler = (_event: Electron.IpcRendererEvent, value: T) => listener(value);
+  ipcRenderer.on(channel, handler);
+  return () => { ipcRenderer.removeListener(channel, handler); };
+}
+// The config folder, passed by the main process as a window argument so `dir` is ready at once.
+const configDir = process.argv.find(arg => arg.startsWith('--squiggly-config='))?.slice('--squiggly-config='.length) ?? '';
+const config: ConfigApi = {
+  dir: configDir,
+  read: () => ipcRenderer.invoke('squiggly:config:read'),
+  subscribe: listener => listen<ConfigFiles>('squiggly:config', listener),
+  openDir: () => ipcRenderer.invoke('squiggly:config:open-dir'),
+};
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
@@ -56,6 +70,7 @@ const bridge: DesktopBridge = {
     stop: () => ipcRenderer.invoke('squiggly:radio:stop'),
   },
   library,
+  config,
   settings: () => ipcRenderer.invoke('squiggly:get-settings'),
   updateSettings: changes => ipcRenderer.invoke('squiggly:update-settings', changes),
   window: {

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { flushSync } from 'react-dom';
+import { reducedMotion } from './theme';
 import type { AlbumListType } from '../../../../../packages/core/contracts';
 
 export type Route =
@@ -49,7 +50,7 @@ const emit = () => listeners.forEach(listener => listener());
 
 // Moving between places animates with the browser's View Transitions: the sleeve you touched
 // travels to where it lands, everything else crossfades. Skipped for reduced motion.
-const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+const reduced = reducedMotion;
 // The record, playlist, or mix whose sleeve should travel on the next move.
 export const morph = { id: null as string | null };
 export function transition(update: () => void) {
