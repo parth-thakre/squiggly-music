@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import { reducedMotion } from './theme';
 import { time } from './ui';
 
 // The squiggle is the app's "now playing" mark and its seek bar. It keeps squiggling while
@@ -33,7 +34,8 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     const element = canvas.current!;
     const context = element.getContext('2d');
     if (!context) return;
-    const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+    // The system setting or the theme's motion token (reduced or none) both mean a still wave.
+    const reduced = reducedMotion;
     let frame = 0, timer: ReturnType<typeof setTimeout> | undefined, last = performance.now(), phase = 0, spoken = '';
     const draw = (now: number) => {
       const { position: value, duration: length, playing: active, at, color: ink, rest: line } = latest.current;

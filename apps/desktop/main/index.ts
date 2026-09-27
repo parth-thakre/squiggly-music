@@ -25,6 +25,8 @@ import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
 import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
+import { configDirectory } from './config';
+import { startConfigFolder } from './configBridge';
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
@@ -52,6 +54,7 @@ let ipcCount = 0;
 let messages = 0;
 let bytes = 0;
 let quitting = false;
+let config: ReturnType<typeof startConfigFolder> | null = null;
 const pending = new Map<number, { resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
 const semaphores = {
   audio: Effect.runSync(Effect.makeSemaphore(1)),
@@ -474,7 +477,8 @@ function createWindow(mini: boolean) {
     webPreferences: {
       preload: join(directory, '../preload/index.cjs'),
       contextIsolation: true, nodeIntegration: false, sandbox: true,
-      ...(mini ? { additionalArguments: ['--squiggly-mini'] } : {}),
+      // The preload reads the config folder's path from here, so ConfigApi.dir is ready at once.
+      additionalArguments: [...(mini ? ['--squiggly-mini'] : []), `--squiggly-config=${configDirectory()}`],
     },
   });
   target.setMenuBarVisibility(false);
@@ -640,6 +644,7 @@ app.whenReady().then(async () => {
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
   await Promise.all([settings.load(), windowState.load()]);
   installHandlers(); loop.enable();
+  config = startConfigFolder({ assertSender, windows: () => appWindows().map(target => target.webContents) });
   protocol.handle('squiggly-art', serveCover);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   createMainWindow();
@@ -674,6 +679,7 @@ app.whenReady().then(async () => {
     const bounded = Promise.race([saved.catch(() => undefined), new Promise(resolve => setTimeout(resolve, 1500))]);
     // Also covers a cleanup already in progress during a restart or disconnect.
     const stopped = host ? terminateHost(host) : Promise.resolve();
+    config?.close();
     void Promise.all([bounded, stopped]).then(() => app.exit(0), () => app.exit(1));
   });
 });

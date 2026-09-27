@@ -18,6 +18,7 @@ It's early software. It runs on Windows and Fedora, and a browser version works 
 - Show synced lyrics from your files. Looking up missing lyrics on LRCLIB is off until you turn it on.
 - Run as a mini player or from the tray, with media keys, and with MPRIS on Linux.
 - Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.
+- Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 
 It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% it tells you that's attenuation.
 

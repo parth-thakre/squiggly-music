@@ -1,9 +1,10 @@
-import type { CSSProperties } from 'react';
+import { useLayoutEffect, type CSSProperties } from 'react';
 import type { Track } from '../../../../../packages/core/contracts';
 import type { Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
 import { Squiggle } from './Squiggle';
-import { Glyph } from './ui';
+import { applyTheme, themePalette, useActiveTheme } from './theme';
+import { Glyph, usePalette } from './ui';
 
 // Shared by the deck (App.tsx) and the mini player window (Mini.tsx).
 
@@ -15,8 +16,18 @@ export const alpha = (hex: string, a: number) => {
 // don't carry one fall back to the accent.
 export const paletteStyle = (palette: Palette) => ({
   '--ground': palette.ground, '--ink': palette.ink, '--soft': palette.soft, '--accent': palette.accent,
-  '--accent-text': palette.accentText ?? palette.accent, '--line': alpha(palette.ink, .16),
+  '--accent-text': palette.accentText ?? palette.accent, '--line': palette.line ?? alpha(palette.ink, .16),
 }) as CSSProperties;
+
+// The room's palette: the theme's fixed colours, or the playing record's sleeve. Each window
+// (main and mini) applies the chosen theme's type, spacing, and motion to its own document.
+export function useRoomPalette(coverArt: string | null | undefined): Palette {
+  const theme = useActiveTheme();
+  const fixed = themePalette(theme);
+  const cover = usePalette(fixed ? null : coverArt);
+  useLayoutEffect(() => applyTheme(theme), [theme]);
+  return fixed ?? cover;
+}
 
 export function TransportButtons({ playing }: { playing: boolean }) {
   return <>

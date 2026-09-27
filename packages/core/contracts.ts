@@ -168,6 +168,21 @@ export interface AppSnapshot {
   server: { connected: boolean; name: string | null; sessionId: string | null };
 }
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
+// The user's config folder (~/.config/squiggly on Linux, %APPDATA%\Squiggly on Windows).
+// Files are read and watched by the main process; edits apply live.
+export interface ThemeFile { id: string; name: string; tokens: unknown }
+export interface ConfigFiles {
+  keybindings: unknown | null;   // keybindings.json, validated by the renderer's command system
+  themes: ThemeFile[];           // themes/*.json
+  errors: string[];              // plain messages for files that could not be read
+}
+export interface ConfigApi {
+  dir: string;
+  read(): Promise<ConfigFiles>;
+  subscribe(listener: (files: ConfigFiles) => void): () => void;
+  openDir(): Promise<Result>;
+}
+
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
@@ -181,6 +196,7 @@ export interface DesktopBridge {
   queue: QueueApi;
   radio: RadioApi;
   library: LibraryApi;
+  config: ConfigApi;
   settings(): Promise<Settings>;
   updateSettings(changes: Partial<Settings>): Promise<Result<Settings>>;
   // The compact always-on-top window. Opening it from the mini player's own button returns to the full window.

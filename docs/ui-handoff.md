@@ -11,7 +11,10 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in two places: t
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions will |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows |
-| `transport.tsx` | Palette CSS variables, transport buttons, and the position squiggle, shared by the deck and the mini player |
+| `commands/` | Every action as a command, default keys, `keybindings.json` overrides, and the Ctrl+K palette. The palette lists commands only and filters by substring; the library has the search in the bar. The browser build has no config folder, so Settings › Keys edits its bindings there instead |
+| `theme/` | Theme tokens, built-in themes, and user themes from the config folder. Motion checks go through `reducedMotion` from here, which covers the system setting and the theme |
+| `config.ts` | The desktop's config folder (`keybindings.json`, `themes/*.json`), read once and shared by keys and themes. The main process reads and watches it (`main/config.ts`, wired up in `main/configBridge.ts`) |
+| `transport.tsx` | The room's palette (`useRoomPalette`: theme colours or the sleeve), its CSS variables, transport buttons, and the position squiggle, shared by the deck and the mini player |
 | `ui.tsx` | Small shared pieces: covers, glyphs, palettes from sleeves, title splitting, `time()`, `shuffled()`, formatting |
 | `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites |
 
@@ -32,6 +35,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `library.*` | `LibraryApi`: browse, search, star, playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics` |
 | `library.coverUrl(coverArt, size)` | `squiggly-art://` URL; the main process fetches art, credentials never reach the renderer |
 | `settings()`, `updateSettings(changes)` | Stored preferences; re-read `settings()` after a failed update |
+| `config.dir`, `config.read()`, `config.subscribe(listener)`, `config.openDir()` | The config folder: `keybindings.json` and `themes/*.json` as parsed JSON, with plain errors for files that couldn't be read. Pushed again whenever their contents change |
 | `window.toggleMini()`, `window.setAlwaysOnTop(on)`, `window.isMini` | The mini player window |
 | `exportDiagnostics()` | Save a credential-free report |
 

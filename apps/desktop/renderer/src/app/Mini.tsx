@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
-import { paletteStyle, Position, TransportButtons } from './transport';
-import { Cover, splitTitle, usePalette } from './ui';
+import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
+import { Cover, splitTitle } from './ui';
 
 // The mini player: its own small window, for when another app owns the screen.
 // The window is dragged by its background; the controls opt out of dragging.
@@ -11,7 +11,7 @@ export function Mini() {
   const playing = usePlayer(s => s.playing);
   const engine = usePlayer(s => s.engine);
   const error = usePlayer(s => s.error);
-  const palette = usePalette(track?.coverArt);
+  const palette = useRoomPalette(track?.coverArt);
   // The stored preference until this window changes it; the main process applies it when the
   // window opens, so nothing is written here until the listener asks.
   const stored = useSettings().miniOnTop;
