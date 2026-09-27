@@ -47,9 +47,12 @@ let state: PlayerState = {
   radio: null, radioStarting: null, resumable: null,
 };
 const listeners = new Set<() => void>();
+// When the position last arrived, so livePosition() can count forward between reports.
+let positionAt = performance.now();
 const set = (patch: Partial<PlayerState>) => {
   const before = state;
   state = { ...state, ...patch };
+  if ('position' in patch || state.playing !== before.playing) positionAt = performance.now();
   listeners.forEach(listener => listener());
   if (web && (state.index !== before.index || state.queue !== before.queue)) topUpRadio();
 };
@@ -60,6 +63,14 @@ export function usePlayer<T>(select: (s: PlayerState) => T): T {
 }
 export const current = (s: PlayerState) => s.queue[s.index] as Track | undefined;
 export const currentEntry = (s: PlayerState) => s.entryIds[s.index] as string | undefined;
+// The position right now, not as of the last report. The browser asks its audio element; the
+// desktop counts forward from the engine's last report (every 250 ms), at most one second ahead.
+export function livePosition() {
+  if (web && state.index >= 0 && Number.isFinite(web.active.currentTime)) return web.active.currentTime;
+  if (!state.playing) return state.position;
+  const ahead = Math.min((performance.now() - positionAt) / 1000, 1);
+  return state.duration > 0 ? Math.min(state.duration, state.position + ahead) : state.position + ahead;
+}
 
 const report = (result: Result) => { if (!result.ok) set({ error: result.error }); return result; };
 const queueFull = (left: number) => left

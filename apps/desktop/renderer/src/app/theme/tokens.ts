@@ -13,7 +13,7 @@ import { blend, contrast, ensureContrast, LINE_ALPHA, MARK_CONTRAST, TEXT_CONTRA
 //   }
 //
 // Colours are hex. ground is the room, ink is text, soft is secondary text, accent marks and
-// large type, accentText normal-weight text in the accent colour (the current lyric line), line
+// large type, accentText normal-weight text in the accent colour (the current track number), line
 // rules and the selected-row tint (ink over the ground at 16% when absent). Text colours must
 // read at 4.5:1 on the ground and on a selected row, and the accent at 3:1; a colour that falls
 // short is moved (same hue, lighter or darker) until it does, and the theme says so.

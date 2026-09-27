@@ -53,7 +53,7 @@ Mutations return `{ ok: true, value }` or `{ ok: false, error }` and every failu
 - **Menus and commands** register through `registry.ts`. Ids are namespaced by owner (`builtin:play`). Registering an id that is still live throws `RegistryCollision`; dispose the old registration first. Disposers are idempotent and never remove a newer registration with the same id. `registry.scope(owner)` gives an extension its own add functions and one `dispose()` for everything it added.
 - `tracksOf(target)` in `menu.tsx` returns a `Result`. Show its error; don't assume the tracks loaded.
 - **Navigation state** lives in the route. The Records sort is part of the route, so Back returns to the same order and scroll offset.
-- **Contrast.** `--accent` is for marks and large type (3:1 against the ground). `--accent-text` is for normal-weight text: it keeps 4.5:1 against both the ground and the selected-row tint. Use it for the current lyric line and the current track number.
+- **Contrast.** `--accent` is for marks and large type (3:1 against the ground). `--accent-text` is for normal-weight text: it keeps 4.5:1 against both the ground and the selected-row tint. Use it for the current track number. Lyrics stay in ink and soft: the current line is ink and its words fill from soft to ink as they are sung.
 
 ## Browser build
 
@@ -72,6 +72,7 @@ The browser build uses `bridge/previewLibrary.ts` instead of `window.squiggly`. 
 
 - No per-frame clock in app-wide state. The squiggle interpolates between snapshots; views subscribe with selectors.
 - The seek squiggle animates continuously while visible; that is intentional. It draws every frame while playing and 30 frames a second while paused, and draws nothing while the window is hidden. Reduced motion gets a still wave. Other decorative motion stops while paused or hidden.
+- Lyrics run one animation frame loop while playing and visible. It writes each sung word's progress to its span (`--p`, `data-progress`) and re-renders only when the line changes; paused, it paints once. Word times come with the lyrics (`wordTiming`); lines without exact times are estimated by `timeWords()` in `packages/lyrics/words.ts`, the same on desktop and web. Reduced motion lights whole words and drops the blur.
 - Window long lists and page the library. Caches are bounded.
 - Never import Node, Electron, Koffi, server authentication, or the private player protocol into renderer code.
 - Keep passwords out of renderer state and storage; never hand authenticated URLs to components.
