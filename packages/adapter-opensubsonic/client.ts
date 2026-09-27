@@ -8,6 +8,8 @@ import type { PlayableTrack } from '../player-mpv/protocol';
 import { Metrics } from '../core/metrics';
 import { IdSchema, LibraryRequestSchemas } from '../core/validation';
 import { type LrclibOptions, lrclibLyrics, parseLrc } from '../lyrics/lrclib';
+import { timeWords } from '../lyrics/words';
+import { LyricsListSchema, structuredLyrics } from './lyrics';
 
 const DurationSchema = Schema.Number.pipe(Schema.finite(), Schema.nonNegative());
 const CountSchema = DurationSchema.pipe(Schema.int());
@@ -78,12 +80,6 @@ const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Sc
 const SongListSchema = Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(200))) });
 const SimilarSongsSchema = Schema.Struct({ similarSongs: SongListSchema });
 const TopSongsSchema = Schema.Struct({ topSongs: SongListSchema });
-// songLyrics: line starts and the offset are milliseconds; a positive offset shows lyrics sooner.
-const StructuredLyricsSchema = Schema.Struct({
-  synced: Schema.Boolean, offset: Schema.optional(Schema.Number.pipe(Schema.finite())), kind: Schema.optional(Schema.String),
-  line: Schema.optional(Schema.Array(Schema.Struct({ start: Schema.optional(DurationSchema), value: Schema.String.pipe(Schema.maxLength(4096)) })).pipe(Schema.maxItems(5000))),
-});
-const LyricsListSchema = Schema.Struct({ lyricsList: Schema.Struct({ structuredLyrics: Schema.optional(Schema.Array(StructuredLyricsSchema).pipe(Schema.maxItems(50))) }) });
 const LegacyLyricsSchema = Schema.Struct({ lyrics: Schema.optional(Schema.Struct({ value: Schema.optional(Schema.String.pipe(Schema.maxLength(200_000))) })) });
 // Saved queues. Positions are milliseconds. Legacy servers name the current song; indexBasedQueue gives its index.
 const QueueFields = {
@@ -150,21 +146,6 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max
   ? Effect.fail(new ServerError('The server returned more tracks than requested.')) : Effect.succeed((songs ?? []).map(song => toTrack(song)));
-// Picks the main synced layer when there is one, otherwise the fullest unsynced layer.
-function structuredLyrics(entries: readonly Schema.Schema.Type<typeof StructuredLyricsSchema>[]): Lyrics | null {
-  const candidates = entries.filter(entry => !entry.kind || entry.kind === 'main').map((entry): Lyrics => {
-    const lines = entry.line ?? [];
-    const synced = entry.synced && lines.every(line => line.start !== undefined);
-    const offset = entry.offset ?? 0;
-    return {
-      synced, source: 'server',
-      lines: synced
-        ? lines.map(line => ({ start: Math.max(0, Math.round((line.start ?? 0) - offset) / 1000), text: line.value.trim() })).sort((a, b) => a.start - b.start)
-        : lines.map(line => ({ start: null, text: line.value.trim() })),
-    };
-  }).filter(lyrics => lyrics.lines.some(line => line.text));
-  return candidates.sort((a, b) => Number(b.synced) - Number(a.synced) || b.lines.length - a.lines.length)[0] ?? null;
-}
 const playlistEditMessages: Record<number, string> = {
   50: 'This playlist cannot be changed. Only its owner can edit it, and smart or imported playlists are read-only.',
   70: 'This playlist no longer exists. Refresh your playlists.',
@@ -371,11 +352,14 @@ export class SubsonicClient {
   // Server lyrics (embedded or sidecar .lrc) come first. LRCLIB is contacted only when lookup
   // is true and the server has none; it receives the song's title, artist, album and duration.
   lyrics(query: LyricsQuery, lookup: boolean) {
-    const server = this.supports('songLyrics').pipe(Effect.flatMap(structured => structured
-      ? this.request('getLyricsBySongId', LyricsListSchema, { id: query.id }).pipe(Effect.map(result => structuredLyrics(result.lyricsList.structuredLyrics ?? [])))
+    // songLyrics version 2 adds word cues when asked for them (enhanced=true).
+    const structured = Effect.all([this.supports('songLyrics'), this.supports('songLyrics', 2)]);
+    const server = structured.pipe(Effect.flatMap(([v1, v2]) => v1 || v2
+      ? this.request('getLyricsBySongId', LyricsListSchema, v2 ? { id: query.id, enhanced: 'true' } : { id: query.id })
+        .pipe(Effect.map(result => structuredLyrics(result.lyricsList.structuredLyrics ?? [])))
       : this.request('getLyrics', LegacyLyricsSchema, { artist: query.artist, title: query.title }).pipe(Effect.map((result): Lyrics | null => {
         const parsed = result.lyrics?.value ? parseLrc(result.lyrics.value) : null;
-        return parsed && { ...parsed, source: 'server' };
+        return parsed && { ...timeWords(parsed), source: 'server' };
       }))),
     // An unknown song simply has no server lyrics.
     Effect.catchIf(error => error instanceof ServerError && error.code === 70, () => Effect.succeed(null)));

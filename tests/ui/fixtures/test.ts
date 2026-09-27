@@ -4,7 +4,7 @@ import { startPreview, webPassword } from './server';
 
 export { expect };
 export { webPassword };
-export { special, playlistIds, lyricLines, trackOf } from './library';
+export { special, playlistIds, lyricLines, wordLines, trackOf } from './library';
 
 type Preview = Awaited<ReturnType<typeof startPreview>>;
 

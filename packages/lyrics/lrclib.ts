@@ -1,28 +1,38 @@
 import { Effect, Schema } from 'effect';
 import type { Lyrics, LyricsQuery } from '../core/contracts';
+import { attachSpaces, type LyricLines, lineSpan, round, timeWords, weightOf } from './words';
 
-export type LyricLines = Pick<Lyrics, 'synced' | 'lines'>;
-const round = (seconds: number) => Math.max(0, Math.round(seconds * 1000) / 1000);
+export type { LyricLines };
+const seconds = (minutes: string, whole: string, fraction: string | undefined) => Number(minutes) * 60 + Number(whole) + (fraction ? Number(`0.${fraction}`) : 0);
+type Timed = { start: number; text: string; words: { start: number; end: number | null; text: string }[] | null };
 
 // LRC text: `[mm:ss.xx]` or `[mm:ss.xxx]` stamps (several may share one line), `[ar:...]`-style
-// metadata, `<mm:ss.xx>` word stamps from enhanced LRC, and an optional `[offset:+/-ms]` where a
-// positive offset shows lyrics sooner. Text without any stamp is returned as unsynced lines.
+// metadata, `<mm:ss.xx>` word stamps from enhanced LRC (A2), and an optional `[offset:+/-ms]`
+// where a positive offset shows lyrics sooner. Text without any stamp is returned as unsynced
+// lines. Word stamps become the line's words; the text shown has them removed.
 const stampPattern = /^\[(\d{1,4}):(\d{1,2})(?:[.:](\d{1,3}))?\]/;
+const wordPattern = /<(\d{1,4}):(\d{1,2})(?:[.:](\d{1,3}))?>/g;
 const tagPattern = /^\[([a-zA-Z#]+):([^\]]*)\]\s*$/;
 export function parseLrc(text: string): LyricLines | null {
-  const timed: { start: number; text: string }[] = [];
+  const timed: Timed[] = [];
   const plain: string[] = [];
   let offsetMs = 0;
   for (const raw of text.split(/\r\n|\r|\n/)) {
     let line = raw.trim();
     const starts: number[] = [];
     for (let match = stampPattern.exec(line); match; match = stampPattern.exec(line)) {
-      starts.push(Number(match[1]) * 60 + Number(match[2]) + (match[3] ? Number(`0.${match[3]}`) : 0));
+      starts.push(seconds(match[1], match[2], match[3]));
       line = line.slice(match[0].length).trimStart();
     }
     if (starts.length) {
-      const words = line.replace(/<\d{1,4}:\d{1,2}(?:[.:]\d{1,3})?>/g, '').replace(/\s+/g, ' ').trim();
-      for (const start of starts) timed.push({ start, text: words });
+      const { text, words } = wordStamps(line);
+      // Word stamps are absolute; when one line is stamped several times, they belong to the
+      // stamp nearest the first word and move with the others.
+      const first = words?.find(word => word.start !== null)?.start ?? null;
+      const reference = first === null ? starts[0] : starts.reduce((a, b) => Math.abs(b - first) < Math.abs(a - first) ? b : a);
+      for (const start of starts) timed.push({ start, text, words: words && words.map(word => ({
+        text: word.text, start: (word.start ?? reference) + start - reference, end: word.end === null ? null : word.end + start - reference,
+      })) });
       continue;
     }
     const tag = tagPattern.exec(line);
@@ -34,14 +44,47 @@ export function parseLrc(text: string): LyricLines | null {
   }
   if (timed.length) {
     if (!timed.some(line => line.text)) return null;
+    const shift = (at: number) => round(at - offsetMs / 1000);
     // Stable sort keeps the file's order for lines that share a stamp.
-    return { synced: true, lines: timed.map(line => ({ start: round(line.start - offsetMs / 1000), text: line.text })).sort((a, b) => a.start - b.start) };
+    const sorted = timed.map(line => ({ ...line, start: shift(line.start) })).sort((a, b) => a.start - b.start);
+    return { synced: true, lines: sorted.map((line, i) => {
+      if (!line.words) return { start: line.start, text: line.text };
+      // A last word without a closing stamp ends by estimate, before the next line.
+      const next = sorted.slice(i + 1).find(other => other.start > line.start)?.start ?? null;
+      const words = line.words.map(word => {
+        const start = shift(word.start);
+        const end = word.end === null ? round(start + lineSpan(start, next, weightOf(word.text))) : Math.max(start, shift(word.end));
+        return { start, end, text: word.text };
+      });
+      return { start: line.start, text: line.text, words };
+    }) };
   }
   // Keep single blank lines between stanzas; drop leading, trailing and repeated blanks.
   const lines = plain.filter((line, index) => line || (index > 0 && plain[index - 1] !== '')).map(text => ({ start: null, text }));
   while (lines.length && !lines[lines.length - 1].text) lines.pop();
   while (lines.length && !lines[0].text) lines.shift();
   return lines.length ? { synced: false, lines } : null;
+}
+
+// Splits a line at its word stamps. Each stamp starts a word and ends the one before; text before
+// the first stamp starts with the line (start null). Spaces are collapsed as in the plain text.
+function wordStamps(line: string): { text: string; words: { start: number | null; end: number | null; text: string }[] | null } {
+  const pieces: { start: number | null; end: number | null; text: string }[] = [];
+  let from = 0, at: number | null = null;
+  for (const match of line.matchAll(wordPattern)) {
+    const time = seconds(match[1], match[2], match[3]);
+    pieces.push({ start: at, end: time, text: line.slice(from, match.index) });
+    at = time; from = match.index + match[0].length;
+  }
+  pieces.push({ start: at, end: null, text: line.slice(from) });
+  const text = pieces.map(piece => piece.text).join('').replace(/\s+/g, ' ').trim();
+  if (pieces.length === 1 || !text) return { text, words: null };
+  for (const piece of pieces) piece.text = piece.text.replace(/\s+/g, ' ');
+  const words = attachSpaces(pieces);
+  if (!words.length) return { text, words: null };
+  words[0].text = words[0].text.trimStart();
+  words[words.length - 1].text = words[words.length - 1].text.trimEnd();
+  return { text, words: words.map(word => ({ ...word, text: word.text.replace(/\s+/g, ' ') })).filter(word => word.text) };
 }
 
 // LRCLIB (https://lrclib.net) is a third-party service. Callers must only reach it when the
@@ -63,7 +106,7 @@ const failed = 'Lyrics lookup failed. Try again later.';
 function fromRecord(record: LrclibRecord): Lyrics | null {
   if (record.instrumental) return null;
   const parsed = (record.syncedLyrics && parseLrc(record.syncedLyrics)) || (record.plainLyrics && parseLrc(record.plainLyrics)) || null;
-  return parsed && { ...parsed, source: 'lrclib' };
+  return parsed && { ...timeWords(parsed), source: 'lrclib' };
 }
 const normalize = (text: string | null | undefined) => (text ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
 // Search is fuzzy: accept only results within 3 seconds of a known duration, or with the same

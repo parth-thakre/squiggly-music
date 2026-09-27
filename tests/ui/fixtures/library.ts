@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track } from '../../../packages/core/contracts';
 import type { SubsonicClient } from '../../../packages/adapter-opensubsonic/client';
+import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
 
 // A deterministic stand-in for a Navidrome account, passed to the real preview plugin as its
@@ -26,9 +27,27 @@ export const special = {
   shortStop: 'tr-1-3', // 8 s: never reported finished
   thirtyTwo: 'tr-1-4', // 32 s: finished after 16 s of listening
   tailLight: 'tr-1-5', // 20 s
+  wordByWord: 'tr-4-3', // 24 s on Northern Wires, lyrics with exact word times
 } as const;
 const specialTracks: [string, number][] = [['Long Run', 45], ['Lyric Line', 30], ['Short Stop', 8], ['Thirty Two', 32], ['Tail Light', 20]];
 export const lyricLines = Array.from({ length: 10 }, (_, i) => ({ start: i * 3, text: `Line ${i + 1} of the lyric` }));
+// Word by Word: a line every 4 s from 1 s, each word with its own start and end, the last word
+// done well before the next line. The times are uneven on purpose, unlike an estimate.
+const wordTimes: [number, [string, number][]][] = [
+  [1, [['Every ', .9], ['word ', .3], ['arrives ', .5], ['on ', .2], ['time', 1]]],
+  [5, [['Each ', .3], ['one ', .3], ['lights ', 1.2], ['before ', .4], ['the ', .2], ['next', .6]]],
+  [9, [['Slow', .8], ['ly ', .4], ['through ', .4], ['the ', .2], ['longest ', 1.2], ['vowel', .4]]],
+  [13, [['Then ', .4], ['the ', .2], ['chorus ', .9], ['comes ', .5], ['around', 1]]],
+  [17, [['And ', .3], ['the ', .2], ['last ', .5], ['word ', .5], ['lingers', 1.5]]],
+];
+export const wordLines = wordTimes.map(([start, words]) => {
+  let at = start;
+  return { start, text: words.map(([text]) => text).join(''), words: words.map(([text, length]) => {
+    const word = { start: Math.round(at * 1000) / 1000, end: Math.round((at + length) * 1000) / 1000, text };
+    at += length;
+    return word;
+  }) };
+});
 
 export const playlistIds = { road: 'pl-road', readonly: 'pl-server' } as const;
 
@@ -46,7 +65,7 @@ function buildLibrary() {
     const year = 2024 - i;
     const genre = genres[k % genres.length];
     const songs: [string, number][] = k === 1 ? specialTracks
-      : Array.from({ length: 3 + (k % 3) }, (_, n) => [`${trackWords[n]} ${k}`, 12 + ((k + n) % 5) * 3]);
+      : Array.from({ length: 3 + (k % 3) }, (_, n) => k === 4 && n === 2 ? ['Word by Word', 24] : [`${trackWords[n]} ${k}`, 12 + ((k + n) % 5) * 3]);
     const albumTracks = songs.map(([title, duration], n): Track => ({
       id: `tr-${k}-${n + 1}`, title, artist: artist.name, album: name, duration,
       source: 'navidrome', sourceFormat: 'wav', sourceSampleRate: 8000, sourceBitDepth: 16,
@@ -195,7 +214,8 @@ export class FakeNavidrome {
     topSongs: (artistId: string, count: number) => this.op('topSongs', [artistId, count], () =>
       Effect.succeed(catalog.tracks.filter(t => t.artistId === artistId).slice(0, count).map(t => this.track(t.id)))),
     lyrics: (query: LyricsQuery, lookup: boolean) => this.op('lyrics', [query, lookup], () =>
-      Effect.succeed<Lyrics | null>(query.id === special.lyricLine ? { synced: true, source: 'server', lines: lyricLines } : null)),
+      Effect.succeed<Lyrics | null>(query.id === special.lyricLine ? { ...timeWords({ synced: true, lines: lyricLines }), source: 'server' }
+        : query.id === special.wordByWord ? { ...timeWords({ synced: true, lines: wordLines }), source: 'server' } : null)),
     reportPlay: (id: string, event: 'started' | 'finished') => this.op('reportPlay', [id, event], () => {
       this.reports.push({ id, event });
       return Effect.void;

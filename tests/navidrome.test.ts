@@ -212,7 +212,7 @@ async function subsonicFixture(mode: 'opensubsonic' | 'legacy') {
     const endpoint = url.pathname.replace(/^\/rest\/(\w+)\.view$/, '$1');
     if (endpoint === 'getOpenSubsonicExtensions') {
       if (mode === 'legacy') return void response.writeHead(404).end();
-      return reply({ openSubsonicExtensions: ['formPost', 'songLyrics', 'indexBasedQueue', 'topSongsByArtistId'].map(name => ({ name, versions: [1] })) });
+      return reply({ openSubsonicExtensions: ['formPost', 'songLyrics', 'indexBasedQueue', 'topSongsByArtistId'].map(name => ({ name, versions: name === 'songLyrics' ? [1, 2] : [1] })) });
     }
     if (params.get('u') !== 'listener' || params.get('t') !== createHash('md5').update(password + params.get('s')).digest('hex')) return fail(40);
     requests.push({ endpoint, method: request.method!, params });
@@ -227,10 +227,19 @@ async function subsonicFixture(mode: 'opensubsonic' | 'legacy') {
         if (mode === 'opensubsonic' ? params.get('id') !== 'ar1' || params.has('artist') : params.get('artist') !== 'Artist' || params.has('id')) return reply({ topSongs: {} });
         return reply({ topSongs: { song: [song('s5'), song('s6', { artistId: 'someone-else' })] } });
       case 'getLyricsBySongId':
+        // songLyrics 2 (enhanced=true): word cues for the main voice and a backing voice.
         if (id === 's1') return reply({ lyricsList: { structuredLyrics: [
-          { lang: 'eng', synced: false, line: [{ value: 'Plain' }] },
-          { lang: 'xxx', synced: true, offset: 100, line: [{ start: 2000, value: ' Second ' }, { start: 500, value: 'First' }, { start: 3000, value: '' }] },
-          { lang: 'deu', synced: true, kind: 'translation', line: Array.from({ length: 9 }, (_, index) => ({ start: index * 1000, value: 'Übersetzung' })) },
+          { kind: 'main', lang: 'eng', synced: false, line: [{ value: 'Plain' }] },
+          { kind: 'main', lang: 'xxx', synced: true, offset: 100,
+            line: [{ start: 2000, value: ' Second line (oh) ' }, { start: 500, value: 'First' }, { start: 3000, value: '' }],
+            agents: [{ id: 'lead', role: 'main' }, { id: 'echo', role: 'bg', name: 'Echo' }],
+            cueLine: [
+              { index: 0, agentId: 'echo', start: 2600, end: 2900, value: '(oh)', cue: [{ start: 2600, end: 2900, value: '(oh)', byteStart: 0, byteEnd: 3 }] },
+              { index: 0, agentId: 'lead', start: 2000, end: 2900, value: 'Second line', cue: [
+                { start: 2000, end: 2400, value: 'Second', byteStart: 0, byteEnd: 5 }, { start: 2500, end: 2900, value: 'line', byteStart: 7, byteEnd: 10 }] },
+              { index: 1, agentId: 'lead', start: 500, end: 1500, value: 'First', cue: [{ start: 500, value: 'First', byteStart: 0, byteEnd: 4 }] },
+            ] },
+          { kind: 'translation', lang: 'deu', synced: true, line: Array.from({ length: 9 }, (_, index) => ({ start: index * 1000, value: 'Übersetzung' })) },
         ] } });
         return id === 's2' ? reply({ lyricsList: {} }) : fail(70);
       case 'getLyrics': return reply(params.get('title') === 'Song s1' && params.get('artist') === 'Artist' ? { lyrics: { artist: 'Artist', title: 'Song s1', value: 'Line one\nLine two' } } : { lyrics: {} });
@@ -296,19 +305,25 @@ it.each(['opensubsonic', 'legacy'] as const)('edits playlists, reads radio, lyri
     expect(sent('getArtist').length).toBe(mode === 'opensubsonic' ? 0 : 1);
 
     // Lyrics: the server's synced main layer, in seconds with its offset applied. LRCLIB only when allowed and needed.
+    // With songLyrics 2 the main voice's cues time the words; the backing voice's words in the
+    // line light whole when the main voice finishes. A cue without an end lasts to its line's end.
     const serverLyrics = mode === 'opensubsonic'
-      ? { synced: true, source: 'server', lines: [{ start: 0.4, text: 'First' }, { start: 1.9, text: 'Second' }, { start: 2.9, text: '' }] }
-      : { synced: false, source: 'server', lines: [{ start: null, text: 'Line one' }, { start: null, text: 'Line two' }] };
+      ? { synced: true, source: 'server', wordTiming: 'exact', lines: [
+        { start: 0.4, end: 1.4, text: 'First', words: [{ start: 0.4, end: 1.4, text: 'First' }] },
+        { start: 1.9, end: 2.8, text: 'Second line (oh)', words: [{ start: 1.9, end: 2.3, text: 'Second ' }, { start: 2.4, end: 2.8, text: 'line ' }, { start: 2.8, end: 2.8, text: '(oh)' }] },
+        { start: 2.9, text: '' }] }
+      : { synced: false, source: 'server', wordTiming: null, lines: [{ start: null, text: 'Line one' }, { start: null, text: 'Line two' }] };
     expect(await run(client.lyrics(queryFor('s1'), true))).toEqual(serverLyrics);
     expect(await run(client.lyrics(queryFor('s2'), false))).toBeNull();
     expect(fixture.lrclibRequests).toEqual([]);
-    expect(await run(client.lyrics(queryFor('s2'), true))).toEqual({ synced: true, source: 'lrclib', lines: [
+    expect(await run(client.lyrics(queryFor('s2'), true))).toMatchObject({ synced: true, source: 'lrclib', wordTiming: 'estimated', lines: [
       { start: 1, text: 'Hook' }, { start: 4.25, text: 'From LRCLIB' }, { start: 8.5, text: 'Hook' },
     ] });
     expect(fixture.lrclibRequests.map(params => Object.fromEntries(params))).toEqual([{ track_name: 'Song s2', artist_name: 'Artist', album_name: 'Record', duration: '200' }]);
     if (mode === 'opensubsonic') {
       expect(await run(client.lyrics(queryFor('missing'), false))).toBeNull();
       expect(sent('getLyricsBySongId').map(({ params }) => params.get('id'))).toEqual(['s1', 's2', 's2', 'missing']);
+      expect(sent('getLyricsBySongId').every(({ params }) => params.get('enhanced') === 'true')).toBe(true);
     } else expect(sent('getLyrics').map(({ params }) => params.get('title'))).toEqual(['Song s1', 'Song s2', 'Song s2']);
     expect(JSON.stringify(fixture.lrclibRequests.map(String))).not.toMatch(/listener|fixture-password|t=/);
 

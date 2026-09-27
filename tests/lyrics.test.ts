@@ -3,13 +3,14 @@ import { describe, expect, it, vi } from 'vitest';
 import { lrclibLyrics, lrclibUserAgent, parseLrc } from '../packages/lyrics/lrclib';
 
 describe('LRC parser', () => {
-  it('reads centisecond and millisecond stamps, skips metadata and strips word stamps', () => {
+  it('reads centisecond and millisecond stamps, skips metadata and takes word stamps out of the text', () => {
     expect(parseLrc([
       '[ar:Artist]', '[ti:Song]', '[al:Record]', '[by:someone]', '[length: 03:20]', '[#:comment]', '',
-      '[00:01.5]First', '[00:12.34] Second  line ', '[01:02.345]<01:02.345>Word <01:03.00>stamps', '[1:05]No fraction', '[00:07:50]Colon fraction',
+      '[00:01.5]First', '[00:12.34] Second  line ', '[01:02.345]<01:02.345>Word <01:03.00>stamps<01:03.50>', '[1:05]No fraction', '[00:07:50]Colon fraction',
     ].join('\n'))).toEqual({ synced: true, lines: [
       { start: 1.5, text: 'First' }, { start: 7.5, text: 'Colon fraction' }, { start: 12.34, text: 'Second line' },
-      { start: 62.345, text: 'Word stamps' }, { start: 65, text: 'No fraction' },
+      { start: 62.345, text: 'Word stamps', words: [{ start: 62.345, end: 63, text: 'Word ' }, { start: 63, end: 63.5, text: 'stamps' }] },
+      { start: 65, text: 'No fraction' },
     ] });
   });
   it('expands several stamps on one line, keeps timed blank lines and ignores untimed text', () => {
@@ -39,8 +40,8 @@ const run = (task: Effect.Effect<unknown, Error>) => Effect.runPromise(Effect.ei
 describe('LRCLIB', () => {
   it('asks the exact-match endpoint with all four fields and a descriptive User-Agent', async () => {
     const { mock, options } = service({ '/api/get': () => Response.json(record()) });
-    expect(await Effect.runPromise(lrclibLyrics({ ...query, duration: 199.6 }, options))).toEqual({
-      synced: true, source: 'lrclib', lines: [{ start: 1, text: 'Synced one' }, { start: 2, text: 'Synced two' }],
+    expect(await Effect.runPromise(lrclibLyrics({ ...query, duration: 199.6 }, options))).toMatchObject({
+      synced: true, source: 'lrclib', wordTiming: 'estimated', lines: [{ start: 1, text: 'Synced one' }, { start: 2, text: 'Synced two' }],
     });
     const [url, init] = mock.mock.calls[0];
     expect(Object.fromEntries(new URL(String(url)).searchParams)).toEqual({ track_name: 'Song', artist_name: 'Artist', album_name: 'Record', duration: '200' });
@@ -50,13 +51,13 @@ describe('LRCLIB', () => {
   });
   it('falls back to plain lyrics when a record has no synced text', async () => {
     const { options } = service({ '/api/get': () => Response.json(record({ syncedLyrics: null })) });
-    expect(await Effect.runPromise(lrclibLyrics(query, options))).toEqual({ synced: false, source: 'lrclib', lines: [{ start: null, text: 'Plain one' }, { start: null, text: 'Plain two' }] });
+    expect(await Effect.runPromise(lrclibLyrics(query, options))).toEqual({ synced: false, source: 'lrclib', wordTiming: null, lines: [{ start: null, text: 'Plain one' }, { start: null, text: 'Plain two' }] });
   });
   it('searches when the exact match is missing and picks a synced result within 3 seconds', async () => {
     const { mock, options } = service({ '/api/search': () => Response.json([
       record({ duration: 250, syncedLyrics: '[00:01.00]Wrong length' }), record({ syncedLyrics: null, duration: 201 }), record({ duration: 197.5, syncedLyrics: '[00:03.00]Right' }),
     ]) });
-    expect(await Effect.runPromise(lrclibLyrics(query, options))).toEqual({ synced: true, source: 'lrclib', lines: [{ start: 3, text: 'Right' }] });
+    expect(await Effect.runPromise(lrclibLyrics(query, options))).toMatchObject({ synced: true, source: 'lrclib', wordTiming: 'estimated', lines: [{ start: 3, text: 'Right' }] });
     expect(mock.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/get', '/api/search']);
     expect(Object.fromEntries(new URL(String(mock.mock.calls[1][0])).searchParams)).toEqual({ track_name: 'Song', artist_name: 'Artist', album_name: 'Record' });
   });

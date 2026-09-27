@@ -81,9 +81,20 @@ export interface LibraryApi {
   coverUrl(coverArt: string, size: number): string;
 }
 export interface LyricsQuery { id: string; title: string; artist: string; album: string; duration: number | null }
+// Times are seconds from the beginning of the song. A synced line's words, joined, spell its
+// text exactly: the space after a word travels with that word.
+export interface LyricWord { start: number; end: number; text: string }
+export interface LyricLine {
+  // null for unsynced lyrics. end is when the singing of the line stops, when known.
+  start: number | null; end?: number | null; text: string;
+  // Synced lines with text only.
+  words?: LyricWord[];
+}
 export interface Lyrics {
-  // start is seconds from the beginning of the song; null for unsynced lyrics.
-  synced: boolean; lines: { start: number | null; text: string }[];
+  synced: boolean; lines: LyricLine[];
+  // 'exact' when every line came with its own word times (OpenSubsonic cues, enhanced LRC);
+  // 'estimated' when some were spread across the line by length; null for unsynced lyrics.
+  wordTiming: 'exact' | 'estimated' | null;
   source: 'server' | 'lrclib';
 }
 export interface SavedQueue { tracks: Track[]; currentIndex: number; positionSeconds: number; changed: string | null; changedBy: string | null }
