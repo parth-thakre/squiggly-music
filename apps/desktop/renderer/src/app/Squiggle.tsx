@@ -6,6 +6,9 @@ import { time } from './ui';
 // the window is visible: every frame while playing, a calmer 30 frames a second while paused.
 // A hidden window draws nothing, and reduced motion gets a still wave. Position is
 // interpolated locally between the occasional snapshots; no clock lives in app state.
+// Radians per second the wave travels, and how tall it stands while paused (1 is full height).
+const PLAYING_SPEED = 2.4, PAUSED_SPEED = 1.3, PAUSED_LIFT = .82;
+
 export function Squiggle({ label, identity, position, duration, playing, color, rest, onSeek }: {
   label: string;
   // The queue entry playing. A drag that starts on one entry never seeks another.
@@ -37,6 +40,7 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     // The system setting or the theme's motion token (reduced or none) both mean a still wave.
     const reduced = reducedMotion;
     let frame = 0, timer: ReturnType<typeof setTimeout> | undefined, last = performance.now(), phase = 0, spoken = '';
+    let speed = latest.current.playing ? PLAYING_SPEED : PAUSED_SPEED, lift = latest.current.playing ? 1 : PAUSED_LIFT;
     const draw = (now: number) => {
       const { position: value, duration: length, playing: active, at, color: ink, rest: line } = latest.current;
       const elapsed = active ? Math.min((now - at) / 1000, 1) : 0;
@@ -71,7 +75,7 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
         context.strokeStyle = ink; context.beginPath();
         for (let x = left; ; x = Math.min(x + 1, stop)) {
           const t = Math.max(0, Math.min(1, (stop - x) / taper, (x - left) / taper));
-          const y = mid + Math.sin((x - left) / wavelength * 2 * Math.PI - phase) * 4.5 * t;
+          const y = mid + Math.sin((x - left) / wavelength * 2 * Math.PI - phase) * 4.5 * lift * t;
           if (x === left) context.moveTo(x, y); else context.lineTo(x, y);
           if (x >= stop) break;
         }
@@ -83,14 +87,22 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     const still = () => document.hidden || reduced.matches;
     const tick = (now: number) => {
       // Slower while paused: still alive, clearly not playing.
-      phase += Math.min(now - last, 100) / 1000 * (latest.current.playing ? 2.2 : 1.2);
+      // Playing runs a touch faster and taller than paused, and the change eases in over about
+      // half a second, so pressing play visibly winds the wave up.
+      const dt = Math.min(now - last, 100) / 1000;
+      const ease = 1 - Math.exp(-dt / .18);
+      speed += ((latest.current.playing ? PLAYING_SPEED : PAUSED_SPEED) - speed) * ease;
+      lift += ((latest.current.playing ? 1 : PAUSED_LIFT) - lift) * ease;
+      phase += dt * speed;
       last = now;
       draw(now);
       schedule();
     };
     const schedule = () => {
       if (still()) return;
-      if (latest.current.playing) frame = requestAnimationFrame(tick);
+      // Every frame while playing, and while the speed is still easing between the two.
+      const settling = Math.abs(speed - (latest.current.playing ? PLAYING_SPEED : PAUSED_SPEED)) > .02;
+      if (latest.current.playing || settling) frame = requestAnimationFrame(tick);
       else timer = setTimeout(() => { frame = requestAnimationFrame(tick); }, 1000 / 30);
     };
     const refresh = () => {

@@ -1,6 +1,6 @@
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
 import type { AudioDevice, Track } from '../../../../../packages/core/contracts';
-import { current, optimisticVolume, player, usePlayer } from './player';
+import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
@@ -8,6 +8,7 @@ import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
+import { useSwipeSongs } from './swipe';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView } from './views';
 
 onMenuError(message => player.showError(message));
@@ -136,6 +137,9 @@ const Deck = memo(function Deck() {
   const [sheetLyrics, setSheetLyrics] = useState(false);
   const route = useRoute();
   const palette = useContext(PaletteContext);
+  const entry = usePlayer(currentEntry);
+  const deck = useRef<HTMLElement>(null);
+  useSwipeSongs(deck, entry ?? track?.id);
   if (!track) return <aside className="deck" aria-label="Now playing">
     <div className="cover cover-empty" aria-hidden="true" />
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
@@ -149,7 +153,7 @@ const Deck = memo(function Deck() {
   const open = () => nav.openOverlay(() => setExpanded(true), () => setExpanded(false));
   shell.openNowPlaying = expanded ? null : open;
   const toggleLyrics = () => route.view === 'lyrics' ? nav.back() : nav.go({ view: 'lyrics' });
-  return <aside className={`deck${expanded ? ' open' : ''}${expanded && sheetLyrics ? ' lyrics-open' : ''}`} aria-label="Now playing"
+  return <aside ref={deck} className={`deck${expanded ? ' open' : ''}${expanded && sheetLyrics ? ' lyrics-open' : ''}`} aria-label="Now playing"
     onContextMenu={event => { if (!(event.target as HTMLElement).closest('input, select')) openMenu(event, { kind: 'tracks', tracks: [track] }); }}>
     <div className="deck-top">
       <div className="deck-sheet-bar">
