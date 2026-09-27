@@ -1,121 +1,78 @@
-# Squiggly Music
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.png">
+    <img alt="Squiggly" src="docs/brand/lockup-light.png" width="400">
+  </picture>
+</h1>
 
-An audiophile-first Electron player prototype with React, Effect, and native libmpv playback. The renderer is a replaceable test shell. Audio correctness, process isolation, and inspectable behavior come first.
+Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-## Run
+It's early software. It runs on Windows and Fedora, and a browser version works on phones.
 
-Use Node 22.16 or newer and npm. A graphical desktop and a compatible libmpv runtime are required for desktop playback.
+## What it does
+
+- Browse records, artists, playlists, and favorites on your server, or play files from your computer.
+- Edit the queue and your playlists. The queue follows you between devices through the server.
+- Start a radio station from any song, record, or artist.
+- Build automatic playlists from your library by genre, by decade, and from what's new.
+- Show synced lyrics from your files. Looking up missing lyrics on LRCLIB is off until you turn it on.
+- Run as a mini player or from the tray, with media keys, and with MPRIS on Linux.
+- Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.
+
+It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% it tells you that's attenuation.
+
+## Install
+
+Download a build from [Releases](https://github.com/parth-thakre/squiggly-music/releases), along with `SHA256SUMS` from the same release, and check it:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+On Windows, run the setup program or the portable exe. They aren't signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.
+
+On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
+
+To connect, enter your Navidrome address with any port or subpath (`https://music.example.com/navidrome` works), your username, and your password. The password stays in memory for the session. Squiggly doesn't save it.
+
+## Run from source
+
+You need Node 22.16 or newer and libmpv (`mpv-libs` on Fedora).
 
 ```bash
 npm ci
 npm run dev
 ```
 
-The player searches for `libmpv.so.2` or `.1` on Linux, `libmpv.2.dylib` on macOS, and `mpv-2.dll` or `libmpv-2.dll` on Windows. Set `SQUIGGLY_LIBMPV_PATH` to an absolute library path if it is not discoverable. Omit this override on systems with a normal libmpv installation. Setting it to a missing path makes the engine unavailable; it does not fall back to system libraries. Its dependent libraries must also be available to the OS loader. A standalone `mpv` executable is not sufficient.
+If libmpv isn't on the loader path, set `SQUIGGLY_LIBMPV_PATH` to the library file. Audio runs in a separate Node process that uses the `node` on your PATH, or `SQUIGGLY_NODE_PATH`. Installed builds bring their own Node. The separate process exists because libmpv crashed inside Electron's utility process.
 
-The audio host launches `node` from PATH, or the absolute executable in `SQUIGGLY_NODE_PATH`. This development dependency is deliberate. Loading the Fedora libmpv build into Electron 44's utility process crashed during native initialization, while standalone Node succeeded. A release must ship a separately validated host runtime instead of assuming users have Node installed.
-
-On Fedora, the runtime package is `mpv-libs`. An optional developer setup is to extract a Fedora runtime under `.local/runtime`. This per-machine setup is untracked and absent in a fresh checkout. If you have created that extraction, run:
+## Browser version
 
 ```bash
-SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \
-LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run dev
+SQUIGGLY_PREVIEW_NAVIDROME_URL=https://music.example.com \
+SQUIGGLY_PREVIEW_NAVIDROME_USER=you \
+SQUIGGLY_PREVIEW_NAVIDROME_PASSWORD='your navidrome password' \
+SQUIGGLY_WEB_PASSWORD='a long password for this page' \
+npm run web
 ```
 
-That local runtime is machine-specific, ignored by Git, and not a redistributable app bundle. Other platforms still need native validation and packaging.
+This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv, and the signal-path line says so.
 
-For a browser-only UI preview:
+## Tests
 
 ```bash
-npm run preview
+npm run check     # typecheck, build, unit and integration tests
+npm run test:ui   # the real interface in Chromium, against a fake Navidrome
 ```
 
-The preview does not have an Electron bridge, does not play audio, and does not invent diagnostic values. For a named preview host, set `SQUIGGLY_PREVIEW_HOST` to that exact hostname. The preview server binds to all interfaces for the collaborative browser; it is a development server, not an authenticated deployment.
+The libmpv tests only decode audio when `SQUIGGLY_LIBMPV_PATH` points at a library. Otherwise they skip. [docs/development.md](docs/development.md) has the rest.
 
-## Implemented slice
+## More
 
-- Sandboxed Electron renderer with an allowlisted, runtime-validated preload API.
-- libmpv client API through Koffi's native FFI, hosted in a separate Node process. Audio samples never pass through JavaScript.
-- Local file selection, queue replacement, track selection, play, pause, stop, previous/next, seek, attenuation, and output-device selection.
-- Session-only Navidrome/OpenSubsonic login, server identification, paged album browsing, and original-stream requests. No credentials are stored on disk.
-- A native playlist configured for gapless playback. This is not yet an end-to-end gapless certification.
-- Source metadata, decoder/output formats, processing settings, MPV cache throughput and buffer time, with unknown values left unknown.
-- Process CPU/working-set memory, player-to-main IPC payload rate, bounded latency samples, pending operations, and main event-loop timing.
-- A manually exported diagnostic report that omits credentials, stream URLs, local file paths, track metadata, and server addresses.
+- [docs/packaging.md](docs/packaging.md) covers installers, pinned runtimes, releases, and checksums.
+- [docs/audio.md](docs/audio.md) explains what the signal-path readout can and can't tell you.
+- [docs/ui-handoff.md](docs/ui-handoff.md) describes how the interface is put together.
 
-## Connect Navidrome
+## License
 
-In the desktop app, choose **Connect a server**, enter your Navidrome server address, username, and password, then connect. Include any port or reverse-proxy subpath, such as `http://localhost:4533` or `https://music.example.com/navidrome`. Use HTTPS outside a trusted local network.
-
-Use the server's base address, not its web UI route. An explicit API endpoint such as `/navidrome/rest/ping.view` is also accepted. Bare `/app` and `/rest` suffixes are preserved because either can be a configured server subpath.
-
-The Library opens after login. Browse newest albums in pages of 48, use Refresh after a server scan, and select an album to play it through libmpv. The connector uses Navidrome's OpenSubsonic API with salted token authentication and requests original audio with `format=raw`.
-
-Credentials last only for the current session. Disconnecting or replacing a connection clears the previous native playlist and its stream tokens. A failed replacement leaves the existing session connected. Browser preview cannot connect to a server or play audio.
-
-The connector tests include a local Navidrome-compatible HTTP fixture covering authentication, subpaths, album paging, metadata, and authenticated stream retrieval. They do not replace testing against a live Navidrome installation.
-
-## Audio policy
-
-Ignore external MPV config and scripts. Request original server streams. Start at unity player volume, disable ReplayGain, and do not add EQ or crossfade. Volume changes below 100% are intentional processing, not bit-perfect playback.
-
-`audio-params` describes decoded samples, not original file bit depth. `audio-out-params` describes MPV's output, not necessarily the OS mixer's or DAC's final format. Matching rates do not prove bit-perfect output. Server transcoding, exclusive access, OS mixing, hardware underruns, and physical output resolution remain unverified where the implementation cannot establish them.
-
-MPV's `cache-speed` is a cache input rate. It is not the track's encoded bitrate, total network usage, or a measurement of the connection's maximum bandwidth. Event-loop delay includes the configured sampling interval. Startup timing begins when the main module loads, not when the executable is launched.
-
-## Boundaries
-
-- `apps/desktop/main`: Electron lifecycle, file dialogs, IPC validation, server session, and diagnostic aggregation.
-- `apps/desktop/preload`: the only renderer-to-desktop bridge.
-- `apps/desktop/renderer`: replaceable React UI, with no Node or libmpv access.
-- `packages/core`: public data contracts, request schemas, and bounded Effect operation metrics.
-- `packages/player-mpv`: private playback transport and native library calls.
-- `packages/adapter-opensubsonic`: token authentication, validated responses, cancellation, and server mapping.
-
-Effect runs at asynchronous service boundaries. Audio commands and server requests use separate concurrency lanes so slow network requests do not hold the playback permit. OpenSubsonic metadata requests have a 15-second timeout and an 8 MiB response cap; audio streaming uses libmpv's own network behavior. The prototype bounds queues at 500 tracks and album pages at 48 entries. These bounds are not evidence of 100k-track scalability.
-
-The player polls native state every 250 ms and publishes immediate updates at startup and after commands. Renderer subscriptions also receive once-per-second diagnostic updates and operation-completion updates. Only the seek control interpolates playback position. It stops its animation while paused, hidden, or reduced motion is enabled. Detailed traces are not persisted or sent externally; Effect spans exist for future opt-in trace export.
-
-## Verification
-
-```bash
-npm run check
-```
-
-This typechecks, builds, and runs the tests. Without `SQUIGGLY_LIBMPV_PATH`, the native decoding test is explicitly skipped; the missing-library test still runs.
-
-If you created the optional local Fedora runtime extraction, run the native decoding test with:
-
-```bash
-SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \
-LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run check
-```
-
-For the actual Electron preload/process integration test, run in a graphical session or supply a private Xvfb display on Linux. The example below assumes you created the optional local Fedora runtime extraction. With a normal libmpv installation, omit both environment overrides and run `npm run test:desktop`:
-
-```bash
-SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \
-LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run test:desktop
-```
-
-Tests generate their own PCM file and use MPV's null audio output. They do not exercise a real DAC, prove bit-perfect playback, or establish hardware performance budgets. Never set `SQUIGGLY_TEST_NULL_AUDIO=1` for normal listening; that test-only variable deliberately produces no audible output.
-
-## Not implemented yet
-
-OS-backed credential persistence, library indexing/search, artwork caching, metadata extraction for local files, saved playlists, queue editing, ReplayGain/EQ controls, exclusive-output controls, verified gapless transitions, device-loopback tests, renderer frame metrics, plugin hosting, lyrics, Jellyfin, mobile apps, installers, signing, and updates.
-
-React Native is reserved for a future mobile client. Shared domain contracts and suitable Effect logic can be reused; the playback implementation will need platform-specific adapters.
-
-## UI handoff
-
-See [docs/ui-handoff.md](docs/ui-handoff.md). The renderer can be redesigned without changing the playback or credential boundaries.
-
-Five interactive UI design studies are available at `/mocks.html` with `npm run preview`. Use the direction buttons to compare Cove, Daylight, After hours, Studio, and Blue note. These are isolated mockups with sample records and no audio playback. The existing player is unchanged. See [docs/ui-mockups.md](docs/ui-mockups.md) for the design notes.
-
-Five more UI studies are at `/mocks-2.html` with `npm run preview`: Verse, Bench, Sleeve notes, Transistor, and Ledger. They are isolated mockups with sample records and no audio playback. See [docs/ui-mockups-2.md](docs/ui-mockups-2.md).
-
-## References and licensing
-
-The [upstream references](references/README.md) remain separate and unchanged. No Feishin, LosslessCut, T3 Code, or Fiddle implementation was copied into this app. The seek bar is an original canvas implementation of a sine-wave progress indicator, not a port of upstream source.
-
-The project is private and has no distribution license selected yet. Decide that before release, and review the exact libmpv/FFmpeg build and dependency licenses before bundling binaries. Koffi is a native FFI dependency, not our own N-API addon.
+Squiggly is [MIT](LICENSE) licensed. The installers include other people's software under their own licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

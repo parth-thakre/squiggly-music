@@ -14,10 +14,16 @@ describe('command boundary', () => {
   });
   it('requires a bounded queue identity for seeks', () => {
     expect(() => decode({ type: 'seek', seconds: 10, queueIndex: -1, trackId: 'track' })).toThrow();
-    expect(() => decode({ type: 'seek', seconds: 10, queueIndex: 500, trackId: 'track' })).toThrow();
+    expect(() => decode({ type: 'seek', seconds: 10, queueIndex: 1000, trackId: 'track' })).toThrow();
     expect(() => decode({ type: 'seek', seconds: 10, queueIndex: 0, trackId: '' })).toThrow();
     expect(decode({ type: 'seek', seconds: 10, queueIndex: 0, trackId: 'track' }))
       .toEqual({ type: 'seek', seconds: 10, queueIndex: 0, trackId: 'track' });
+  });
+  it('accepts the queue entry a seek began on, bounded like other ids', () => {
+    expect(decode({ type: 'seek', seconds: 1, queueIndex: 999, trackId: 'track', entryId: 'abc.1' }))
+      .toEqual({ type: 'seek', seconds: 1, queueIndex: 999, trackId: 'track', entryId: 'abc.1' });
+    expect(() => decode({ type: 'seek', seconds: 1, queueIndex: 0, trackId: 'track', entryId: '' })).toThrow();
+    expect(() => decode({ type: 'seek', seconds: 1, queueIndex: 0, trackId: 'track', entryId: 'x'.repeat(257) })).toThrow();
   });
   it('allows unity and attenuation, not amplification', () => {
     expect(decode({ type: 'volume', percent: 100 })).toEqual({ type: 'volume', percent: 100 });
@@ -28,7 +34,7 @@ describe('command boundary', () => {
     expect(() => decode({ type: 'loadfile', path: '/secret' })).toThrow();
   });
   it('bounds string payloads', () => {
-    expect(() => decode({ type: 'select', id: 'x'.repeat(257) })).toThrow();
+    expect(() => decode({ type: 'seek', seconds: 0, queueIndex: 0, trackId: 'x'.repeat(257) })).toThrow();
     expect(() => decode({ type: 'device', id: '' })).toThrow();
   });
   it('requires credentials without accepting unlimited payloads', () => {
@@ -44,6 +50,7 @@ describe('honest initial state', () => {
     expect(emptyAudio().streamBytesPerSecond).toBeNull();
     expect(emptyAudio().replayGain).toBeNull();
     expect(emptyPlayer().queue).toEqual([]);
+    expect(emptyPlayer()).toMatchObject({ entryIds: [], radio: null });
     expect(emptyPlayer().playing).toBe(false);
   });
 });

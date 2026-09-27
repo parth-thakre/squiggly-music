@@ -135,6 +135,7 @@ export class NativePlayer {
       outputBackend: this.property('current-ao'),
       requestedDevice: this.property('audio-device') ?? 'auto',
       replayGain: this.property('options/replaygain'),
+      exclusiveRequested: ({ yes: true, no: false } as Record<string, boolean>)[this.property('options/audio-exclusive') ?? ''] ?? null,
       filters: this.property('af'),
       bufferSeconds: this.number('demuxer-cache-duration'),
       streamBytesPerSecond: this.number('cache-speed'),

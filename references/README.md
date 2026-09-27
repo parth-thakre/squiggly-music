@@ -24,7 +24,7 @@ These revisions identify this inspection, not the latest release tags. Branch he
 - [OpenSubsonic controller](feishin/src/renderer/api/subsonic/subsonic-controller.ts) and [normalization](feishin/src/shared/api/subsonic/subsonic-normalize.ts): server behavior and mapping API results into application data.
 - [Lyrics providers](feishin/src/main/features/core/lyrics): provider-specific behavior worth checking before adding our own.
 
-Feishin uses `node-mpv` to control an MPV process. This is not the native libmpv addon proposed in `PROJECT.md`. Use it to understand playback behavior, not as proof that our proposed binding works. Profile before attributing Feishin's slowness to a particular layer.
+Feishin uses `node-mpv` to control an MPV process. This is not the in-process libmpv approach Squiggly uses. Use it to understand playback behavior, not as proof that our proposed binding works. Profile before attributing Feishin's slowness to a particular layer.
 
 ### T3 Code: desktop boundaries and focused performance tests
 
