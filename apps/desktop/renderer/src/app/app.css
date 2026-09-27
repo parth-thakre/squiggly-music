@@ -473,7 +473,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   /* The sheet */
   .deck.open {
-    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; gap: 0; overflow-y: auto;
+    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: stretch; gap: 0; overflow-x: hidden; overflow-y: auto;
     padding: calc(8px + env(safe-area-inset-top)) 24px calc(20px + env(safe-area-inset-bottom)); background: var(--ground);
   }
   .deck.open .deck-top { display: flex; flex-direction: column; align-items: center; }
@@ -577,6 +577,18 @@ html[data-density='compact'] { --row-height: 38px; }
 .deck.open .deck-bottom > :nth-child(3) { animation-delay: .03s; }
 .deck.open .deck-bottom > :nth-child(4) { animation-delay: .06s; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+
+/* Swiping songs (swipe.ts): the sleeve and title follow the finger, then the new song enters
+   from the side it was pulled toward. */
+.deck { touch-action: pan-y; }
+.deck .deck-cover, .deck .deck-text {
+  transform: translateX(var(--swipe-x, 0px)); opacity: var(--swipe-fade, 1);
+  transition: transform var(--swipe-ms, 0ms) cubic-bezier(.2, .8, .2, 1), opacity var(--swipe-ms, 0ms) ease;
+}
+.deck[data-enter='from-right'] .deck-cover, .deck[data-enter='from-right'] .deck-text { animation: enter-right .28s cubic-bezier(.2, .8, .2, 1) both; }
+.deck[data-enter='from-left'] .deck-cover, .deck[data-enter='from-left'] .deck-text { animation: enter-left .28s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes enter-right { from { transform: translateX(28%); opacity: 0; } }
+@keyframes enter-left { from { transform: translateX(-28%); opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
   .room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li { transition: none; }
