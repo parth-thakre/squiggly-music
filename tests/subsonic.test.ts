@@ -372,7 +372,11 @@ describe('OpenSubsonic playback extras', () => {
       { synced: true, kind: 'pronunciation', line: Array.from({ length: 5 }, (_, index) => ({ start: index, value: 'p' })) },
       { synced: true, line: [{ start: 1000, value: 'x' }, { value: 'unstamped' }, { start: 3000, value: 'y' }] },
     ] } })), extensions('songLyrics'));
-    expect(await Effect.runPromise(client().lyrics(query, false))).toEqual({ synced: true, source: 'server', lines: [{ start: 1, text: 'one' }, { start: 2, text: 'two' }] });
+    // Without cues the words are estimated, each line ending shortly before the next.
+    expect(await Effect.runPromise(client().lyrics(query, false))).toEqual({ synced: true, source: 'server', wordTiming: 'estimated', lines: [
+      { start: 1, end: 1.9, text: 'one', words: [{ start: 1, end: 1.9, text: 'one' }] },
+      { start: 2, end: 3.5, text: 'two', words: [{ start: 2, end: 3.5, text: 'two' }] },
+    ] });
   });
   it('does not contact LRCLIB when lookup is off, and keeps server failures as local messages', async () => {
     const fetchMock = serve(() => Response.json(envelope({ lyricsList: {} })), extensions('songLyrics'));

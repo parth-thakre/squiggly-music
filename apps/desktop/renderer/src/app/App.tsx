@@ -256,14 +256,12 @@ function SignalPath({ track }: { track: Track }) {
     ? `${format || 'Unknown format'}, the original file requested from Navidrome`
     : `${format || 'Unknown format'} from this computer`;
   const level = volume >= 100 ? 'Full volume' : `Volume at ${volume}% attenuates the signal`;
-  // In a browser the decoder, resampler, and mixer all belong to the browser and the phone.
-  if (mode === 'web') return <p className="signal">
-    {delivery === 'mp3-fallback'
-      ? <>This browser couldn't decode the original{format ? ` ${format}` : ''} file, so it asked the server for a 320 kbps MP3 and is playing that, decoded by this browser and mixed by this device.</>
-      : <>{source}, decoded by this browser and mixed by this device.</>}
-    {' '}{level}.{buffering && ' Buffering.'}{' '}
-    <span>The browser doesn't report what it does to the signal. Use the desktop app for a checked audio path.</span>
-  </p>;
+  // In a browser there's nothing to inspect, so say only what changes what you hear.
+  if (mode === 'web') {
+    const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
+      volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean);
+    return notes.length ? <p className="signal">{notes.join(' ')}</p> : null;
+  }
   const output = <DeviceChoice devices={devices} device={device} />;
   if (!audio || !audio.decoderFormat) return <p className="signal">{source}, playing on {output}. {level}. <span>Decoder and output formats appear once it plays.</span></p>;
   const extra = [audio.replayGain && audio.replayGain !== 'no' ? `ReplayGain ${audio.replayGain}` : 'no ReplayGain', audio.filters ? `filters: ${audio.filters}` : 'no filters'];

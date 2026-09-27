@@ -1,5 +1,5 @@
 // accent: marks and large type (3:1 against ground). accentText: normal-weight text such as
-// the current lyric line (4.5:1 against ground and against the selected-row tint).
+// the current track number (4.5:1 against ground and against the selected-row tint).
 // line: a fixed theme may set its own rule and selected-row colour; otherwise it is ink over the ground.
 export interface Palette { ground: string; ink: string; soft: string; accent: string; accentText?: string; line?: string }
 
@@ -95,7 +95,7 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   const vivid = candidates.find(b => s < .15 || hueGap(b.hue) > 30) ?? candidates[0];
   const hue: Hsl | null = vivid ? [vivid.hue, Math.max(vivid.s / vivid.count, .55), vivid.l / vivid.count] : null;
   const accent = hue ? readable(hue, [ground, tint], MARK_CONTRAST + .2, dark) : ink;
-  // The same hue, pushed further when needed, for normal-weight text such as the current lyric line.
+  // The same hue, pushed further when needed, for normal-weight text such as the current track number.
   const accentText = hue ? readable([hue[0], hue[1], hslOf(accent)[2]], [ground, tint], TEXT_CONTRAST + .1, dark) : ink;
   return { ground, ink, soft, accent, accentText };
 }
