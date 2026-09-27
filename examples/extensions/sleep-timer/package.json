@@ -1,0 +1,11 @@
+{
+  "name": "sleep-timer",
+  "version": "1.0.0",
+  "description": "Pause playback after a while, or at the end of the current song.",
+  "private": true,
+  "type": "module",
+  "squiggly": {
+    "displayName": "Sleep timer",
+    "renderer": "src/index.ts"
+  }
+}

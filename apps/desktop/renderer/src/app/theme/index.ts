@@ -1,28 +1,41 @@
-// Themes: built in, and from the user's config folder (themes/*.json, desktop).
+// Themes: built in, from the user's config folder (themes/*.json, desktop), and from
+// extensions (registerTheme, through ctx.themes.register).
 //
 // - A theme's tokens have the shape documented at the top of ./tokens.ts (colors, type,
 //   density, radius, motion). They are validated strictly: a theme file with errors is refused
-//   and its problems are listed in Settings › Theme in plain words. Colours that fail contrast
-//   are corrected rather than refused; the corrections show there too.
-// - Stored ids are namespaced `owner:id`, as in registry.ts: `builtin:cover`, `user:night`.
+//   and its problems are listed in Settings › Theme in plain words; registerTheme throws a
+//   ThemeError whose `problems` lists them. Colours that fail contrast are corrected rather
+//   than refused; the corrections show in Settings too.
+// - Stored ids are namespaced `owner:id`, as in registry.ts: `builtin:cover`, `user:night`,
+//   `sleep-timer:dusk`. Registering an id that is still live throws a RegistryCollision;
+//   disposers are idempotent and never remove a newer theme with that id.
 // - If the user had picked a theme that goes away, the app shows Cover and switches back when
-//   the theme returns (its file saved again).
+//   the theme returns (its file saved again, an extension reloading).
 import { useSyncExternalStore } from 'react';
 import type { ThemeFile } from '../../../../../../packages/core/contracts';
 import { configApi, watchConfig } from '../config';
 import type { Palette } from '../palette';
+import { RegistryCollision } from '../registry';
 import { BUILTIN_THEMES, checkTokens, DEFAULT_TOKENS, fontStack, isSerifDisplay, tintOf, type ThemeTokens } from './tokens';
 
 export type { ThemeTokens } from './tokens';
 export interface ThemeInput { id: string; name: string; description?: string; tokens: unknown }
 export interface Theme {
   id: string; name: string; description: string;
-  owner: string; source: 'builtin' | 'user';
+  owner: string; source: 'builtin' | 'user' | 'extension';
   tokens: ThemeTokens;
   // Contrast corrections applied to this theme.
   notes: string[];
 }
 const ID = /^[a-z0-9][a-z0-9._-]*$/;
+export class ThemeError extends Error {
+  constructor(readonly problems: string[], name: string) {
+    super(`The theme “${name}” can't be used. ${problems.join(' ')}`);
+    this.name = 'ThemeError';
+  }
+}
+
+const OWNER = /^[a-z][a-z0-9._-]*$/;
 const COVER = 'builtin:cover';
 const SELECTED = 'squiggly.theme';
 
@@ -48,6 +61,7 @@ const builtins: Theme[] = BUILTIN_THEMES.map(definition => {
 let userThemes: Theme[] = [];
 // Problems with user theme files, each starting with the file's name.
 let userProblems: string[] = [];
+const extensionThemes = new Map<string, Theme>();
 let chosen = (() => { try { return localStorage.getItem(SELECTED) ?? COVER; } catch { return COVER; } })();
 
 export interface ThemeState {
@@ -60,7 +74,7 @@ export interface ThemeState {
   notes: string[];
 }
 const build = (): ThemeState => {
-  const themes = [...builtins, ...userThemes];
+  const themes = [...builtins, ...userThemes, ...extensionThemes.values()];
   const active = themes.find(theme => theme.id === chosen) ?? builtins[0];
   const notes = themes.filter(theme => theme.source !== 'builtin').flatMap(theme => theme.notes.map(note => `${theme.name}: ${note}`));
   return { themes, chosen, active, problems: userProblems, notes };
@@ -78,6 +92,17 @@ export function selectTheme(id: string) {
   chosen = id;
   try { localStorage.setItem(SELECTED, id); } catch { /* the choice lasts this session */ }
   emit();
+}
+
+export function registerTheme(input: ThemeInput, owner: string): () => void {
+  if (!OWNER.test(owner)) throw new Error(`“${owner}” is not a valid owner name. Use lowercase letters, digits, dots, dashes, or underscores.`);
+  const { theme, problems } = make(input, owner, 'extension');
+  if (!theme) throw new ThemeError(problems, typeof input?.name === 'string' ? input.name : String(input?.id));
+  const live = extensionThemes.get(theme.id) ?? [...builtins, ...userThemes].find(other => other.id === theme.id);
+  if (live) throw new RegistryCollision('theme', theme.id, live.owner);
+  extensionThemes.set(theme.id, theme);
+  emit();
+  return () => { if (extensionThemes.get(theme.id) === theme) { extensionThemes.delete(theme.id); emit(); } };
 }
 
 // Themes folder (desktop). Each file is checked on its own, so one bad file never hides the rest.

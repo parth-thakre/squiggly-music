@@ -1,0 +1,23 @@
+/* Settings › Extensions, extension pages, and extension notices. */
+.extension-list { list-style: none; margin: 14px 0 0; padding: 0; }
+.extension { padding: 6px 0 12px; border-bottom: 1px solid var(--line); }
+.extension.off strong { color: var(--soft); }
+.extension-version, .extension-source { font-weight: 400; color: var(--soft); }
+.setting .extension-version { display: inline; margin: 0; }
+.extension-source { display: block; margin-top: 2px; font-size: calc(13px * var(--text)); overflow-wrap: anywhere; }
+.extension-error {
+  margin: 4px 0 0 36px; padding: 8px 10px; max-width: 64ch; white-space: pre-wrap; overflow-wrap: anywhere;
+  font: calc(13px * var(--text))/1.45 ui-monospace, 'SF Mono', Menlo, Consolas, monospace; color: var(--ink);
+  border-left: 3px solid var(--accent); background: color-mix(in srgb, var(--ink) 5%, transparent);
+}
+.extension-actions { margin: 6px 0 0 36px; gap: 8px 18px; }
+.extension .note { margin-left: 36px; }
+.text-button.danger { color: var(--accent-text); }
+.extension-page { min-height: 40vh; }
+.extension-notices { position: fixed; right: 18px; bottom: 18px; z-index: 40; display: grid; gap: 8px; max-width: min(420px, calc(100vw - 36px)); pointer-events: none; }
+.extension-notice {
+  margin: 0; padding: 10px 12px; pointer-events: auto; color: var(--ink); background: var(--ground);
+  border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 24px rgba(0, 0, 0, .18);
+}
+.extension-notice.error { border-left: 3px solid var(--accent); }
+.extension-notice .link { margin-left: 10px; font-size: calc(13px * var(--text)); color: var(--soft); }

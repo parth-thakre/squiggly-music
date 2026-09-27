@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, LibraryApi } from '../../../packages/core/contracts';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
@@ -45,6 +45,15 @@ const config: ConfigApi = {
   subscribe: listener => listen<ConfigFiles>('squiggly:config', listener),
   openDir: () => ipcRenderer.invoke('squiggly:config:open-dir'),
 };
+const extensions: ExtensionsApi = {
+  list: () => ipcRenderer.invoke('squiggly:extensions:list'),
+  subscribe: listener => listen<ExtensionInfo[]>('squiggly:extensions', listener),
+  setEnabled: (id, enabled) => ipcRenderer.invoke('squiggly:extensions:set-enabled', [id, enabled]),
+  reload: () => ipcRenderer.invoke('squiggly:extensions:reload'),
+  remove: id => ipcRenderer.invoke('squiggly:extensions:remove', id),
+  openDir: () => ipcRenderer.invoke('squiggly:extensions:open-dir'),
+  writeClipboard: text => ipcRenderer.invoke('squiggly:extensions:clipboard', text),
+};
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
@@ -71,6 +80,7 @@ const bridge: DesktopBridge = {
   },
   library,
   config,
+  extensions,
   settings: () => ipcRenderer.invoke('squiggly:get-settings'),
   updateSettings: changes => ipcRenderer.invoke('squiggly:update-settings', changes),
   window: {

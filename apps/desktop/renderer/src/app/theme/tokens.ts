@@ -31,6 +31,15 @@ export interface ThemeTokens {
   radius: number;
   motion: 'full' | 'reduced' | 'none';
 }
+// What a theme file or an extension writes: every field optional, and fixed colours need at
+// least ground and ink. checkTokens() turns it into ThemeTokens.
+export interface ThemeTokensInput {
+  colors?: 'cover' | (Pick<ThemeColors, 'ground' | 'ink'> & Partial<Omit<ThemeColors, 'ground' | 'ink' | 'line'>> & { line?: string });
+  type?: Partial<ThemeType>;
+  density?: ThemeTokens['density'];
+  radius?: number;
+  motion?: ThemeTokens['motion'];
+}
 export const DEFAULT_TOKENS: ThemeTokens = {
   colors: 'cover', type: { display: 'Young Serif', body: 'Familjen Grotesk', size: 15, scale: 1 },
   density: 'comfortable', radius: 6, motion: 'full',

@@ -1,0 +1,11 @@
+{
+  "name": "@squiggly/extension-api",
+  "version": "1.0.0",
+  "description": "Types for Squiggly Music extensions. The app supplies the runtime; see docs/extensions.md.",
+  "private": true,
+  "type": "module",
+  "types": "index.ts",
+  "main": "index.ts",
+  "peerDependencies": { "@types/react": "^19.0.0" },
+  "license": "MIT"
+}

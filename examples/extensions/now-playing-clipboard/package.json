@@ -1,0 +1,11 @@
+{
+  "name": "now-playing-clipboard",
+  "version": "1.0.0",
+  "description": "Copy the song that's playing to the clipboard with Ctrl+Shift+C.",
+  "private": true,
+  "type": "module",
+  "squiggly": {
+    "displayName": "Now playing to clipboard",
+    "renderer": "src/index.ts"
+  }
+}

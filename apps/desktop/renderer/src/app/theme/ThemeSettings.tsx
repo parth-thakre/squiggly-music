@@ -11,7 +11,7 @@ export function ThemeSettings() {
   const { themes, chosen, active, problems, notes } = useThemes();
   const cover = usePalette(usePlayer(s => current(s)?.coverArt ?? null));
   const [opened, setOpened] = useState<string | null>(null);
-  const origin = (theme: Theme) => theme.source === 'user' ? `From themes/${theme.id.slice('user:'.length)}.json.` : '';
+  const origin = (theme: Theme) => theme.source === 'user' ? `From themes/${theme.id.slice('user:'.length)}.json.` : theme.source === 'extension' ? `From ${theme.owner}.` : '';
   return <>
     <h2 id="theme">Theme</h2>
     <div role="radiogroup" aria-label="Theme" className="themes">
@@ -21,7 +21,7 @@ export function ThemeSettings() {
         <Sample theme={theme} cover={cover} />
       </label>)}
     </div>
-    {chosen !== active.id && <p className="note">The theme you picked isn't loaded right now, so Cover is showing. It returns when its file does.</p>}
+    {chosen !== active.id && <p className="note">The theme you picked isn't loaded right now, so Cover is showing. It returns when its file or extension does.</p>}
     {problems.length > 0 && <div className="problems" role="alert">
       <p className="problems-head">{problems.length === 1 ? 'One theme problem' : `${problems.length} theme problems`}</p>
       <ul>{problems.map(problem => <li key={problem}>{problem}</li>)}</ul>
