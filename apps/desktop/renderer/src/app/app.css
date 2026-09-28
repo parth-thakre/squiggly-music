@@ -33,7 +33,7 @@ button:disabled { cursor: default; opacity: .45; }
 .sections { order: 1; }
 .bar-top > :not(.wordmark) { order: 2; }
 .wordmark { display: inline-flex; align-items: center; gap: 9px; font-family: 'Young Serif', serif; font-size: 22px; margin-right: 10px; }
-.wordmark .mark { width: 30px; height: auto; margin-top: 2px; }
+.wordmark .mark { width: 36px; height: auto; margin-top: 2px; }
 .sections { display: flex; gap: 22px; }
 .sections button, .choices button { padding: 0; background: none; border: 0; color: var(--soft); }
 .sections button { font-size: calc(15px * var(--text)); font-weight: 600; }
