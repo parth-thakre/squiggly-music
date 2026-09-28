@@ -622,7 +622,7 @@ export function SettingsView() {
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
-      {mode === 'desktop' && <Disconnect />}
+      {mode !== 'web' && <Disconnect />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
@@ -678,8 +678,9 @@ function UpdateSettings() {
   </>;
 }
 
-// Desktop only; the browser build signs out from the deck. The main process forgets the
-// server and restarts the audio engine, and the app returns to the connect screen.
+// Desktop and Android; the browser build signs out from the deck. The desktop's main process
+// (or the Android bridge) forgets the server and stops playback, and the app returns to the
+// connect screen.
 function Disconnect() {
   const serverName = usePlayer(s => s.serverName);
   const connected = usePlayer(s => s.connected);
@@ -691,7 +692,7 @@ function Disconnect() {
       <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. It also forgets the saved sign-in, so have your password ready.</span></p>
     <button type="button" className="text-button" disabled={busy} onClick={async () => {
       setBusy(true); setError(null);
-      const result = await window.squiggly!.disconnect();
+      const result = await (window.squiggly ?? window.squigglyAndroid!.session).disconnect();
       setBusy(false);
       if (!result.ok) setError(result.error);
     }}>{busy ? 'Disconnecting' : 'Disconnect'}</button>
@@ -705,6 +706,7 @@ export function DiagnosticsView() {
   const audio = usePlayer(s => s.audio);
   const [message, setMessage] = useState<string | null>(null);
   if (mode === 'web') return <><Head title="Diagnostics" /><Status>Process and memory figures come from the desktop app. The browser version has none to show.</Status></>;
+  if (mode === 'android') return <><Head title="Diagnostics" /><Status>Process and memory figures come from the desktop app. Android shows them in Settings › Apps › Squiggly.</Status></>;
   return <>
     <Head title="Diagnostics">
       <p className="byline"><span>Running {length(diagnostics.uptimeSeconds)}{diagnostics.startupMs !== null && `, started in ${Math.round(diagnostics.startupMs)} ms`}</span></p>

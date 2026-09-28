@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The default room (theme-color in the renderer's index.html) and the icon's own colours. -->
+    <color name="ground">#D8D7D1</color>
+    <color name="ink">#1C1B18</color>
+    <color name="ic_launcher_background">#DCD8CC</color>
+</resources>

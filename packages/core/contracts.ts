@@ -314,4 +314,55 @@ export const emptyDiagnostics = (): Diagnostics => ({
   playerBytesPerSecond: 0, pendingCommands: 0, eventLoopDelayMs: 0, processes: [], operations: [],
 });
 
-declare global { interface Window { squiggly?: DesktopBridge } }
+// The Android app (apps/android). Its web entry installs window.squigglyAndroid before the app
+// starts. The connector runs in the page and reaches Navidrome through native HTTP; a native
+// Media3 player holds the queue and plays it, so it keeps going with the screen off.
+export interface AndroidSession {
+  // False until the saved sign-in has been read; the page shows nothing before then.
+  ready: boolean;
+  connected: boolean; serverName: string | null;
+  // Changes with every sign-in; library caches are dropped with it, as on the desktop.
+  sessionId: string | null;
+  signIn: Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
+}
+// What the native player reports. Times are seconds; a duration of 0 is unknown.
+export interface AndroidPlayback {
+  // The queue entry loaded, or null with nothing loaded.
+  entryId: string | null;
+  // Changes whenever an entry starts from its beginning, which makes it a new play.
+  playId: number;
+  playing: boolean; buffering: boolean; ended: boolean; position: number; duration: number;
+  // The original couldn't be decoded, so the server's 320 kbps MP3 is playing instead.
+  fallback: boolean;
+  error: string | null;
+}
+export interface AndroidQueueSnapshot { queue: Track[]; entryIds: string[]; index: number; playback: AndroidPlayback }
+export interface AndroidBridge {
+  library: LibraryApi;
+  session: {
+    get(): AndroidSession;
+    subscribe(listener: (session: AndroidSession) => void): () => void;
+    // Tries HTTPS, then HTTP, for an address without a scheme; saves the sign-in when it can.
+    connect(connection: Connection): Promise<Result>;
+    // Tries the saved sign-in again, after it failed at launch (offline, say).
+    reconnect(): Promise<Result>;
+    // Stops playback, empties the native queue, and forgets the saved sign-in.
+    disconnect(): Promise<Result>;
+  };
+  player: {
+    // What the native player still holds from before the page loaded (the app was swiped away
+    // while it played), or null.
+    restore(): Promise<AndroidQueueSnapshot | null>;
+    // Makes the native queue match these entries, keeping the one playing where it is.
+    sync(queue: readonly Track[], entryIds: readonly string[]): void;
+    load(entryId: string, options: { play: boolean; position: number }): void;
+    play(): void; pause(): void;
+    seek(entryId: string, seconds: number): void;
+    volume(percent: number): void;
+    subscribe(listener: (playback: AndroidPlayback) => void): () => void;
+    // The bridge emptied the native queue (a new sign-in, or disconnecting); the page empties its own.
+    onReset(listener: () => void): () => void;
+  };
+}
+
+declare global { interface Window { squiggly?: DesktopBridge; squigglyAndroid?: AndroidBridge } }

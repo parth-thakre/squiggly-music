@@ -1,0 +1,12 @@
+/* Flex Mode in the Android app: the layout app.css gives Chrome through viewport segments, from
+   the hinge position the app reports (system.ts). The sleeve stays on the top half and the
+   controls sit on the bottom half. One column: as a grid, the sheet would otherwise take the
+   collapsed strip's three columns (.deck in the phone layout) and put the halves side by side. */
+@media (max-width: 760px) {
+  :root[data-posture="flex"] .deck.open { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--fold-top) var(--fold-bottom); padding: 0; overflow: hidden; }
+  :root[data-posture="flex"] .deck.open .deck-top { justify-content: center; padding: env(safe-area-inset-top) 24px 12px; min-height: 0; }
+  :root[data-posture="flex"] .deck.open .deck-cover { width: auto; height: calc(var(--fold-top) - 90px); max-width: 100%; margin: 0; }
+  :root[data-posture="flex"] .deck.open .deck-bottom { justify-content: center; padding: 12px 24px env(safe-area-inset-bottom); overflow-y: auto; }
+  :root[data-posture="flex"] .deck.open .deck-text { margin-top: 0; }
+  :root[data-posture="flex"] .deck.open .signal { display: none; }
+}

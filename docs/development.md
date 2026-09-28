@@ -12,6 +12,8 @@
 | `packages/adapter-opensubsonic` | The Navidrome connector: token auth, validated responses, timeouts |
 | `packages/lyrics` | The LRCLIB client and LRC parser |
 | `scripts/navidrome-preview.ts` | The `/api` bridge for the browser version |
+| `apps/android` | The Android app: the page's Android half (`web/`) and the native project (Capacitor, Media3). See [android.md](android.md) |
+| `scripts/android.mjs` | Builds the Android APKs |
 
 [ui-handoff.md](ui-handoff.md) goes into the interface.
 
@@ -35,6 +37,8 @@ LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run dev
 The native decoding tests skip unless `SQUIGGLY_LIBMPV_PATH` is set. They decode generated PCM to mpv's null output, so they never touch a real DAC. Don't set `SQUIGGLY_TEST_NULL_AUDIO=1` for listening. It silences output on purpose.
 
 `npm run test:ui` builds the browser version and drives it in Chromium against a fake Navidrome with generated covers and audio. It runs desktop and phone layouts.
+
+The Android app's pure parts run with the rest: `tests/androidQueue.test.ts` checks how the page's queue is mirrored to the native player. [android.md](android.md) covers the emulator.
 
 `npm run test:desktop` starts the real Electron app and checks the preload bridge and process isolation. It needs a display (a graphical session, or Xvfb on Linux).
 

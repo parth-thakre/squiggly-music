@@ -7,7 +7,7 @@
 
 Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-It's early software. It runs on Windows and Fedora, and a browser version works on phones.
+It's early software. It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too.
 
 ![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
 
@@ -68,6 +68,17 @@ npm run web
 
 This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
 
+## Android
+
+The Android app connects to your Navidrome server itself and plays with the screen off, with controls in the notification and on the lock screen. It's made for the Galaxy Z Flip 7 (the main screen, the cover screen, and Flex Mode). You build the APK yourself for now; it needs a JDK 21 and the Android SDK, which [docs/android.md](docs/android.md) sets up without root:
+
+```bash
+npm run android:keystore   # once: the key that signs your release APK
+npm run android:build      # dist/android/squiggly-<version>-release.apk and -debug.apk
+```
+
+It remembers the sign-in with the password sealed by the Android Keystore, and keeps it for the session only when the Keystore can't be used. Disconnecting in Settings forgets it.
+
 ## Tests
 
 ```bash
@@ -80,6 +91,7 @@ The libmpv tests only decode audio when `SQUIGGLY_LIBMPV_PATH` points at a libra
 ## More
 
 - [docs/packaging.md](docs/packaging.md) covers installers, pinned runtimes, releases, and checksums.
+- [docs/android.md](docs/android.md) covers the Android app: how it's built, signing, and testing on an emulator.
 - [docs/audio.md](docs/audio.md) explains what the signal-path readout can and can't tell you.
 - [docs/ui-handoff.md](docs/ui-handoff.md) describes how the interface is put together.
 - [docs/extensions.md](docs/extensions.md) covers writing extensions and what trusting one means.
