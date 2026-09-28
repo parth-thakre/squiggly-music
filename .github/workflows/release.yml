@@ -164,13 +164,20 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Windows signing goes through SignPath Foundation (CODE_SIGNING.md, docs/signing.md). Every
+  # signing step is skipped until the SIGNPATH_ORGANIZATION_ID variable is set, so releases are
+  # unsigned until then rather than failing. Each signing request waits for an approver.
   windows:
     name: Windows installer and portable
     needs: [check, ui, libmpv]
     runs-on: windows-latest
     permissions:
       contents: read
-    timeout-minutes: 30
+      actions: read # the SignPath action reads this job's details to verify where the files came from
+    # Includes up to an hour for each of the two signing approvals.
+    timeout-minutes: 150
+    env:
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -192,11 +199,80 @@ jobs:
           name: libmpv-windows
           path: .local/libmpv-windows
       - run: npm ci
-      - run: npm run package:win
+      # The app first, unpacked, so its own files are signed before they go into the installers.
+      - name: Build the unpacked app
+        run: npm run package:win -- --dir
       # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll,
       # and the unpacked esbuild binary.
       - name: Smoke-test the packaged audio runtime
         run: node scripts/smoke-runtime.mjs dist/win-unpacked
+      # Signs the files this project builds: the app's exe and libmpv-2.dll. node.exe is signed
+      # by the OpenJS Foundation; other third-party files are left as they came.
+      - name: Upload the app for signing
+        id: unsigned-app
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-app
+          path: dist/win-unpacked/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the app
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: squiggly-music
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: app
+          github-artifact-id: ${{ steps.unsigned-app.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist/win-signed
+      - name: Use the signed app
+        if: env.SIGN == 'true'
+        shell: bash
+        run: rm -rf dist/win-unpacked && mv dist/win-signed dist/win-unpacked
+      - name: Build the installer and portable exe
+        run: npx electron-builder --win --prepackaged dist/win-unpacked --publish never
+      - name: Upload the installer and portable exe for signing
+        id: unsigned-installers
+        if: env.SIGN == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned-installers
+          path: dist/*.exe
+          if-no-files-found: error
+          retention-days: 1
+      - name: Sign the installer and portable exe
+        if: env.SIGN == 'true'
+        uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: squiggly-music
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installers
+          github-artifact-id: ${{ steps.unsigned-installers.outputs.artifact-id }}
+          wait-for-completion-timeout-in-seconds: 3600
+          output-artifact-directory: dist/signed
+      # Signing changes the installer's bytes, so latest.yml and its block map are rebuilt.
+      - name: Use the signed installers and update their metadata
+        if: env.SIGN == 'true'
+        shell: bash
+        run: |
+          mv -f dist/signed/*.exe dist/
+          node scripts/rehash-windows-update.mjs dist
+      - name: Check the signatures
+        if: env.SIGN == 'true'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem dist/*.exe) + @(Get-Item 'dist/win-unpacked/Squiggly Music.exe', 'dist/win-unpacked/resources/runtime/libmpv-2.dll')
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
+            if ($signature.Status -ne 'Valid') { throw "$($file.Name) is not validly signed: $($signature.Status)" }
+            "$($file.Name): $($signature.SignerCertificate.Subject)"
+          }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-x64
