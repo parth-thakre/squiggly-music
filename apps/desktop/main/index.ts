@@ -331,7 +331,8 @@ function connectTo(typed: Connection, generation: number) {
   return Effect.gen(function* () {
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const connection = yield* resolveAddress(typed);
-    const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
+    // The address check's own message (a bad address says how), not Effect's generic one.
+    const candidate = yield* Effect.try({ try: () => new SubsonicClient(connection, metrics), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* candidate.ping();
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     endRadio();
