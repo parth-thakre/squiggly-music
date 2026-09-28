@@ -183,7 +183,9 @@ img:is(.deck-cover, .head-cover) {
 .track .n .wave { width: 20px; }
 .track .figure { text-align: right; font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.track .name { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The song's name keeps its width; the version note and credits give way first, and the name
+   only shortens when it can't fit on its own. */
+.track .name { flex: 0 0 auto; max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .track .extra, .track .credit, .track .album { flex: 0 10 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .album { font-size: calc(14px * var(--text)); }
 .track:hover .name { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
