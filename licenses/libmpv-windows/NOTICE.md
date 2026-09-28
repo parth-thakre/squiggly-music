@@ -40,7 +40,7 @@ than Windows system libraries.
 | --- | --- | --- | --- | --- |
 | mpv | 0.41.0 (commit `41f6a645068483470267271e1d09966ca3b9f413`) | https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz | LGPL-2.1-or-later (built with `-Dgpl=false`) | `mpv-Copyright.txt`, `mpv-LICENSE.LGPL.txt` |
 | FFmpeg (libavcodec, libavformat, libavfilter, libavutil, libswresample, libswscale) | 8.1.3 (commit `1041abdc962f4cc4f394aa8de9dc5236c0c3b9e7`) | https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz | LGPL-2.1-or-later | `ffmpeg-LICENSE.md`, `ffmpeg-COPYING.LGPLv2.1.txt` |
-| libplacebo | 7.360.1 (commit `cee9b076f2c63104ccfd497fa79c39a867293ec4`) | https://code.videolan.org/videolan/libplacebo/-/archive/v7.360.1/libplacebo-v7.360.1.tar.gz | LGPL-2.1-or-later | `libplacebo-LICENSE.txt` |
+| libplacebo | 7.360.1 (commit `cee9b076f2c63104ccfd497fa79c39a867293ec4`) | https://github.com/haasn/libplacebo/archive/refs/tags/v7.360.1.tar.gz (the author's mirror of code.videolan.org/videolan/libplacebo) | LGPL-2.1-or-later | `libplacebo-LICENSE.txt` |
 | fast_float (compiled into libplacebo) | commit `97b54ca9e75f5303507699d27c6b4f4efe4641a1` | https://github.com/fastfloat/fast_float/archive/97b54ca9e75f5303507699d27c6b4f4efe4641a1.tar.gz | MIT (offered as Apache-2.0, MIT, or BSL-1.0) | `fast_float-LICENSE-MIT.txt` |
 | libass | 0.17.5 | https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz | ISC | `libass-COPYING.txt` |
 | FreeType | 2.14.3 | https://download.savannah.gnu.org/releases/freetype/freetype-2.14.3.tar.xz | FreeType License (FTL), chosen from FTL or GPL-2.0 | `freetype-LICENSE.TXT`, `freetype-FTL.TXT` |

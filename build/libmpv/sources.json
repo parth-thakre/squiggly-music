@@ -103,10 +103,11 @@
     {
       "name": "libplacebo",
       "version": "7.360.1",
-      "file": "libplacebo-v7.360.1.tar.gz",
-      "url": "https://code.videolan.org/videolan/libplacebo/-/archive/v7.360.1/libplacebo-v7.360.1.tar.gz",
-      "sha256": "14c0a99f4b01557ec9826ce6b1d52f6de21be274ba03fd5aab7307f18766dc39",
+      "file": "libplacebo-7.360.1.tar.gz",
+      "url": "https://github.com/haasn/libplacebo/archive/refs/tags/v7.360.1.tar.gz",
+      "sha256": "d05fdf90bea2f629eaa2d115e909fd356388ac639e54f77b87a018a6d76224bd",
       "commit": "cee9b076f2c63104ccfd497fa79c39a867293ec4",
+      "mirror": "The author's GitHub mirror of code.videolan.org/videolan/libplacebo, which refuses downloads from GitHub Actions. Same tag and commit; the files match the code.videolan.org archive exactly, apart from the top directory's name, which build.sh strips.",
       "license": "LGPL-2.1-or-later",
       "licenseFiles": [
         "LICENSE"
