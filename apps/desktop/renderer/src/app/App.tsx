@@ -1,3 +1,4 @@
+import { ListMusic, MessageSquareQuote, PictureInPicture2 } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
 import type { Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
@@ -182,10 +183,12 @@ const Deck = memo(function Deck() {
         <TransportButtons playing={playing} />
         <Volume />
       </div>
+      {/* What the page shows next to the deck: toggles, so icons, each named for screen readers
+          and in a tooltip. */}
       <div className="deck-actions">
-        <button type="button" className="text-button" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}>Lyrics</button>
-        <button type="button" className="text-button" aria-pressed={route.view === 'queue'} onClick={() => route.view === 'queue' ? nav.back() : nav.go({ view: 'queue' })}>Queue</button>
-        {window.squiggly && <button type="button" className="text-button" onClick={() => void window.squiggly!.window.toggleMini()}>Mini player</button>}
+        <button type="button" className="icon-button" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /></button>
+        <button type="button" className="icon-button" aria-label="Queue" title="Queue" aria-pressed={route.view === 'queue'} onClick={() => route.view === 'queue' ? nav.back() : nav.go({ view: 'queue' })}><ListMusic aria-hidden="true" /></button>
+        {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
       </div>
       <SignalPath track={track} />
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
