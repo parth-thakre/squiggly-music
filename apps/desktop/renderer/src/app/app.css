@@ -33,7 +33,7 @@ button:disabled { cursor: default; opacity: .45; }
 .sections { order: 1; }
 .bar-top > :not(.wordmark) { order: 2; }
 .wordmark { display: inline-flex; align-items: center; gap: 9px; font-family: 'Young Serif', serif; font-size: 22px; margin-right: 10px; }
-.wordmark .mark { width: 30px; height: auto; margin-top: 2px; }
+.wordmark .mark { width: 36px; height: auto; margin-top: 2px; }
 .sections { display: flex; gap: 22px; }
 .sections button, .choices button { padding: 0; background: none; border: 0; color: var(--soft); }
 .sections button { font-size: calc(15px * var(--text)); font-weight: 600; }
@@ -183,7 +183,9 @@ img:is(.deck-cover, .head-cover) {
 .track .n .wave { width: 20px; }
 .track .figure { text-align: right; font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.track .name { flex: 0 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The song's name keeps its width; the version note and credits give way first, and the name
+   only shortens when it can't fit on its own. */
+.track .name { flex: 0 0 auto; max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .track .extra, .track .credit, .track .album { flex: 0 10 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .album { font-size: calc(14px * var(--text)); }
 .track:hover .name { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
