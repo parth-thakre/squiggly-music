@@ -397,6 +397,10 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .lyric-lines.synced li.current .word {
   --edge: .12em; --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
   display: inline-block; transform: translateY(calc(var(--p, 0) * -.05em));
+  /* The fill is a background clipped to the letters, and a background ends at the word's box.
+     Marks that reach outside it (Devanagari's ि, accents, italic overhangs) get room on every
+     side, taken back by the margin so the line doesn't move. */
+  padding: .2em .18em; margin: -.2em -.18em;
   color: transparent; -webkit-background-clip: text; background-clip: text;
   background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)),
     color-mix(in srgb, var(--soft) 80%, var(--ground)) calc(var(--at) + var(--edge)));
