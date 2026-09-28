@@ -157,3 +157,17 @@ test.describe('one click to play, then what is playing', () => {
     await expect(app.heading).toHaveText('Queue');
   });
 });
+
+test.describe('one sleeve', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+
+  test("the playing record's page folds its cover away, since the deck shows it; other records keep theirs", async ({ app }) => {
+    await app.play('Test Pressing', 'Long Run');
+    const head = app.main.locator('header.head');
+    await expect(head).toHaveClass(/\bon-deck\b/);
+    await expect(head.locator('.head-cover')).toHaveCSS('opacity', '0');
+    await app.openAlbum('Quiet Harbor');
+    await expect(head).not.toHaveClass(/\bon-deck\b/);
+    await expect(head.locator('.head-cover')).toHaveCSS('opacity', '1');
+  });
+});

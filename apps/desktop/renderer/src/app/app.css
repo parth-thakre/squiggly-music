@@ -116,6 +116,15 @@ img:is(.deck-cover, .head-cover) {
 .head { margin-bottom: 26px; }
 .head.with-cover { display: grid; grid-template-columns: clamp(160px, 18vw, 230px) minmax(0, 1fr); gap: 32px; align-items: end; }
 .head-cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .12), 0 18px 28px -18px rgba(0, 0, 0, .5); }
+/* The playing record's page: its sleeve is already in the deck beside it, so the page's cover
+   folds away and the title leads. It folds rather than vanishes, so starting a song from the
+   list doesn't jolt the page. Desktop only; a phone's deck is a strip. */
+@media (min-width: 761px) {
+  .head.with-cover { transition: grid-template-columns .45s cubic-bezier(.2, .8, .2, 1), gap .45s cubic-bezier(.2, .8, .2, 1); }
+  .head.with-cover .head-cover { transition: opacity .3s ease, transform .45s cubic-bezier(.2, .8, .2, 1); }
+  .head.with-cover.on-deck { grid-template-columns: 0px minmax(0, 1fr); gap: 0; }
+  .head.on-deck .head-cover { opacity: 0; transform: scale(.9); view-transition-name: none; }
+}
 .head h1 { margin: 0; font: var(--display-weight) calc(clamp(40px, 4.4vw, 66px) * var(--display-size))/1.02 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
 .head h1.long { font-size: calc(clamp(30px, 3.2vw, 46px) * var(--display-size)); line-height: 1.08; }
 .qualifier { margin: 8px 0 0; font-size: calc(16px * var(--text)); color: var(--soft); }
@@ -637,7 +646,7 @@ html[data-density='compact'] { --row-height: 38px; }
 @keyframes enter-left { from { transform: translateX(-28%); opacity: 0; } }
 
 @media (prefers-reduced-motion: reduce) {
-  .room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li { transition: none; }
+  .room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li, .head.with-cover, .head-cover { transition: none; }
   .lyric-lines.synced li.far { filter: none; }
   .grid .playable:hover .cover, .playable:hover .play-over { transform: none; }
   .play:active, .play-action:active .disc { transform: none; }
@@ -646,7 +655,7 @@ html[data-density='compact'] { --row-height: 38px; }
   .theme-sample { transition: none; }
 }
 /* A theme's motion setting: "reduced" does what the system setting does; "none" also stops every fade. */
-html:is([data-motion='reduced'], [data-motion='none']) :is(.room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li, .theme-sample) { transition: none; }
+html:is([data-motion='reduced'], [data-motion='none']) :is(.room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li, .theme-sample, .head.with-cover, .head-cover) { transition: none; }
 html:is([data-motion='reduced'], [data-motion='none']) .lyric-lines.synced li.far { filter: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.grid .playable:hover .cover, .playable:hover .play-over) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.play:active, .play-action:active .disc) { transform: none; }
