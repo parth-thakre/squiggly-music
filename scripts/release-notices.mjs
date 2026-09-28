@@ -15,7 +15,9 @@ import asar from '@electron/asar';
 
 // Licenses reviewed as compatible with redistribution in a closed or open app.
 // Add to this list only after reviewing the new package's terms.
-const REVIEWED = new Set(['MIT', 'ISC', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', '0BSD', 'OFL-1.1', 'Zlib']);
+// BlueOak-1.0.0 (sax) and Python-2.0 (argparse, through js-yaml) came with electron-updater: both
+// permissive, OSI-approved, and satisfied by shipping the notice in npm-packages.txt.
+const REVIEWED = new Set(['MIT', 'ISC', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', '0BSD', 'OFL-1.1', 'Zlib', 'BlueOak-1.0.0', 'Python-2.0']);
 // Packages the renderer bundle includes, excluded from resources/app/node_modules by electron-builder.yml.
 const RENDERER_ONLY = new Set(['react', 'react-dom', 'scheduler', 'lucide-react']);
 const LICENSE_FILE = /^(licen[cs]e|copying|notice)(\.|-|$)/i;
@@ -64,16 +66,25 @@ export function writeNotices(appDir, platform) {
 function checkNotices(appDir, platform, resources, shippedRoot, shippedLabel) {
   const shipped = new Set(packageDirs(shippedRoot).map(dir => dir.slice(shippedRoot.length + 1).replaceAll('\\', '/')));
   const lock = JSON.parse(readFileSync('package-lock.json', 'utf8')).packages;
+  // electron-builder may lay packages out differently from npm (it hoisted electron-updater's own
+  // semver to the top level), so a package also counts by name and version, wherever it sits.
+  const nameOf = key => key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+  const shippedIds = new Map([...shipped].map(key => {
+    const manifest = JSON.parse(readFileSync(join(shippedRoot, key, 'package.json'), 'utf8'));
+    return [key, `${manifest.name}@${manifest.version}`];
+  }));
+  const shippedAnywhere = new Set(shippedIds.values());
+  const production = new Set(Object.entries(lock).filter(([key, meta]) => key && !meta.dev && !meta.devOptional && !meta.link).map(([key, meta]) => `${nameOf(key)}@${meta.version}`));
 
   const entries = [];
   const problems = [];
   const unlicensedText = [];
   for (const [key, meta] of Object.entries(lock)) {
     if (!key || meta.dev || meta.devOptional || meta.link) continue;
-    const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+    const name = nameOf(key);
+    const isShipped = shipped.has(key) || shippedAnywhere.has(`${name}@${meta.version}`);
     // Optional per-platform binaries ship only when electron-builder kept them.
-    if (meta.optional && !shipped.has(key)) continue;
-    const isShipped = shipped.has(key);
+    if (meta.optional && !isShipped) continue;
     if (!isShipped && !RENDERER_ONLY.has(name)) problems.push(`${key} is a production dependency but is not in ${shippedLabel}`);
     const dir = existsSync(key) ? key : join(shippedRoot, key);
     const manifest = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'));
@@ -89,7 +100,8 @@ function checkNotices(appDir, platform, resources, shippedRoot, shippedLabel) {
     entries.push({ name, version: manifest.version, license, where: isShipped ? `${shippedLabel}/${key}` : 'bundled into the renderer (out/renderer)', text });
   }
   for (const key of shipped) {
-    if (!lock[key] || lock[key].dev) problems.push(`${key} ships in the app but is not a production dependency in package-lock.json`);
+    const inLock = lock[key] && !lock[key].dev && !lock[key].devOptional;
+    if (!inLock && !production.has(shippedIds.get(key))) problems.push(`${key} (${shippedIds.get(key)}) ships in the app but is not a production dependency in package-lock.json`);
   }
 
   const required = ['LICENSE.electron.txt', 'LICENSES.chromium.html', 'resources/runtime/LICENSE.node.txt', 'resources/licenses/THIRD-PARTY-NOTICES.md'];

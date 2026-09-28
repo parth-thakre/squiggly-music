@@ -26,6 +26,7 @@ import { QueueSync } from './queueSync';
 import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
 import { Account } from './account';
+import { initialUpdateState, Updates } from './updates';
 import { isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
@@ -59,7 +60,7 @@ const started = performance.now();
 const metrics = new Metrics();
 const loop = monitorEventLoopDelay({ resolution: 20 });
 const state: AppSnapshot = {
-  player: emptyPlayer(), diagnostics: emptyDiagnostics(),
+  player: emptyPlayer(), diagnostics: emptyDiagnostics(), update: initialUpdateState(),
   server: { connected: false, name: null, sessionId: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null },
 };
 const windows: { main: BrowserWindow | null; mini: BrowserWindow | null } = { main: null, mini: null };
@@ -99,6 +100,7 @@ const knownTracks = new Map<string, Track>();
 let settings = new JsonStore('', SettingsFileSchema, defaultSettings());
 let windowState = new JsonStore('', WindowStateSchema, {});
 let account = new Account('', safeStorage);
+const updates = new Updates(() => state.update, next => { state.update = next; broadcast(); }, () => settings.value.checkForUpdates);
 const plays = new PlayTracker();
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
 // still in flight) belongs to the session that was current when quit began.
@@ -530,6 +532,7 @@ function installHandlers() {
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();
     applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
+    if (next.checkForUpdates && !previous.checkForUpdates) updates.check();
     return settings.value;
   }), 'settings');
   handle('window:toggle-mini', () => Effect.sync(toggleMini), 'window');
@@ -550,6 +553,10 @@ function installHandlers() {
     target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink.right, height: CONTROLS_HEIGHT });
     return { ok: true, value: undefined };
   });
+  // Updates (updates.ts): check now, restart into a downloaded update, or open the release page.
+  handle('update:check', () => Effect.sync(() => updates.check(true)), 'window');
+  handle('update:install', () => Effect.suspend(() => updates.installNow() ? Effect.void : Effect.fail(new Error('No update is ready to install.'))), 'window');
+  handle('update:open', () => Effect.tryPromise({ try: () => shell.openExternal(updates.releaseUrl()), catch: () => new Error('Could not open the release page.') }), 'window');
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
@@ -832,6 +839,7 @@ app.whenReady().then(async () => {
   createTray();
   startMediaControls();
   void reconnect();
+  updates.start();
   await launchPlayer();
   let sampledAt = performance.now();
   const timer = setInterval(() => {
@@ -851,6 +859,8 @@ app.whenReady().then(async () => {
   app.on('before-quit', event => {
     event.preventDefault();
     if (quitting) return;
+    // A downloaded update installs as the app quits (updates.ts); the rest of the quit goes on.
+    updates.installOnQuit(); updates.stop();
     // Starts the final queue save while the session is still current. Waits at most 1.5 s.
     const saved = settings.value.syncQueue ? queueSync.flush() : Promise.resolve();
     if (server) finalSession = { generation: connectionGeneration, client: server };

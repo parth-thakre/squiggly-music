@@ -611,7 +611,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -634,6 +634,7 @@ export function SettingsView() {
           </select>
         </label>
         {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows supports this; many Linux setups ignore it.')}
+        <UpdateSettings />
         <h2>Window</h2>
         {row('closeToTray', 'Keep playing when the window closes', 'Closing the window leaves Squiggly in the tray. Quit from the tray menu.')}
         {row('miniOnTop', 'Keep the mini player on top', 'The mini player stays above other windows.')}
@@ -643,6 +644,38 @@ export function SettingsView() {
       <KeySettings />
       {mode === 'desktop' && <ExtensionsSettings />}
     </section>
+  </>;
+}
+
+// Updates from GitHub releases (apps/desktop/main/updates.ts). Development builds have none.
+function UpdateSettings() {
+  const update = usePlayer(s => s.update);
+  const settings = useSettings();
+  if (!update || update.mode === 'off') return null;
+  const bridge = window.squiggly!.updates;
+  const status = {
+    idle: `This is Squiggly ${update.current}.`,
+    checking: 'Checking for updates.',
+    'up-to-date': `Squiggly ${update.current} is the latest version.`,
+    available: `Squiggly ${update.version} is out. You have ${update.current}.`,
+    downloading: `Downloading Squiggly ${update.version}${update.percent !== null ? `, ${update.percent}%` : ''}.`,
+    ready: `Squiggly ${update.version} is ready. It installs when you restart or quit.`,
+    error: update.error ?? 'Couldn\'t check for updates.',
+  }[update.status];
+  return <>
+    <h2>Updates</h2>
+    <label className="setting">
+      <input type="checkbox" checked={settings.checkForUpdates} onChange={event => void updateSettings({ checkForUpdates: event.target.checked })} />
+      <span><strong>Check for updates</strong><span>{update.mode === 'install'
+        ? 'Asks GitHub for new releases at launch and every six hours, and downloads them in the background. Nothing else about you is sent.'
+        : 'Asks GitHub for new releases at launch and every six hours. This copy can\'t update itself, so you download new versions from the release page. Nothing else about you is sent.'}</span></span>
+    </label>
+    <div className="setting-action">
+      <p><span role="status">{status}</span></p>
+      {update.status === 'ready' && <button type="button" className="text-button" onClick={() => void bridge.install()}>Restart to update</button>}
+      {update.status === 'available' && <button type="button" className="text-button" onClick={() => void bridge.open()}>Open the release page</button>}
+      {!['checking', 'downloading', 'ready'].includes(update.status) && <button type="button" className="text-button" onClick={() => void bridge.check()}>Check now</button>}
+    </div>
   </>;
 }
 

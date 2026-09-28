@@ -69,7 +69,7 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto' });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);

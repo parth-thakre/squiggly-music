@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi, SystemMediaApi, SystemMediaState } from '../../../packages/core/contracts';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
@@ -59,6 +59,11 @@ const media: SystemMediaApi = {
   hosted: process.argv.includes('--squiggly-media-session'),
   subscribe: listener => listen<SystemMediaState | null>('squiggly:media', listener),
 };
+const updates: UpdatesApi = {
+  check: () => ipcRenderer.invoke('squiggly:update:check'),
+  install: () => ipcRenderer.invoke('squiggly:update:install'),
+  open: () => ipcRenderer.invoke('squiggly:update:open'),
+};
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
@@ -87,6 +92,7 @@ const bridge: DesktopBridge = {
   config,
   extensions,
   media,
+  updates,
   settings: () => ipcRenderer.invoke('squiggly:get-settings'),
   updateSettings: changes => ipcRenderer.invoke('squiggly:update-settings', changes),
   window: {

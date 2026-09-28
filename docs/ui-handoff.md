@@ -40,6 +40,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `config.dir`, `config.read()`, `config.subscribe(listener)`, `config.openDir()` | The config folder: `keybindings.json` and `themes/*.json` as parsed JSON, with plain errors for files that couldn't be read. Pushed again whenever their contents change |
 | `window.toggleMini()`, `window.setAlwaysOnTop(on)`, `window.isMini` | The mini player window |
 | `exportDiagnostics()` | Save a credential-free report |
+| `updates.check()`, `updates.install()`, `updates.open()` | Updates from GitHub releases; the state is `update` in the snapshot (`mode` install, notify, or off; `status`; `version`). `install()` restarts into a downloaded update, `open()` opens the new release's page for copies that can't update themselves |
 
 Queue entries have identities: `snapshot.player.entryIds[i]` names the entry at `queue[i]`. Select and seek by entry, not by track id: `queue.jump` takes the entry id, and seek commands carry the `entryId` captured when the gesture began, so a seek that lands after the track changed is refused instead of seeking the wrong song.
 
