@@ -33,6 +33,7 @@
     "esbuild": "0.25.12",
     "koffi": "3.3.1",
     "lucide-react": "^0.468.0",
+    "music-metadata": "11.16.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },

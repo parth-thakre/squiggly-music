@@ -110,10 +110,17 @@ function protocolError(code: number | undefined): ServerError {
   return new ServerError(messages[code ?? -1] ?? 'The server rejected the request. Check your account and server settings.', code);
 }
 
+// An address typed without a scheme ("music.example.com") is tried as HTTPS, then HTTP.
+export const hasScheme = (input: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(input.trim());
+export function serverUrlCandidates(input: string): string[] {
+  const trimmed = input.trim();
+  return hasScheme(trimmed) ? [trimmed] : [`https://${trimmed}`, `http://${trimmed}`];
+}
+
 export function normalizeServerUrl(input: string): string {
   let url: URL;
   try { url = new URL(input.trim()); }
-  catch { throw new ServerError('Enter a complete server URL, such as https://music.example.com.'); }
+  catch { throw new ServerError('Enter your server\'s address, such as music.example.com.'); }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new Error('Use an HTTP or HTTPS server URL without embedded credentials, query parameters, or a fragment.');
   }
@@ -241,6 +248,14 @@ export class SubsonicClient {
   }
   private request<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params = {}) {
     return this.supports('formPost').pipe(Effect.flatMap(formPost => this.exchange(endpoint, schema, extra, formPost)));
+  }
+  // Whether a Subsonic server answers at this address, asked without credentials: any Subsonic
+  // reply counts, even one refusing the request. Used to pick HTTPS or HTTP before signing in.
+  probe() {
+    return this.transfer('ping', {}, false, false, 1, () => undefined, body => {
+      Schema.decodeUnknownSync(StatusSchema)(Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(body.toString('utf8')))['subsonic-response']);
+      return true;
+    });
   }
   ping() {
     return this.request('ping', StatusSchema).pipe(Effect.map(result => ({

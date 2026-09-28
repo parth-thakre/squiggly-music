@@ -242,8 +242,9 @@ async function songsFor(t: MenuTarget): Promise<Track[] | null> {
   return result.value;
 }
 
-builtin.menu({ id: 'play', section: 0, label: t => t.kind === 'tracks' && t.tracks.length === 1 ? 'Play' : 'Play all',
-  run: async t => { const tracks = await songsFor(t); if (tracks) await player.play(tracks, 0); } });
+// Plays a record, artist, or playlist from the start, as the menu's Play and a cover's play button do.
+export async function playTarget(t: MenuTarget) { const tracks = await songsFor(t); if (tracks) await player.play(tracks, 0); }
+builtin.menu({ id: 'play', section: 0, label: t => t.kind === 'tracks' && t.tracks.length === 1 ? 'Play' : 'Play all', run: playTarget });
 builtin.menu({ id: 'shuffle', section: 0, label: 'Shuffle', when: t => t.kind !== 'tracks' || t.tracks.length > 1,
   run: async t => { const tracks = await songsFor(t); if (tracks) await player.play(shuffled(tracks), 0); } });
 builtin.menu({ id: 'play-next', section: 0, label: 'Play next', when: t => !(t.kind === 'tracks' && t.from?.queue),

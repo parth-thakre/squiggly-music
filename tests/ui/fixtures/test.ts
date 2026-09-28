@@ -48,13 +48,13 @@ export class App {
   async openAlbum(name: string) {
     await this.section('Records').click();
     await expect(this.heading).toHaveText('Records');
-    await this.main.getByRole('list').first().getByRole('button', { name: new RegExp(escape(name)) }).click();
+    await this.main.getByRole('list').first().getByRole('button', { name: new RegExp(`^${escape(name)}`) }).click();
     await expect(this.heading).toHaveText(name);
   }
   async openPlaylist(name: string) {
     await this.section('Playlists').click();
     await expect(this.heading).toHaveText('Playlists');
-    await this.main.getByRole('button', { name: new RegExp(escape(name)) }).click();
+    await this.main.getByRole('button', { name: new RegExp(`^${escape(name)}`) }).click();
     await expect(this.heading).toHaveText(name);
   }
   /** Plays a song from its record page and waits until the browser is really playing it. */

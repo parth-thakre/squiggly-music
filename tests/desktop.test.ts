@@ -13,6 +13,7 @@ import { LibraryRequestSchemas, PlayTracksSchema, QUEUE_LIMIT as CORE_QUEUE_LIMI
 import { Radio, type RadioClient } from '../apps/desktop/main/radio';
 import { QUEUE_LIMIT as HOST_QUEUE_LIMIT } from '../packages/player-mpv/queue';
 import { JsonStore } from '../apps/desktop/main/store';
+import { Account, type Encryption } from '../apps/desktop/main/account';
 import { finishThreshold, PlayTracker } from '../apps/desktop/main/plays';
 import { QueueSync, savedState, type SavedState } from '../apps/desktop/main/queueSync';
 
@@ -68,13 +69,14 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto' });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: false }).miniOnTop).toBe(false);
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ closeToTray: 'yes' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: 'no' })).toThrow();
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: '' })).toThrow();
   });
 
   it('accepts only known, defined setting changes', () => {
@@ -447,6 +449,16 @@ describe('MPRIS media controls', () => {
     expect(service.metadata['mpris:trackid']).not.toBe(first);
   });
 
+  it('offers Play with nothing loaded only when the saved queue can be resumed', async () => {
+    const { session, service, controls } = await mpris();
+    session.update(snapshot({ queue: [], currentIndex: -1 }), null);
+    expect(service).toMatchObject({ canPlay: false, playbackStatus: 'Stopped' });
+    session.update(snapshot({ queue: [], currentIndex: -1 }), null, true);
+    expect(service).toMatchObject({ canPlay: true, canPause: false, playbackStatus: 'Stopped' });
+    service.emit('playpause');
+    expect(controls.command).toHaveBeenLastCalledWith('play');
+  });
+
   it('stops publishing after a bus error', async () => {
     const { session, service, onError } = await mpris();
     service.emit('error', new Error('no session bus'));
@@ -606,5 +618,50 @@ describe('main-process radio', () => {
     expect(radio.view).toEqual({ label: 'Second' });
     radio.end();
     expect(log).toEqual(['replace top1 s2', 'radio Second', 'radio off']);
+  });
+});
+
+describe('saved sign-in', () => {
+  // Stands in for Electron's safeStorage: reversible, and never the plain password on disk.
+  const encryption = (backend = 'gnome_libsecret', available = true): Encryption => ({
+    isEncryptionAvailable: () => available,
+    getSelectedStorageBackend: () => backend,
+    encryptString: text => Buffer.from([...Buffer.from(text)].reverse().map(byte => byte ^ 0x5a)),
+    decryptString: data => Buffer.from([...data].map(byte => byte ^ 0x5a).reverse()).toString(),
+  });
+  const connection = { url: 'https://music.example.com', username: 'ana', password: 'hunter22' };
+
+  it('keeps the password only encrypted, reconnects with it, and forgets it', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-account-'));
+    const path = join(directory, 'account.json');
+    await new Account(path, encryption(), 'linux').remember(connection);
+    const file = await readFile(path, 'utf8');
+    expect(file).not.toContain('hunter22');
+    expect(JSON.parse(file)).toMatchObject({ url: connection.url, username: 'ana' });
+    const later = new Account(path, encryption(), 'linux');
+    await later.load();
+    expect(later.saved).toEqual({ url: connection.url, username: 'ana' });
+    expect(later.connection()).toEqual(connection);
+    await later.forget();
+    const after = new Account(path, encryption(), 'linux');
+    await after.load();
+    expect(after.saved).toBeNull();
+  });
+
+  it('saves nothing without real encryption, and drops a password that no longer decrypts', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-account-'));
+    const path = join(directory, 'account.json');
+    for (const weak of [encryption('basic_text'), encryption('unknown'), encryption('gnome_libsecret', false)]) {
+      const account = new Account(path, weak, 'linux');
+      expect(account.canRemember).toBe(false);
+      await account.remember(connection);
+      expect(account.saved).toBeNull();
+    }
+    expect(new Account(path, encryption('unknown'), 'win32').canRemember).toBe(true);
+    await new Account(path, encryption(), 'win32').remember(connection);
+    const broken = new Account(path, { ...encryption(), decryptString: () => { throw new Error('other user'); } }, 'win32');
+    await broken.load();
+    expect(broken.saved).toEqual({ url: connection.url, username: 'ana' });
+    expect(broken.connection()).toBeNull();
   });
 });

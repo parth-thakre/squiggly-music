@@ -130,6 +130,10 @@ try {
   clientApiVersion = native.clientApiVersion;
   player.engine = 'ready';
   player.devices = native.devices();
+  // The saved output device, while it's connected. An unplugged one leaves the system default
+  // rather than an output that can't open.
+  const device = process.env.SQUIGGLY_AUDIO_DEVICE;
+  if (device && device !== 'auto' && player.devices.some(d => d.name === device)) native.set('audio-device', device);
   if (process.env.SQUIGGLY_AUDIO_EXCLUSIVE === '1') {
     try { applyExclusive(true); } catch (error) { exclusive = false; player.error = error instanceof Error ? error.message : exclusiveError; }
   }

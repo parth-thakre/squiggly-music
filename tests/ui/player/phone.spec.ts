@@ -118,6 +118,9 @@ test('the open now-playing sheet uses the full width', async ({ app }) => {
   await app.signIn();
   await app.play('Test Pressing', 'Long Run');
   await app.deck.getByRole('button', { name: 'Open now playing: Long Run' }).tap();
-  const sheet = (await app.deck.boundingBox())!, sleeve = (await app.deck.locator('.deck-cover').boundingBox())!;
-  expect(sleeve.width).toBeGreaterThan(sheet.width * .75);
+  // Measured once the sheet has finished opening.
+  await expect.poll(async () => {
+    const sheet = (await app.deck.boundingBox())!, sleeve = (await app.deck.locator('.deck-cover').boundingBox())!;
+    return sleeve.width / sheet.width;
+  }).toBeGreaterThan(.75);
 });

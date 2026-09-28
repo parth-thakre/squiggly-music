@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, Track } from '../../../../../packages/core/contracts';
+import type { AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
 import { finishThreshold } from '../../../../../packages/core/plays';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
@@ -32,7 +32,10 @@ export interface PlayerState {
   radioStarting: string | null;
   // A queue saved on the server, offered once at startup when nothing is playing.
   resumable: SavedQueue | null;
+  // Desktop only: the saved sign-in and reconnecting with it at launch.
+  signIn: SignInState;
 }
+export type SignInState = Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
 
 // The most songs a queue holds, on both builds (QUEUE_LIMIT in packages/core/validation.ts).
 // Kept here so the renderer doesn't bundle the schema library.
@@ -45,6 +48,7 @@ let state: PlayerState = {
   queue: [], entryIds: [], index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
+  signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
 };
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
@@ -110,7 +114,11 @@ if (desktop) {
     const error = p.error && p.error !== lastEngineError ? p.error : state.error;
     lastEngineError = p.error;
     const track = p.queue[p.currentIndex];
+    const { saved, canRemember, reconnecting, reconnectError } = snapshot.server;
+    const signIn = state.signIn.saved?.url === saved?.url && state.signIn.saved?.username === saved?.username && state.signIn.canRemember === canRemember
+      && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : { saved, canRemember, reconnecting, reconnectError };
     set({
+      signIn,
       engine: p.engine, connected: snapshot.server.connected, serverName: snapshot.server.name, sessionId,
       queue: sameList(state.queue, p.queue, sameTrack) ? state.queue : p.queue,
       entryIds: sameList(state.entryIds, p.entryIds, Object.is) ? state.entryIds : p.entryIds,
@@ -118,6 +126,8 @@ if (desktop) {
       volume: p.volume, audio: sameFields(state.audio, p.audio) ? state.audio : p.audio,
       devices: !p.devices.length || sameList(state.devices, p.devices, sameFields) ? state.devices : p.devices, device: p.audio.requestedDevice,
       radio: p.radio?.label === state.radio?.label ? state.radio : p.radio,
+      // A queue loaded some other way (a play key resumes the saved one) replaces the offer.
+      resumable: p.queue.length ? null : state.resumable,
       // The desktop asks Navidrome for the original file; the host doesn't verify what came back.
       delivery: track?.source === 'navidrome' ? 'original-requested' : null,
       error, diagnostics: snapshot.diagnostics,
@@ -481,10 +491,6 @@ export const player = {
     if (web) { web.active.volume = web.standby.volume = percent / 100; set({ volume: percent }); return; }
     volumeCommands!.enqueue(percent);
     if (final) volumeCommands!.finish();
-  },
-  device(name: string) {
-    if (web) return;
-    void desktop!.command({ type: 'device', id: name }).then(report);
   },
   dismissError() { set({ error: null }); },
 };

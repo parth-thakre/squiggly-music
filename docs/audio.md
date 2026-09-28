@@ -8,6 +8,8 @@ On the desktop, libmpv decodes and plays everything. Squiggly ignores any mpv co
 
 Exclusive output is a request to mpv. On Windows that asks WASAPI for exclusive use of the device; most Linux setups ignore it. The app reports whether mpv accepted the request. It can't tell whether the operating system actually gave it the device.
 
+On Windows and macOS, the system media controls come from Chromium, which only shows them while the window plays audio itself. So the window plays a silent clip alongside mpv, following its play and pause. With exclusive output on, that second stream would compete with mpv for the device, so there's no silent clip. On Windows the media keys still work, but the media flyout doesn't show Squiggly. Linux uses MPRIS and has no silent clip.
+
 The browser version plays through the browser's own audio element, so the browser decodes and the phone or computer mixes. If the browser can't decode the original (ALAC, for example), it asks the server for a 320 kbps MP3 instead, and the signal-path line says that too.
 
 ## Reading the signal path

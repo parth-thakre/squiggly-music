@@ -27,7 +27,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | --- | --- |
 | `snapshot()`, `subscribe(listener)` | Authoritative player, diagnostics, and server state |
 | `command(command)` | Play, pause, stop, previous/next, seek, volume, output device, restart |
-| `openFiles()`, `connect(connection)`, `disconnect()` | Local files; session-only server login. Settings › Disconnect calls `disconnect()`, which stops playback and returns to the connect screen |
+| `openFiles()`, `connect(connection)`, `disconnect()` | Local files; server login, saved encrypted when the system allows (`server.saved`, `server.canRemember` in the snapshot) and reconnected at launch (`server.reconnecting`, `server.reconnectError`). Settings › Disconnect calls `disconnect()`, which stops playback, forgets the saved sign-in, and returns to the connect screen |
 | `playTracks(trackIds, startIndex)` | Replace the queue with up to 500 library tracks the main process has returned |
 | `queue.add(ids, 'next' \| 'end')`, `queue.move`, `queue.remove`, `queue.clear` | Edit the queue (up to 1000). The playing song cannot be removed. Indexes refer to the latest snapshot |
 | `queue.jump(index, entryId)` | Play a queue entry. The entry id makes the jump land on that exact entry, even when the same song appears twice |
