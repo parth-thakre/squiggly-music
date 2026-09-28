@@ -43,6 +43,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   const keys = useMemo(() => entryIds && entryIds.length === tracks.length ? entryIds : occurrenceKeys(tracks), [tracks, entryIds]);
   const positions = useMemo(() => new Map(keys.map((key, i) => [key, i])), [keys]);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
+  // The row a context menu is open for, when it isn't part of the selection.
+  const [menuRow, setMenuRow] = useState<string | null>(null);
   const anchor = useRef<string | null>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
   // A keyboard move on its way: once the row lands, focus follows it and the move is announced.
@@ -106,10 +108,12 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   };
   const menu = (event: ReactMouseEvent, index: number) => {
     const key = keys[index];
+    // A row outside the selection is only marked while its menu is open; the selection stays.
     const indexes = selected.has(key) ? selectedIndexes() : [index];
-    if (!selected.has(key)) { setSelected(new Set([key])); anchor.current = key; }
+    if (!selected.has(key)) setMenuRow(key);
     openMenu(event, { kind: 'tracks', tracks: indexes.map(i => tracks[i]), indexes, from: { playlist, queue },
-      reorder: onMove && indexes.length === 1 ? { index, length: tracks.length, move: to => move(index, to) } : undefined });
+      reorder: onMove && indexes.length === 1 ? { index, length: tracks.length, move: to => move(index, to) } : undefined },
+      () => setMenuRow(null));
   };
   const keyDown = (event: ReactKeyboardEvent) => {
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && onMove) {
@@ -133,7 +137,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const index = first + offset;
         const key = keys[index];
         const isNow = queue ? index === nowIndex : track.id === nowId;
-        const isSelected = selected.has(key);
+        const isSelected = selected.has(key) || menuRow === key;
         const name = splitTitle(track.title, album);
         const starred = isStarred(track.id, track.starred);
         const credit = track.artist !== albumArtist ? track.artist : null;
