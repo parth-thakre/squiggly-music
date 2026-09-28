@@ -294,13 +294,16 @@ const hostOf = (url: string) => { try { return new URL(url).host; } catch { retu
 function Connect({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
+  const connect = async (connection: { url: string; username: string; password: string }) => {
     setBusy(true); setError(null);
-    const result = await window.squiggly!.connect({ url: String(data.get('url')), username: String(data.get('username')), password: String(data.get('password')) });
+    const result = await window.squiggly!.connect(connection);
     setBusy(false);
     if (!result.ok) setError(result.error);
+  };
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    void connect({ url: String(data.get('url')), username: String(data.get('username')), password: String(data.get('password')) });
   };
   const openFiles = async () => {
     setError(null);
@@ -328,6 +331,9 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       {error && <p className="deck-error" role="alert">{error}</p>}
     </form>
     {!embedded && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
+    {/* Navidrome's own public demo, with Creative Commons music, for trying Squiggly without a server. */}
+    <p className="connect-demo">No server yet? <button type="button" className="link" disabled={busy}
+      onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>, a public server of Creative Commons music that everyone shares.</p>
     {!embedded && <p className="connect-update"><UpdateLink /></p>}
   </Frame>;
 }

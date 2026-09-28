@@ -73,6 +73,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         openDir: async () => ({ ok: true, value: undefined }),
         writeClipboard: async (text: string) => { calls.push(`clipboard:${text}`); return { ok: true, value: undefined }; },
       },
+      connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
       disconnect: async () => {
         calls.push('disconnect');
         server = { connected: false, name: null, sessionId: null };
