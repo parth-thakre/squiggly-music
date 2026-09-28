@@ -19,6 +19,9 @@ const KnownCountSchema = Schema.transform(Schema.NullOr(CountSchema), Schema.Nul
 });
 // Cover art and cross-reference IDs are opaque. Servers send '' when there is none.
 const ReferenceSchema = Schema.String.pipe(Schema.maxLength(256));
+// OpenSubsonic lists each credited artist with an id when the server splits a credit such as
+// "A & B" (Navidrome does, by its tag settings). Older servers leave it out.
+const ArtistRefsSchema = Schema.optional(Schema.Array(Schema.Struct({ id: ReferenceSchema, name: Schema.String })).pipe(Schema.maxItems(50)));
 const SongSchema = Schema.Struct({
   id: IdSchema, title: Schema.String,
   artist: Schema.optional(Schema.String), album: Schema.optional(Schema.String),
@@ -26,12 +29,13 @@ const SongSchema = Schema.Struct({
   samplingRate: Schema.optional(KnownCountSchema), bitDepth: Schema.optional(KnownCountSchema),
   albumId: Schema.optional(ReferenceSchema), artistId: Schema.optional(ReferenceSchema), coverArt: Schema.optional(ReferenceSchema),
   track: Schema.optional(KnownCountSchema), discNumber: Schema.optional(KnownCountSchema), year: Schema.optional(KnownCountSchema),
-  genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.String),
+  genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.String), artists: ArtistRefsSchema,
 });
 const AlbumFields = {
   id: IdSchema, name: Schema.String, artist: Schema.optional(Schema.String), songCount: Schema.optional(CountSchema),
   artistId: Schema.optional(ReferenceSchema), year: Schema.optional(KnownCountSchema), genre: Schema.optional(Schema.String),
   duration: Schema.optional(DurationSchema), coverArt: Schema.optional(ReferenceSchema), starred: Schema.optional(Schema.String),
+  artists: ArtistRefsSchema,
 };
 const AlbumSchema = Schema.Struct({ ...AlbumFields, song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) });
 const ArtistFields = {
@@ -131,11 +135,16 @@ export function normalizeServerUrl(input: string): string {
   return url.href.replace(/\/+$/, '');
 }
 
+// Only credits that name more than one artist are kept: one is already artistId.
+const artistRefs = (refs: readonly { id: string; name: string }[] | undefined) => {
+  const named = (refs ?? []).filter(ref => ref.id && ref.name.trim()).map(ref => ({ id: ref.id, name: ref.name.trim() }));
+  return named.length > 1 ? { artists: named } : {};
+};
 function toAlbum(album: Schema.Schema.Type<Schema.Struct<typeof AlbumFields>>): Album {
   return {
     id: album.id, name: album.name, artist: album.artist ?? 'Unknown artist', songCount: album.songCount ?? 0,
     artistId: album.artistId || null, year: album.year ?? null, genre: album.genre || null, duration: album.duration ?? null,
-    coverArt: album.coverArt || null, starred: Boolean(album.starred),
+    coverArt: album.coverArt || null, starred: Boolean(album.starred), ...artistRefs(album.artists),
   };
 }
 function toArtist(artist: Schema.Schema.Type<typeof ArtistSchema>): Artist {
@@ -148,7 +157,7 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     sourceSampleRate: song.samplingRate ?? null, sourceBitDepth: song.bitDepth ?? null,
     albumId: song.albumId || null, artistId: song.artistId || null, coverArt: song.coverArt || null,
     trackNumber: song.track ?? null, discNumber: song.discNumber ?? null, year: song.year ?? null,
-    genre: song.genre || null, starred: Boolean(song.starred),
+    genre: song.genre || null, starred: Boolean(song.starred), ...artistRefs(song.artists),
   };
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max

@@ -18,16 +18,23 @@ export interface Track {
   albumId?: string | null;
   artistId?: string | null;
   coverArt?: string | null;
+  // When the server splits the credit ("A & B") into several artists, each with a page;
+  // `artist` stays the display text. Absent for a single artist.
+  artists?: ArtistRef[];
   trackNumber?: number | null;
   discNumber?: number | null;
   year?: number | null;
   genre?: string | null;
   starred?: boolean;
 }
+// One credited artist with their own page. See Track.artists.
+export interface ArtistRef { id: string; name: string }
 export interface Album {
   id: string; name: string; artist: string; songCount: number;
   artistId: string | null; year: number | null; genre: string | null; duration: number | null;
   coverArt: string | null; starred: boolean;
+  // When the server splits the credit into several artists; `artist` stays the display text.
+  artists?: ArtistRef[];
 }
 export interface Artist { id: string; name: string; albumCount: number; coverArt: string | null; starred: boolean }
 export interface AlbumDetail { album: Album; tracks: Track[] }

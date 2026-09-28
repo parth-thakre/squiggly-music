@@ -66,10 +66,12 @@ function buildLibrary() {
     const genre = genres[k % genres.length];
     const songs: [string, number][] = k === 1 ? specialTracks
       : Array.from({ length: 3 + (k % 3) }, (_, n) => k === 4 && n === 2 ? ['Word by Word', 24] : [`${trackWords[n]} ${k}`, 12 + ((k + n) % 5) * 3]);
+    // Second Wind 2 is a duet: the server splits its credit into two artists (Track.artists).
     const albumTracks = songs.map(([title, duration], n): Track => ({
-      id: `tr-${k}-${n + 1}`, title, artist: artist.name, album: name, duration,
+      id: `tr-${k}-${n + 1}`, title, artist: k === 2 && n === 1 ? `${artist.name} & ${artists[2].name}` : artist.name, album: name, duration,
       source: 'navidrome', sourceFormat: 'wav', sourceSampleRate: 8000, sourceBitDepth: 16,
       albumId: `al-${k}`, artistId: artist.id, coverArt: `al-${k}`, trackNumber: n + 1, discNumber: 1, year, genre, starred: false,
+      ...(k === 2 && n === 1 ? { artists: [{ id: artist.id, name: artist.name }, { id: artists[2].id, name: artists[2].name }] } : {}),
     }));
     tracks.push(...albumTracks);
     albums.push({ id: `al-${k}`, name, artist: artist.name, songCount: albumTracks.length, artistId: artist.id, year, genre,

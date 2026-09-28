@@ -291,10 +291,17 @@ builtin.menu({
 });
 
 builtin.menu({ id: 'go-album', section: 2, label: 'Go to record', when: t => !!one(t)?.albumId, run: t => nav.go({ view: 'album', id: one(t)!.albumId! }) });
+// A credit the server splits into several artists offers each of them (Track.artists).
+const creditedArtists = (t: MenuTarget) => (t.kind === 'album' ? t.album.artists : one(t)?.artists) ?? [];
 builtin.menu({
   id: 'go-artist', section: 2, label: 'Go to artist',
-  when: t => !!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId),
+  when: t => creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
   run: t => nav.go({ view: 'artist', id: t.kind === 'album' ? t.album.artistId! : one(t)!.artistId! }),
+});
+builtin.menu({
+  id: 'go-artists', section: 2, label: 'Go to artist',
+  when: t => creditedArtists(t).length > 1,
+  submenu: t => creditedArtists(t).map(artist => ({ id: `go-artist:${artist.id}`, section: 0, label: artist.name, run: () => nav.go({ view: 'artist', id: artist.id }) })),
 });
 
 builtin.menu({
