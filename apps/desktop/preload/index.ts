@@ -94,6 +94,8 @@ const bridge: DesktopBridge = {
     setAlwaysOnTop: on => ipcRenderer.invoke('squiggly:window:always-on-top', on),
     // The main process adds this argument only to the mini player's window.
     isMini: process.argv.includes('--squiggly-mini'),
+    frameless: process.argv.includes('--squiggly-frameless'),
+    tintControls: ink => ipcRenderer.invoke('squiggly:window:tint-controls', ink),
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
   exportDiagnostics: () => ipcRenderer.invoke('squiggly:export-diagnostics'),

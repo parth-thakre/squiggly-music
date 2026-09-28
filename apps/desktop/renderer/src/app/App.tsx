@@ -34,6 +34,8 @@ export function App() {
   useCommandKeys();
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
+  // Without a title bar, the window's own buttons take the room's ink.
+  useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
   const shell = connected || (mode === 'desktop' && hasQueue);
   return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
@@ -42,6 +44,7 @@ export function App() {
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : mode === 'desktop' ? <Connect /> : access === 'checking' ? null : <SignIn />}
+    {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
@@ -261,6 +264,13 @@ function SignalPath({ track }: { track: Track }) {
   return line ? <p className="signal">{line}</p> : null;
 }
 
+// Any CSS colour as #rrggbb, which is what the window's buttons take. A canvas normalises it.
+function asHex(color: string) {
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return color;
+  context.fillStyle = '#000'; context.fillStyle = color;
+  return context.fillStyle;
+}
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The desktop's server login. Embedded, it stands in for a library page while songs from
 // this computer play without a server.

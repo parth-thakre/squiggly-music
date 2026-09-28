@@ -5,6 +5,8 @@
   --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px;
 }
 html, body { margin: 0; height: 100%; }
+/* The room fills the window and each part scrolls on its own; the document itself never scrolls. */
+html, body { overflow: hidden; }
 body { font: calc(15px * var(--text))/1.45 var(--font-body); -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -22,6 +24,12 @@ button:disabled { cursor: default; opacity: .45; }
 /* Bar */
 .bar { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 26px; padding: 18px 40px 12px; min-width: 0; }
 .bar-top { display: contents; }
+/* A frameless main window (Windows, Linux): the system's window buttons sit over the top right of
+   the page. The top edge and the header drag the window, and anything you can click in them stays
+   clickable. The header keeps clear of the buttons: env(titlebar-area-*) is the space they leave. */
+.drag-strip { position: fixed; inset: 0 0 auto 0; height: 40px; pointer-events: none; -webkit-app-region: drag; }
+.bar { -webkit-app-region: drag; padding-right: max(40px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)); }
+:is(button, a, input, select, textarea, label, [role='button'], [tabindex]:not([tabindex='-1'])) { -webkit-app-region: no-drag; }
 .sections { order: 1; }
 .bar-top > :not(.wordmark) { order: 2; }
 .wordmark { display: inline-flex; align-items: center; gap: 9px; font-family: 'Young Serif', serif; font-size: 22px; margin-right: 10px; }

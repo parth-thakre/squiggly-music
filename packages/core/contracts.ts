@@ -261,7 +261,12 @@ export interface DesktopBridge {
   settings(): Promise<Settings>;
   updateSettings(changes: Partial<Settings>): Promise<Result<Settings>>;
   // The compact always-on-top window. Opening it from the mini player's own button returns to the full window.
-  window: { toggleMini(): Promise<Result>; setAlwaysOnTop(on: boolean): Promise<Result>; isMini: boolean };
+  window: {
+    toggleMini(): Promise<Result>; setAlwaysOnTop(on: boolean): Promise<Result>; isMini: boolean;
+    // The main window has no title bar on Windows and Linux: the system's window buttons sit over
+    // the top of the page, and tintControls gives them the room's ink colour (#rrggbb).
+    frameless: boolean; tintControls(ink: string): Promise<Result>;
+  };
   disconnect(): Promise<Result>;
   exportDiagnostics(): Promise<Result>;
 }

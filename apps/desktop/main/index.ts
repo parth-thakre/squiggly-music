@@ -508,6 +508,15 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
+  // The main window's buttons take the room's ink as the palette changes.
+  ipcMain.handle('squiggly:window:tint-controls', (event, value) => {
+    assertSender(event);
+    const target = BrowserWindow.fromWebContents(event.sender);
+    const ink = Schema.decodeUnknownEither(Schema.String.pipe(Schema.pattern(/^#[0-9a-f]{6}$/i)))(value);
+    if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(ink)) return { ok: false, error: 'Invalid window colour.' };
+    target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink.right, height: CONTROLS_HEIGHT });
+    return { ok: true, value: undefined };
+  });
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
@@ -533,12 +542,20 @@ function installHandlers() {
 
 // Both windows load the same renderer with the same sandbox, isolation, and navigation limits.
 // The mini player differs only in size, frame, and the argument its preload exposes as isMini.
+// Windows and Linux: no title bar on the main window. The system's window buttons are drawn over
+// the top of the page (window controls overlay), tinted to the room by tintControls. macOS keeps
+// its title bar, since its window buttons would sit on the wordmark.
+const FRAMELESS = process.platform !== 'darwin';
+const CONTROLS_HEIGHT = 40;
 function createWindow(mini: boolean) {
   const target = new BrowserWindow({
     ...(mini ? {
       ...miniBounds(), minWidth: 320, minHeight: 96, maxWidth: 900, maxHeight: 240,
       frame: false, maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
-    } : { width: 1440, height: 940, minWidth: 850, minHeight: 650 }),
+    } : {
+      width: 1440, height: 940, minWidth: 850, minHeight: 650,
+      ...(FRAMELESS ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: '#1c1b18', height: CONTROLS_HEIGHT } } : {}),
+    }),
     backgroundColor: '#181d25', title: 'Squiggly Music',
     ...(process.platform === 'linux' ? { icon: iconPath } : {}),
     webPreferences: {
@@ -548,6 +565,7 @@ function createWindow(mini: boolean) {
       // Only the main window, which lives as long as the app, hosts the system media session.
       additionalArguments: [
         ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
+        ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
         `--squiggly-config=${configDirectory()}`,
       ],
     },
