@@ -1,0 +1,510 @@
+/* The sleeve. A record on a table: scroll pulls the disc out, then the inner sleeve. */
+
+:root {
+  --table: #cfcabd;
+  --ink: #1c1b18;
+  --soft: #514a3a;
+  --sleeve: #d6c7a6;
+  --inner: #e8e0cb;
+  --vinyl: #1a1814;
+  --p: 1;
+  /* Where things end up, as fractions of the sleeve's size. */
+  --disc-x: 0.52;
+  --disc-y: 0;
+  --inner-x: 1.34;
+  --inner-y: 0.06;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --table: #121620;
+    --ink: #ebe7dd;
+    --soft: #a2a8b6;
+  }
+}
+
+html {
+  background: var(--table);
+  color: var(--ink);
+}
+
+body {
+  font-size: 1.0625rem;
+  line-height: 1.5;
+  font-variation-settings: "wght" 430;
+}
+
+code {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+/* Bar */
+
+.bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem clamp(1.25rem, 4vw, 3rem);
+  mix-blend-mode: multiply;
+}
+
+@media (prefers-color-scheme: dark) {
+  .bar {
+    mix-blend-mode: normal;
+  }
+}
+
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  font-family: var(--serif);
+  font-size: 1.4rem;
+}
+
+.lockup .mark {
+  height: 1rem;
+}
+
+.bar nav {
+  display: flex;
+  gap: 1.5rem;
+  font-variation-settings: "wght" 520;
+}
+
+.bar nav a {
+  text-decoration: none;
+}
+
+.bar nav a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Stage */
+
+.stage-wrap {
+  height: 380vh;
+}
+
+.stage {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  --s: min(62vh, 40vw);
+  --x0: clamp(1.25rem, 6vw, 6rem);
+  --y0: 16vh;
+}
+
+.sleeve,
+.disc,
+.inner {
+  position: absolute;
+  top: var(--y0);
+  left: var(--x0);
+  width: var(--s);
+  height: var(--s);
+}
+
+/* Paper grain, printed into the sleeves. */
+.grain,
+.sleeve::after,
+.inner::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .42 0 0 0 0 .36 0 0 0 .2 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+.sleeve {
+  z-index: 3;
+  background: var(--sleeve);
+  color: #1c1b18;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.08), 0 30px 60px -20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(0, 0, 0, 0.06);
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  padding: calc(var(--s) * 0.07) calc(var(--s) * 0.08) calc(var(--s) * 0.07) calc(var(--s) * 0.12);
+}
+
+/* Ring wear: where the record has pressed through the card. */
+.sleeve::before {
+  content: "";
+  position: absolute;
+  inset: 5% 5% 5% 9%;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.06), inset 0 0 0 1.5px rgba(255, 255, 255, 0.18);
+  filter: blur(1px);
+}
+
+.spine {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 5%;
+  background: rgba(0, 0, 0, 0.09);
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: calc(var(--s) * 0.028);
+  padding: 4% 0;
+  text-align: center;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+  font-variation-settings: "wght" 520;
+}
+
+.cover-mark {
+  width: calc(var(--s) * 0.34);
+  height: auto;
+  position: relative;
+}
+
+.cover-title {
+  align-self: end;
+  font-family: var(--serif);
+  font-size: calc(var(--s) * 0.19);
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  margin-left: -0.03em;
+  position: relative;
+}
+
+.cover-line {
+  font-size: calc(var(--s) * 0.036);
+  margin-top: 6%;
+  position: relative;
+  font-variation-settings: "wght" 500;
+}
+
+/* The disc */
+
+.disc {
+  z-index: 2;
+  border-radius: 50%;
+  transform: translate(calc(var(--s) * var(--disc-x) * var(--p)), calc(var(--s) * var(--disc-y) * var(--p)));
+  filter: drop-shadow(0 16px 24px rgba(0, 0, 0, 0.35));
+}
+
+.disc-spin {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background:
+    conic-gradient(from 20deg, rgba(255, 255, 255, 0.06), transparent 22%, rgba(255, 255, 255, 0.05) 48%, transparent 60%, rgba(255, 255, 255, 0.07) 82%, transparent),
+    repeating-radial-gradient(circle at 50% 50%, #1e1b16 0 1.4px, #14120e 1.4px 3px);
+  background-color: var(--vinyl);
+  display: grid;
+  place-items: center;
+  animation: spin 9s linear infinite;
+}
+
+.label {
+  width: 36%;
+  height: 36%;
+  border-radius: 50%;
+  background: var(--sleeve);
+  color: #1c1b18;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.15em;
+  text-align: center;
+  font-family: var(--serif);
+  font-size: calc(var(--s) * 0.042);
+  line-height: 1;
+  position: relative;
+}
+
+.label::after {
+  content: "";
+  position: absolute;
+  width: 8%;
+  height: 8%;
+  border-radius: 50%;
+  background: var(--table);
+  top: 46%;
+  left: 46%;
+}
+
+.label .mark {
+  height: 0.8em;
+  margin-bottom: 0.35em;
+}
+
+.label small {
+  font-family: var(--sans);
+  font-size: 0.6em;
+  color: #514a3a;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* The inner sleeve, with the screenshot printed on it */
+
+.inner {
+  z-index: 1;
+  background: var(--inner);
+  color: #1c1b18;
+  padding: calc(var(--s) * 0.05) calc(var(--s) * 0.05) calc(var(--s) * 0.05) calc(var(--s) * 0.19);
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--s) * 0.04);
+  transform: translate(calc(var(--s) * var(--inner-x) * var(--p)), calc(var(--s) * var(--inner-y) * var(--p)));
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.06), 0 30px 60px -24px rgba(0, 0, 0, 0.4);
+}
+
+.inner img {
+  width: 100%;
+  height: auto;
+  flex: none;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  position: relative;
+}
+
+.inner-note {
+  font-size: calc(var(--s) * 0.03);
+  color: #514a3a;
+  position: relative;
+  margin-top: auto;
+}
+
+/* Copy on the stage: arrives last */
+
+.stage-copy {
+  position: absolute;
+  left: var(--x0);
+  right: var(--x0);
+  bottom: 5vh;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 1rem 2rem;
+}
+
+.stage-copy h1 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(1.4rem, 1rem + 1.6vw, 2.4rem);
+  line-height: 1.1;
+  max-width: 18em;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.cta a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.9rem;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  text-decoration: none;
+  font-variation-settings: "wght" 560;
+}
+
+.cta a.primary {
+  background: var(--ink);
+  color: var(--table);
+}
+
+.cta a:hover {
+  background: var(--ink);
+  color: var(--table);
+}
+
+/* Back cover */
+
+.back {
+  padding: 4vh clamp(1.25rem, 6vw, 6rem) 12vh;
+}
+
+.back-sleeve {
+  position: relative;
+  background: var(--sleeve);
+  color: #1c1b18;
+  padding: clamp(2rem, 5vw, 4.5rem);
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.08), 0 40px 80px -30px rgba(0, 0, 0, 0.5);
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: clamp(2rem, 4vw, 3.5rem) clamp(1rem, 2vw, 2rem);
+  overflow: hidden;
+}
+
+.back-sleeve > * {
+  position: relative;
+}
+
+.back-sleeve::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .45 0 0 0 0 .42 0 0 0 0 .36 0 0 0 .2 0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23g)'/%3E%3C/svg%3E");
+}
+
+.back-sleeve h2 {
+  grid-column: 1 / 10;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(1.6rem, 1rem + 2.4vw, 3.2rem);
+  line-height: 1.1;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+
+.back-cols {
+  grid-column: 1 / 8;
+  columns: 2;
+  column-gap: 2.5rem;
+  font-size: 0.9375rem;
+  color: #4a4438;
+}
+
+.back-cols h3 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: 1.15rem;
+  color: #1c1b18;
+  margin-bottom: 0.4rem;
+  break-after: avoid;
+}
+
+.back-cols p {
+  margin-bottom: 1rem;
+}
+
+.back-shot {
+  grid-column: 8 / 13;
+}
+
+.back-shot img {
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.back-phone {
+  grid-column: 1 / 8;
+}
+
+.back-shot figcaption {
+  margin-top: 0.6rem;
+  font-size: 0.875rem;
+  color: #4a4438;
+}
+
+.catalogue {
+  grid-column: 8 / 13;
+  align-self: end;
+  font-size: 0.9375rem;
+}
+
+.cat-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 2px solid #1c1b18;
+  color: #4a4438;
+}
+
+.cat-line span:first-child {
+  color: #1c1b18;
+  font-variation-settings: "wght" 600;
+}
+
+.formats {
+  list-style: none;
+  padding: 0;
+}
+
+.formats a {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+  text-decoration: none;
+  font-variation-settings: "wght" 560;
+}
+
+.formats a span {
+  color: #4a4438;
+  font-variation-settings: "wght" 420;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.formats a:hover {
+  color: #8e2418;
+}
+
+.demo,
+.made {
+  margin-top: 1rem;
+  color: #4a4438;
+}
+
+/* Narrow: the disc comes out to the right, the inner sleeve drops below. */
+
+@media (max-width: 56rem) {
+  :root {
+    --disc-x: 0.5;
+    --disc-y: 0.08;
+    --inner-x: 0.12;
+    --inner-y: 1.08;
+  }
+  .stage {
+    --s: min(70vw, 40vh);
+    --x0: 1.25rem;
+    --y0: 11vh;
+  }
+  .stage-copy {
+    bottom: 3vh;
+  }
+  .stage-copy h1 {
+    font-size: 1.35rem;
+  }
+  .back-sleeve h2,
+  .back-cols,
+  .back-shot,
+  .back-phone,
+  .catalogue {
+    grid-column: 1 / -1;
+  }
+  .back-cols {
+    columns: 1;
+  }
+}
+
+/* Full-page captures: the stage as a plain block. */
+html.shot .stage-wrap {
+  height: auto;
+}
+
+html.shot .stage {
+  position: relative;
+  height: 56rem;
+  --s: 36rem;
+  --y0: 7rem;
+}

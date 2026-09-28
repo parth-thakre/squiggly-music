@@ -1,0 +1,368 @@
+/* The room. Full-bleed colour fields, each from a sleeve in the screenshots, stacked so the
+   next wipes over the last. Big type over colour. */
+
+:root {
+  --paper: #dcd8cc;
+  --paper-ink: #1c1b18;
+  --paper-soft: #5c574c;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #121620;
+    --paper-ink: #ebe7dd;
+    --paper-soft: #a2a8b6;
+  }
+}
+
+html {
+  /* The first room's sand, so the bar always sits on it at the top. */
+  background: #d6c7a6;
+  color: #1c1b18;
+}
+
+body {
+  font-size: 1.0625rem;
+  line-height: 1.45;
+  font-variation-settings: "wght" 440;
+}
+
+code {
+  font-family: ui-monospace, "Cascadia Mono", Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+/* Bar: its colour follows the room. */
+
+.bar {
+  position: fixed;
+  inset: 0 0 auto 0;
+  z-index: 20;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.25rem clamp(1.25rem, 4vw, 3rem);
+  color: var(--bar, #1c1b18);
+  transition: color 500ms ease;
+}
+
+.lockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  text-decoration: none;
+  font-family: var(--serif);
+  font-size: 1.4rem;
+}
+
+.lockup .mark {
+  height: 1rem;
+}
+
+.bar nav {
+  display: flex;
+  gap: 1.5rem;
+  font-variation-settings: "wght" 520;
+}
+
+.bar nav a {
+  text-decoration: none;
+}
+
+.bar nav a:hover {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Rooms */
+
+.room {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  padding: clamp(1.25rem, 4vw, 3rem);
+  background: var(--field);
+  color: var(--ink);
+  box-shadow: 0 -30px 60px -30px rgba(0, 0, 0, 0.35);
+}
+
+.room-sand { --field: #d6c7a6; --ink: #1c1b18; --soft: #514a3a; }
+.room-pink { --field: #efb3c9; --ink: #2a1a22; --soft: #5a3c48; }
+.room-sky { --field: #3b93cf; --ink: #0e1c28; --soft: #12283a; }
+.room-night { --field: #121620; --ink: #ebe7dd; --soft: #a2a8b6; --accent: #eda43a; }
+.room-red { --field: #7a1616; --ink: #f3e6d3; --soft: #e0c9b0; }
+.room-paper { --field: var(--paper); --ink: var(--paper-ink); --soft: var(--paper-soft); }
+
+.facts {
+  position: absolute;
+  top: 5rem;
+  right: clamp(1.25rem, 4vw, 3rem);
+  max-width: 22rem;
+  text-align: right;
+  font-size: 0.9375rem;
+  color: var(--soft);
+  font-variation-settings: "wght" 500;
+}
+
+.statement {
+  position: absolute;
+  left: clamp(1.25rem, 4vw, 3rem);
+  right: clamp(1.25rem, 4vw, 3rem);
+  bottom: clamp(1.5rem, 5vh, 3.5rem);
+  z-index: 2;
+}
+
+.statement h1,
+.statement h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(2.6rem, 1rem + 7.4vw, 8.5rem);
+  line-height: 0.96;
+  letter-spacing: -0.02em;
+  max-width: 9.5em;
+  text-wrap: balance;
+}
+
+.room-sky .statement h2,
+.room-red .statement h2 {
+  font-size: clamp(3.2rem, 1rem + 11vw, 12.5rem);
+  max-width: none;
+}
+
+.note {
+  margin-top: 1.25rem;
+  max-width: 34rem;
+  color: var(--soft);
+  font-size: 1.125rem;
+}
+
+.room-night .note {
+  color: var(--accent);
+}
+
+.list {
+  list-style: none;
+  padding: 0;
+  margin-top: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.5rem 2rem;
+  color: var(--soft);
+  font-size: 0.9375rem;
+  max-width: 70rem;
+}
+
+.cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}
+
+.cta a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.9rem;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid var(--ink);
+  border-radius: 999px;
+  text-decoration: none;
+  font-variation-settings: "wght" 560;
+}
+
+.cta a.primary {
+  background: var(--ink);
+  color: var(--field);
+}
+
+.cta a:hover {
+  background: var(--ink);
+  color: var(--field);
+}
+
+/* Screenshots bleed off the edges. */
+
+.shot {
+  position: absolute;
+  z-index: 1;
+}
+
+.shot img {
+  border-radius: 8px;
+  box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.5);
+  background: #d6c7a6;
+}
+
+/* Each screenshot dissolves into the field where the statement sits. */
+.shot-hero {
+  right: -6vw;
+  top: 7rem;
+  width: min(62vw, 64rem);
+  mask-image: linear-gradient(180deg, #000 45%, transparent 92%);
+  -webkit-mask-image: linear-gradient(180deg, #000 45%, transparent 92%);
+}
+
+.shot-lyrics {
+  left: 30vw;
+  top: 6rem;
+  width: min(66vw, 68rem);
+  mask-image: linear-gradient(180deg, #000 55%, transparent 95%);
+  -webkit-mask-image: linear-gradient(180deg, #000 55%, transparent 95%);
+}
+
+.shot-phone {
+  right: -4vw;
+  top: 5rem;
+  width: min(58vw, 60rem);
+  mask-image: linear-gradient(180deg, #000 50%, transparent 92%);
+  -webkit-mask-image: linear-gradient(180deg, #000 50%, transparent 92%);
+}
+
+.shot img {
+  box-shadow: none;
+}
+
+.shot-phone img {
+  border-radius: 0;
+  box-shadow: none;
+  background: none;
+}
+
+/* The last room is the end of the page, not a stage. */
+
+.end {
+  position: relative;
+  height: auto;
+  min-height: 100vh;
+  padding-top: 6rem;
+  overflow: visible;
+}
+
+.end-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 3rem clamp(2rem, 6vw, 6rem);
+  max-width: 76rem;
+  align-items: start;
+}
+
+.end h2 {
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(2.5rem, 1rem + 5vw, 5.5rem);
+  line-height: 1;
+  letter-spacing: -0.015em;
+  margin-bottom: 1rem;
+}
+
+.formats {
+  list-style: none;
+  padding: 0;
+  margin-top: 1.5rem;
+  border-top: 2px solid var(--ink);
+  max-width: 34rem;
+}
+
+.formats a {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--ink) 25%, transparent);
+  text-decoration: none;
+  font-variation-settings: "wght" 560;
+}
+
+.formats a span:last-child {
+  color: var(--soft);
+  font-variation-settings: "wght" 420;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.formats a:hover span:first-child {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.trust {
+  padding-top: 0.5rem;
+  color: var(--soft);
+  display: grid;
+  gap: 1rem;
+  max-width: 34rem;
+}
+
+/* Motion: as a room arrives, its statement rises and its screenshot settles. */
+
+@media (prefers-reduced-motion: no-preference) {
+  .js .room:not(.end) .statement,
+  .js .room .shot {
+    transition: transform 900ms var(--ease), opacity 900ms var(--ease);
+  }
+  .js .room .shot {
+    transition-delay: 120ms;
+  }
+  .js .room:not(.in):not(.end) .statement {
+    transform: translateY(36px);
+    opacity: 0;
+  }
+  .js .room:not(.in) .shot {
+    transform: translateY(60px) scale(0.985);
+    opacity: 0;
+  }
+}
+
+/* Narrow */
+
+@media (max-width: 56rem) {
+  .facts {
+    top: 4.5rem;
+    left: 1.25rem;
+    right: 1.25rem;
+    max-width: none;
+    text-align: left;
+    font-size: 0.875rem;
+  }
+  .statement h1,
+  .statement h2 {
+    font-size: clamp(2.4rem, 1rem + 9vw, 4.5rem);
+    max-width: none;
+  }
+  .room-sky .statement h2,
+  .room-red .statement h2 {
+    font-size: clamp(3rem, 1rem + 14vw, 5.5rem);
+  }
+  .list {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+    font-size: 0.875rem;
+  }
+  .list li:nth-child(n + 3) {
+    display: none;
+  }
+  .note {
+    font-size: 1rem;
+  }
+  .shot-hero {
+    right: -22vw;
+    top: 9.5rem;
+    width: 120vw;
+  }
+  .shot-lyrics {
+    left: 8vw;
+    top: 9rem;
+    width: 120vw;
+  }
+  .shot-phone {
+    right: -10vw;
+    top: 8rem;
+    width: 110vw;
+  }
+  .end-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
