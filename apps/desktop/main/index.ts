@@ -19,7 +19,7 @@ import {
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
-import { SubsonicClient, libraryCall, libraryMethods } from '../../../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, libraryMethods, serverUrlCandidates } from '../../../packages/adapter-opensubsonic/client';
 import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
@@ -327,9 +327,10 @@ function shellPlay() {
 }
 // Connects to a server, replacing any current one. Stops playback and clears every authenticated
 // URL before replacing the account, while keeping the audio engine's volume and output device.
-function connectTo(connection: Connection, generation: number) {
+function connectTo(typed: Connection, generation: number) {
   return Effect.gen(function* () {
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
+    const connection = yield* resolveAddress(typed);
     const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
     const info = yield* candidate.ping();
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
@@ -337,9 +338,26 @@ function connectTo(connection: Connection, generation: number) {
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear();
     connectionGeneration++; resetSessionState();
-    state.server = { ...state.server, connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID(), reconnectError: null };
+    // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
+    const address = new URL(candidate.baseUrl);
+    state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), reconnectError: null };
     // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
     updateTray(); updateMedia(); void loadSavedSong(candidate);
+    return connection;
+  });
+}
+// The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
+// where a server answers. That's asked without credentials, so the password only goes to an
+// address that answered, and a failed HTTPS attempt never sends it over plain HTTP.
+function resolveAddress(connection: Connection) {
+  const candidates = serverUrlCandidates(connection.url);
+  if (candidates.length === 1) return Effect.succeed(connection);
+  return Effect.gen(function* () {
+    for (const url of candidates) {
+      const attempt = yield* Effect.either(Effect.try(() => new SubsonicClient({ ...connection, url }, metrics)).pipe(Effect.flatMap(client => client.probe())));
+      if (Either.isRight(attempt)) return { ...connection, url };
+    }
+    return yield* Effect.fail(new Error(`No Navidrome server answered at ${connection.url.trim()} over HTTPS or HTTP. Check the address and your connection.`));
   });
 }
 // At launch, with a saved sign-in. A failure leaves the connect screen filled in, with the reason.
@@ -416,9 +434,9 @@ function installHandlers() {
   }), 'dialog');
   handle('connect', (value, generation) => Effect.gen(function* () {
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
-    yield* connectTo(connection, generation);
+    const resolved = yield* connectTo(connection, generation);
     // A sign-in that can't be saved securely stays in memory for this session (account.ts).
-    yield* Effect.promise(() => account.remember(connection).catch(() => undefined));
+    yield* Effect.promise(() => account.remember(resolved).catch(() => undefined));
     state.server = { ...state.server, saved: account.saved };
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {

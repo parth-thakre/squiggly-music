@@ -304,7 +304,9 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       {canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
     <form onSubmit={submit}>
-      <label>Server address<input name="url" type="url" required placeholder="https://music.example.com" autoComplete="url" defaultValue={saved?.url} /></label>
+      {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, then HTTP. */}
+      <label>Server address<input name="url" type="text" inputMode="url" required placeholder="music.example.com" autoComplete="url"
+        autoCapitalize="off" spellCheck={false} defaultValue={saved?.url} /></label>
       <label>Username<input name="username" required autoComplete="username" defaultValue={saved?.username} /></label>
       <label>Password<input name="password" type="password" required autoComplete="current-password" /></label>
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
