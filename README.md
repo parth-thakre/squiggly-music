@@ -35,7 +35,7 @@ On Windows, run the setup program or the portable exe. They aren't signed yet, s
 
 On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
 
-To connect, enter your Navidrome address with any port or subpath (`https://music.example.com/navidrome` works), your username, and your password. The password stays in memory for the session. Squiggly doesn't save it.
+To connect, enter your Navidrome address with any port or subpath (`https://music.example.com/navidrome` works), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
 
 ## Run from source
 
@@ -58,7 +58,7 @@ SQUIGGLY_WEB_PASSWORD='a long password for this page' \
 npm run web
 ```
 
-This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv, and the signal-path line says so.
+This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
 
 ## Tests
 

@@ -625,7 +625,7 @@ function Disconnect() {
   if (!connected) return null;
   return <div className="setting-action">
     <p><strong>Disconnect or switch server</strong>
-      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. Squiggly doesn't save your password, so have it ready.</span></p>
+      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. It also forgets the saved sign-in, so have your password ready.</span></p>
     <button type="button" className="text-button" disabled={busy} onClick={async () => {
       setBusy(true); setError(null);
       const result = await window.squiggly!.disconnect();

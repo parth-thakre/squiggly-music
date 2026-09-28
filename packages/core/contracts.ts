@@ -176,7 +176,16 @@ export interface Diagnostics {
 export interface AppSnapshot {
   player: PlayerSnapshot;
   diagnostics: Diagnostics;
-  server: { connected: boolean; name: string | null; sessionId: string | null };
+  server: ServerState;
+}
+export interface ServerState {
+  connected: boolean; name: string | null; sessionId: string | null;
+  // The saved sign-in (see apps/desktop/main/account.ts), without its password.
+  saved: { url: string; username: string } | null;
+  // Whether connecting will save the sign-in: the system can encrypt the password.
+  canRemember: boolean;
+  // Reconnecting with the saved sign-in at launch, and why that failed, if it did.
+  reconnecting: boolean; reconnectError: string | null;
 }
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
 // The user's config folder (~/.config/squiggly on Linux, %APPDATA%\Squiggly on Windows).

@@ -1,5 +1,5 @@
 /// <reference types="electron-vite/node" />
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,7 +16,7 @@ import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
-import type { AppSnapshot, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
 import { SubsonicClient, libraryCall, libraryMethods } from '../../../packages/adapter-opensubsonic/client';
@@ -25,6 +25,7 @@ import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
 import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
+import { Account } from './account';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
@@ -56,7 +57,10 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const started = performance.now();
 const metrics = new Metrics();
 const loop = monitorEventLoopDelay({ resolution: 20 });
-const state: AppSnapshot = { player: emptyPlayer(), diagnostics: emptyDiagnostics(), server: { connected: false, name: null, sessionId: null } };
+const state: AppSnapshot = {
+  player: emptyPlayer(), diagnostics: emptyDiagnostics(),
+  server: { connected: false, name: null, sessionId: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null },
+};
 const windows: { main: BrowserWindow | null; mini: BrowserWindow | null } = { main: null, mini: null };
 let tray: Tray | null = null;
 let media: MediaSession | null = null;
@@ -93,6 +97,7 @@ const knownTracks = new Map<string, Track>();
 // Created at ready, once userData is final. Reads fall back to defaults until loaded.
 let settings = new JsonStore('', SettingsFileSchema, defaultSettings());
 let windowState = new JsonStore('', WindowStateSchema, {});
+let account = new Account('', safeStorage);
 const plays = new PlayTracker();
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
 // still in flight) belongs to the session that was current when quit began.
@@ -319,6 +324,34 @@ function shellPlay() {
   const resume = Effect.suspend(() => generation === connectionGeneration && canResume() ? resumeSaved(false) : Effect.void);
   void Effect.runPromise(Effect.either(metrics.measure('shell.resume', semaphores.server.withPermits(1)(resume)))).then(broadcast);
 }
+// Connects to a server, replacing any current one. Stops playback and clears every authenticated
+// URL before replacing the account, while keeping the audio engine's volume and output device.
+function connectTo(connection: Connection, generation: number) {
+  return Effect.gen(function* () {
+    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
+    const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
+    const info = yield* candidate.ping();
+    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
+    endRadio();
+    if (server) yield* send({ type: 'clear-session' });
+    server = candidate; knownTracks.clear();
+    connectionGeneration++; resetSessionState();
+    state.server = { ...state.server, connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID(), reconnectError: null };
+    // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
+    updateTray(); updateMedia(); void loadSavedSong(candidate);
+  });
+}
+// At launch, with a saved sign-in. A failure leaves the connect screen filled in, with the reason.
+async function reconnect() {
+  const connection = account.connection();
+  if (!connection) return;
+  state.server = { ...state.server, reconnecting: true }; broadcast();
+  const generation = connectionGeneration;
+  const result = await Effect.runPromise(Effect.either(metrics.measure('shell.reconnect', semaphores.server.withPermits(1)(connectTo(connection, generation)))));
+  const reconnectError = Either.isLeft(result) && !state.server.connected ? (result.left instanceof Error ? result.left.message : 'Could not connect.') : null;
+  state.server = { ...state.server, reconnecting: false, reconnectError };
+  broadcast();
+}
 function seekTo(seconds: number) {
   const index = state.player.currentIndex; const track = state.player.queue[index];
   const entryId = state.player.entryIds[index];
@@ -381,21 +414,11 @@ function installHandlers() {
     yield* send({ type: 'queue', tracks });
   }), 'dialog');
   handle('connect', (value, generation) => Effect.gen(function* () {
-    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
-    const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
-    const info = yield* candidate.ping();
-    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
-    // Credentials are session-only. No plaintext persistence or silent safeStorage fallback.
-    // Stop playback and clear every authenticated URL before replacing the account,
-    // while preserving the audio engine's volume and selected output device.
-    endRadio();
-    if (server) yield* send({ type: 'clear-session' });
-    server = candidate; knownTracks.clear();
-    connectionGeneration++; resetSessionState();
-    state.server = { connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID() };
-    // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
-    updateTray(); updateMedia(); void loadSavedSong(candidate);
+    yield* connectTo(connection, generation);
+    // A sign-in that can't be saved securely stays in memory for this session (account.ts).
+    yield* Effect.promise(() => account.remember(connection).catch(() => undefined));
+    state.server = { ...state.server, saved: account.saved };
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
@@ -484,7 +507,10 @@ function installHandlers() {
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
-    server = null; knownTracks.clear(); resetSessionState(); state.server = { connected: false, name: null, sessionId: null };
+    server = null; knownTracks.clear(); resetSessionState();
+    // Disconnecting also forgets the saved sign-in.
+    yield* Effect.promise(() => account.forget().catch(() => undefined));
+    state.server = { ...state.server, connected: false, name: null, sessionId: null, saved: account.saved, reconnectError: null };
     yield* Effect.tryPromise(() => launchPlayer());
   }));
   handle('export-diagnostics', () => Effect.gen(function* () {
@@ -735,7 +761,9 @@ app.whenReady().then(async () => {
   const userData = app.getPath('userData');
   settings = new JsonStore(join(userData, 'settings.json'), SettingsFileSchema, defaultSettings());
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
-  await Promise.all([settings.load(), windowState.load()]);
+  account = new Account(join(userData, 'account.json'), safeStorage);
+  await Promise.all([settings.load(), windowState.load(), account.load()]);
+  state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   installHandlers(); loop.enable();
   const windowContents = () => appWindows().map(target => target.webContents);
   config = startConfigFolder({ assertSender, windows: windowContents });
@@ -745,6 +773,7 @@ app.whenReady().then(async () => {
   createMainWindow();
   createTray();
   startMediaControls();
+  void reconnect();
   await launchPlayer();
   let sampledAt = performance.now();
   const timer = setInterval(() => {

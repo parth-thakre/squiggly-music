@@ -12,19 +12,23 @@ import type { Page } from '@playwright/test';
 // window.pushMedia(state) stands in for the main process, and player commands are recorded in
 // bridgeCalls.
 export interface FakeExtension { id: string; name: string; url: string; error?: string }
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost }) => {
+// `signIn` overrides the saved sign-in state (ServerState), and `connected: false` starts on the
+// connect screen.
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
       outputChannels: null, outputBackend: null, requestedDevice: 'auto', replayGain: null, exclusiveRequested: null,
       filters: null, bufferSeconds: null, streamBytesPerSecond: null, buffering: false,
     };
-    let server: { connected: boolean; name: string | null; sessionId: string | null } = { connected: true, name: 'Navidrome (music.example.com)', sessionId: 'session-1' };
+    const signIn = { saved: null, canRemember: true, reconnecting: false, reconnectError: null, ...signInPatch };
+    let server: { connected: boolean; name: string | null; sessionId: string | null } = connected
+      ? { connected: true, name: 'Navidrome (music.example.com)', sessionId: 'session-1' } : { connected: false, name: null, sessionId: null };
     const snapshot = () => ({
       player: { engine: 'ready', error: null, playing: false, position: 0, duration: 0, volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio },
       diagnostics: { uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0, playerBytesPerSecond: 0, pendingCommands: 0, eventLoopDelayMs: 0, processes: [], operations: [] },
-      server,
+      server: { ...server, ...signIn },
     });
     const empty: Record<string, unknown> = { starred: { artists: [], albums: [], tracks: [] }, savedQueue: null };
     const library = new Proxy({}, {
@@ -70,5 +74,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true });
 }

@@ -271,6 +271,7 @@ function DeviceChoice({ devices, device }: { devices: AudioDevice[]; device: str
   </select>;
 }
 
+const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The desktop's server login. Embedded, it stands in for a library page while songs from
 // this computer play without a server.
 function Connect({ embedded = false }: { embedded?: boolean }) {
@@ -290,12 +291,19 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     if (!result.ok) setError(result.error);
   };
   const Frame = embedded ? 'section' : 'main';
+  const { saved, canRemember, reconnecting, reconnectError } = usePlayer(s => s.signIn);
+  if (reconnecting && saved) return <Frame className="connect">
+    <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
+    <p>Connecting to {hostOf(saved.url)} as {saved.username}.</p>
+  </Frame>;
   return <Frame className="connect">
     <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
-    <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'} Your password stays in memory for this session only.</p>
+    <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
+      {canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
+    {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
     <form onSubmit={submit}>
-      <label>Server address<input name="url" type="url" required placeholder="https://music.example.com" autoComplete="url" /></label>
-      <label>Username<input name="username" required autoComplete="username" /></label>
+      <label>Server address<input name="url" type="url" required placeholder="https://music.example.com" autoComplete="url" defaultValue={saved?.url} /></label>
+      <label>Username<input name="username" required autoComplete="username" defaultValue={saved?.username} /></label>
       <label>Password<input name="password" type="password" required autoComplete="current-password" /></label>
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
