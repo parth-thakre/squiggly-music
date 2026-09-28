@@ -124,7 +124,7 @@ test.describe('playback with reduced motion', () => {
   });
 });
 
-test.describe('one click to play', () => {
+test.describe('one click to play, then what is playing', () => {
   test.beforeEach(async ({ app }) => { await app.signIn(); });
 
   test('a record plays from its cover without opening it', async ({ app }) => {
@@ -132,7 +132,20 @@ test.describe('one click to play', () => {
     await card.hover();
     await card.getByRole('button', { name: 'Play Quiet Harbor' }).click();
     await app.expectPlaying('Opening 2');
-    await expect(app.heading).toHaveText('Records');
+    // Playing a whole record shows the queue, with the sleeve in the deck beside it.
+    await expect(app.heading).toHaveText('Queue');
+  });
+
+  test("a record page's Play and Shuffle show the queue; a song from its list doesn't", async ({ app }) => {
+    await app.openAlbum('Quiet Harbor');
+    await app.main.getByRole('button', { name: 'Play', exact: true }).click();
+    await app.expectPlaying('Opening 2');
+    await expect(app.heading).toHaveText('Queue');
+    await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+    await app.rowButton(app.row('Second Wind 2')).click();
+    await app.expectPlaying('Second Wind 2');
+    await expect(app.heading).toHaveText('Quiet Harbor');
   });
 
   test('an artist plays from beside their name', async ({ app }) => {
@@ -141,6 +154,6 @@ test.describe('one click to play', () => {
     await row.hover();
     await row.getByRole('button', { name: 'Play Bell Tower' }).click();
     await app.expectPlaying('Opening 2');
-    await expect(app.heading).toHaveText('Artists');
+    await expect(app.heading).toHaveText('Queue');
   });
 });

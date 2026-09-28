@@ -15,8 +15,8 @@ const builtin = registry.scope('builtin');
 import.meta.hot?.dispose(() => builtin.dispose());
 onCommandError(message => player.showError(message));
 
-// Hooks into the shell for actions that live in components.
-export const shell = { openNowPlaying: null as (() => void) | null };
+export { shell } from '../nowPlaying';
+import { shell } from '../nowPlaying';
 
 const phone = () => matchMedia('(max-width: 760px)').matches;
 const desktop = () => !!window.squiggly;
