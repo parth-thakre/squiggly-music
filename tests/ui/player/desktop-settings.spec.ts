@@ -46,3 +46,11 @@ test.describe('saved sign-in', () => {
     await expect(page.getByText('This system can\'t store the password securely')).toBeVisible();
   });
 });
+
+test('the output device is chosen in Settings and saved there', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const output = page.getByRole('combobox', { name: /Output/ });
+  await expect(output).toHaveValue('auto');
+  await expect(output.locator('option')).toHaveText(['System default']);
+});

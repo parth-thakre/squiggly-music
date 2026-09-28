@@ -224,6 +224,7 @@ async function launchPlayer() {
     env: {
       ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
+      SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
     },
     execArgv: [], windowsHide: true,
     stdio: ['ignore', 'ignore', process.env.SQUIGGLY_SMOKE_TEST === '1' ? 'pipe' : 'ignore', 'ipc'],
@@ -489,6 +490,9 @@ function installHandlers() {
     // A running engine applies exclusive output now; a stopped one reads the saved value at start.
     const exclusiveChanged = next.exclusiveOutput !== previous.exclusiveOutput && host !== null && state.player.engine === 'ready';
     if (exclusiveChanged) yield* send({ type: 'exclusive', on: next.exclusiveOutput });
+    // A running engine switches output now; a stopped one reads the saved device at start.
+    const deviceChanged = next.outputDevice !== previous.outputDevice && host !== null && state.player.engine === 'ready';
+    if (deviceChanged) yield* send({ type: 'device', id: next.outputDevice });
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();

@@ -492,9 +492,5 @@ export const player = {
     volumeCommands!.enqueue(percent);
     if (final) volumeCommands!.finish();
   },
-  device(name: string) {
-    if (web) return;
-    void desktop!.command({ type: 'device', id: name }).then(report);
-  },
   dismissError() { set({ error: null }); },
 };

@@ -4,7 +4,7 @@ import { api, load, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
-import { createPlaylist, openMenu, tracksOf } from './menu';
+import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
@@ -183,7 +183,8 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
   const [first, last] = useVisibleRows(list, offsets);
   const shown = active ? albums.slice(first * active.columns, last * active.columns) : windowed ? albums.slice(0, WINDOWED) : albums;
   return <ul ref={list} className="grid" style={active ? { paddingTop: first * active.stride, paddingBottom: (rows - last) * active.stride } : undefined}>
-    {shown.map(album => <li key={album.id}>
+    {shown.map(album => <li key={album.id} className="playable">
+      <PlayOver label={splitTitle(album.name).main} play={() => playTarget({ kind: 'album', album })} />
       <button type="button" onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
         onContextMenu={event => openMenu(event, { kind: 'album', album })}>
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
@@ -192,6 +193,16 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
       </button>
     </li>)}
   </ul>;
+}
+
+// One click to play a record, playlist, or artist without opening it. It shows over the cover
+// (beside an artist's name) on hover or keyboard focus; the rest of the card still opens the page.
+function PlayOver({ label, play, small = false }: { label: string; play(): Promise<void>; small?: boolean }) {
+  const [busy, setBusy] = useState(false);
+  return <button type="button" className={`play-over${small ? ' small' : ''}`} aria-label={`Play ${label}`} disabled={busy}
+    onClick={async () => { setBusy(true); try { await play(); } finally { setBusy(false); } }}>
+    <span className="disc"><Glyph kind="play" /></span>
+  </button>;
 }
 
 // Album --------------------------------------------------------------------------------
@@ -302,11 +313,12 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
         ? <h2 key={`letter-${row.letter}`} className="letter-row" id={`letter-${row.letter}`}>{row.letter}</h2>
         : <ul key={`${row.letter}-${first + i}`} className="name-row" aria-label={row.letter}
           style={{ gridTemplateColumns: `repeat(${shape!.columns}, minmax(0, 1fr))` }}>
-          {row.artists.map(artist => <li key={artist.id}>
+          {row.artists.map(artist => <li key={artist.id} className="playable">
             <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
               onContextMenu={event => openMenu(event, { kind: 'artist', artist })}>
               <span className="artist-name">{artist.name}</span> <span>{artist.albumCount}</span>
             </button>
+            <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
           </li>)}
         </ul>)}
     </div>
@@ -367,7 +379,8 @@ export function Playlists() {
     <section className="shelf-section" aria-labelledby="yours">
       <div className="section-head"><h2 id="yours">Yours</h2><NewPlaylist /></div>
       <Pending result={playlists} waiting="Loading playlists">{list => list.length ? <ul className="rows">
-        {list.map(playlist => <li key={playlist.id}>
+        {list.map(playlist => <li key={playlist.id} className="playable">
+          <PlayOver label={splitTitle(playlist.name).main} play={() => playTarget({ kind: 'playlist', playlist })} />
           <button type="button" onClick={event => { travel(playlist.id, event.currentTarget); nav.go({ view: 'playlist', id: playlist.id }); }}
             onContextMenu={event => openMenu(event, { kind: 'playlist', playlist })}>
             <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
@@ -383,7 +396,8 @@ export function Playlists() {
       <h2 id="automatic">Automatic</h2>
       <p className="section-note">Drawn from your library each session. Save one to keep it as it is.</p>
       <ul className="rows">
-        {mixes.map(mix => <li key={mix.id}>
+        {mixes.map(mix => <li key={mix.id} className="playable">
+          <PlayOver label={mix.name} play={async () => { const drawn = await mixTracks(mix); if (drawn.ok && drawn.value.length) await player.play(drawn.value, 0); }} />
           <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
             <MixTile mix={mix} travels={mix.id === morph.id} />
             <span className="row-text"><span className="row-name">{mix.name}</span><span className="row-sub">{mix.description}</span></span>
@@ -534,8 +548,9 @@ export function Favorites() {
 }
 
 function ArtistNames({ artists }: { artists: Artist[] }) {
-  return <ul className="names">{artists.map(artist => <li key={artist.id}>
+  return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
     <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}>{artist.name} <span>{artist.albumCount}</span></button>
+    <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
 }
 
@@ -587,7 +602,8 @@ export function SettingsView() {
   const settings = useSettings();
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
-  const row = (key: keyof typeof settings, title: string, detail: string) => <label className="setting">
+  const devices = usePlayer(s => s.devices);
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -602,6 +618,13 @@ export function SettingsView() {
       {mode === 'desktop' && <Disconnect />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
+        <label className="setting choice">
+          <span><strong>Output</strong><span>Where Squiggly plays. If this device isn't connected when Squiggly starts, it uses the system default.</span></span>
+          <select value={settings.outputDevice} onChange={event => void updateSettings({ outputDevice: event.target.value })}>
+            {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${settings.outputDevice} (not connected)`}</option>}
+            {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
+          </select>
+        </label>
         {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows supports this; many Linux setups ignore it.')}
         <h2>Window</h2>
         {row('closeToTray', 'Keep playing when the window closes', 'Closing the window leaves Squiggly in the tray. Quit from the tray menu.')}

@@ -90,11 +90,6 @@ button:disabled { cursor: default; opacity: .45; }
 .volume input::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--ink); }
 
 .signal { margin: 14px 0 0; font-size: calc(12.5px * var(--text)); line-height: 1.55; color: var(--soft); }
-.signal select {
-  max-width: 100%; padding: 0 2px; background: none; border: 0; border-bottom: 1px dashed var(--soft); border-radius: 0;
-  color: var(--ink); font-weight: 600;
-}
-.signal select option { color: #000; }
 
 /* Page */
 .page { min-width: 0; overflow-y: auto; padding: 18px 48px 72px 36px; outline: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -135,10 +130,29 @@ button:disabled { cursor: default; opacity: .45; }
 .grid li { min-width: 0; }
 .grid button { display: block; width: 100%; padding: 0; background: none; border: 0; text-align: left; }
 .grid .cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .1), 0 10px 16px -12px rgba(0, 0, 0, .5); transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
-.grid button:hover .cover { transform: translateY(-4px); }
+.grid .playable:hover .cover { transform: translateY(-4px); }
 .grid-name { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: calc(14px * var(--text)); font-weight: 600; line-height: 1.3; }
 .grid-name > span, .grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .grid-sub { display: block; font-size: calc(13px * var(--text)); color: var(--soft); line-height: 1.35; }
+/* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
+   keyboard focus. Touch screens have no hover, so there it stays hidden and a tap opens the page. */
+.playable { position: relative; }
+/* :is(.playable) lifts it above the card's own button rules (.grid button, .rows button), which
+   would otherwise stretch it across the whole card. */
+:is(.playable) > .play-over { position: absolute; z-index: 1; display: block; width: auto; height: auto; padding: 0; background: none; border: 0; opacity: 0; pointer-events: none;
+  transform: translateY(4px) scale(.9); transition: opacity .16s ease, transform .22s cubic-bezier(.2, .8, .2, 1); }
+.play-over .disc { box-shadow: 0 8px 16px -8px rgba(0, 0, 0, .6); transition: transform .15s ease; }
+.play-over:hover .disc { transform: scale(1.06); }
+.playable:hover .play-over, .playable:focus-within .play-over { opacity: 1; pointer-events: auto; transform: none; }
+.grid .playable { container-type: inline-size; }
+.grid .play-over { left: 10px; top: calc(100cqw - 52px); }
+.grid .playable:hover .play-over { transform: translateY(-4px); }
+.rows .play-over { left: 11px; top: 50%; margin-top: -21px; }
+:is(.playable) > .play-over.small { position: static; flex: none; margin-left: 8px; }
+.play-over.small .disc { width: 24px; height: 24px; box-shadow: none; }
+.play-over.small .disc svg { width: 10px; }
+.name-row li, .names li { display: flex; align-items: center; }
+@media (hover: none) { :is(.playable) > .play-over { display: none; } }
 
 /* Tracks */
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }
@@ -275,6 +289,13 @@ button:disabled { cursor: default; opacity: .45; }
 .setting span span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
 /* A setting that is an action rather than a switch: text in the switches' column, the button under it. */
 .setting-action { padding: 10px 0 10px 36px; }
+/* A choice rather than a switch: the text lines up with the switches' text, the menu below it. */
+.setting.choice { display: block; padding-left: 36px; cursor: default; }
+.setting.choice select {
+  margin-top: 8px; max-width: min(100%, 42ch); padding: 2px 2px 3px; background: none; border: 0; border-bottom: 1px dashed var(--soft); border-radius: 0;
+  font: inherit; font-size: calc(14.5px * var(--text)); color: var(--ink); font-weight: 600; cursor: pointer;
+}
+.setting.choice select option { color: #000; }
 .setting-action p { margin: 0 0 4px; }
 .setting-action strong { display: block; font-size: calc(15.5px * var(--text)); font-weight: 600; }
 .setting-action span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
@@ -595,7 +616,7 @@ html[data-density='compact'] { --row-height: 38px; }
 @media (prefers-reduced-motion: reduce) {
   .room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li { transition: none; }
   .lyric-lines.synced li.far { filter: none; }
-  .grid button:hover .cover { transform: none; }
+  .grid .playable:hover .cover, .playable:hover .play-over { transform: none; }
   .play:active, .play-action:active .disc { transform: none; }
   .wave.moving path, .deck-cover, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
@@ -604,7 +625,7 @@ html[data-density='compact'] { --row-height: 38px; }
 /* A theme's motion setting: "reduced" does what the system setting does; "none" also stops every fade. */
 html:is([data-motion='reduced'], [data-motion='none']) :is(.room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li, .theme-sample) { transition: none; }
 html:is([data-motion='reduced'], [data-motion='none']) .lyric-lines.synced li.far { filter: none; }
-html:is([data-motion='reduced'], [data-motion='none']) .grid button:hover .cover { transform: none; }
+html:is([data-motion='reduced'], [data-motion='none']) :is(.grid .playable:hover .cover, .playable:hover .play-over) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.play:active, .play-action:active .disc) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.wave.moving path, .deck-cover, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet) { animation: none; }
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-group(*),

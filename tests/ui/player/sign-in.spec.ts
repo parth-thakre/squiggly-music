@@ -19,7 +19,7 @@ test.describe('sign-in', () => {
     await app.signInPassword.fill(webPassword);
     await app.signInPassword.press('Enter');
     await expect(app.heading).toHaveText('Records');
-    await expect(app.main.getByRole('button', { name: /Test Pressing/ })).toBeVisible();
+    await expect(app.main.getByRole('button', { name: /^Test Pressing/ })).toBeVisible();
 
     await app.deck.getByRole('button', { name: 'Sign out' }).click();
     await expect(app.signInPassword).toBeVisible();
@@ -44,6 +44,6 @@ test.describe('sign-in', () => {
     await expect(app.section('Artists')).toBeVisible();
     await app.section('Artists').click();
     await expect(app.heading).toHaveText('Artists');
-    await expect(app.main.getByRole('button', { name: /Ada Brass/ })).toBeVisible();
+    await expect(app.main.getByRole('button', { name: /^Ada Brass/ })).toBeVisible();
   });
 });

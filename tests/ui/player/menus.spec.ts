@@ -32,7 +32,7 @@ test.describe('menus', () => {
 
   test('a text item takes typing: ArrowLeft moves the caret, Escape leaves the field, a second Escape closes', async ({ app, page }) => {
     await app.section('Playlists').click();
-    const invoker = app.main.getByRole('button', { name: /Road Mix/ });
+    const invoker = app.main.getByRole('button', { name: /^Road Mix/ });
     await app.openMenuOn(invoker);
     await expect(app.menu.getByRole('menuitem', { name: 'Play all' })).toBeFocused();
     await page.keyboard.press('End');

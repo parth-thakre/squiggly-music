@@ -107,6 +107,7 @@ export interface Settings {
   syncQueue: boolean;         // save the queue to Navidrome and offer to resume it
   reportPlays: boolean;       // tell Navidrome what was played
   miniOnTop: boolean;         // keep the mini player above other windows
+  outputDevice: string;       // mpv audio-device name; 'auto' is the system default
 }
 export interface QueueApi {
   add(trackIds: string[], where: 'next' | 'end'): Promise<Result>;

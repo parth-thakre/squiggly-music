@@ -1,5 +1,5 @@
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
-import type { AudioDevice, Track } from '../../../../../packages/core/contracts';
+import type { Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
@@ -247,11 +247,9 @@ function Volume() {
 
 // The signal path as a sentence. Unknown stays unknown, and a request is called a request:
 // asking Navidrome for the original file doesn't prove the original arrived.
-// One quiet line: what the file is, and on the desktop where it plays. Notes appear only when
-// something changes what you hear. The full decoder and output detail is on the Diagnostics page.
+// One quiet line: what the file is. Notes appear only when something changes what you hear.
+// The output device is in Settings; decoder and output detail is on the Diagnostics page.
 function SignalPath({ track }: { track: Track }) {
-  const devices = usePlayer(s => s.devices);
-  const device = usePlayer(s => s.device);
   const volume = usePlayer(s => Math.round(s.volume));
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
@@ -259,16 +257,8 @@ function SignalPath({ track }: { track: Track }) {
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
   const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
     volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
-  if (mode === 'web') return notes ? <p className="signal">{notes}</p> : null;
-  return <p className="signal">
-    {format && <>{format} on </>}<DeviceChoice devices={devices} device={device} />{notes && <> {notes}</>}
-  </p>;
-}
-function DeviceChoice({ devices, device }: { devices: AudioDevice[]; device: string }) {
-  return <select aria-label="Output device" value={device} onChange={event => player.device(event.target.value)}>
-    {!devices.some(d => d.name === device) && <option value={device}>{device === 'auto' ? 'System default' : device}</option>}
-    {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
-  </select>;
+  const line = [mode === 'desktop' && format, notes].filter(Boolean).join('. ');
+  return line ? <p className="signal">{line}</p> : null;
 }
 
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };

@@ -17,18 +17,21 @@ export const RadioSeedSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal('album', 'artist'), id: IdSchema, label: LabelSchema }),
 );
 
+// An mpv audio-device name, as listed by the engine.
+const DeviceSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024));
 // A stored file may predate a setting, so missing keys take their default. A wrong type rejects the whole file.
 const setting = (fallback: boolean) => Schema.optionalWith(Schema.Boolean, { default: () => fallback });
 export const SettingsFileSchema = Schema.Struct({
   // Stock GNOME hides tray icons, so closing to the tray would strand the app there. Off on Linux.
   lyricsLookup: setting(false), exclusiveOutput: setting(false), closeToTray: setting(process.platform !== 'linux'), syncQueue: setting(true), reportPlays: setting(true),
   miniOnTop: setting(true),
+  outputDevice: Schema.optionalWith(DeviceSchema, { default: () => 'auto' }),
 });
 export const defaultSettings = (): Settings => Schema.decodeUnknownSync(SettingsFileSchema)({});
 // Renderer changes: known keys only, never undefined. Decode with onExcessProperty: 'error'.
 export const SettingsPatchSchema = Schema.partialWith(Schema.Struct({
   lyricsLookup: Schema.Boolean, exclusiveOutput: Schema.Boolean, closeToTray: Schema.Boolean, syncQueue: Schema.Boolean, reportPlays: Schema.Boolean,
-  miniOnTop: Schema.Boolean,
+  miniOnTop: Schema.Boolean, outputDevice: DeviceSchema,
 }), { exact: true });
 
 const CoordinateSchema = Schema.Number.pipe(Schema.int(), Schema.between(-100_000, 100_000));

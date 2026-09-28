@@ -42,7 +42,7 @@ test.describe('history', () => {
     await sort.getByRole('button', { name: 'A to Z' }).click();
     await expect(sort.getByRole('button', { name: 'A to Z' })).toHaveAttribute('aria-pressed', 'true');
     await expect(firstRecord).toContainText('Amber Field');
-    await firstRecord.getByRole('button').click();
+    await firstRecord.getByRole('button', { name: /^Amber Field/ }).click();
     await expect(app.heading).toHaveText('Amber Field');
 
     await page.getByRole('button', { name: 'Back', exact: true }).click();
@@ -59,7 +59,7 @@ test.describe('history', () => {
     const search = page.getByRole('searchbox', { name: 'Search your library' });
     await search.fill('harbor');
     await expect(app.heading).toHaveText('“harbor”');
-    await expect(app.main.getByRole('button', { name: /Quiet Harbor/ })).toBeVisible();
+    await expect(app.main.getByRole('button', { name: /^Quiet Harbor/ })).toBeVisible();
     await app.section('Artists').click();
     await expect(app.heading).toHaveText('Artists');
     await expect(search).toHaveValue('');

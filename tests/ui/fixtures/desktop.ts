@@ -34,7 +34,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const library = new Proxy({}, {
       get: (_target, method: string) => method === 'coverUrl' ? () => '' : async () => ({ ok: true, value: method in empty ? empty[method] : [] }),
     });
-    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true };
+    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto' };
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
     const disabled = new Set<string>(), removed = new Set<string>();
