@@ -1,7 +1,7 @@
 <h1>
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/lockup-dark.png">
-    <img alt="Squiggly" src="docs/brand/lockup-light.png" width="400">
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.png">
+    <img alt="Squiggly" src="docs/brand/wordmark-light.png" width="400">
   </picture>
 </h1>
 
