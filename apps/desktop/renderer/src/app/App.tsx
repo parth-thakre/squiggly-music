@@ -39,12 +39,14 @@ export function App() {
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
   const shell = connected || (mode === 'desktop' && hasQueue);
   return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
+    {/* First, so everything clickable after it wins: Electron applies drag regions in page order,
+        and a later drag region would swallow the header's buttons where they overlap it. */}
+    {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
     {shell ? <>
       <Bar />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : mode === 'desktop' ? <Connect /> : access === 'checking' ? null : <SignIn />}
-    {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
