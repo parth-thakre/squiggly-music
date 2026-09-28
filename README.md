@@ -9,17 +9,23 @@ Squiggly plays your own music from Navidrome. It asks the server for the origina
 
 It's early software. It runs on Windows and Fedora, and a browser version works on phones.
 
+![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
+
 ## What it does
 
 - Browse records, artists, playlists, and favorites on your server, or play files from your computer.
 - Edit the queue and your playlists. The queue follows you between devices through the server.
 - Start a radio station from any song, record, or artist.
 - Build automatic playlists from your library by genre, by decade, and from what's new.
-- Show synced lyrics from your files. Looking up missing lyrics on LRCLIB is off until you turn it on.
+- Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.
 - Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
 - Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.
 - Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
+
+![Synced lyrics filling in word by word, in Hindi and English](docs/screenshots/desktop-lyrics.webp)
+
+![The browser version on a phone: the library with the playing song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet](docs/screenshots/phone.webp)
 
 It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% it tells you that's attenuation.
 
