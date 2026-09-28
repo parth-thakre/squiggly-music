@@ -293,8 +293,11 @@ img:is(.deck-cover, .head-cover) {
 .menu.sheet .menu-title { font-size: calc(14px * var(--text)); padding: 8px 12px; }
 
 /* Selection and reordering. A selected row is tinted; the drop point is a single ink line. */
-.tracks li { border-radius: var(--radius); }
+/* The tint gets a little room on either side (taken back by the margin, so columns stay put), and
+   a selected row shows its star as a hovered one does, so the tint doesn't end in blank space. */
+.tracks li { border-radius: var(--radius); padding: 0 10px; margin: 0 -10px; }
 .tracks li.selected { background: var(--line); }
+.tracks li.selected .star { opacity: 1; }
 .tracks li.drop-before { box-shadow: inset 0 2px 0 var(--ink); }
 .tracks li.drop-after { box-shadow: inset 0 -2px 0 var(--ink); }
 .tracks.dragging { user-select: none; }

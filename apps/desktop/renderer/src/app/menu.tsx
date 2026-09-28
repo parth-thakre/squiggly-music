@@ -33,8 +33,10 @@ function rowsFor(items: MenuItem[], target: MenuTarget, problems: string[]): Row
   });
 }
 
-export function openMenu(event: Pick<ReactMouseEvent, 'clientX' | 'clientY' | 'preventDefault'> & { target?: EventTarget | null }, target: MenuTarget) {
+// `onClose` runs when this menu closes, however it closes.
+export function openMenu(event: Pick<ReactMouseEvent, 'clientX' | 'clientY' | 'preventDefault'> & { target?: EventTarget | null }, target: MenuTarget, onClose?: () => void) {
   event.preventDefault();
+  onMenuClose?.(); onMenuClose = onClose ?? null;
   // Focus goes back here when the menu closes: the control that opened it, or whatever had focus.
   const origin = event.target instanceof Element ? event.target.closest<HTMLElement>('button, a[href], input, select, [tabindex]') : null;
   const invoker = origin ?? (document.activeElement instanceof HTMLElement && !document.activeElement.closest('.menu-layer') ? document.activeElement : null);
@@ -50,10 +52,12 @@ export function openMenu(event: Pick<ReactMouseEvent, 'clientX' | 'clientY' | 'p
 }
 let inHistory = false;
 let closed: (() => void) | null = null;
+let onMenuClose: (() => void) | null = null;
 function finishClose() {
   if (!open) return;
   const { invoker } = open;
   setOpen(null);
+  onMenuClose?.(); onMenuClose = null;
   const focus = document.activeElement;
   if (invoker?.isConnected && (!focus || focus === document.body || focus.closest('.menu-layer'))) invoker.focus({ preventScroll: true });
 }

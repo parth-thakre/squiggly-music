@@ -116,3 +116,16 @@ test.describe('menus with reduced motion', () => {
     expect(await app.menu.evaluate(menu => getComputedStyle(menu).animationName)).toBe('none');
   });
 });
+
+test.describe('menus and the selection', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+  test('right-clicking a song marks it only while its menu is open', async ({ app, page }) => {
+    await app.openAlbum('Test Pressing');
+    const row = app.row('Long Run');
+    await app.openMenuOn(row);
+    await expect(row).toHaveClass(/\bselected\b/);
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(row).not.toHaveClass(/\bselected\b/);
+  });
+});
