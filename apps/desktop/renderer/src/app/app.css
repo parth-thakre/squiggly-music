@@ -349,8 +349,8 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .menu.palette.sheet:not(.keyed) .palette-item[aria-selected='true'] { background: none; }
 
 /* Lyrics. Synced lines are big display type in ink, never the accent. The current line's words
-   fill from soft to ink as they're sung: lyrics.tsx writes each word's progress (0 to 1) to --p,
-   and the fill is a soft-edged gradient clipped to the letters. Past lines are soft, upcoming ones
+   fill from the upcoming lines' faint soft to ink as they're sung, and rise a touch: lyrics.tsx
+   writes each word's progress (0 to 1) to --p, and the fill is a gradient clipped to the letters. Past lines are soft, upcoming ones
    soft taken a fifth of the way to the ground (still 3:1 for type this large, since soft is at
    least 4.5:1), and lines more than two away blur slightly until the listener scrolls. Unsynced
    lyrics are plain ink at a reading size. */
@@ -366,9 +366,11 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .lyric-lines.synced li.far { filter: blur(.5px); }
 .lyrics.browsing .lyric-lines.synced li.far { filter: none; }
 .lyric-lines.synced li.current .word {
-  --edge: .35em; --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
+  --edge: .12em; --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
+  display: inline-block; transform: translateY(calc(var(--p, 0) * -.05em));
   color: transparent; -webkit-background-clip: text; background-clip: text;
-  background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)), var(--soft) calc(var(--at) + var(--edge)));
+  background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)),
+    color-mix(in srgb, var(--soft) 80%, var(--ground)) calc(var(--at) + var(--edge)));
 }
 .lyric-lines button { padding: 0; background: none; border: 0; text-align: left; font: inherit; color: inherit; letter-spacing: inherit; }
 .lyric-lines button:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .18em; }
