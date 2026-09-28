@@ -60,9 +60,13 @@ export class NativePlayer {
     if (!this.handle) throw new Error('libmpv could not create a player.');
     try {
       // Ignore user mpv configuration so no hidden DSP or scripts change the path.
+      // Gapless: 'weak' keeps the output open from one song to the next while their formats
+      // match (an album, usually), and reopens it in the new format when they don't. ('yes'
+      // would hold the first song's format and resample the rest.) prefetch-playlist opens the
+      // next song's stream before this one ends, so a network fetch doesn't open a gap.
       const options: Record<string, string> = {
         config: 'no', 'load-scripts': 'no', terminal: 'no', video: 'no',
-        idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'yes',
+        idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'weak', 'prefetch-playlist': 'yes',
         replaygain: 'no', volume: '100', 'volume-max': '100',
         'audio-display': 'no',
       };
@@ -75,6 +79,11 @@ export class NativePlayer {
         // The null output otherwise simulates a large device buffer. Keep its
         // timing deterministic enough for transport tests, not hardware claims.
         this.option(this.handle, 'ao-null-buffer', '0.01');
+        // Tests of gapless playback read what mpv output from a WAV file instead.
+        if (process.env.SQUIGGLY_TEST_PCM_FILE) {
+          this.option(this.handle, 'ao', 'pcm');
+          this.option(this.handle, 'ao-pcm-file', process.env.SQUIGGLY_TEST_PCM_FILE);
+        }
       }
       if (this.initialize(this.handle) < 0) throw new Error('libmpv initialization failed. Check audio-device availability.');
     } catch (error) { this.close(); throw error; }

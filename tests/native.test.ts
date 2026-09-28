@@ -21,12 +21,12 @@ afterEach(async () => {
   vi.doUnmock('../packages/player-mpv/native'); vi.doUnmock('koffi'); vi.resetModules();
 });
 
-function start(libraryPath: string) {
+function start(libraryPath: string, env: Record<string, string> = {}) {
   const snapshots: PlayerSnapshot[] = [];
   const replies = new Map<number, string | null>();
   worker = fork(resolve('out/main/player.js'), [], {
     stdio: ['ignore', 'ignore', 'pipe', 'ipc'],
-    env: { ...process.env, SQUIGGLY_LIBMPV_PATH: libraryPath, SQUIGGLY_TEST_NULL_AUDIO: '1' },
+    env: { ...process.env, SQUIGGLY_LIBMPV_PATH: libraryPath, SQUIGGLY_TEST_NULL_AUDIO: '1', ...env },
   });
   worker.on('message', (message: HostMessage) => {
     if (message.type === 'snapshot') snapshots.push(message.player);
@@ -741,5 +741,79 @@ describe('exclusive output', () => {
     expect(reply).toEqual({ type: 'reply', id: 2, error: expect.stringContaining('exclusive mode') });
     // Reverted to the last accepted request.
     expect(native.set.mock.calls).toEqual([['audio-exclusive', 'no'], ['audio-exclusive', 'yes']]);
+  });
+});
+
+// A mono 16-bit WAV of a 440 Hz tone, from sample `from` of one continuous tone, at `rate`.
+function tone(rate: number, seconds: number, from = 0) {
+  const samples = Math.round(rate * seconds), bytes = samples * 2;
+  const wav = Buffer.alloc(44 + bytes);
+  wav.write('RIFF', 0); wav.writeUInt32LE(36 + bytes, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write('data', 36); wav.writeUInt32LE(bytes, 40);
+  for (let i = 0; i < samples; i++) wav.writeInt16LE(Math.round(Math.sin((from + i) * 2 * Math.PI * 440 / rate) * 8000), 44 + i * 2);
+  return wav;
+}
+// Serves files the way a music server does, over HTTP; `/slow/…` answers after a delay.
+async function serve(files: Record<string, Buffer>) {
+  const { createServer } = await import('node:http');
+  const server = createServer((request, response) => {
+    const path = request.url!.replace(/^\/slow/, '');
+    const body = files[path];
+    if (!body) { response.writeHead(404).end(); return; }
+    setTimeout(() => response.writeHead(200, { 'content-type': 'audio/wav', 'content-length': body.length }).end(body), request.url!.startsWith('/slow') ? 400 : 0);
+  });
+  await new Promise<void>(done => server.listen(0, '127.0.0.1', done));
+  const port = (server.address() as { port: number }).port;
+  return { url: (path: string) => `http://127.0.0.1:${port}${path}`, close: () => server.close() };
+}
+const streamed = (location: string, id: string, rate: number) => ({ location, track: {
+  id, title: id, artist: '', album: '', duration: 2, source: 'navidrome' as const, sourceFormat: 'wav', sourceSampleRate: rate, sourceBitDepth: 16,
+} });
+
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('gapless playback in real libmpv', () => {
+  it('plays two halves of one tone as one tone, even when the second stream is slow to start', async () => {
+    fixtureDirectory = await mkdtemp(join(tmpdir(), 'squiggly-gapless-'));
+    const output = join(fixtureDirectory, 'output.wav');
+    const rate = 48000, half = rate * 2;
+    const server = await serve({ '/one.wav': tone(rate, 2), '/two.wav': tone(rate, 2, half) });
+    try {
+      const { snapshots, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!, { SQUIGGLY_TEST_PCM_FILE: output });
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      send({ id: 1, action: { type: 'queue', tracks: [streamed(server.url('/one.wav'), 'one', rate), streamed(server.url('/slow/two.wav'), 'two', rate)] } });
+      await expect.poll(() => snapshots.some(s => s.currentIndex === 1), { timeout: 15_000 }).toBe(true);
+      await expect.poll(() => snapshots.at(-1)?.currentIndex, { timeout: 15_000 }).toBe(-1);
+    } finally { server.close(); }
+    const { readFile } = await import('node:fs/promises');
+    const wav = await readFile(output);
+    // The output stayed open across the join: one file, both halves, at the songs' own rate.
+    expect(wav.readUInt32LE(24)).toBe(rate);
+    const channels = wav.readUInt16LE(22), bits = wav.readUInt16LE(34);
+    const data = wav.subarray(wav.indexOf('data') + 8);
+    const frame = channels * bits / 8;
+    const read = (i: number) => bits === 16 ? data.readInt16LE(i * frame) / 32768 : bits === 32 && wav.readUInt16LE(20) === 3 ? data.readFloatLE(i * frame) : data.readInt32LE(i * frame) / 2 ** 31;
+    const frames = Math.floor(data.length / frame);
+    expect(Math.abs(frames - 2 * half)).toBeLessThan(rate / 100);
+    // No silence and no click anywhere: a 440 Hz tone at this level never changes by more than
+    // about 0.014 between samples, and never stays near zero for more than a sample or two.
+    let jump = 0, quiet = 0, longestQuiet = 0;
+    for (let i = 1; i < frames; i++) {
+      jump = Math.max(jump, Math.abs(read(i) - read(i - 1)));
+      quiet = Math.abs(read(i)) < 0.001 ? quiet + 1 : 0; longestQuiet = Math.max(longestQuiet, quiet);
+    }
+    expect(jump).toBeLessThan(0.02);
+    expect(longestQuiet).toBeLessThan(4);
+  });
+
+  it('switches the output to a new sample rate instead of resampling to the first song\'s', async () => {
+    const server = await serve({ '/48.wav': tone(48000, 1), '/44.wav': tone(44100, 1) });
+    try {
+      const { snapshots, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      send({ id: 1, action: { type: 'queue', tracks: [streamed(server.url('/48.wav'), 'a', 48000), streamed(server.url('/44.wav'), 'b', 44100)] } });
+      await expect.poll(() => snapshots.at(-1)?.audio.outputRate, { timeout: 10_000 }).toBe(48000);
+      await expect.poll(() => snapshots.find(s => s.currentIndex === 1 && s.audio.outputRate === 44100)?.audio.outputRate, { timeout: 10_000 }).toBe(44100);
+    } finally { server.close(); }
   });
 });
