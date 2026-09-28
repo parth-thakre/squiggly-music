@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Schema } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, normalizeServerUrl, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, normalizeServerUrl, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 
@@ -42,6 +42,40 @@ describe('server address', () => {
     for (const secret of ['u', 't', 's', 'p']) expect(sent.searchParams.has(secret)).toBe(false);
     serve(() => new Response('<html>not navidrome</html>', { headers: { 'content-type': 'text/html' } }));
     expect(Either.isLeft(await Effect.runPromise(Effect.either(client().probe())))).toBe(true);
+  });
+  it('signs in over HTTPS, then HTTP, whichever answers first, and uses a typed scheme as given', async () => {
+    const probed: string[] = [];
+    const answering = (answers: string) => vi.fn((input: string) => {
+      probed.push(new URL(input).origin);
+      return input.startsWith(answers) ? Promise.resolve(Response.json({ 'subsonic-response': { status: 'ok' } })) : Promise.reject(new TypeError('refused'));
+    });
+    vi.stubGlobal('fetch', answering('http://'));
+    const make = (candidate: typeof connection) => new SubsonicClient(candidate, new Metrics());
+    const typed = { ...connection, url: 'music.example.com' };
+    await expect(Effect.runPromise(resolveServerAddress(typed, make))).resolves.toEqual({ ...typed, url: 'http://music.example.com' });
+    expect(probed).toEqual(['https://music.example.com', 'http://music.example.com']);
+    probed.length = 0;
+    await expect(Effect.runPromise(resolveServerAddress(connection, make))).resolves.toBe(connection);
+    expect(probed).toEqual([]);
+    vi.stubGlobal('fetch', answering('nothing'));
+    await expect(Effect.runPromise(resolveServerAddress(typed, make))).rejects.toThrow('No Navidrome server answered at music.example.com over HTTPS or HTTP');
+  });
+  it('sends every request through a fetch it was given instead of the global one', async () => {
+    const global = serve(() => Response.json(envelope({})));
+    const own = vi.fn((input: string, _options: RequestInit) => Promise.resolve(new URL(input).pathname.endsWith('/getOpenSubsonicExtensions.view') ? discoveryResponse() : Response.json(envelope({ type: 'navidrome' }))));
+    const subject = new SubsonicClient(connection, new Metrics(), {}, { fetch: own as unknown as typeof fetch });
+    await expect(Effect.runPromise(subject.ping())).resolves.toEqual({ name: 'Navidrome' });
+    expect(own).toHaveBeenCalledTimes(2);
+    expect(global).not.toHaveBeenCalled();
+  });
+  it('gives the native cover proxy an authenticated getCoverArt address without an id or size', () => {
+    const base = new URL(client().coverArtBase());
+    expect(base.pathname).toBe('/navidrome/rest/getCoverArt.view');
+    expect(base.searchParams.get('u')).toBe('listener');
+    expect(base.searchParams.get('t')).toBe(createHash('md5').update(connection.password + base.searchParams.get('s')).digest('hex'));
+    expect(base.searchParams.has('id')).toBe(false);
+    expect(base.searchParams.has('size')).toBe(false);
+    expect(base.href).not.toContain(connection.password);
   });
   it('preserves subpaths', () => expect(normalizeServerUrl(connection.url)).toBe('https://music.example.com/navidrome'));
   it.each(['/rest/ping.view', '/rest/getAlbumList2.view/'])('accepts an explicit API address ending in %s', suffix => {

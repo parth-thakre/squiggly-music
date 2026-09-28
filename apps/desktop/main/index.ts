@@ -19,7 +19,7 @@ import {
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
-import { SubsonicClient, libraryCall, libraryMethods, serverUrlCandidates } from '../../../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, libraryMethods, resolveServerAddress } from '../../../packages/adapter-opensubsonic/client';
 import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
@@ -368,20 +368,8 @@ function connectTo(typed: Connection, generation: number) {
     return connection;
   });
 }
-// The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
-// where a server answers. That's asked without credentials, so the password only goes to an
-// address that answered, and a failed HTTPS attempt never sends it over plain HTTP.
-function resolveAddress(connection: Connection) {
-  const candidates = serverUrlCandidates(connection.url);
-  if (candidates.length === 1) return Effect.succeed(connection);
-  return Effect.gen(function* () {
-    for (const url of candidates) {
-      const attempt = yield* Effect.either(Effect.try(() => new SubsonicClient({ ...connection, url }, metrics)).pipe(Effect.flatMap(client => client.probe())));
-      if (Either.isRight(attempt)) return { ...connection, url };
-    }
-    return yield* Effect.fail(new Error(`No Navidrome server answered at ${connection.url.trim()} over HTTPS or HTTP. Check the address and your connection.`));
-  });
-}
+// HTTPS, then HTTP, for an address typed without a scheme (resolveServerAddress in the connector).
+const resolveAddress = (connection: Connection) => resolveServerAddress(connection, candidate => new SubsonicClient(candidate, metrics));
 // At launch, with a saved sign-in. A failure leaves the connect screen filled in, with the reason.
 async function reconnect() {
   const connection = account.connection();
