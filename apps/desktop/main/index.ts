@@ -1,5 +1,5 @@
 /// <reference types="electron-vite/node" />
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, session, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, session, shell, Tray } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -31,6 +31,23 @@ import { extensionScheme, startExtensions } from './extensions/electron';
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+// Windows names the app in the media flyout and notifications by finding a Start menu shortcut
+// with this id (appId in electron-builder.yml; the installer's shortcuts carry it). Without one it
+// says "Unknown app". Set before Chromium creates its windows, which take the id they start with.
+const APP_ID = 'dev.squiggly.music';
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
+// The portable exe has no installer, so it adds that shortcut itself, once, unless one exists.
+function ensurePortableShortcut() {
+  const exe = process.env.PORTABLE_EXECUTABLE_FILE;
+  if (process.platform !== 'win32' || !exe) return;
+  const link = join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Squiggly Music.lnk');
+  try {
+    // An installed copy's shortcut, or one for a portable exe that still exists, already names the app.
+    const existing = existsSync(link) ? shell.readShortcutLink(link) : null;
+    if (existing?.appUserModelId === APP_ID && existsSync(existing.target)) return;
+    shell.writeShortcutLink(link, existing ? 'replace' : 'create', { target: exe, appUserModelId: APP_ID, icon: exe, iconIndex: 0, description: 'Squiggly Music' });
+  } catch { metrics.record('shell.shortcut-unavailable', 0, true); }
+}
 // One instance owns the audio host, tray, and media keys. Launching again shows the existing window.
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
@@ -714,10 +731,7 @@ if (primary) app.on('second-instance', () => showMain());
 app.whenReady().then(async () => {
   if (!primary) return;
   app.setName('Squiggly Music');
-  // The installer's shortcuts carry this id (appId in electron-builder.yml), so Windows shows the
-  // app's name and icon in the media flyout and notifications. The portable exe has no shortcut
-  // to match, so it keeps the id Windows derives from the exe, which already names the app.
-  if (process.platform === 'win32' && !process.env.PORTABLE_EXECUTABLE_DIR) app.setAppUserModelId('dev.squiggly.music');
+  ensurePortableShortcut();
   const userData = app.getPath('userData');
   settings = new JsonStore(join(userData, 'settings.json'), SettingsFileSchema, defaultSettings());
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
