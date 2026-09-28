@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage,
 import type { IpcMainInvokeEvent } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join, basename, extname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
@@ -26,6 +26,7 @@ import { QueueSync } from './queueSync';
 import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
 import { Account } from './account';
+import { isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
@@ -135,16 +136,31 @@ async function serveCover(request: Request): Promise<Response> {
   const missing = () => new Response(null, { status: 404, headers: cors });
   try {
     const url = new URL(request.url);
-    if (request.method !== 'GET' || url.hostname !== 'cover' || !server) return missing();
+    if (request.method !== 'GET' || url.hostname !== 'cover') return missing();
     const id = Schema.decodeUnknownEither(IdSchema)(decodeURIComponent(url.pathname.slice(1)));
     if (Either.isLeft(id)) return missing();
-    const client = server;
-    const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id.right, Number(url.searchParams.get('size') ?? 300)))));
-    if (Either.isLeft(result) || server !== client) return missing();
-    return new Response(result.right.bytes, { headers: {
-      ...cors, 'content-type': result.right.contentType, 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff',
+    const cover = await coverBytes(id.right, Number(url.searchParams.get('size') ?? 300));
+    if (!cover) return missing();
+    return new Response(cover.bytes, { headers: {
+      ...cors, 'content-type': cover.contentType, 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff',
     } });
   } catch { return missing(); }
+}
+// A cover's bytes. A local file's (localFiles.ts) is scaled down to the size asked for, since
+// embedded pictures are often several thousand pixels across; the server scales its own.
+async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8Array<ArrayBuffer>; contentType: string } | null> {
+  const size = Math.min(1200, Math.max(32, Math.round(requested) || 300));
+  if (isLocalCover(id)) {
+    const cover = await semaphores.art.withPermits(1)(Effect.promise(() => readLocalCover(id))).pipe(Effect.runPromise);
+    if (!cover) return null;
+    const image = nativeImage.createFromBuffer(cover.bytes);
+    if (image.isEmpty() || image.getSize().width <= size) return { bytes: new Uint8Array(cover.bytes), contentType: cover.contentType };
+    return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
+  }
+  const client = server;
+  if (!client) return null;
+  const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size))));
+  return Either.isRight(result) && server === client ? result.right : null;
 }
 
 const alive = (target: BrowserWindow | null): target is BrowserWindow => target !== null && !target.isDestroyed();
@@ -422,14 +438,9 @@ function installHandlers() {
     }));
     if (result.canceled) return;
     if (result.filePaths.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`Choose up to ${QUEUE_LIMIT.toLocaleString('en-US')} files at a time.`));
-    const tracks: PlayableTrack[] = result.filePaths.map(path => ({
-      location: path,
-      track: {
-        id: randomUUID(), title: basename(path, extname(path)), artist: 'Local file', album: '',
-        source: 'local', duration: null, sourceFormat: extname(path).slice(1) || null,
-        sourceSampleRate: null, sourceBitDepth: null,
-      },
-    }));
+    // Titles, artists, and covers from the files' own tags (localFiles.ts).
+    const read = yield* Effect.promise(() => readLocalTracks(result.filePaths));
+    const tracks: PlayableTrack[] = result.filePaths.map((path, i) => ({ location: path, track: read[i] }));
     endRadio();
     yield* send({ type: 'queue', tracks });
   }), 'dialog');
@@ -706,18 +717,21 @@ let artFiles = 0;
 function updateMedia() {
   if (!media) return;
   const track = state.player.queue[state.player.currentIndex];
-  const coverArt = state.player.engine === 'ready' && track?.source === 'navidrome' ? track.coverArt ?? null : null;
-  if (coverArt && art?.coverArt !== coverArt && artRequest !== coverArt && server && artDirectory) void fetchArt(coverArt, server, artDirectory);
+  const coverArt = state.player.engine === 'ready' ? track?.coverArt ?? null : null;
+  if (coverArt && art?.coverArt !== coverArt && artRequest !== coverArt && (server || isLocalCover(coverArt)) && artDirectory) void fetchArt(coverArt, artDirectory);
   media.update(state.player, coverArt && art?.coverArt === coverArt ? pathToFileURL(art.path).href : null, canResume());
 }
-async function fetchArt(coverArt: string, client: SubsonicClient, directory: string) {
+async function fetchArt(coverArt: string, directory: string) {
   artRequest = coverArt;
-  const result = await Effect.runPromise(Effect.either(metrics.measure('shell.media-art', semaphores.art.withPermits(1)(client.coverArt(coverArt, 512)))));
-  if (Either.isLeft(result) || artRequest !== coverArt || server !== client) return;
-  const extension = result.right.contentType.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'img';
+  // A server's cover belongs to that session; a local one to no session.
+  const client = isLocalCover(coverArt) ? null : server;
+  const stale = () => artRequest !== coverArt || (client !== null && server !== client);
+  const cover = await metrics.measure('shell.media-art', Effect.promise(() => coverBytes(coverArt, 512))).pipe(Effect.runPromise);
+  if (!cover || stale()) return;
+  const extension = cover.contentType.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'img';
   const path = join(directory, `cover-${++artFiles}.${extension}`);
-  try { await writeFile(path, result.right.bytes, { mode: 0o600 }); } catch { return; }
-  if (artRequest !== coverArt || server !== client) { void rm(path, { force: true }).catch(() => undefined); return; }
+  try { await writeFile(path, cover.bytes, { mode: 0o600 }); } catch { return; }
+  if (stale()) { void rm(path, { force: true }).catch(() => undefined); return; }
   const previous = art; art = { coverArt, path };
   if (previous) void rm(previous.path, { force: true }).catch(() => undefined);
   updateMedia();
@@ -772,7 +786,7 @@ function updateSystemMedia() {
   const now = performance.now();
   const next: SystemMediaState | null = track && entryId ? {
     index: saved ? -1 : p.currentIndex, entryId, trackId: track.id, title: track.title, artist: track.artist, album: track.album,
-    coverArt: track.source === 'navidrome' ? track.coverArt ?? null : null,
+    coverArt: track.coverArt ?? null,
     duration: saved ? track.duration ?? 0 : p.duration > 0 ? p.duration : track.duration ?? 0,
     position: saved ? saved.position : p.position, playing: saved ? false : p.playing,
   } : null;
