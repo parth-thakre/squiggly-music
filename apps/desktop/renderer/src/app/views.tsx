@@ -27,8 +27,10 @@ function Pending<T>({ result, children, waiting }: { result: Result<T> | undefin
   return <>{children(result.value)}</>;
 }
 
-function Head({ title, qualifier, cover, children }: { title: string; qualifier?: string; cover?: ReactNode; children?: ReactNode }) {
-  return <header className={`head${cover ? ' with-cover' : ''}`}>
+// `onDeck`: this record is the one playing, so the deck already shows its sleeve and the page's
+// cover folds away (desktop only; a phone's deck is a strip).
+function Head({ title, qualifier, cover, onDeck = false, children }: { title: string; qualifier?: string; cover?: ReactNode; onDeck?: boolean; children?: ReactNode }) {
+  return <header className={`head${cover ? ' with-cover' : ''}${onDeck ? ' on-deck' : ''}`}>
     {cover}
     <div className="head-text">
       <h1 className={title.length > 28 ? 'long' : undefined}>{title}</h1>
@@ -210,11 +212,12 @@ function PlayOver({ label, play, small = false }: { label: string; play(): Promi
 
 export function AlbumPage({ id }: { id: string }) {
   const result = useResource(`album:${id}`, () => api.album(id));
+  const playingHere = usePlayer(s => current(s)?.albumId === id);
   return <Pending result={result} waiting="Reading the tracklist">{({ album, tracks }) => {
     const title = splitTitle(album.name);
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
-      <Head title={title.main} qualifier={title.extra} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
+      <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
         <p className="byline">{album.artistId
           ? <button type="button" className="link" onClick={() => nav.go({ view: 'artist', id: album.artistId! })}>{album.artist}</button>
           : <strong>{album.artist}</strong>} <span>{facts}</span></p>
