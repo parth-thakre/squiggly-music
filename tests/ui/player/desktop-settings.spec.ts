@@ -84,3 +84,11 @@ test.describe('updates', () => {
     await expect(page.getByLabel(/Check for updates/)).toBeChecked();
   });
 });
+
+test("the connect screen offers Navidrome's public demo", async ({ page }) => {
+  await installDesktopBridge(page, { connected: false });
+  await page.goto('/');
+  await page.getByRole('button', { name: "Try Navidrome's demo" }).click();
+  expect(await page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls)).toEqual(['connect:https://demo.navidrome.org:demo']);
+  await expect(page.getByRole('alert')).toHaveText('No server in the test.');
+});
