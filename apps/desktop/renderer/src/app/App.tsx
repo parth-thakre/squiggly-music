@@ -63,7 +63,6 @@ function Mark() {
 const Bar = memo(function Bar() {
   const route = useRoute();
   const canGoBack = useCanGoBack();
-  const mode = usePlayer(s => s.mode);
   const [query, setQuery] = useState(route.view === 'search' ? route.query : '');
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   // The search route this field last went to. Any other route change came from elsewhere
@@ -76,7 +75,6 @@ const Bar = memo(function Bar() {
   }, [route]);
   useEffect(() => () => clearTimeout(timer.current), []);
   const active = sectionOf(route);
-  const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
   return <header className="bar">
     <div className="bar-top">
     <span className="wordmark"><Mark />Squiggly</span>
@@ -91,7 +89,6 @@ const Bar = memo(function Bar() {
           else if (replace) nav.back();
         }, 250);
       }} />
-    {mode === 'desktop' && <button type="button" className="text-button" onClick={() => void openFiles()}>Open files</button>}
     {/* Phones have no Ctrl+K; the palette opens from here. */}
     <button type="button" className="text-button bar-commands" onClick={openPalette}>Commands</button>
     </div>
@@ -198,13 +195,18 @@ const Deck = memo(function Deck() {
   </aside>;
 });
 
+// Opening files from this computer lives here rather than in the header, which has to leave
+// room for the window's buttons.
+const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
 function DeckLinks() {
   const signedIn = usePlayer(s => s.access === 'signed-in');
+  const mode = usePlayer(s => s.mode);
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
     <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
+    {mode === 'desktop' && <button type="button" className="quiet-link" onClick={() => void openFiles()}>Open files</button>}
     {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}
   </p>;
 }

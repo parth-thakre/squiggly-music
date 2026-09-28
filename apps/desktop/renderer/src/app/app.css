@@ -37,11 +37,13 @@ button:disabled { cursor: default; opacity: .45; }
 .sections { display: flex; gap: 22px; }
 .sections button, .choices button { padding: 0; background: none; border: 0; color: var(--soft); }
 .sections button { font-size: calc(15px * var(--text)); font-weight: 600; }
+/* Header labels stay on one line; when space runs short the search box gives way instead. */
+.bar :is(button, .wordmark) { flex: none; white-space: nowrap; }
 .sections button[aria-current], .choices button[aria-pressed='true'] { color: var(--ink); }
 .sections button:hover, .choices button:hover { color: var(--ink); }
 .back { margin-left: auto; }
 .search {
-  width: 220px; padding: 4px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  flex: 0 1 220px; width: 220px; min-width: 110px; padding: 4px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
 }
 .back + .search { margin-left: 0; }
 .bar-top > .search:not(.back + .search) { margin-left: auto; }
