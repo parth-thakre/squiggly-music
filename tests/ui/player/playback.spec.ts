@@ -123,3 +123,24 @@ test.describe('playback with reduced motion', () => {
     expect(await squigglePixels(page)).toBe(first);
   });
 });
+
+test.describe('one click to play', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+
+  test('a record plays from its cover without opening it', async ({ app }) => {
+    const card = app.main.getByRole('listitem').filter({ has: app.page.getByRole('button', { name: 'Play Quiet Harbor' }) });
+    await card.hover();
+    await card.getByRole('button', { name: 'Play Quiet Harbor' }).click();
+    await app.expectPlaying('Opening 2');
+    await expect(app.heading).toHaveText('Records');
+  });
+
+  test('an artist plays from beside their name', async ({ app }) => {
+    await app.section('Artists').click();
+    const row = app.main.getByRole('listitem').filter({ has: app.page.getByRole('button', { name: 'Play Bell Tower' }) });
+    await row.hover();
+    await row.getByRole('button', { name: 'Play Bell Tower' }).click();
+    await app.expectPlaying('Opening 2');
+    await expect(app.heading).toHaveText('Artists');
+  });
+});

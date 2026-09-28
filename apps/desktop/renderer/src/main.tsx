@@ -7,9 +7,12 @@ import './app/shell.css';
 import { App } from './app/App';
 import { Mini } from './app/Mini';
 import { startExtensions } from './app/extensions';
+import { startSystemMedia } from './app/systemMedia';
 
 // The desktop mini player is a second window running the same renderer.
 const mini = window.squiggly?.window.isMini === true;
 // Extensions run in the main window only.
 if (!mini) startExtensions();
+// The Windows and macOS media controls, hosted by the main window only.
+startSystemMedia();
 createRoot(document.getElementById('root')!).render(<StrictMode>{mini ? <Mini /> : <App />}</StrictMode>);

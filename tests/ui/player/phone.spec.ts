@@ -67,3 +67,60 @@ test.describe('phone', () => {
     await app.expectPlaying('Short Stop');
   });
 });
+
+// Swipes on the now-playing sleeve, as touch pointer events (the headless shell has no gesture API).
+async function swipe(target: Locator, dx: number, stepMs = 0) {
+  const box = (await target.boundingBox())!;
+  const y = box.y + box.height / 2, x0 = box.x + box.width / 2;
+  await target.evaluate(async (element, { x0, y, dx, stepMs }) => {
+    const fire = (type: string, x: number) => element.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y }));
+    fire('pointerdown', x0);
+    for (let i = 1; i <= 8; i++) { fire('pointermove', x0 + dx * i / 8); if (stepMs) await new Promise(done => setTimeout(done, stepMs)); }
+    fire('pointerup', x0 + dx);
+  }, { x0, y, dx, stepMs });
+}
+
+test.describe('swiping songs', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+
+  test('swiping the sleeve left and right moves through the queue, and stops at the ends', async ({ app, page }) => {
+    await app.openAlbum('Test Pressing');
+    const titles = await app.titles();
+    await app.rowButton(app.row(titles[0])).tap();
+    await app.expectPlaying(titles[0]);
+    await app.deck.getByRole('button', { name: `Open now playing: ${titles[0]}` }).tap();
+    const sleeve = app.deck.locator('.deck-cover');
+    await swipe(sleeve, -260);
+    await app.expectPlaying(titles[1]);
+    await swipe(sleeve, 260);
+    await app.expectPlaying(titles[0]);
+    // Nothing before the first song: the sleeve springs back and the song stays.
+    await swipe(sleeve, 260);
+    await page.waitForTimeout(500);
+    await app.expectPlaying(titles[0]);
+    await expect.poll(() => app.deck.evaluate(deck => getComputedStyle(deck).getPropertyValue('--swipe-x').trim())).toBe('0px');
+  });
+
+  test('a short, slow drag springs back without changing songs', async ({ app, page }) => {
+    await app.openAlbum('Test Pressing');
+    const titles = await app.titles();
+    await app.rowButton(app.row(titles[0])).tap();
+    await app.expectPlaying(titles[0]);
+    await swipe(app.deck.locator('.deck-cover'), -70, 40);
+    await page.waitForTimeout(500);
+    await app.expectPlaying(titles[0]);
+    // The strip didn't open the sheet either.
+    await expect(app.deck).not.toHaveClass(/\bopen\b/);
+  });
+});
+
+test('the open now-playing sheet uses the full width', async ({ app }) => {
+  await app.signIn();
+  await app.play('Test Pressing', 'Long Run');
+  await app.deck.getByRole('button', { name: 'Open now playing: Long Run' }).tap();
+  // Measured once the sheet has finished opening.
+  await expect.poll(async () => {
+    const sheet = (await app.deck.boundingBox())!, sleeve = (await app.deck.locator('.deck-cover').boundingBox())!;
+    return sleeve.width / sheet.width;
+  }).toBeGreaterThan(.75);
+});

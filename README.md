@@ -16,7 +16,7 @@ It's early software. It runs on Windows and Fedora, and a browser version works 
 - Start a radio station from any song, record, or artist.
 - Build automatic playlists from your library by genre, by decade, and from what's new.
 - Show synced lyrics from your files. Looking up missing lyrics on LRCLIB is off until you turn it on.
-- Run as a mini player or from the tray, with media keys, and with MPRIS on Linux.
+- Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
 - Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.
 - Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
@@ -35,7 +35,7 @@ On Windows, run the setup program or the portable exe. They aren't signed yet, s
 
 On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
 
-To connect, enter your Navidrome address with any port or subpath (`https://music.example.com/navidrome` works), your username, and your password. The password stays in memory for the session. Squiggly doesn't save it.
+To connect, enter your Navidrome address with any port or subpath (`https://music.example.com/navidrome` works), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
 
 ## Run from source
 
@@ -58,7 +58,7 @@ SQUIGGLY_WEB_PASSWORD='a long password for this page' \
 npm run web
 ```
 
-This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv, and the signal-path line says so.
+This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
 
 ## Tests
 

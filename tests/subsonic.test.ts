@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Schema } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, normalizeServerUrl } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, normalizeServerUrl, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 
@@ -28,6 +28,21 @@ async function expectRedactedFailure<E>(task: Effect.Effect<unknown, E>, secret 
 }
 
 describe('server address', () => {
+  it('tries HTTPS then HTTP for an address typed without a scheme, and only what was typed otherwise', () => {
+    expect(serverUrlCandidates(' navidrome.example.com ')).toEqual(['https://navidrome.example.com', 'http://navidrome.example.com']);
+    expect(serverUrlCandidates('localhost:4533/music')).toEqual(['https://localhost:4533/music', 'http://localhost:4533/music']);
+    expect(serverUrlCandidates('http://navidrome.example.com')).toEqual(['http://navidrome.example.com']);
+    expect(serverUrlCandidates('HTTPS://navidrome.example.com')).toEqual(['HTTPS://navidrome.example.com']);
+  });
+  it('probes for a server without sending credentials, and takes any Subsonic reply as an answer', async () => {
+    const mock = serve(() => Response.json({ 'subsonic-response': { status: 'failed', error: { code: 10, message: 'Required parameter is missing' } } }));
+    await expect(Effect.runPromise(client().probe())).resolves.toBe(true);
+    const sent = new URL(mock.mock.calls.at(-1)![0]);
+    expect(sent.pathname).toBe('/navidrome/rest/ping.view');
+    for (const secret of ['u', 't', 's', 'p']) expect(sent.searchParams.has(secret)).toBe(false);
+    serve(() => new Response('<html>not navidrome</html>', { headers: { 'content-type': 'text/html' } }));
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(client().probe())))).toBe(true);
+  });
   it('preserves subpaths', () => expect(normalizeServerUrl(connection.url)).toBe('https://music.example.com/navidrome'));
   it.each(['/rest/ping.view', '/rest/getAlbumList2.view/'])('accepts an explicit API address ending in %s', suffix => {
     expect(normalizeServerUrl(` https://music.example.com/navidrome${suffix} `)).toBe('https://music.example.com/navidrome');

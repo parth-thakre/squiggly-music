@@ -23,3 +23,34 @@ test('the browser build has no Disconnect in Settings', async ({ app, page }) =>
   await expect(app.heading).toHaveText('Settings');
   await expect(page.getByRole('button', { name: 'Disconnect' })).toHaveCount(0);
 });
+
+test.describe('saved sign-in', () => {
+  const saved = { url: 'https://music.example.com', username: 'ana' };
+  test('a failed reconnect leaves the connect screen filled in, with the reason', async ({ page }) => {
+    await installDesktopBridge(page, { connected: false, signIn: { saved, reconnectError: 'The server did not answer.' } });
+    await page.goto('/');
+    await expect(page.getByRole('alert')).toHaveText('Couldn\'t reconnect to music.example.com: The server did not answer.');
+    await expect(page.getByLabel('Server address')).toHaveValue(saved.url);
+    await expect(page.getByLabel('Username')).toHaveValue('ana');
+    await expect(page.getByText('Squiggly remembers this sign-in')).toBeVisible();
+  });
+  test('while reconnecting, the connect form waits', async ({ page }) => {
+    await installDesktopBridge(page, { connected: false, signIn: { saved, reconnecting: true } });
+    await page.goto('/');
+    await expect(page.getByText('Connecting to music.example.com as ana.')).toBeVisible();
+    await expect(page.getByLabel('Password')).toHaveCount(0);
+  });
+  test('without secure storage, the password is said to stay in memory', async ({ page }) => {
+    await installDesktopBridge(page, { connected: false, signIn: { canRemember: false } });
+    await page.goto('/');
+    await expect(page.getByText('This system can\'t store the password securely')).toBeVisible();
+  });
+});
+
+test('the output device is chosen in Settings and saved there', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const output = page.getByRole('combobox', { name: /Output/ });
+  await expect(output).toHaveValue('auto');
+  await expect(output.locator('option')).toHaveText(['System default']);
+});

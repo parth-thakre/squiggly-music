@@ -1,6 +1,6 @@
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
-import type { AudioDevice, Track } from '../../../../../packages/core/contracts';
-import { current, optimisticVolume, player, usePlayer } from './player';
+import type { Track } from '../../../../../packages/core/contracts';
+import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
@@ -8,6 +8,7 @@ import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
+import { useSwipeSongs } from './swipe';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView } from './views';
 
 onMenuError(message => player.showError(message));
@@ -33,6 +34,8 @@ export function App() {
   useCommandKeys();
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
+  // Without a title bar, the window's own buttons take the room's ink.
+  useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
   const shell = connected || (mode === 'desktop' && hasQueue);
   return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
@@ -41,6 +44,7 @@ export function App() {
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : mode === 'desktop' ? <Connect /> : access === 'checking' ? null : <SignIn />}
+    {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
@@ -59,7 +63,6 @@ function Mark() {
 const Bar = memo(function Bar() {
   const route = useRoute();
   const canGoBack = useCanGoBack();
-  const mode = usePlayer(s => s.mode);
   const [query, setQuery] = useState(route.view === 'search' ? route.query : '');
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   // The search route this field last went to. Any other route change came from elsewhere
@@ -72,7 +75,6 @@ const Bar = memo(function Bar() {
   }, [route]);
   useEffect(() => () => clearTimeout(timer.current), []);
   const active = sectionOf(route);
-  const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
   return <header className="bar">
     <div className="bar-top">
     <span className="wordmark"><Mark />Squiggly</span>
@@ -87,7 +89,6 @@ const Bar = memo(function Bar() {
           else if (replace) nav.back();
         }, 250);
       }} />
-    {mode === 'desktop' && <button type="button" className="text-button" onClick={() => void openFiles()}>Open files</button>}
     {/* Phones have no Ctrl+K; the palette opens from here. */}
     <button type="button" className="text-button bar-commands" onClick={openPalette}>Commands</button>
     </div>
@@ -136,6 +137,9 @@ const Deck = memo(function Deck() {
   const [sheetLyrics, setSheetLyrics] = useState(false);
   const route = useRoute();
   const palette = useContext(PaletteContext);
+  const entry = usePlayer(currentEntry);
+  const deck = useRef<HTMLElement>(null);
+  useSwipeSongs(deck, entry ?? track?.id);
   if (!track) return <aside className="deck" aria-label="Now playing">
     <div className="cover cover-empty" aria-hidden="true" />
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
@@ -149,7 +153,7 @@ const Deck = memo(function Deck() {
   const open = () => nav.openOverlay(() => setExpanded(true), () => setExpanded(false));
   shell.openNowPlaying = expanded ? null : open;
   const toggleLyrics = () => route.view === 'lyrics' ? nav.back() : nav.go({ view: 'lyrics' });
-  return <aside className={`deck${expanded ? ' open' : ''}${expanded && sheetLyrics ? ' lyrics-open' : ''}`} aria-label="Now playing"
+  return <aside ref={deck} className={`deck${expanded ? ' open' : ''}${expanded && sheetLyrics ? ' lyrics-open' : ''}`} aria-label="Now playing"
     onContextMenu={event => { if (!(event.target as HTMLElement).closest('input, select')) openMenu(event, { kind: 'tracks', tracks: [track] }); }}>
     <div className="deck-top">
       <div className="deck-sheet-bar">
@@ -191,13 +195,18 @@ const Deck = memo(function Deck() {
   </aside>;
 });
 
+// Opening files from this computer lives here rather than in the header, which has to leave
+// room for the window's buttons.
+const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
 function DeckLinks() {
   const signedIn = usePlayer(s => s.access === 'signed-in');
+  const mode = usePlayer(s => s.mode);
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
     <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
+    {mode === 'desktop' && <button type="button" className="quiet-link" onClick={() => void openFiles()}>Open files</button>}
     {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}
   </p>;
 }
@@ -243,41 +252,28 @@ function Volume() {
 
 // The signal path as a sentence. Unknown stays unknown, and a request is called a request:
 // asking Navidrome for the original file doesn't prove the original arrived.
+// One quiet line: what the file is. Notes appear only when something changes what you hear.
+// The output device is in Settings; decoder and output detail is on the Diagnostics page.
 function SignalPath({ track }: { track: Track }) {
-  const audio = usePlayer(s => s.audio);
-  const devices = usePlayer(s => s.devices);
-  const device = usePlayer(s => s.device);
   const volume = usePlayer(s => Math.round(s.volume));
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
-  const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(', ');
-  const source = track.source === 'navidrome'
-    ? `${format || 'Unknown format'}, the original file requested from Navidrome`
-    : `${format || 'Unknown format'} from this computer`;
-  const level = volume >= 100 ? 'Full volume' : `Volume at ${volume}% attenuates the signal`;
-  // In a browser there's nothing to inspect, so say only what changes what you hear.
-  if (mode === 'web') {
-    const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
-      volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean);
-    return notes.length ? <p className="signal">{notes.join(' ')}</p> : null;
-  }
-  const output = <DeviceChoice devices={devices} device={device} />;
-  if (!audio || !audio.decoderFormat) return <p className="signal">{source}, playing on {output}. {level}. <span>Decoder and output formats appear once it plays.</span></p>;
-  const extra = [audio.replayGain && audio.replayGain !== 'no' ? `ReplayGain ${audio.replayGain}` : 'no ReplayGain', audio.filters ? `filters: ${audio.filters}` : 'no filters'];
-  return <p className="signal">
-    {source}. Decoded to {audio.decoderFormat}{audio.decoderRate ? ` at ${kHz(audio.decoderRate)}` : ''} and handed to {audio.outputBackend ?? 'the system'}
-    {audio.outputRate ? ` at ${kHz(audio.outputRate)}` : ''}{audio.outputFormat ? ` as ${audio.outputFormat}` : ''}, playing on {output}. {[level, ...extra].join(', ')}.
-    {audio.buffering && ' Buffering.'} <span>The system mixer's final format isn't reported.</span>
-  </p>;
-}
-function DeviceChoice({ devices, device }: { devices: AudioDevice[]; device: string }) {
-  return <select aria-label="Output device" value={device} onChange={event => player.device(event.target.value)}>
-    {!devices.some(d => d.name === device) && <option value={device}>{device === 'auto' ? 'System default' : device}</option>}
-    {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
-  </select>;
+  const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
+  const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
+    volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
+  const line = [mode === 'desktop' && format, notes].filter(Boolean).join('. ');
+  return line ? <p className="signal">{line}</p> : null;
 }
 
+// Any CSS colour as #rrggbb, which is what the window's buttons take. A canvas normalises it.
+function asHex(color: string) {
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return color;
+  context.fillStyle = '#000'; context.fillStyle = color;
+  return context.fillStyle;
+}
+const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The desktop's server login. Embedded, it stands in for a library page while songs from
 // this computer play without a server.
 function Connect({ embedded = false }: { embedded?: boolean }) {
@@ -297,12 +293,21 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     if (!result.ok) setError(result.error);
   };
   const Frame = embedded ? 'section' : 'main';
+  const { saved, canRemember, reconnecting, reconnectError } = usePlayer(s => s.signIn);
+  if (reconnecting && saved) return <Frame className="connect">
+    <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
+    <p>Connecting to {hostOf(saved.url)} as {saved.username}.</p>
+  </Frame>;
   return <Frame className="connect">
     <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
-    <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'} Your password stays in memory for this session only.</p>
+    <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
+      {canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
+    {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
     <form onSubmit={submit}>
-      <label>Server address<input name="url" type="url" required placeholder="https://music.example.com" autoComplete="url" /></label>
-      <label>Username<input name="username" required autoComplete="username" /></label>
+      {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, then HTTP. */}
+      <label>Server address<input name="url" type="text" inputMode="url" required placeholder="music.example.com" autoComplete="url"
+        autoCapitalize="off" spellCheck={false} defaultValue={saved?.url} /></label>
+      <label>Username<input name="username" required autoComplete="username" defaultValue={saved?.username} /></label>
       <label>Password<input name="password" type="password" required autoComplete="current-password" /></label>
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}

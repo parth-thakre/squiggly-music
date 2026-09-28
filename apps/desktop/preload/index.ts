@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi } from '../../../packages/core/contracts';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi, SystemMediaApi, SystemMediaState } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
@@ -54,6 +54,11 @@ const extensions: ExtensionsApi = {
   openDir: () => ipcRenderer.invoke('squiggly:extensions:open-dir'),
   writeClipboard: text => ipcRenderer.invoke('squiggly:extensions:clipboard', text),
 };
+const media: SystemMediaApi = {
+  // The main process adds this argument only to the main window, and not on Linux.
+  hosted: process.argv.includes('--squiggly-media-session'),
+  subscribe: listener => listen<SystemMediaState | null>('squiggly:media', listener),
+};
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
@@ -81,6 +86,7 @@ const bridge: DesktopBridge = {
   library,
   config,
   extensions,
+  media,
   settings: () => ipcRenderer.invoke('squiggly:get-settings'),
   updateSettings: changes => ipcRenderer.invoke('squiggly:update-settings', changes),
   window: {
@@ -88,6 +94,8 @@ const bridge: DesktopBridge = {
     setAlwaysOnTop: on => ipcRenderer.invoke('squiggly:window:always-on-top', on),
     // The main process adds this argument only to the mini player's window.
     isMini: process.argv.includes('--squiggly-mini'),
+    frameless: process.argv.includes('--squiggly-frameless'),
+    tintControls: ink => ipcRenderer.invoke('squiggly:window:tint-controls', ink),
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
   exportDiagnostics: () => ipcRenderer.invoke('squiggly:export-diagnostics'),

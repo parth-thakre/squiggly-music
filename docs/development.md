@@ -4,7 +4,7 @@
 
 | Path | What lives there |
 | --- | --- |
-| `apps/desktop/main` | Electron lifecycle, IPC checks, the server session, radio, queue sync, tray, MPRIS, settings |
+| `apps/desktop/main` | Electron lifecycle, IPC checks, the server session, radio, queue sync, tray, MPRIS, media keys, settings |
 | `apps/desktop/preload` | The only bridge between the interface and the desktop |
 | `apps/desktop/renderer` | The React interface, with no Node or libmpv access. The same code runs as the browser version |
 | `packages/core` | Shared types and request schemas |

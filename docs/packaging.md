@@ -6,6 +6,8 @@
 
 The Windows build makes an installer and a portable exe. Both carry their own Node (for the audio process), libmpv, and the Windows binaries of Koffi and esbuild. You can build it on Windows, or on Linux with Wine. It needs a libmpv build first (see below).
 
+Windows names an app in its media flyout and notifications by finding a Start menu shortcut with the app's id (`appId`, `dev.squiggly.music`). The installer's shortcuts carry it. The portable exe adds a "Squiggly Music" shortcut to the user's Start menu on first launch, unless one already exists; without it the flyout says "Unknown app".
+
 The Linux build makes a Fedora RPM. It carries its own Node and the Linux binaries of Koffi and esbuild, and depends on the system's `mpv-libs` instead of shipping libmpv. It needs `rpmbuild` and `libcrypt.so.1`, which electron-builder's fpm links against:
 
 ```bash

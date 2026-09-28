@@ -5,6 +5,8 @@
   --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px;
 }
 html, body { margin: 0; height: 100%; }
+/* The room fills the window and each part scrolls on its own; the document itself never scrolls. */
+html, body { overflow: hidden; }
 body { font: calc(15px * var(--text))/1.45 var(--font-body); -webkit-font-smoothing: antialiased; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -22,6 +24,12 @@ button:disabled { cursor: default; opacity: .45; }
 /* Bar */
 .bar { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 26px; padding: 18px 40px 12px; min-width: 0; }
 .bar-top { display: contents; }
+/* A frameless main window (Windows, Linux): the system's window buttons sit over the top right of
+   the page. The top edge and the header drag the window, and anything you can click in them stays
+   clickable. The header keeps clear of the buttons: env(titlebar-area-*) is the space they leave. */
+.drag-strip { position: fixed; inset: 0 0 auto 0; height: 40px; pointer-events: none; -webkit-app-region: drag; }
+.bar { -webkit-app-region: drag; padding-right: max(40px, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 16px)); }
+:is(button, a, input, select, textarea, label, [role='button'], [tabindex]:not([tabindex='-1'])) { -webkit-app-region: no-drag; }
 .sections { order: 1; }
 .bar-top > :not(.wordmark) { order: 2; }
 .wordmark { display: inline-flex; align-items: center; gap: 9px; font-family: 'Young Serif', serif; font-size: 22px; margin-right: 10px; }
@@ -29,11 +37,13 @@ button:disabled { cursor: default; opacity: .45; }
 .sections { display: flex; gap: 22px; }
 .sections button, .choices button { padding: 0; background: none; border: 0; color: var(--soft); }
 .sections button { font-size: calc(15px * var(--text)); font-weight: 600; }
+/* Header labels stay on one line; when space runs short the search box gives way instead. */
+.bar :is(button, .wordmark) { flex: none; white-space: nowrap; }
 .sections button[aria-current], .choices button[aria-pressed='true'] { color: var(--ink); }
 .sections button:hover, .choices button:hover { color: var(--ink); }
 .back { margin-left: auto; }
 .search {
-  width: 220px; padding: 4px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  flex: 0 1 220px; width: 220px; min-width: 110px; padding: 4px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
 }
 .back + .search { margin-left: 0; }
 .bar-top > .search:not(.back + .search) { margin-left: auto; }
@@ -90,11 +100,6 @@ button:disabled { cursor: default; opacity: .45; }
 .volume input::-moz-range-thumb { width: 12px; height: 12px; border: 0; border-radius: 50%; background: var(--ink); }
 
 .signal { margin: 14px 0 0; font-size: calc(12.5px * var(--text)); line-height: 1.55; color: var(--soft); }
-.signal select {
-  max-width: 100%; padding: 0 2px; background: none; border: 0; border-bottom: 1px dashed var(--soft); border-radius: 0;
-  color: var(--ink); font-weight: 600;
-}
-.signal select option { color: #000; }
 
 /* Page */
 .page { min-width: 0; overflow-y: auto; padding: 18px 48px 72px 36px; outline: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
@@ -135,10 +140,29 @@ button:disabled { cursor: default; opacity: .45; }
 .grid li { min-width: 0; }
 .grid button { display: block; width: 100%; padding: 0; background: none; border: 0; text-align: left; }
 .grid .cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .1), 0 10px 16px -12px rgba(0, 0, 0, .5); transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
-.grid button:hover .cover { transform: translateY(-4px); }
+.grid .playable:hover .cover { transform: translateY(-4px); }
 .grid-name { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: calc(14px * var(--text)); font-weight: 600; line-height: 1.3; }
 .grid-name > span, .grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .grid-sub { display: block; font-size: calc(13px * var(--text)); color: var(--soft); line-height: 1.35; }
+/* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
+   keyboard focus. Touch screens have no hover, so there it stays hidden and a tap opens the page. */
+.playable { position: relative; }
+/* :is(.playable) lifts it above the card's own button rules (.grid button, .rows button), which
+   would otherwise stretch it across the whole card. */
+:is(.playable) > .play-over { position: absolute; z-index: 1; display: block; width: auto; height: auto; padding: 0; background: none; border: 0; opacity: 0; pointer-events: none;
+  transform: translateY(4px) scale(.9); transition: opacity .16s ease, transform .22s cubic-bezier(.2, .8, .2, 1); }
+.play-over .disc { box-shadow: 0 8px 16px -8px rgba(0, 0, 0, .6); transition: transform .15s ease; }
+.play-over:hover .disc { transform: scale(1.06); }
+.playable:hover .play-over, .playable:focus-within .play-over { opacity: 1; pointer-events: auto; transform: none; }
+.grid .playable { container-type: inline-size; }
+.grid .play-over { left: 10px; top: calc(100cqw - 52px); }
+.grid .playable:hover .play-over { transform: translateY(-4px); }
+.rows .play-over { left: 11px; top: 50%; margin-top: -21px; }
+:is(.playable) > .play-over.small { position: static; flex: none; margin-left: 8px; }
+.play-over.small .disc { width: 24px; height: 24px; box-shadow: none; }
+.play-over.small .disc svg { width: 10px; }
+.name-row li, .names li { display: flex; align-items: center; }
+@media (hover: none) { :is(.playable) > .play-over { display: none; } }
 
 /* Tracks */
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }
@@ -275,6 +299,13 @@ button:disabled { cursor: default; opacity: .45; }
 .setting span span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
 /* A setting that is an action rather than a switch: text in the switches' column, the button under it. */
 .setting-action { padding: 10px 0 10px 36px; }
+/* A choice rather than a switch: the text lines up with the switches' text, the menu below it. */
+.setting.choice { display: block; padding-left: 36px; cursor: default; }
+.setting.choice select {
+  margin-top: 8px; max-width: min(100%, 42ch); padding: 2px 2px 3px; background: none; border: 0; border-bottom: 1px dashed var(--soft); border-radius: 0;
+  font: inherit; font-size: calc(14.5px * var(--text)); color: var(--ink); font-weight: 600; cursor: pointer;
+}
+.setting.choice select option { color: #000; }
 .setting-action p { margin: 0 0 4px; }
 .setting-action strong { display: block; font-size: calc(15.5px * var(--text)); font-weight: 600; }
 .setting-action span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
@@ -349,8 +380,8 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .menu.palette.sheet:not(.keyed) .palette-item[aria-selected='true'] { background: none; }
 
 /* Lyrics. Synced lines are big display type in ink, never the accent. The current line's words
-   fill from soft to ink as they're sung: lyrics.tsx writes each word's progress (0 to 1) to --p,
-   and the fill is a soft-edged gradient clipped to the letters. Past lines are soft, upcoming ones
+   fill from the upcoming lines' faint soft to ink as they're sung, and rise a touch: lyrics.tsx
+   writes each word's progress (0 to 1) to --p, and the fill is a gradient clipped to the letters. Past lines are soft, upcoming ones
    soft taken a fifth of the way to the ground (still 3:1 for type this large, since soft is at
    least 4.5:1), and lines more than two away blur slightly until the listener scrolls. Unsynced
    lyrics are plain ink at a reading size. */
@@ -366,9 +397,15 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .lyric-lines.synced li.far { filter: blur(.5px); }
 .lyrics.browsing .lyric-lines.synced li.far { filter: none; }
 .lyric-lines.synced li.current .word {
-  --edge: .35em; --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
+  --edge: .12em; --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
+  display: inline-block; transform: translateY(calc(var(--p, 0) * -.05em));
+  /* The fill is a background clipped to the letters, and a background ends at the word's box.
+     Marks that reach outside it (Devanagari's ि, accents, italic overhangs) get room on every
+     side, taken back by the margin so the line doesn't move. */
+  padding: .2em .18em; margin: -.2em -.18em;
   color: transparent; -webkit-background-clip: text; background-clip: text;
-  background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)), var(--soft) calc(var(--at) + var(--edge)));
+  background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)),
+    color-mix(in srgb, var(--soft) 80%, var(--ground)) calc(var(--at) + var(--edge)));
 }
 .lyric-lines button { padding: 0; background: none; border: 0; text-align: left; font: inherit; color: inherit; letter-spacing: inherit; }
 .lyric-lines button:hover { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .18em; }
@@ -473,7 +510,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   /* The sheet */
   .deck.open {
-    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; gap: 0; overflow-y: auto;
+    position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: stretch; gap: 0; overflow-x: hidden; overflow-y: auto;
     padding: calc(8px + env(safe-area-inset-top)) 24px calc(20px + env(safe-area-inset-bottom)); background: var(--ground);
   }
   .deck.open .deck-top { display: flex; flex-direction: column; align-items: center; }
@@ -578,10 +615,22 @@ html[data-density='compact'] { --row-height: 38px; }
 .deck.open .deck-bottom > :nth-child(4) { animation-delay: .06s; }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 
+/* Swiping songs (swipe.ts): the sleeve and title follow the finger, then the new song enters
+   from the side it was pulled toward. */
+.deck { touch-action: pan-y; }
+.deck .deck-cover, .deck .deck-text {
+  transform: translateX(var(--swipe-x, 0px)); opacity: var(--swipe-fade, 1);
+  transition: transform var(--swipe-ms, 0ms) cubic-bezier(.2, .8, .2, 1), opacity var(--swipe-ms, 0ms) ease;
+}
+.deck[data-enter='from-right'] .deck-cover, .deck[data-enter='from-right'] .deck-text { animation: enter-right .28s cubic-bezier(.2, .8, .2, 1) both; }
+.deck[data-enter='from-left'] .deck-cover, .deck[data-enter='from-left'] .deck-text { animation: enter-left .28s cubic-bezier(.2, .8, .2, 1) both; }
+@keyframes enter-right { from { transform: translateX(28%); opacity: 0; } }
+@keyframes enter-left { from { transform: translateX(-28%); opacity: 0; } }
+
 @media (prefers-reduced-motion: reduce) {
   .room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li { transition: none; }
   .lyric-lines.synced li.far { filter: none; }
-  .grid button:hover .cover { transform: none; }
+  .grid .playable:hover .cover, .playable:hover .play-over { transform: none; }
   .play:active, .play-action:active .disc { transform: none; }
   .wave.moving path, .deck-cover, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
@@ -590,7 +639,7 @@ html[data-density='compact'] { --row-height: 38px; }
 /* A theme's motion setting: "reduced" does what the system setting does; "none" also stops every fade. */
 html:is([data-motion='reduced'], [data-motion='none']) :is(.room, .play, .disc, .grid .cover, .mini, .lyric-lines.synced li, .theme-sample) { transition: none; }
 html:is([data-motion='reduced'], [data-motion='none']) .lyric-lines.synced li.far { filter: none; }
-html:is([data-motion='reduced'], [data-motion='none']) .grid button:hover .cover { transform: none; }
+html:is([data-motion='reduced'], [data-motion='none']) :is(.grid .playable:hover .cover, .playable:hover .play-over) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.play:active, .play-action:active .disc) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.wave.moving path, .deck-cover, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet) { animation: none; }
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-group(*),

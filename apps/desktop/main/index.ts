@@ -1,9 +1,9 @@
 /// <reference types="electron-vite/node" />
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, screen, session, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
 import type { IpcMainInvokeEvent } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join, basename, extname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
@@ -16,21 +16,40 @@ import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
-import type { AppSnapshot, Result, PlayerCommand, Settings, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
-import { SubsonicClient, libraryCall, libraryMethods } from '../../../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, libraryMethods, serverUrlCandidates } from '../../../packages/adapter-opensubsonic/client';
 import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
 import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
+import { Account } from './account';
+import { isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+// Windows names the app in the media flyout and notifications by finding a Start menu shortcut
+// with this id (appId in electron-builder.yml; the installer's shortcuts carry it). Without one it
+// says "Unknown app". Set before Chromium creates its windows, which take the id they start with.
+const APP_ID = 'dev.squiggly.music';
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
+// The portable exe has no installer, so it adds that shortcut itself, once, unless one exists.
+function ensurePortableShortcut() {
+  const exe = process.env.PORTABLE_EXECUTABLE_FILE;
+  if (process.platform !== 'win32' || !exe) return;
+  const link = join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Squiggly Music.lnk');
+  try {
+    // An installed copy's shortcut, or one for a portable exe that still exists, already names the app.
+    const existing = existsSync(link) ? shell.readShortcutLink(link) : null;
+    if (existing?.appUserModelId === APP_ID && existsSync(existing.target)) return;
+    shell.writeShortcutLink(link, existing ? 'replace' : 'create', { target: exe, appUserModelId: APP_ID, icon: exe, iconIndex: 0, description: 'Squiggly Music' });
+  } catch { metrics.record('shell.shortcut-unavailable', 0, true); }
+}
 // One instance owns the audio host, tray, and media keys. Launching again shows the existing window.
 const primary = app.requestSingleInstanceLock();
 if (!primary) app.quit();
@@ -39,7 +58,10 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const started = performance.now();
 const metrics = new Metrics();
 const loop = monitorEventLoopDelay({ resolution: 20 });
-const state: AppSnapshot = { player: emptyPlayer(), diagnostics: emptyDiagnostics(), server: { connected: false, name: null, sessionId: null } };
+const state: AppSnapshot = {
+  player: emptyPlayer(), diagnostics: emptyDiagnostics(),
+  server: { connected: false, name: null, sessionId: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null },
+};
 const windows: { main: BrowserWindow | null; mini: BrowserWindow | null } = { main: null, mini: null };
 let tray: Tray | null = null;
 let media: MediaSession | null = null;
@@ -76,6 +98,7 @@ const knownTracks = new Map<string, Track>();
 // Created at ready, once userData is final. Reads fall back to defaults until loaded.
 let settings = new JsonStore('', SettingsFileSchema, defaultSettings());
 let windowState = new JsonStore('', WindowStateSchema, {});
+let account = new Account('', safeStorage);
 const plays = new PlayTracker();
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
 // still in flight) belongs to the session that was current when quit began.
@@ -113,16 +136,31 @@ async function serveCover(request: Request): Promise<Response> {
   const missing = () => new Response(null, { status: 404, headers: cors });
   try {
     const url = new URL(request.url);
-    if (request.method !== 'GET' || url.hostname !== 'cover' || !server) return missing();
+    if (request.method !== 'GET' || url.hostname !== 'cover') return missing();
     const id = Schema.decodeUnknownEither(IdSchema)(decodeURIComponent(url.pathname.slice(1)));
     if (Either.isLeft(id)) return missing();
-    const client = server;
-    const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id.right, Number(url.searchParams.get('size') ?? 300)))));
-    if (Either.isLeft(result) || server !== client) return missing();
-    return new Response(result.right.bytes, { headers: {
-      ...cors, 'content-type': result.right.contentType, 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff',
+    const cover = await coverBytes(id.right, Number(url.searchParams.get('size') ?? 300));
+    if (!cover) return missing();
+    return new Response(cover.bytes, { headers: {
+      ...cors, 'content-type': cover.contentType, 'cache-control': 'private, max-age=86400', 'x-content-type-options': 'nosniff',
     } });
   } catch { return missing(); }
+}
+// A cover's bytes. A local file's (localFiles.ts) is scaled down to the size asked for, since
+// embedded pictures are often several thousand pixels across; the server scales its own.
+async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8Array<ArrayBuffer>; contentType: string } | null> {
+  const size = Math.min(1200, Math.max(32, Math.round(requested) || 300));
+  if (isLocalCover(id)) {
+    const cover = await semaphores.art.withPermits(1)(Effect.promise(() => readLocalCover(id))).pipe(Effect.runPromise);
+    if (!cover) return null;
+    const image = nativeImage.createFromBuffer(cover.bytes);
+    if (image.isEmpty() || image.getSize().width <= size) return { bytes: new Uint8Array(cover.bytes), contentType: cover.contentType };
+    return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
+  }
+  const client = server;
+  if (!client) return null;
+  const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size))));
+  return Either.isRight(result) && server === client ? result.right : null;
 }
 
 const alive = (target: BrowserWindow | null): target is BrowserWindow => target !== null && !target.isDestroyed();
@@ -134,7 +172,7 @@ function broadcast() {
 // Background consumers of each native snapshot: tray, OS media controls, play reports, queue sync.
 function observePlayer() {
   const player = state.player;
-  updateTray(); updateMedia(); void radio.topUp();
+  updateTray(); updateMedia(); updateSystemMedia(); void radio.topUp();
   queueSync.observe(player, connectionGeneration, settings.value.syncQueue && server !== null);
   const events = plays.update(player, performance.now());
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
@@ -147,7 +185,7 @@ function reportPlay({ trackId, event }: PlayEvent) {
 }
 // Per-session state that must not carry across an account switch or disconnect.
 function resetSessionState() {
-  queueSync.reset(); plays.reset();
+  queueSync.reset(); plays.reset(); savedSong = null;
   artRequest = null;
   if (art) void rm(art.path, { force: true }).catch(() => undefined);
   art = null;
@@ -205,6 +243,7 @@ async function launchPlayer() {
     env: {
       ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
+      SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
     },
     execArgv: [], windowsHide: true,
     stdio: ['ignore', 'ignore', process.env.SQUIGGLY_SMOKE_TEST === '1' ? 'pipe' : 'ignore', 'ipc'],
@@ -279,6 +318,79 @@ function transport(action: HostRequest['action']) {
   void Effect.runPromise(Effect.either(metrics.measure('shell.command', semaphores.audio.withPermits(1)(send(action)))))
     .then(() => { shellPending--; broadcast(); });
 }
+// Loads the server-saved queue at its song and position, paused or playing.
+function resumeSaved(paused: boolean) {
+  return Effect.gen(function* () {
+    if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
+    const client = server;
+    const saved = yield* client.savedQueue();
+    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
+    if (!saved || !saved.tracks.length) return yield* Effect.fail(new Error('There is no saved queue on this server.'));
+    if (saved.tracks.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`The saved queue has more than ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`));
+    rememberTracks(saved.tracks);
+    const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
+    const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
+    endRadio();
+    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused });
+    queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
+  });
+}
+// Play from a media key, MPRIS, or the tray. With nothing loaded, the queue saved on the server
+// (when queue sync is on) starts where it left off, so a play key works right after launch.
+const canResume = () => state.player.engine === 'ready' && !state.player.queue.length && server !== null && settings.value.syncQueue;
+function shellPlay() {
+  if (!canResume()) { transport({ type: 'play' }); return; }
+  const generation = connectionGeneration;
+  const resume = Effect.suspend(() => generation === connectionGeneration && canResume() ? resumeSaved(false) : Effect.void);
+  void Effect.runPromise(Effect.either(metrics.measure('shell.resume', semaphores.server.withPermits(1)(resume)))).then(broadcast);
+}
+// Connects to a server, replacing any current one. Stops playback and clears every authenticated
+// URL before replacing the account, while keeping the audio engine's volume and output device.
+function connectTo(typed: Connection, generation: number) {
+  return Effect.gen(function* () {
+    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
+    const connection = yield* resolveAddress(typed);
+    // The address check's own message (a bad address says how), not Effect's generic one.
+    const candidate = yield* Effect.try({ try: () => new SubsonicClient(connection, metrics), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
+    const info = yield* candidate.ping();
+    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
+    endRadio();
+    if (server) yield* send({ type: 'clear-session' });
+    server = candidate; knownTracks.clear();
+    connectionGeneration++; resetSessionState();
+    // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
+    const address = new URL(candidate.baseUrl);
+    state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), reconnectError: null };
+    // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
+    updateTray(); updateMedia(); void loadSavedSong(candidate);
+    return connection;
+  });
+}
+// The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
+// where a server answers. That's asked without credentials, so the password only goes to an
+// address that answered, and a failed HTTPS attempt never sends it over plain HTTP.
+function resolveAddress(connection: Connection) {
+  const candidates = serverUrlCandidates(connection.url);
+  if (candidates.length === 1) return Effect.succeed(connection);
+  return Effect.gen(function* () {
+    for (const url of candidates) {
+      const attempt = yield* Effect.either(Effect.try(() => new SubsonicClient({ ...connection, url }, metrics)).pipe(Effect.flatMap(client => client.probe())));
+      if (Either.isRight(attempt)) return { ...connection, url };
+    }
+    return yield* Effect.fail(new Error(`No Navidrome server answered at ${connection.url.trim()} over HTTPS or HTTP. Check the address and your connection.`));
+  });
+}
+// At launch, with a saved sign-in. A failure leaves the connect screen filled in, with the reason.
+async function reconnect() {
+  const connection = account.connection();
+  if (!connection) return;
+  state.server = { ...state.server, reconnecting: true }; broadcast();
+  const generation = connectionGeneration;
+  const result = await Effect.runPromise(Effect.either(metrics.measure('shell.reconnect', semaphores.server.withPermits(1)(connectTo(connection, generation)))));
+  const reconnectError = Either.isLeft(result) && !state.server.connected ? (result.left instanceof Error ? result.left.message : 'Could not connect.') : null;
+  state.server = { ...state.server, reconnecting: false, reconnectError };
+  broadcast();
+}
 function seekTo(seconds: number) {
   const index = state.player.currentIndex; const track = state.player.queue[index];
   const entryId = state.player.entryIds[index];
@@ -318,6 +430,8 @@ function installHandlers() {
   handle('command', value => Effect.gen(function* () {
     const command = yield* Schema.decodeUnknown(CommandSchema)(value).pipe(Effect.mapError(() => new Error('Invalid player command.')));
     if (command.type === 'restart') { yield* Effect.tryPromise(() => launchPlayer()); return; }
+    // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
+    if (command.type === 'play' && canResume()) { yield* resumeSaved(false); return; }
     yield* send(command);
   }));
   handle('open-files', () => Effect.gen(function* () {
@@ -327,31 +441,18 @@ function installHandlers() {
     }));
     if (result.canceled) return;
     if (result.filePaths.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`Choose up to ${QUEUE_LIMIT.toLocaleString('en-US')} files at a time.`));
-    const tracks: PlayableTrack[] = result.filePaths.map(path => ({
-      location: path,
-      track: {
-        id: randomUUID(), title: basename(path, extname(path)), artist: 'Local file', album: '',
-        source: 'local', duration: null, sourceFormat: extname(path).slice(1) || null,
-        sourceSampleRate: null, sourceBitDepth: null,
-      },
-    }));
+    // Titles, artists, and covers from the files' own tags (localFiles.ts).
+    const read = yield* Effect.promise(() => readLocalTracks(result.filePaths));
+    const tracks: PlayableTrack[] = result.filePaths.map((path, i) => ({ location: path, track: read[i] }));
     endRadio();
     yield* send({ type: 'queue', tracks });
   }), 'dialog');
   handle('connect', (value, generation) => Effect.gen(function* () {
-    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
-    const candidate = yield* Effect.try(() => new SubsonicClient(connection, metrics));
-    const info = yield* candidate.ping();
-    if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
-    // Credentials are session-only. No plaintext persistence or silent safeStorage fallback.
-    // Stop playback and clear every authenticated URL before replacing the account,
-    // while preserving the audio engine's volume and selected output device.
-    endRadio();
-    if (server) yield* send({ type: 'clear-session' });
-    server = candidate; knownTracks.clear();
-    connectionGeneration++; resetSessionState();
-    state.server = { connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID() };
+    const resolved = yield* connectTo(connection, generation);
+    // A sign-in that can't be saved securely stays in memory for this session (account.ts).
+    yield* Effect.promise(() => account.remember(resolved).catch(() => undefined));
+    state.server = { ...state.server, saved: account.saved };
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
@@ -413,20 +514,7 @@ function installHandlers() {
   }), 'library');
   handle('radio:stop', () => Effect.sync(endRadio), 'library');
   // Loads the server-saved queue paused at its song and position. Playback starts only on play.
-  handle('resume-queue', () => Effect.gen(function* () {
-    if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
-    const client = server;
-    const saved = yield* client.savedQueue();
-    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
-    if (!saved || !saved.tracks.length) return yield* Effect.fail(new Error('There is no saved queue on this server.'));
-    if (saved.tracks.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`The saved queue has more than ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`));
-    rememberTracks(saved.tracks);
-    const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
-    const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
-    endRadio();
-    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused: true });
-    queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
-  }), 'server');
+  handle('resume-queue', () => resumeSaved(true), 'server');
   ipcMain.handle('squiggly:get-settings', event => { assertSender(event); return settings.value; });
   handle('update-settings', value => Effect.gen(function* () {
     const changes = yield* Schema.decodeUnknown(SettingsPatchSchema)(value, { onExcessProperty: 'error' }).pipe(Effect.mapError(() => new Error('Invalid settings.')));
@@ -435,10 +523,13 @@ function installHandlers() {
     // A running engine applies exclusive output now; a stopped one reads the saved value at start.
     const exclusiveChanged = next.exclusiveOutput !== previous.exclusiveOutput && host !== null && state.player.engine === 'ready';
     if (exclusiveChanged) yield* send({ type: 'exclusive', on: next.exclusiveOutput });
+    // A running engine switches output now; a stopped one reads the saved device at start.
+    const deviceChanged = next.outputDevice !== previous.outputDevice && host !== null && state.player.engine === 'ready';
+    if (deviceChanged) yield* send({ type: 'device', id: next.outputDevice });
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();
-    applyMiniOnTop();
+    applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
     return settings.value;
   }), 'settings');
   handle('window:toggle-mini', () => Effect.sync(toggleMini), 'window');
@@ -450,10 +541,22 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
+  // The main window's buttons take the room's ink as the palette changes.
+  ipcMain.handle('squiggly:window:tint-controls', (event, value) => {
+    assertSender(event);
+    const target = BrowserWindow.fromWebContents(event.sender);
+    const ink = Schema.decodeUnknownEither(Schema.String.pipe(Schema.pattern(/^#[0-9a-f]{6}$/i)))(value);
+    if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(ink)) return { ok: false, error: 'Invalid window colour.' };
+    target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink.right, height: CONTROLS_HEIGHT });
+    return { ok: true, value: undefined };
+  });
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
-    server = null; knownTracks.clear(); resetSessionState(); state.server = { connected: false, name: null, sessionId: null };
+    server = null; knownTracks.clear(); resetSessionState();
+    // Disconnecting also forgets the saved sign-in.
+    yield* Effect.promise(() => account.forget().catch(() => undefined));
+    state.server = { ...state.server, connected: false, name: null, sessionId: null, saved: account.saved, reconnectError: null };
     yield* Effect.tryPromise(() => launchPlayer());
   }));
   handle('export-diagnostics', () => Effect.gen(function* () {
@@ -472,19 +575,32 @@ function installHandlers() {
 
 // Both windows load the same renderer with the same sandbox, isolation, and navigation limits.
 // The mini player differs only in size, frame, and the argument its preload exposes as isMini.
+// Windows and Linux: no title bar on the main window. The system's window buttons are drawn over
+// the top of the page (window controls overlay), tinted to the room by tintControls. macOS keeps
+// its title bar, since its window buttons would sit on the wordmark.
+const FRAMELESS = process.platform !== 'darwin';
+const CONTROLS_HEIGHT = 40;
 function createWindow(mini: boolean) {
   const target = new BrowserWindow({
     ...(mini ? {
       ...miniBounds(), minWidth: 320, minHeight: 96, maxWidth: 900, maxHeight: 240,
       frame: false, maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
-    } : { width: 1440, height: 940, minWidth: 850, minHeight: 650 }),
+    } : {
+      width: 1440, height: 940, minWidth: 850, minHeight: 650,
+      ...(FRAMELESS ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: '#1c1b18', height: CONTROLS_HEIGHT } } : {}),
+    }),
     backgroundColor: '#181d25', title: 'Squiggly Music',
     ...(process.platform === 'linux' ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(directory, '../preload/index.cjs'),
       contextIsolation: true, nodeIntegration: false, sandbox: true,
       // The preload reads the config folder's path from here, so ConfigApi.dir is ready at once.
-      additionalArguments: [...(mini ? ['--squiggly-mini'] : []), `--squiggly-config=${configDirectory()}`],
+      // Only the main window, which lives as long as the app, hosts the system media session.
+      additionalArguments: [
+        ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
+        ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
+        `--squiggly-config=${configDirectory()}`,
+      ],
     },
   });
   target.setMenuBarVisibility(false);
@@ -497,6 +613,8 @@ function createWindow(mini: boolean) {
 }
 function createMainWindow() {
   const main = windows.main = createWindow(false);
+  // A freshly loaded window needs the current song for its media session.
+  main.webContents.on('did-finish-load', () => { systemMediaKey = null; updateSystemMedia(); });
   main.webContents.once('did-finish-load', () => {
     state.diagnostics.startupMs ??= performance.now() - started; broadcast();
   });
@@ -562,11 +680,12 @@ function updateTray() {
   if (!tray) return;
   const playing = state.player.playing;
   const ready = state.player.engine === 'ready' && state.player.queue.length > 0;
+  const resumable = canResume();
   // Rebuild only when a label or enabled state changes, not on every snapshot.
-  if (trayMenu === `${playing}:${ready}`) return;
-  trayMenu = `${playing}:${ready}`;
+  if (trayMenu === `${playing}:${ready}:${resumable}`) return;
+  trayMenu = `${playing}:${ready}:${resumable}`;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: playing ? 'Pause' : 'Play', enabled: ready, click: () => transport({ type: playing ? 'pause' : 'play' }) },
+    { label: playing ? 'Pause' : 'Play', enabled: ready || resumable, click: () => playing ? transport({ type: 'pause' }) : shellPlay() },
     { label: 'Next', enabled: ready, click: () => transport({ type: 'next' }) },
     { label: 'Previous', enabled: ready, click: () => transport({ type: 'previous' }) },
     { type: 'separator' },
@@ -593,6 +712,7 @@ function createTray() {
 }
 
 // Linux: MPRIS. Its cover is a private temporary copy, since artUrl must not carry credentials.
+// Windows and macOS use Chromium's media session instead (updateSystemMedia, systemMedia.ts).
 let artDirectory: string | null = null;
 let art: { coverArt: string; path: string } | null = null;
 let artRequest: string | null = null;
@@ -600,55 +720,108 @@ let artFiles = 0;
 function updateMedia() {
   if (!media) return;
   const track = state.player.queue[state.player.currentIndex];
-  const coverArt = state.player.engine === 'ready' && track?.source === 'navidrome' ? track.coverArt ?? null : null;
-  if (coverArt && art?.coverArt !== coverArt && artRequest !== coverArt && server && artDirectory) void fetchArt(coverArt, server, artDirectory);
-  media.update(state.player, coverArt && art?.coverArt === coverArt ? pathToFileURL(art.path).href : null);
+  const coverArt = state.player.engine === 'ready' ? track?.coverArt ?? null : null;
+  if (coverArt && art?.coverArt !== coverArt && artRequest !== coverArt && (server || isLocalCover(coverArt)) && artDirectory) void fetchArt(coverArt, artDirectory);
+  media.update(state.player, coverArt && art?.coverArt === coverArt ? pathToFileURL(art.path).href : null, canResume());
 }
-async function fetchArt(coverArt: string, client: SubsonicClient, directory: string) {
+async function fetchArt(coverArt: string, directory: string) {
   artRequest = coverArt;
-  const result = await Effect.runPromise(Effect.either(metrics.measure('shell.media-art', semaphores.art.withPermits(1)(client.coverArt(coverArt, 512)))));
-  if (Either.isLeft(result) || artRequest !== coverArt || server !== client) return;
-  const extension = result.right.contentType.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'img';
+  // A server's cover belongs to that session; a local one to no session.
+  const client = isLocalCover(coverArt) ? null : server;
+  const stale = () => artRequest !== coverArt || (client !== null && server !== client);
+  const cover = await metrics.measure('shell.media-art', Effect.promise(() => coverBytes(coverArt, 512))).pipe(Effect.runPromise);
+  if (!cover || stale()) return;
+  const extension = cover.contentType.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'img';
   const path = join(directory, `cover-${++artFiles}.${extension}`);
-  try { await writeFile(path, result.right.bytes, { mode: 0o600 }); } catch { return; }
-  if (artRequest !== coverArt || server !== client) { void rm(path, { force: true }).catch(() => undefined); return; }
+  try { await writeFile(path, cover.bytes, { mode: 0o600 }); } catch { return; }
+  if (stale()) { void rm(path, { force: true }).catch(() => undefined); return; }
   const previous = art; art = { coverArt, path };
   if (previous) void rm(previous.path, { force: true }).catch(() => undefined);
   updateMedia();
+}
+// Windows media keys, taken directly only with exclusive output, when there is no media session
+// (see updateSystemMedia). Otherwise Windows routes them to the session. Registering a media key
+// here also switches off Chromium's own media key handling, which the session needs, so the two
+// never overlap. Registration fails when another application owns a key; that key then stays
+// with that application.
+const mediaKeys: Record<string, () => void> = {
+  MediaPlayPause: () => state.player.playing ? transport({ type: 'pause' }) : shellPlay(),
+  MediaNextTrack: () => transport({ type: 'next' }), MediaPreviousTrack: () => transport({ type: 'previous' }),
+  MediaStop: () => transport({ type: 'stop' }),
+};
+let mediaKeysHeld = false;
+function applyMediaKeys() {
+  if (process.platform !== 'win32') return;
+  const want = settings.value.exclusiveOutput && !quitting;
+  if (want === mediaKeysHeld) return;
+  mediaKeysHeld = want;
+  for (const [accelerator, run] of Object.entries(mediaKeys)) {
+    if (!want) { globalShortcut.unregister(accelerator); continue; }
+    try { if (!globalShortcut.register(accelerator, run)) metrics.record('shell.media-key-unavailable', 0, true); }
+    catch { metrics.record('shell.media-key-unavailable', 0, true); }
+  }
+}
+// Windows and macOS: what the main window's media session shows (systemMedia.ts). Sent only on a
+// change of song or state, or a jump in position, and whether or not the window is visible. With
+// exclusive output, the session's silent stream would contend with mpv for the device, so there is
+// no session and the media keys come here instead. With nothing loaded, the session shows the song
+// saved on the server, paused, so a play key right after connecting resumes it.
+let savedSong: { track: Track; position: number } | null = null;
+async function loadSavedSong(client: SubsonicClient) {
+  savedSong = null;
+  if (process.platform === 'linux' || !settings.value.syncQueue) return;
+  const saved = await Effect.runPromise(Effect.either(metrics.measure('shell.saved-song', semaphores.sync.withPermits(1)(client.savedQueue()))));
+  if (Either.isLeft(saved) || !saved.right?.tracks.length || server !== client) return;
+  const track = saved.right.tracks[Math.min(Math.max(0, Math.trunc(saved.right.currentIndex) || 0), saved.right.tracks.length - 1)];
+  savedSong = { track, position: Number.isFinite(saved.right.positionSeconds) ? Math.max(0, saved.right.positionSeconds) : 0 };
+  updateSystemMedia();
+}
+let systemMediaKey: string | null = null;
+let systemMediaClock = { position: 0, at: 0, playing: false };
+function updateSystemMedia() {
+  const target = windows.main;
+  if (process.platform === 'linux' || !alive(target) || target.webContents.isDestroyed()) return;
+  const p = state.player;
+  const exclusive = settings.value.exclusiveOutput || p.audio.exclusiveRequested === true;
+  const saved = canResume() && savedSong ? savedSong : null;
+  const track = p.engine === 'ready' && !exclusive ? p.queue[p.currentIndex] ?? saved?.track : undefined;
+  const entryId = saved ? 'saved' : p.entryIds[p.currentIndex];
+  const now = performance.now();
+  const next: SystemMediaState | null = track && entryId ? {
+    index: saved ? -1 : p.currentIndex, entryId, trackId: track.id, title: track.title, artist: track.artist, album: track.album,
+    coverArt: track.coverArt ?? null,
+    duration: saved ? track.duration ?? 0 : p.duration > 0 ? p.duration : track.duration ?? 0,
+    position: saved ? saved.position : p.position, playing: saved ? false : p.playing,
+  } : null;
+  const expected = systemMediaClock.position + (systemMediaClock.playing ? (now - systemMediaClock.at) / 1000 : 0);
+  const key = next ? JSON.stringify({ ...next, position: 0 }) : '';
+  if (key === systemMediaKey && (!next || Math.abs(next.position - expected) <= 1.5)) return;
+  systemMediaKey = key;
+  systemMediaClock = { position: next?.position ?? 0, at: now, playing: next?.playing ?? false };
+  target.webContents.send('squiggly:media', next);
 }
 function startMediaControls() {
   if (process.platform === 'linux') {
     try { artDirectory = mkdtempSync(join(app.getPath('temp'), 'squiggly-art-')); } catch { artDirectory = null; }
     void startMpris({
-      command: type => transport({ type }), seek: seekTo, volume: percent => transport({ type: 'volume', percent }),
+      command: type => type === 'play' ? shellPlay() : transport({ type }), seek: seekTo, volume: percent => transport({ type: 'volume', percent }),
       raise: showMain, quit: () => app.quit(),
     }, () => { media = null; metrics.record('shell.mpris-unavailable', 0, true); }).then(session => { media = session; updateMedia(); });
   }
-  // Windows media keys. Chromium's handling only covers audio it plays itself. Registration
-  // fails when another application owns a key; that key then stays with that application.
-  // TODO(windows-smtc): the System Media Transport Controls overlay has no Electron API and no
-  // maintained Node binding. Add it once one exists, rather than a silent HTML audio element.
-  if (process.platform === 'win32') {
-    const keys: Record<string, () => void> = {
-      MediaPlayPause: () => transport({ type: state.player.playing ? 'pause' : 'play' }),
-      MediaNextTrack: () => transport({ type: 'next' }), MediaPreviousTrack: () => transport({ type: 'previous' }),
-      MediaStop: () => transport({ type: 'stop' }),
-    };
-    for (const [accelerator, run] of Object.entries(keys)) {
-      try { if (!globalShortcut.register(accelerator, run)) metrics.record('shell.media-key-unavailable', 0, true); }
-      catch { metrics.record('shell.media-key-unavailable', 0, true); }
-    }
-  }
+  applyMediaKeys();
 }
 
 if (primary) app.on('second-instance', () => showMain());
 app.whenReady().then(async () => {
   if (!primary) return;
   app.setName('Squiggly Music');
+  ensurePortableShortcut();
   const userData = app.getPath('userData');
   settings = new JsonStore(join(userData, 'settings.json'), SettingsFileSchema, defaultSettings());
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
-  await Promise.all([settings.load(), windowState.load()]);
+  account = new Account(join(userData, 'account.json'), safeStorage);
+  await Promise.all([settings.load(), windowState.load(), account.load()]);
+  state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   installHandlers(); loop.enable();
   const windowContents = () => appWindows().map(target => target.webContents);
   config = startConfigFolder({ assertSender, windows: windowContents });
@@ -658,6 +831,7 @@ app.whenReady().then(async () => {
   createMainWindow();
   createTray();
   startMediaControls();
+  void reconnect();
   await launchPlayer();
   let sampledAt = performance.now();
   const timer = setInterval(() => {

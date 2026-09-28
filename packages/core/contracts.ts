@@ -107,6 +107,7 @@ export interface Settings {
   syncQueue: boolean;         // save the queue to Navidrome and offer to resume it
   reportPlays: boolean;       // tell Navidrome what was played
   miniOnTop: boolean;         // keep the mini player above other windows
+  outputDevice: string;       // mpv audio-device name; 'auto' is the system default
 }
 export interface QueueApi {
   add(trackIds: string[], where: 'next' | 'end'): Promise<Result>;
@@ -176,7 +177,16 @@ export interface Diagnostics {
 export interface AppSnapshot {
   player: PlayerSnapshot;
   diagnostics: Diagnostics;
-  server: { connected: boolean; name: string | null; sessionId: string | null };
+  server: ServerState;
+}
+export interface ServerState {
+  connected: boolean; name: string | null; sessionId: string | null;
+  // The saved sign-in (see apps/desktop/main/account.ts), without its password.
+  saved: { url: string; username: string } | null;
+  // Whether connecting will save the sign-in: the system can encrypt the password.
+  canRemember: boolean;
+  // Reconnecting with the saved sign-in at launch, and why that failed, if it did.
+  reconnecting: boolean; reconnectError: string | null;
 }
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
 // The user's config folder (~/.config/squiggly on Linux, %APPDATA%\Squiggly on Windows).
@@ -216,6 +226,21 @@ export interface ExtensionsApi {
   // For ctx.clipboard: the window's own clipboard API needs a permission the app doesn't grant.
   writeClipboard(text: string): Promise<Result>;
 }
+// The operating system's media controls on Windows and macOS: the Windows media flyout and
+// media keys, macOS Now Playing. Linux has MPRIS in the main process instead.
+export interface SystemMediaState {
+  // -1 for the song saved on the server, shown while nothing is loaded.
+  index: number; entryId: string; trackId: string;
+  title: string; artist: string; album: string; coverArt: string | null;
+  duration: number; position: number; playing: boolean;
+}
+export interface SystemMediaApi {
+  // Whether this window hosts the media session: the main window, on Windows and macOS.
+  hosted: boolean;
+  // The current song and its state, or null when there is nothing to show (or exclusive output
+  // needs the device to itself). Sent on changes, whether or not the window is visible.
+  subscribe(listener: (state: SystemMediaState | null) => void): () => void;
+}
 
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
@@ -232,10 +257,16 @@ export interface DesktopBridge {
   library: LibraryApi;
   config: ConfigApi;
   extensions: ExtensionsApi;
+  media: SystemMediaApi;
   settings(): Promise<Settings>;
   updateSettings(changes: Partial<Settings>): Promise<Result<Settings>>;
   // The compact always-on-top window. Opening it from the mini player's own button returns to the full window.
-  window: { toggleMini(): Promise<Result>; setAlwaysOnTop(on: boolean): Promise<Result>; isMini: boolean };
+  window: {
+    toggleMini(): Promise<Result>; setAlwaysOnTop(on: boolean): Promise<Result>; isMini: boolean;
+    // The main window has no title bar on Windows and Linux: the system's window buttons sit over
+    // the top of the page, and tintControls gives them the room's ink colour (#rrggbb).
+    frameless: boolean; tintControls(ink: string): Promise<Result>;
+  };
   disconnect(): Promise<Result>;
   exportDiagnostics(): Promise<Result>;
 }
