@@ -124,3 +124,11 @@ test('the open now-playing sheet uses the full width', async ({ app }) => {
     return sleeve.width / sheet.width;
   }).toBeGreaterThan(.75);
 });
+
+test("on a phone, a record's Play opens the now-playing sheet", async ({ app }) => {
+  await app.signIn();
+  await app.openAlbum('Quiet Harbor');
+  await app.main.getByRole('button', { name: 'Play', exact: true }).tap();
+  await expect(app.deck).toHaveClass(/\bopen\b/);
+  await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Opening 2');
+});

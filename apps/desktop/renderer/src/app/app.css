@@ -63,6 +63,13 @@ button:disabled { cursor: default; opacity: .45; }
 .deck { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 14px 28px 22px 40px; scrollbar-width: none; }
 .deck-cover, .cover-empty { width: 100%; aspect-ratio: 1; flex: none; }
 .deck-cover { box-shadow: 0 1px 1px rgba(0, 0, 0, .12), 0 22px 34px -20px rgba(0, 0, 0, .55); }
+/* The deck's and a record page's sleeve show the whole picture. A cover that isn't square (a film
+   poster) sits inside the square rather than being cropped, and its shadow follows the picture,
+   not the square. Grids and lists still crop to a square, as shelves do. */
+img:is(.deck-cover, .head-cover) {
+  object-fit: contain; background: none; box-shadow: none;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .12)) drop-shadow(0 16px 14px rgba(0, 0, 0, .3));
+}
 .cover-empty { background: var(--line); }
 .deck-empty { margin: 16px 0 0; color: var(--soft); }
 .deck-text { margin-top: 18px; }

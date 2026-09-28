@@ -3,6 +3,7 @@ import type { Playlist, Result, Track } from '../../../../../packages/core/contr
 import { isStarred, setStarred } from './favorites';
 import { api, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, player, type PlayerState } from './player';
+import { showNowPlaying } from './nowPlaying';
 import { nav } from './route';
 import { labelOf, registry, type MenuItem, type MenuTarget } from './registry';
 import { kHz, length, plural, shuffled, splitTitle } from './ui';
@@ -243,10 +244,16 @@ async function songsFor(t: MenuTarget): Promise<Track[] | null> {
 }
 
 // Plays a record, artist, or playlist from the start, as the menu's Play and a cover's play button do.
-export async function playTarget(t: MenuTarget) { const tracks = await songsFor(t); if (tracks) await player.play(tracks, 0); }
-builtin.menu({ id: 'play', section: 0, label: t => t.kind === 'tracks' && t.tracks.length === 1 ? 'Play' : 'Play all', run: playTarget });
+// A whole record, artist, or playlist then shows what's playing (nowPlaying.ts); songs don't.
+export async function playTarget(t: MenuTarget, shuffle = false) {
+  const tracks = await songsFor(t);
+  if (!tracks) return;
+  await player.play(shuffle ? shuffled(tracks) : tracks, 0);
+  if (t.kind !== 'tracks') showNowPlaying();
+}
+builtin.menu({ id: 'play', section: 0, label: t => t.kind === 'tracks' && t.tracks.length === 1 ? 'Play' : 'Play all', run: t => playTarget(t) });
 builtin.menu({ id: 'shuffle', section: 0, label: 'Shuffle', when: t => t.kind !== 'tracks' || t.tracks.length > 1,
-  run: async t => { const tracks = await songsFor(t); if (tracks) await player.play(shuffled(tracks), 0); } });
+  run: t => playTarget(t, true) });
 builtin.menu({ id: 'play-next', section: 0, label: 'Play next', when: t => !(t.kind === 'tracks' && t.from?.queue),
   run: async t => { const tracks = await songsFor(t); if (tracks) await player.add(tracks, 'next'); } });
 builtin.menu({ id: 'queue', section: 0, label: 'Add to queue', when: t => !(t.kind === 'tracks' && t.from?.queue),

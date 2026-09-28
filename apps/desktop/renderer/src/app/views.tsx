@@ -5,6 +5,7 @@ import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixe
 import { current, player, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
+import { showNowPlaying } from './nowPlaying';
 import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
@@ -38,10 +39,10 @@ function Head({ title, qualifier, cover, children }: { title: string; qualifier?
 }
 function Actions({ tracks, children }: { tracks: Track[] | null; children?: ReactNode }) {
   return <div className="actions">
-    <button type="button" className="play-action" disabled={!tracks?.length} onClick={() => tracks && player.play(tracks, 0)}>
+    <button type="button" className="play-action" disabled={!tracks?.length} onClick={() => tracks && void player.play(tracks, 0).then(showNowPlaying)}>
       <span className="disc"><Glyph kind="play" /></span>Play
     </button>
-    <button type="button" className="text-button" disabled={!tracks?.length} onClick={() => tracks && player.play(shuffled(tracks), 0)}>Shuffle</button>
+    <button type="button" className="text-button" disabled={!tracks?.length} onClick={() => tracks && void player.play(shuffled(tracks), 0).then(showNowPlaying)}>Shuffle</button>
     {children}
   </div>;
 }
@@ -338,6 +339,7 @@ export function ArtistPage({ id }: { id: string }) {
     if (!tracks.ok) { setProblem(tracks.error); return; }
     if (!tracks.value.length) { setProblem(`There are no songs by ${artist.name} on this server.`); return; }
     await player.play(shuffle ? shuffled(tracks.value) : tracks.value, 0);
+    showNowPlaying();
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
     <Head title={artist.name}>
@@ -397,7 +399,10 @@ export function Playlists() {
       <p className="section-note">Drawn from your library each session. Save one to keep it as it is.</p>
       <ul className="rows">
         {mixes.map(mix => <li key={mix.id} className="playable">
-          <PlayOver label={mix.name} play={async () => { const drawn = await mixTracks(mix); if (drawn.ok && drawn.value.length) await player.play(drawn.value, 0); }} />
+          <PlayOver label={mix.name} play={async () => {
+            const drawn = await mixTracks(mix);
+            if (drawn.ok && drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+          }} />
           <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
             <MixTile mix={mix} travels={mix.id === morph.id} />
             <span className="row-text"><span className="row-name">{mix.name}</span><span className="row-sub">{mix.description}</span></span>
