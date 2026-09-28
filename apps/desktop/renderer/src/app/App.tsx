@@ -200,6 +200,14 @@ const Deck = memo(function Deck() {
   </aside>;
 });
 
+// A downloaded update, or a newer release for a copy that can't update itself. Shown under the
+// deck, and on the connect screen, which has no deck.
+function UpdateLink() {
+  const update = usePlayer(s => s.update);
+  if (update?.status === 'ready') return <button type="button" className="quiet-link update-link" onClick={() => void window.squiggly!.updates.install()}>Restart to update to {update.version}</button>;
+  if (update?.status === 'available') return <button type="button" className="quiet-link update-link" onClick={() => void window.squiggly!.updates.open()}>Squiggly {update.version} is out</button>;
+  return null;
+}
 // Opening files from this computer lives here rather than in the header, which has to leave
 // room for the window's buttons.
 const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
@@ -208,6 +216,7 @@ function DeckLinks() {
   const mode = usePlayer(s => s.mode);
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
+    <UpdateLink />
     <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
@@ -318,6 +327,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       {error && <p className="deck-error" role="alert">{error}</p>}
     </form>
     {!embedded && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
+    {!embedded && <p className="connect-update"><UpdateLink /></p>}
   </Frame>;
 }
 

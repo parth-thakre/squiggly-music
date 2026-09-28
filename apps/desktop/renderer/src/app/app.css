@@ -445,6 +445,11 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .icon-button[aria-pressed='true'] { color: var(--ink); background: var(--line); }
 .deck-links { display: flex; gap: 16px; margin: auto 0 0; padding-top: 18px; }
 .deck-links { flex-wrap: wrap; row-gap: 6px; }
+/* An update ready or out: the one deck link in the accent, first in the row. */
+.update-link { color: var(--accent-text, var(--accent)); font-weight: 600; }
+.deck-links .update-link { flex-basis: 100%; }
+.connect-update:empty { display: none; }
+.connect-update .quiet-link { padding: 0; margin: 0; }
 .deck-links .quiet-link { margin: 0; padding: 0; white-space: nowrap; }
 .bar-commands { display: none; }
 .deck-sheet-bar { display: none; }

@@ -108,6 +108,7 @@ export interface Settings {
   reportPlays: boolean;       // tell Navidrome what was played
   miniOnTop: boolean;         // keep the mini player above other windows
   outputDevice: string;       // mpv audio-device name; 'auto' is the system default
+  checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
 }
 export interface QueueApi {
   add(trackIds: string[], where: 'next' | 'end'): Promise<Result>;
@@ -178,6 +179,25 @@ export interface AppSnapshot {
   player: PlayerSnapshot;
   diagnostics: Diagnostics;
   server: ServerState;
+  update: UpdateState;
+}
+// Updates from GitHub releases (apps/desktop/main/updates.ts).
+export interface UpdateState {
+  // install: the app updates itself. notify: it says a version is out and links to it (the
+  // portable exe, the RPM). off: development builds.
+  mode: 'install' | 'notify' | 'off';
+  status: 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
+  current: string;          // this app's version
+  version: string | null;   // the newer version, once one is found
+  percent: number | null;   // download progress
+  error: string | null;
+}
+export interface UpdatesApi {
+  check(): Promise<Result>;
+  // Restart to update. Only when an update is ready.
+  install(): Promise<Result>;
+  // The new version's release page, where the portable exe and the RPM are downloaded.
+  open(): Promise<Result>;
 }
 export interface ServerState {
   connected: boolean; name: string | null; sessionId: string | null;
@@ -258,6 +278,7 @@ export interface DesktopBridge {
   config: ConfigApi;
   extensions: ExtensionsApi;
   media: SystemMediaApi;
+  updates: UpdatesApi;
   settings(): Promise<Settings>;
   updateSettings(changes: Partial<Settings>): Promise<Result<Settings>>;
   // The compact always-on-top window. Opening it from the mini player's own button returns to the full window.

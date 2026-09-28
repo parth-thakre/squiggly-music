@@ -81,15 +81,27 @@ Every icon comes from `apps/desktop/renderer/public/icon.svg`. After changing it
 
 ## Releasing
 
-The version in `package.json` is the one that ships. The workflow refuses a tag that doesn't match it.
+The version in `package.json` is the one that ships, and the tag is `v` plus that version. The app's updater (`apps/desktop/main/updates.ts`) compares its own version with the newest GitHub release, so every release needs a new version, and must include `latest.yml`, `latest-linux.yml`, and the installer's `.blockmap` alongside the installers: electron-updater reads the version and SHA-512 from them. Versions with a hyphen go out as prereleases, which the updater skips.
+
+Releases are built on this machine and uploaded. The Release workflow is disabled in the repository's Actions settings, so pushing a tag builds nothing on GitHub:
 
 ```bash
 git switch main && git pull
-npm version patch        # or minor, major, or prerelease --preid beta
-git push --follow-tags
+npm version patch --no-git-tag-version   # or minor, major
+git commit -am "release: v$(node -p "require('./package.json').version")"
+npm ci && npm run check && npm run test:ui
+npm run libmpv:build                     # or keep .local/libmpv-windows; package:win verifies it
+npm run package:win && npm run package:linux
+node scripts/smoke-runtime.mjs dist/win-unpacked   # under Wine: wine dist/win-unpacked/resources/runtime/node.exe ...
+mkdir release && cp dist/*.exe dist/*.exe.blockmap dist/latest.yml dist/*.rpm dist/latest-linux.yml release/
+cp .local/libmpv-windows/libmpv-windows-x64-source.tar "release/Squiggly-Music-$(node -p "require('./package.json').version")-libmpv-windows-x64-source.tar"
+node scripts/release-checksums.mjs release
+git push && gh release create "v$(node -p "require('./package.json').version")" release/* --target main --title "Squiggly Music $(node -p "require('./package.json').version")" --notes-file <notes>
 ```
 
-Pushing a `v*` tag runs `.github/workflows/release.yml`. It typechecks, builds, and runs the unit tests (with real libmpv) and the Playwright interface tests. In parallel, it builds the Windows libmpv from `build/libmpv`, cached by the recipe's contents. Then it builds the Windows installer and portable exe with that libmpv and the RPM, smoke-tests each package's runtime, and stops if anything fails. Last, it writes `SHA256SUMS`, adds build provenance attestations, and publishes a GitHub release with the libmpv source bundle attached as `Squiggly-Music-<version>-libmpv-windows-x64-source.tar`. Versions with a hyphen, like `1.2.0-beta.1`, go out as prereleases.
+The notes start from `.github/release-notes-header.md` with `{{VERSION}}`, `{{TAG}}`, and `{{REPO}}` filled in; drop the attestation section, since locally built files have no GitHub attestation.
+
+With the workflow enabled again, pushing a `v*` tag runs `.github/workflows/release.yml` instead. It typechecks, builds, and runs the unit tests (with real libmpv) and the Playwright interface tests. In parallel, it builds the Windows libmpv from `build/libmpv`, cached by the recipe's contents. Then it builds the Windows installer and portable exe with that libmpv and the RPM, smoke-tests each package's runtime, and stops if anything fails. Last, it writes `SHA256SUMS`, adds build provenance attestations, and publishes a GitHub release with the libmpv source bundle attached as `Squiggly-Music-<version>-libmpv-windows-x64-source.tar`. Versions with a hyphen, like `1.2.0-beta.1`, go out as prereleases.
 
 To build without publishing, open Actions, pick Release, and choose Run workflow. The files end up in the `release-assets` artifact.
 

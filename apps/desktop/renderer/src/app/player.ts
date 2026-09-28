@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track } from '../../../../../packages/core/contracts';
+import type { AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
 import { finishThreshold } from '../../../../../packages/core/plays';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
@@ -34,6 +34,8 @@ export interface PlayerState {
   resumable: SavedQueue | null;
   // Desktop only: the saved sign-in and reconnecting with it at launch.
   signIn: SignInState;
+  // Desktop only: updates from GitHub releases. Null in the browser.
+  update: UpdateState | null;
 }
 export type SignInState = Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
 
@@ -49,6 +51,7 @@ let state: PlayerState = {
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
+  update: null,
 };
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
@@ -119,6 +122,7 @@ if (desktop) {
       && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : { saved, canRemember, reconnecting, reconnectError };
     set({
       signIn,
+      update: snapshot.update && sameFields(state.update, snapshot.update) ? state.update : snapshot.update ?? null,
       engine: p.engine, connected: snapshot.server.connected, serverName: snapshot.server.name, sessionId,
       queue: sameList(state.queue, p.queue, sameTrack) ? state.queue : p.queue,
       entryIds: sameList(state.entryIds, p.entryIds, Object.is) ? state.entryIds : p.entryIds,

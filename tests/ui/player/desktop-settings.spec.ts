@@ -54,3 +54,33 @@ test('the output device is chosen in Settings and saved there', async ({ page })
   await expect(output).toHaveValue('auto');
   await expect(output.locator('option')).toHaveText(['System default']);
 });
+
+test.describe('updates', () => {
+  const calls = (page: import('@playwright/test').Page) => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls);
+  test('a downloaded update offers a restart, in the deck and in Settings', async ({ page }) => {
+    await installDesktopBridge(page, { update: { status: 'ready', version: '0.1.1' } });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Restart to update to 0.1.1' }).click();
+    expect(await calls(page)).toEqual(['update:install']);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByText('Squiggly 0.1.1 is ready. It installs when you restart or quit.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Check now' })).toHaveCount(0);
+  });
+  test("a copy that can't update itself links to the release instead", async ({ page }) => {
+    await installDesktopBridge(page, { update: { mode: 'notify', status: 'available', version: '0.1.1' } });
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Squiggly 0.1.1 is out' }).click();
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByText('Squiggly 0.1.1 is out. You have 0.1.0.')).toBeVisible();
+    await page.getByRole('button', { name: 'Check now' }).click();
+    expect(await calls(page)).toEqual(['update:open', 'update:check']);
+  });
+  test('up to date says so, and nothing shows in the deck', async ({ page }) => {
+    await installDesktopBridge(page);
+    await page.goto('/');
+    await expect(page.locator('.update-link')).toHaveCount(0);
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByText('Squiggly 0.1.0 is the latest version.')).toBeVisible();
+    await expect(page.getByLabel(/Check for updates/)).toBeChecked();
+  });
+});
