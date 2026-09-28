@@ -1,6 +1,6 @@
 # Renderer guide
 
-The renderer lives in `apps/desktop/renderer/src/app/`. It runs in two places: the desktop app, where `window.squiggly` is the preload bridge and libmpv plays audio, and the browser build (`npm run web`), where the same UI talks to the host's `/api/*` bridge and plays through an audio element.
+The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places: the desktop app, where `window.squiggly` is the preload bridge and libmpv plays audio; the browser build (`npm run web`), where the same UI talks to the host's `/api/*` bridge and plays through an audio element; and the Android app, where `window.squigglyAndroid` (`apps/android/web/bridge.ts`) runs the connector in the page and a native Media3 player plays the queue. [android.md](android.md) has the details.
 
 ## Layout of the code
 
@@ -8,7 +8,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in two places: t
 | --- | --- |
 | `App.tsx` | Shell: bar, deck (now playing), page, connect screen |
 | `views.tsx` | Pages: records, album, artists, artist, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics |
-| `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself |
+| `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself. Android (`mode: 'android'`) keeps the queue as web does and follows the native player's reports |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions do |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows |
 | `commands/` | Every action as a command, default keys, `keybindings.json` overrides, and the Ctrl+K palette. The palette lists commands only and filters by substring; the library has the search in the bar. The browser build has no config folder, so Settings › Keys edits its bindings there instead |
@@ -60,6 +60,12 @@ Mutations return `{ ok: true, value }` or `{ ok: false, error }` and every failu
 
 The browser build uses `bridge/previewLibrary.ts` instead of `window.squiggly`. `npm run web` and `npm run preview` bind 127.0.0.1. Reaching them from another address requires `SQUIGGLY_WEB_PASSWORD` (12 or more characters) on the host; without it `/api` serves loopback only. `webSession.status()` reports whether a password is required and whether this browser is signed in; `signIn` and `signOut` manage the HttpOnly session cookie. `onSignedOut(listener)` fires when any `/api` call returns 401, so the UI can return to the sign-in screen. The cookie is same-origin, so `<audio>` and `<img>` URLs under `/api` need no extra headers.
 
+## Android app
+
+`window.squigglyAndroid` (`AndroidBridge` in `packages/core/contracts.ts`) is installed by `apps/android/web/main.ts` before the renderer loads. `library.ts` takes its `library`, and the connect screen and Settings › Disconnect use its `session`, as they use the desktop's bridge. `player.ts` keeps the queue in the page (the browser's queue code), and every change to `entryIds` goes to `player.sync()`, which sends the native player only the edits (`apps/android/web/queue.ts`). Loading an entry is `player.load(entryId, …)`, never an index. The native player moves between songs by itself; its reports name the entry playing and a `playId` that changes whenever an entry starts from the top, which is a new play for reporting. Reports from before the page's last load or queue replacement are dropped by sequence number.
+
+Covers use the browser build's `/api/cover?id=…&size=…` addresses; the native side answers them, so no component sees a credential. The page reports plays and saves the queue itself, under the same settings as the browser.
+
 ## Audio truth rules
 
 - Unknown remains unknown. Do not turn missing sample rates or bit depths into sensible-looking defaults.
@@ -67,7 +73,7 @@ The browser build uses `bridge/previewLibrary.ts` instead of `window.squiggly`. 
 - Exclusive output is a request. `exclusiveRequested` says what mpv accepted, not what the OS granted; never badge it as bit-perfect.
 - A raw stream request does not prove the server returned unmodified audio.
 - Volume below 100% means attenuation. Decoder sample format is not original file bit depth.
-- The desktop plays through libmpv only. The browser build plays through the browser and says so in the signal-path sentence.
+- The desktop plays through libmpv only. The browser build plays through the browser and says so in the signal-path sentence. The Android app plays through ExoPlayer, asks for the original file as the desktop does, and says when it fell back to the server's MP3.
 
 ## Performance and security rules
 
@@ -76,6 +82,6 @@ The browser build uses `bridge/previewLibrary.ts` instead of `window.squiggly`. 
 - Lyrics run one animation frame loop while playing and visible. It writes each sung word's progress to its span (`--p`, `data-progress`) and re-renders only when the line changes; paused, it paints once. Word times come with the lyrics (`wordTiming`); lines without exact times are estimated by `timeWords()` in `packages/lyrics/words.ts`, the same on desktop and web. Reduced motion lights whole words and drops the blur.
 - Window long lists and page the library. Caches are bounded.
 - Never import Node, Electron, Koffi, server authentication, or the private player protocol into renderer code.
-- Keep passwords out of renderer state and storage; never hand authenticated URLs to components.
+- Keep passwords out of renderer state and storage; never hand authenticated URLs to components. The Android app is the one exception to the first half: the page is the whole app there, so the connector holds its token in the page's memory, and the password passes through the bridge at sign-in and at launch. It is never stored in the page (`SecureAccount.kt` keeps it sealed natively) and never logged: Capacitor's logging is off because it would write plugin arguments to logcat.
 
 `npm run check` runs typecheck and tests; `npm run test:desktop` checks the preload bridge and process isolation.

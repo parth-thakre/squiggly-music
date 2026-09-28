@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sign-in is sealed with a Keystore key that never leaves this device, so a copy anywhere
+     else couldn't be opened. Leave it out of cloud backups and device-to-device transfers. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="squiggly-account.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="squiggly-account.xml" />
+    </device-transfer>
+</data-extraction-rules>

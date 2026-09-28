@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Squiggly</string>
+    <string name="title_activity_main">Squiggly</string>
+    <string name="package_name">dev.squiggly.music</string>
+    <string name="custom_url_scheme">dev.squiggly.music</string>
+</resources>

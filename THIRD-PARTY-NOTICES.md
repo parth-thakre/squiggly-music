@@ -1,9 +1,11 @@
 # Third-party notices
 
-Squiggly Music's release packages redistribute the software below. Each installed package
-carries these notices in `resources/licenses/` (this file, `npm-packages.txt`, and on
+Squiggly Music's release packages redistribute the software below. Each installed desktop
+package carries these notices in `resources/licenses/` (this file, `npm-packages.txt`, and on
 Windows `libmpv-windows/`) and beside the executable (`LICENSE.electron.txt`,
-`LICENSES.chromium.html`).
+`LICENSES.chromium.html`). The Android APK carries them in `assets/public/licenses/`: this
+file, `npm-packages.txt` (the npm packages in its page, with their licence texts),
+`android-libraries.txt` (every Android library in it, with its licence), and `apache-2.0.txt`.
 
 Squiggly Music's own source code is released under the MIT License (see [LICENSE](LICENSE)). The components below keep their own licenses.
 
@@ -16,12 +18,22 @@ Squiggly Music's own source code is released under the MIT License (see [LICENSE
 | esbuild and its platform binary (compiles extensions at load time) | 0.25.12 | Windows, Fedora | MIT | `resources/licenses/npm-packages.txt` |
 | libmpv (`libmpv-2.dll`), built by this repository from source (`build/libmpv`): audio-only mpv with statically linked FFmpeg, libplacebo, libass, FreeType, HarfBuzz, and FriBidi | mpv 0.41.0, FFmpeg 8.1.3 (full list in `NOTICE.md`) | Windows only | LGPL-2.1-or-later as a whole (mpv `-Dgpl=false`, FFmpeg without `--enable-gpl`); the other components are LGPL-2.1-or-later, ISC, MIT, or FTL | `resources/licenses/libmpv-windows/` |
 | npm runtime packages: effect, @jellybrick/mpris-service, @jellybrick/dbus-next, fast-xml-parser and its dependencies, fast-check, pure-rand, music-metadata and its dependencies, electron-updater and its dependencies, and others | see `npm-packages.txt` | Windows, Fedora | MIT, ISC, BSD-3-Clause (ieee754), BlueOak-1.0.0 (sax), Python-2.0 (argparse) | `resources/licenses/npm-packages.txt` |
-| Renderer bundle: React, React DOM, scheduler (MIT), lucide-react (ISC) | see `npm-packages.txt` | Windows, Fedora | MIT, ISC | `resources/licenses/npm-packages.txt` |
-| Fonts: Familjen Grotesk, Young Serif (via @fontsource) | 5.3.0 | Windows, Fedora | SIL Open Font License 1.1 | `resources/licenses/npm-packages.txt` |
+| Renderer bundle: React, React DOM, scheduler (MIT), lucide-react (ISC) | see `npm-packages.txt` | Windows, Fedora, Android | MIT, ISC | `resources/licenses/npm-packages.txt`; Android: `assets/public/licenses/npm-packages.txt` |
+| Fonts: Familjen Grotesk, Young Serif (via @fontsource) | 5.3.0 | Windows, Fedora, Android | SIL Open Font License 1.1 | `resources/licenses/npm-packages.txt`; Android: `assets/public/licenses/npm-packages.txt` |
+| effect (the connector runs in the Android app's page) | 3.22.2 | Android (and the desktop, above) | MIT | `assets/public/licenses/npm-packages.txt` |
+| Capacitor: `@capacitor/core` (in the page) and `@capacitor/android` (the native bridge and WebView host) | 8.5.2 | Android | MIT | `assets/public/licenses/npm-packages.txt` |
+| AndroidX Media3: ExoPlayer, session, datasource, extractor, decoder, and their common modules | 1.11.1 | Android | Apache-2.0 | `assets/public/licenses/android-libraries.txt`, `apache-2.0.txt` |
+| Other Android libraries: AndroidX (AppCompat, Core, Activity, Fragment, Lifecycle, Window, WebKit, Media, and others), Guava and failureaccess, the Kotlin standard library, kotlinx-coroutines, JSpecify, JetBrains annotations, Apache Cordova's Android framework (a dependency of Capacitor's) | see `android-libraries.txt` | Android | Apache-2.0 | `assets/public/licenses/android-libraries.txt`, `apache-2.0.txt` |
 | electron-builder's `elevate.exe` and NSIS installer stub | electron-builder 26 | Windows | elevate: MIT (upstream jpassing/elevate, not verified); NSIS: zlib/libpng | Not yet included |
 
 The Fedora RPM does not include libmpv. It depends on Fedora's `mpv-libs` package, which
 Fedora distributes under its own terms.
+
+For the Android app, `scripts/android-notices.ts` writes `npm-packages.txt` from the modules
+the bundler actually put in the page, and `scripts/android.mjs` writes `android-libraries.txt`
+from Gradle's resolved release classpath. Both fail the build on a licence nobody has
+reviewed. None of the Android libraries ship a NOTICE file that Apache-2.0 would require
+passing on.
 
 `scripts/release-notices.mjs` runs after electron-builder copies the app. It writes
 `npm-packages.txt` from `package-lock.json` and the installed packages, and fails the build
@@ -47,6 +59,9 @@ reviewed list, or a shipped package is missing from the inventory.
 This is a summary of what these licenses usually require, not legal advice.
 
 - **MIT, ISC, BSD, Zlib, OFL:** keep the copyright notice and license text with each copy.
+- **Apache-2.0 (AndroidX, Media3, Guava, Kotlin, and the rest of the Android libraries):**
+  include the license text and any NOTICE file the component carries, and state changes made
+  to it. The APK includes `apache-2.0.txt`; Squiggly uses these libraries unmodified.
   `npm-packages.txt`, `LICENSE.electron.txt`, `LICENSES.chromium.html`, and
   `LICENSE.node.txt` carry them.
 - **LGPL-2.1-or-later (Chromium's FFmpeg, libmpv-2.dll):** provide the license text and the

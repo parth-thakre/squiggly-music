@@ -1,5 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
-import { Effect, Schema } from 'effect';
+import { Effect, Either, Schema } from 'effect';
 import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track,
@@ -9,6 +8,7 @@ import { Metrics } from '../core/metrics';
 import { IdSchema, LibraryRequestSchemas } from '../core/validation';
 import { type LrclibOptions, lrclibLyrics, parseLrc } from '../lyrics/lrclib';
 import { timeWords } from '../lyrics/words';
+import { md5Hex, randomSalt } from './auth';
 import { LyricsListSchema, structuredLyrics } from './lyrics';
 
 const DurationSchema = Schema.Number.pipe(Schema.finite(), Schema.nonNegative());
@@ -98,6 +98,14 @@ type Params = Record<string, string | readonly string[]>;
 // Raster formats only: the desktop serves these bytes to the renderer under its own scheme.
 const coverTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const clamp = (value: number, min: number, max: number) => Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min;
+// Response bodies as one byte array, and as text. The BOM is kept, as Node's Buffer did.
+function concatBytes(chunks: readonly Uint8Array[], total: number) {
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+  return body;
+}
+const utf8 = (body: Uint8Array<ArrayBuffer>) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(body);
 
 // Only locally authored messages can cross the desktop boundary. Server error
 // text and fetch errors may contain credentials or authenticated URLs.
@@ -170,18 +178,22 @@ const toItems = (items: Schema.Schema.Type<ReturnType<typeof itemsSchema>>): Lib
   artists: (items.artist ?? []).map(toArtist), albums: (items.album ?? []).map(toAlbum), tracks: (items.song ?? []).map(song => toTrack(song)),
 });
 
+// How the client reaches the server. The Android app passes a fetch that runs natively
+// (bridge/android/http.ts), which has no CORS or mixed-content rules to satisfy.
+export interface ClientOptions { fetch?: typeof globalThis.fetch }
+
 export class SubsonicClient {
   readonly baseUrl: string;
   private auth: { username: string; salt: string; token: string };
   private extensions: Effect.Effect<ReadonlyMap<string, readonly number[]>>;
   // lrclib overrides the LRCLIB address and fetch for tests; it is only contacted when a lyrics lookup allows it.
-  constructor(connection: Connection, private metrics: Metrics, private lrclib: LrclibOptions = {}) {
+  constructor(connection: Connection, private metrics: Metrics, private lrclib: LrclibOptions = {}, private options: ClientOptions = {}) {
     this.baseUrl = normalizeServerUrl(connection.url);
-    const salt = randomBytes(16).toString('hex');
+    const salt = randomSalt();
     this.auth = {
       username: connection.username, salt,
       // OpenSubsonic token authentication requires MD5(password + salt).
-      token: createHash('md5').update(connection.password + salt).digest('hex'),
+      token: md5Hex(connection.password + salt),
     };
     // Discovery is public and must use baseline GET before formPost is known.
     // Legacy servers may reject this endpoint; cache the safe GET fallback too.
@@ -210,13 +222,13 @@ export class SubsonicClient {
     return params;
   }
   // accept() inspects headers before the body is read; parse() runs on the capped body.
-  private transfer<A, B>(endpoint: string, extra: Params, formPost: boolean, authenticated: boolean, limitMB: number, accept: (response: Response) => B, parse: (body: Buffer, accepted: B) => A) {
+  private transfer<A, B>(endpoint: string, extra: Params, formPost: boolean, authenticated: boolean, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A) {
     const task = Effect.tryPromise({
       try: async signal => {
         const url = this.endpointUrl(endpoint);
         const params = authenticated ? this.params(extra) : new URLSearchParams({ v: '1.16.1', c: 'squiggly', f: 'json' });
         if (!formPost) url.search = params.toString();
-        const response = await fetch(url.href, {
+        const response = await (this.options.fetch ?? fetch)(url.href, {
           method: formPost ? 'POST' : 'GET', ...(formPost ? { body: params } : {}), signal, redirect: 'error',
         });
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
@@ -235,7 +247,7 @@ export class SubsonicClient {
             if (total > limitMB * 1024 * 1024) throw new ServerError(`Server response exceeded ${limitMB} MB.`);
             chunks.push(value);
           }
-          return parse(Buffer.concat(chunks), accepted);
+          return parse(concatBytes(chunks, total), accepted);
         } finally {
           // Release the transfer on HTTP errors, size limits, read failures, and success.
           if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); }
@@ -249,7 +261,7 @@ export class SubsonicClient {
   }
   private exchange<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params, formPost: boolean, authenticated = true) {
     return this.transfer(endpoint, extra, formPost, authenticated, 8, () => undefined, body => {
-      const result = Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(body.toString('utf8')))['subsonic-response'];
+      const result = Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(utf8(body)))['subsonic-response'];
       const status = Schema.decodeUnknownSync(StatusSchema)(result);
       if (status.status !== 'ok') throw protocolError(status.error?.code);
       return Schema.decodeUnknownSync(schema)(result);
@@ -262,7 +274,7 @@ export class SubsonicClient {
   // reply counts, even one refusing the request. Used to pick HTTPS or HTTP before signing in.
   probe() {
     return this.transfer('ping', {}, false, false, 1, () => undefined, body => {
-      Schema.decodeUnknownSync(StatusSchema)(Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(body.toString('utf8')))['subsonic-response']);
+      Schema.decodeUnknownSync(StatusSchema)(Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(utf8(body)))['subsonic-response']);
       return true;
     });
   }
@@ -425,7 +437,14 @@ export class SubsonicClient {
       const contentType = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
       if (!coverTypes.has(contentType)) throw new ServerError('Cover art is not available.');
       return contentType;
-    }, (body, contentType) => ({ contentType, bytes: new Uint8Array(body) }))));
+    }, (body, contentType) => ({ contentType, bytes: body }))));
+  }
+  // The authenticated getCoverArt address without id and size, for the Android app's native
+  // cover proxy, which adds both. Like streamLocation, it must stay out of the page's components.
+  coverArtBase() {
+    const location = this.endpointUrl('getCoverArt');
+    location.search = this.params().toString();
+    return location.href;
   }
   // Requests the original stream, but the UI does not claim the server honored it.
   // The location carries credentials and must stay inside the desktop and audio processes.
@@ -436,6 +455,21 @@ export class SubsonicClient {
     return location.href;
   }
   playable(track: Track): PlayableTrack { return { track, location: this.streamLocation(track.id) }; }
+}
+
+// The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
+// where a server answers. That's asked without credentials, so the password only goes to an
+// address that answered, and a failed HTTPS attempt never sends it over plain HTTP.
+export function resolveServerAddress(connection: Connection, client: (connection: Connection) => SubsonicClient): Effect.Effect<Connection, Error> {
+  const candidates = serverUrlCandidates(connection.url);
+  if (candidates.length === 1) return Effect.succeed(connection);
+  return Effect.gen(function* () {
+    for (const url of candidates) {
+      const attempt = yield* Effect.either(Effect.try(() => client({ ...connection, url })).pipe(Effect.flatMap(candidate => candidate.probe())));
+      if (Either.isRight(attempt)) return { ...connection, url };
+    }
+    return yield* Effect.fail(new Error(`No Navidrome server answered at ${connection.url.trim()} over HTTPS or HTTP. Check the address and your connection.`));
+  });
 }
 
 export type LibraryMethod = Exclude<keyof LibraryApi, 'coverUrl'>;

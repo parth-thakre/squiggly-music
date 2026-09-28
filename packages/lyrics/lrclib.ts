@@ -139,7 +139,10 @@ export function lrclibLyrics(query: LyricsQuery, options: LrclibOptions = {}): E
           if (total > 2 * 1024 * 1024) throw new LookupError('The lyrics service sent an unexpectedly large response.');
           chunks.push(value);
         }
-        return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown;
+        const body = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
+        return JSON.parse(new TextDecoder('utf-8', { ignoreBOM: true }).decode(body)) as unknown;
       } finally { if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); } }
     },
     // Service error text is never forwarded.

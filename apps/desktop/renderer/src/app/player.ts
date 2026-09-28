@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
+import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
 import { finishThreshold } from '../../../../../packages/core/plays';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
@@ -11,12 +11,14 @@ import { getSettings } from './settings';
 // snapshots only re-render the deck, never the library.
 export interface PlayerState {
   // desktop: libmpv in the audio host. web: the browser's own audio element, for phones.
-  mode: 'desktop' | 'web';
+  // android: the Android app, where a native Media3 player plays the queue the page keeps.
+  mode: 'desktop' | 'web' | 'android';
   engine: 'starting' | 'ready' | 'unavailable' | 'crashed';
   connected: boolean; serverName: string | null;
   // Changes when the desktop connects to a server or account; library caches are dropped with it.
   sessionId: string | null;
-  // Browser only: whether this host wants its password first. Always 'open' on the desktop.
+  // Browser only: whether this host wants its password first. Always 'open' on the desktop;
+  // on Android, 'checking' until the saved sign-in has been read.
   access: 'checking' | 'sign-in' | 'signed-in' | 'open';
   queue: Track[];
   // One id per queue entry, parallel to `queue`. Two copies of a song are two entries.
@@ -32,7 +34,7 @@ export interface PlayerState {
   radioStarting: string | null;
   // A queue saved on the server, offered once at startup when nothing is playing.
   resumable: SavedQueue | null;
-  // Desktop only: the saved sign-in and reconnecting with it at launch.
+  // Desktop and Android: the saved sign-in and reconnecting with it at launch.
   signIn: SignInState;
   // Desktop only: updates from GitHub releases. Null in the browser.
   update: UpdateState | null;
@@ -44,8 +46,11 @@ export type SignInState = Pick<ServerState, 'saved' | 'canRemember' | 'reconnect
 export const QUEUE_LIMIT = 1000;
 
 const desktop = window.squiggly;
+const android = desktop ? undefined : window.squigglyAndroid;
+// The browser and Android keep the queue in the page; the desktop's main process keeps its own.
+const local = !desktop;
 let state: PlayerState = {
-  mode: desktop ? 'desktop' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop ? null : 'Navidrome',
+  mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop || android ? null : 'Navidrome',
   sessionId: null, access: desktop ? 'open' : 'checking',
   queue: [], entryIds: [], index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
@@ -60,8 +65,10 @@ const set = (patch: Partial<PlayerState>) => {
   const before = state;
   state = { ...state, ...patch };
   if ('position' in patch || state.playing !== before.playing) positionAt = performance.now();
+  // The native player gets every change to the queue, before any command that names an entry.
+  if (android && state.entryIds !== before.entryIds) android.player.sync(state.queue, state.entryIds);
   listeners.forEach(listener => listener());
-  if (web && (state.index !== before.index || state.queue !== before.queue)) topUpRadio();
+  if (local && (state.index !== before.index || state.queue !== before.queue)) topUpRadio();
 };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const getPlayer = () => state;
@@ -148,16 +155,19 @@ if (desktop) {
 // so the change between songs is short. Streams come through the host's /api/stream,
 // which keeps the Navidrome credentials off the device.
 const stream = (id: string, mp3 = false) => `/api/stream?id=${encodeURIComponent(id)}${mp3 ? '&format=mp3' : ''}`;
-const web = desktop ? null : {
-  active: new Audio(), standby: new Audio(),
-  // Every real load is a new playback instance. Play reports belong to the instance, so
-  // replaying a song counts again and moving an already counted entry doesn't.
+const web = local && !android ? { active: new Audio(), standby: new Audio() } : null;
+// Every real load is a new playback instance. Play reports belong to the instance, so
+// replaying a song counts again and moving an already counted entry doesn't. Shared by the
+// browser and Android, which both report plays and save the queue from the page.
+const plays = {
   instance: 0, track: null as Track | null, started: -1, finished: -1,
   lastPosition: 0, listened: 0, startAt: 0,
 };
-// Entry ids for the browser's own queue, with the desktop's meaning: unique, and kept across moves.
+// Entry ids for the page's own queue, with the desktop's meaning: unique, and kept across moves.
+// Android's are unique per page load too, since the native player may still hold the last page's.
 let entries = 0;
-const mint = (count: number) => Array.from({ length: count }, () => `web-${++entries}`);
+const entryPrefix = android ? `a${Date.now().toString(36)}-` : 'web-';
+const mint = (count: number) => Array.from({ length: count }, () => `${entryPrefix}${++entries}`);
 // Bumped by every new queue and by stopping radio, so a late radio request can tell it's stale.
 let station = 0;
 
@@ -170,29 +180,37 @@ function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = f
 function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play?: boolean; startAt?: number; patch?: Partial<PlayerState> } = {}) {
   const queue = patch.queue ?? state.queue, entryIds = patch.entryIds ?? state.entryIds;
   const track = queue[index], entry = entryIds[index];
+  if (android && track && entry) {
+    // set() sends the queue to the native player before the load that names the entry. The new
+    // play instance begins when the player reports the entry started (see nativePlayback).
+    set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false, delivery: 'original-requested' });
+    android.player.load(entry, { play, position: startAt });
+    saveSoon();
+    return;
+  }
   if (!web || !track || !entry) return;
   web.active.pause();
   // The standby element may already hold this entry; one that failed to load starts over.
   if (web.standby.dataset.entry === entry && !web.standby.error) [web.active, web.standby] = [web.standby, web.active];
   else prepare(web.active, track, entry);
   web.standby.removeAttribute('src'); web.standby.dataset.entry = ''; web.standby.load();
-  web.instance++; web.track = track; web.lastPosition = startAt; web.listened = 0; web.startAt = startAt;
-  if (startAt && web.active.readyState >= HTMLMediaElement.HAVE_METADATA) { web.active.currentTime = startAt; web.startAt = 0; }
+  plays.instance++; plays.track = track; plays.lastPosition = startAt; plays.listened = 0; plays.startAt = startAt;
+  if (startAt && web.active.readyState >= HTMLMediaElement.HAVE_METADATA) { web.active.currentTime = startAt; plays.startAt = 0; }
   set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false,
     delivery: web.active.dataset.mp3 ? 'mp3-fallback' : 'original-requested' });
   if (play) void web.active.play().catch(() => set({ playing: false, buffering: false }));
   session(track);
   saveSoon();
 }
-// Play reporting in the browser, by time actually listened, with the desktop's rule: songs of
-// 30 seconds or less start but never finish.
+// Play reporting in the browser and on Android, by time actually listened, with the desktop's
+// rule: songs of 30 seconds or less start but never finish.
 function listened(seconds: number) {
-  if (!web?.track || !getSettings().reportPlays || web.track.source !== 'navidrome') return;
-  const { track, instance } = web;
-  if (web.started !== instance) { web.started = instance; void api.reportPlay(track.id, 'started'); }
-  web.listened += seconds;
-  const threshold = finishThreshold(track.duration ?? web.active.duration);
-  if (web.finished !== instance && threshold !== null && web.listened >= threshold) { web.finished = instance; void api.reportPlay(track.id, 'finished'); }
+  if (!local || !plays.track || !getSettings().reportPlays || plays.track.source !== 'navidrome') return;
+  const { track, instance } = plays;
+  if (plays.started !== instance) { plays.started = instance; void api.reportPlay(track.id, 'started'); }
+  plays.listened += seconds;
+  const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration));
+  if (plays.finished !== instance && threshold !== null && plays.listened >= threshold) { plays.finished = instance; void api.reportPlay(track.id, 'finished'); }
 }
 if (web) {
   for (const element of [web.active, web.standby]) {
@@ -201,15 +219,15 @@ if (web) {
     element.addEventListener('playing', () => { if (mine()) set({ playing: true, buffering: false }); });
     element.addEventListener('pause', () => { if (mine() && !element.ended) { set({ playing: false }); saveSoon(); } });
     element.addEventListener('waiting', () => { if (mine()) set({ buffering: true }); });
-    element.addEventListener('loadedmetadata', () => { if (mine() && web.startAt) { element.currentTime = web.startAt; web.startAt = 0; } });
+    element.addEventListener('loadedmetadata', () => { if (mine() && plays.startAt) { element.currentTime = plays.startAt; plays.startAt = 0; } });
     element.addEventListener('durationchange', () => { if (mine() && Number.isFinite(element.duration)) set({ duration: element.duration }); });
     element.addEventListener('timeupdate', () => {
       if (!mine()) return;
       const position = element.currentTime;
-      const step = position - web.lastPosition;
+      const step = position - plays.lastPosition;
       if (Math.abs(step) >= .25) {
         if (step > 0 && step < 2 && !element.paused) listened(step);
-        web.lastPosition = position; set({ position });
+        plays.lastPosition = position; set({ position });
       }
       const next = state.queue[state.index + 1], nextEntry = state.entryIds[state.index + 1];
       if (next && nextEntry && web.standby.dataset.entry !== nextEntry && element.duration - position < 25) { prepare(web.standby, next, nextEntry); web.standby.load(); }
@@ -222,16 +240,16 @@ if (web) {
     });
     element.addEventListener('error', () => {
       if (!mine() || !element.dataset.entry) return;
-      const { instance, track } = web;
+      const { instance, track } = plays;
       const wanted = state.playing || state.buffering;
       const network = element.error?.code === MediaError.MEDIA_ERR_NETWORK;
       // A refused stream (an ended session) looks like an unsupported file, so check the session
       // before blaming the format. A dropped connection is reported as one, without that check.
       void (network ? Promise.resolve(true) : stillSignedIn()).then(signedIn => {
-        if (!signedIn || instance !== web.instance || !mine() || !track) return;
+        if (!signedIn || instance !== plays.instance || !mine() || !track) return;
         // Some originals (ALAC, DSD) are beyond the browser; ask the server for a 320 kbps MP3 once.
         if (!network && !element.dataset.mp3) {
-          web.startAt = web.lastPosition;
+          plays.startAt = plays.lastPosition;
           prepare(element, track, element.dataset.entry!, true);
           set({ delivery: 'mp3-fallback' });
           if (wanted) void element.play().catch(() => undefined);
@@ -246,12 +264,12 @@ if (web) {
   addEventListener('pagehide', () => saveNow());
 }
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
-function saveSoon() { if (web) { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 3000); } }
+function saveSoon() { if (local) { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 3000); } }
 function saveNow() {
-  if (!web || !state.connected || !getSettings().syncQueue || !state.queue.length || state.index < 0) return;
+  if (!local || !state.connected || !getSettings().syncQueue || !state.queue.length || state.index < 0) return;
   // The queue never holds more than the server keeps, so the saved index is the playing song's own.
   if (state.queue.length > QUEUE_LIMIT || state.queue.some(t => t.source !== 'navidrome')) return;
-  void api.saveQueue(state.queue.map(t => t.id), state.index, web.startAt || web.active.currentTime || 0);
+  void api.saveQueue(state.queue.map(t => t.id), state.index, (web ? plays.startAt || web.active.currentTime : livePosition()) || 0);
 }
 // Appends at the end, making room by dropping songs already played from the front.
 function webAppend(tracks: Track[]) {
@@ -330,6 +348,69 @@ if (web) {
   void checkAccess();
 }
 
+// Android ----------------------------------------------------------------------------------
+// The page keeps the queue, as in the browser, and the native player plays a copy of it (see
+// apps/android/web/bridge.ts). It moves between songs, and takes the notification's and lock
+// screen's buttons, on its own; the page follows its reports. Sign-in works as on the desktop.
+let native: AndroidPlayback | null = null;
+// Reports whose entry the page doesn't know (a queue edit still on its way) are left alone.
+function nativePlayback(playback: AndroidPlayback) {
+  const before = native;
+  native = playback;
+  const index = playback.entryId ? state.entryIds.indexOf(playback.entryId) : -1;
+  if (index < 0) { if (state.playing || state.buffering) set({ playing: false, buffering: false }); return; }
+  const track = state.queue[index];
+  const patch: Partial<PlayerState> = {
+    index, playing: playback.playing, buffering: playback.buffering,
+    delivery: playback.fallback ? 'mp3-fallback' : 'original-requested',
+    duration: playback.duration > 0 ? playback.duration : track.duration ?? 0,
+  };
+  if (!before || before.playId !== playback.playId) {
+    // The entry started from its beginning: a new play, as a load is in the browser.
+    plays.instance++; plays.track = track; plays.listened = 0; plays.lastPosition = playback.position; plays.startAt = 0;
+    if (before) saveSoon();
+  } else {
+    const step = playback.position - plays.lastPosition;
+    if (step > 0 && step < 2 && playback.playing) listened(step);
+    plays.lastPosition = playback.position;
+  }
+  patch.position = playback.position;
+  // The last song ended: like the browser, the deck rests at its start.
+  if (playback.ended) { patch.playing = false; patch.buffering = false; patch.position = 0; }
+  // A song that can't be played says so once.
+  if (playback.error && (before?.error !== playback.error || before.playId !== playback.playId)) {
+    patch.error = 'This song could not be played here. Try another, or check the connection.';
+  }
+  set(patch);
+}
+function nativeSession(next: AndroidSession) {
+  const was = state.connected;
+  // Another server or account: nothing cached from the last one may show.
+  if (next.sessionId !== state.sessionId) resetLibraryCaches();
+  const { saved, canRemember, reconnecting, reconnectError } = next.signIn;
+  const signIn = state.signIn.saved?.url === saved?.url && state.signIn.saved?.username === saved?.username && state.signIn.canRemember === canRemember
+    && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : next.signIn;
+  set({ access: next.ready ? 'open' : 'checking', connected: next.connected, serverName: next.serverName, sessionId: next.sessionId, signIn });
+  if (next.connected && !was) void offerResume();
+}
+if (android) {
+  android.player.subscribe(nativePlayback);
+  android.player.onReset(() => {
+    station++; native = null;
+    set({ queue: [], entryIds: [], index: -1, playing: false, buffering: false, position: 0, duration: 0, radio: null, resumable: null, error: null, delivery: null });
+  });
+  android.session.subscribe(nativeSession);
+  nativeSession(android.session.get());
+  // The app was swiped away while playing and the player kept going: show what it holds.
+  void android.player.restore().then(held => {
+    if (!held || state.queue.length) return;
+    set({ queue: held.queue, entryIds: held.entryIds, index: held.index, resumable: null });
+    nativePlayback(held.playback);
+  });
+  setInterval(() => { if (state.playing) saveSoon(); }, 30000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
+}
+
 // A queue saved on the server is offered once, when nothing is playing yet.
 async function offerResume() {
   if (!getSettings().syncQueue || state.queue.length) return;
@@ -369,7 +450,7 @@ export const player = {
     if (!tracks.length) return;
     const chosen = queueWindow(tracks, start);
     set({ error: null, resumable: null });
-    if (web) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return; }
+    if (local) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return; }
     report(await desktop!.playTracks(chosen.items.map(track => track.id), chosen.start));
   },
   // Plays the seed, then songs like it, and keeps adding more as the queue runs low.
@@ -389,7 +470,7 @@ export const player = {
     const saved = state.resumable;
     set({ resumable: null });
     if (!saved) return;
-    if (!web) { report(await desktop!.resumeQueue()); return; }
+    if (desktop) { report(await desktop.resumeQueue()); return; }
     const chosen = queueWindow(saved.tracks, saved.currentIndex);
     station++;
     webLoad(chosen.start, { play: false, startAt: saved.positionSeconds, patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio: null } });
@@ -415,7 +496,7 @@ export const player = {
     const adding = tracks.slice(0, Math.max(0, QUEUE_LIMIT - state.queue.length));
     if (!adding.length) { set({ error: queueFull(0) }); return; }
     const left = tracks.length - adding.length;
-    if (web) {
+    if (local) {
       const at = where === 'next' ? state.index + 1 : state.queue.length;
       const queue = [...state.queue], entryIds = [...state.entryIds];
       queue.splice(at, 0, ...adding); entryIds.splice(at, 0, ...mint(adding.length));
@@ -425,7 +506,7 @@ export const player = {
   },
   async move(from: number, to: number) {
     if (from === to || from < 0 || to < 0 || from >= state.queue.length || to >= state.queue.length) return;
-    if (web) {
+    if (local) {
       const queue = [...state.queue], entryIds = [...state.entryIds];
       const [moved] = queue.splice(from, 1); queue.splice(to, 0, moved);
       const [entry] = entryIds.splice(from, 1); entryIds.splice(to, 0, entry);
@@ -437,7 +518,7 @@ export const player = {
   async remove(indexes: number[]) {
     const drop = new Set(indexes.filter(i => i !== state.index));
     if (!drop.size) return;
-    if (web) {
+    if (local) {
       const keep = (_: unknown, i: number) => !drop.has(i);
       const index = state.index - [...drop].filter(i => i < state.index).length;
       set({ queue: state.queue.filter(keep), entryIds: state.entryIds.filter(keep), index }); saveSoon(); return;
@@ -445,7 +526,7 @@ export const player = {
     report(await desktop!.queue.remove([...drop]));
   },
   async clear() {
-    if (web) {
+    if (local) {
       const now = current(state), entry = currentEntry(state);
       station++;
       set({ queue: now ? [now] : [], entryIds: entry ? [entry] : [], index: now ? 0 : -1, radio: null }); saveSoon(); return;
@@ -455,6 +536,13 @@ export const player = {
   },
 
   toggle() {
+    if (android) {
+      if (state.index < 0) return;
+      // A song that already ended starts over as a new play, as in the browser.
+      if (native?.ended || !native?.entryId) { webLoad(state.index); return; }
+      if (state.playing) android.player.pause(); else android.player.play();
+      return;
+    }
     if (web) {
       if (state.index < 0) return;
       // A song that already ended starts over as a new play (and a new report), not a resume.
@@ -469,29 +557,34 @@ export const player = {
   // underneath, the entry is refused rather than playing whatever now sits at that index.
   jump(index: number, entryId: string | undefined = state.entryIds[index]) {
     if (!state.queue[index] || !entryId) return;
-    if (web) { if (state.entryIds[index] === entryId) webLoad(index); return; }
+    if (local) { if (state.entryIds[index] === entryId) webLoad(index); return; }
     void desktop!.queue.jump(index, entryId).then(report);
   },
   next() {
-    if (web) { if (state.index + 1 < state.queue.length) webLoad(state.index + 1); return; }
+    if (local) { if (state.index + 1 < state.queue.length) webLoad(state.index + 1); return; }
     void desktop!.command({ type: 'next' }).then(report);
   },
   previous() {
-    if (web) { if (web.active.currentTime > 3 || state.index <= 0) player.seek(0); else webLoad(state.index - 1); return; }
+    if (local) { if ((web ? web.active.currentTime : livePosition()) > 3 || state.index <= 0) player.seek(0); else webLoad(state.index - 1); return; }
     void desktop!.command({ type: 'previous' }).then(report);
   },
   // `entryId`, when given, is the entry the gesture started on; another entry is never seeked.
   seek(seconds: number, entryId?: string) {
     const track = current(state);
     if (!track || (entryId !== undefined && entryId !== currentEntry(state))) return;
+    if (android) {
+      android.player.seek(currentEntry(state)!, seconds);
+      plays.lastPosition = seconds; set({ position: seconds }); saveSoon(); return;
+    }
     if (web) {
-      if (web.active.readyState >= HTMLMediaElement.HAVE_METADATA) web.active.currentTime = seconds; else web.startAt = seconds;
-      web.lastPosition = seconds; set({ position: seconds }); positionState(); saveSoon(); return;
+      if (web.active.readyState >= HTMLMediaElement.HAVE_METADATA) web.active.currentTime = seconds; else plays.startAt = seconds;
+      plays.lastPosition = seconds; set({ position: seconds }); positionState(); saveSoon(); return;
     }
     // The host refuses the seek if that entry is no longer the one playing.
     void desktop!.command({ type: 'seek', seconds, queueIndex: state.index, trackId: track.id, entryId: entryId ?? currentEntry(state) }).then(report);
   },
   volume(percent: number, final = false) {
+    if (android) { android.player.volume(percent); set({ volume: percent }); return; }
     if (web) { web.active.volume = web.standby.volume = percent / 100; set({ volume: percent }); return; }
     volumeCommands!.enqueue(percent);
     if (final) volumeCommands!.finish();

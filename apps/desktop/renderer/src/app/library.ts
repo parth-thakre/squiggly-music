@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { LibraryApi, Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { previewLibrary } from '../bridge/previewLibrary';
 
-export const api: LibraryApi = (typeof window !== 'undefined' && window.squiggly?.library) || previewLibrary;
+// The desktop's preload bridge, the Android app's bridge (apps/android/web/bridge.ts), or the browser build's host.
+export const api: LibraryApi = (typeof window !== 'undefined' && (window.squiggly?.library ?? window.squigglyAndroid?.library)) || previewLibrary;
 
 // A small bounded cache of library responses: going back is instant, memory stays flat.
 const LIMIT = 120;

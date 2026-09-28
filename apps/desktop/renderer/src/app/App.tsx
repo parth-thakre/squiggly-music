@@ -48,7 +48,7 @@ export function App() {
       <Bar />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
-    </> : mode === 'desktop' ? <Connect /> : access === 'checking' ? null : <SignIn />}
+    </> : access === 'checking' ? null : mode === 'web' ? <SignIn /> : <Connect />}
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
@@ -275,9 +275,10 @@ function SignalPath({ track }: { track: Track }) {
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
-  const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
+  const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
     volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
-  const line = [mode === 'desktop' && format, notes].filter(Boolean).join('. ');
+  // What the file is. The Android app asks for the original file too, and plays it itself.
+  const line = [mode !== 'web' && format, notes].filter(Boolean).join('. ');
   return line ? <p className="signal">{line}</p> : null;
 }
 
@@ -289,14 +290,15 @@ function asHex(color: string) {
   return context.fillStyle;
 }
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
-// The desktop's server login. Embedded, it stands in for a library page while songs from
-// this computer play without a server.
+// The desktop's and the Android app's server login. Embedded, it stands in for a library page
+// while songs from this computer play without a server.
 function Connect({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const android = window.squigglyAndroid?.session;
   const connect = async (connection: { url: string; username: string; password: string }) => {
     setBusy(true); setError(null);
-    const result = await window.squiggly!.connect(connection);
+    const result = await (window.squiggly ? window.squiggly.connect(connection) : android!.connect(connection));
     setBusy(false);
     if (!result.ok) setError(result.error);
   };
@@ -304,6 +306,11 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     void connect({ url: String(data.get('url')), username: String(data.get('username')), password: String(data.get('password')) });
+  };
+  const retry = async () => {
+    setBusy(true); setError(null);
+    await android?.reconnect();
+    setBusy(false);
   };
   const openFiles = async () => {
     setError(null);
@@ -321,6 +328,8 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
       {canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
+    {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
+    {reconnectError && saved && android && <button type="button" className="text-button" disabled={busy} onClick={() => void retry()}>Try {hostOf(saved.url)} again</button>}
     <form onSubmit={submit}>
       {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, then HTTP. */}
       <label>Server address<input name="url" type="text" inputMode="url" required placeholder="music.example.com" autoComplete="url"
@@ -330,11 +339,11 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
     </form>
-    {!embedded && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
+    {!embedded && window.squiggly && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
     {/* Navidrome's own public demo, with Creative Commons music, for trying Squiggly without a server. */}
     <p className="connect-demo">No server yet? <button type="button" className="link" disabled={busy}
       onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>, a public server of Creative Commons music that everyone shares.</p>
-    {!embedded && <p className="connect-update"><UpdateLink /></p>}
+    {!embedded && window.squiggly && <p className="connect-update"><UpdateLink /></p>}
   </Frame>;
 }
 
