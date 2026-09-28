@@ -9,8 +9,8 @@ import type { Page } from '@playwright/test';
 // from (the test routes that URL to a compiled bundle).
 //
 // `mediaHost` makes the page the window that hosts the system media session (systemMedia.ts):
-// window.pushMedia(state) stands in for the main process, and player commands and live reports
-// are recorded in bridgeCalls.
+// window.pushMedia(state) stands in for the main process, and player commands are recorded in
+// bridgeCalls.
 export interface FakeExtension { id: string; name: string; url: string; error?: string }
 export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean } = {}) {
   await page.addInitScript(({ extensions: given, mediaHost }) => {
@@ -48,7 +48,6 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       media: {
         hosted: mediaHost,
         subscribe: (listener: (state: unknown) => void) => { Object.assign(window, { pushMedia: listener }); return () => undefined; },
-        live: async (on: boolean) => { calls.push(`media-live:${on}`); return { ok: true, value: undefined }; },
       },
       settings: async () => settings,
       updateSettings: async () => ({ ok: true, value: settings }),

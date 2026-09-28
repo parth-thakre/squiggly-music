@@ -219,6 +219,7 @@ export interface ExtensionsApi {
 // The operating system's media controls on Windows and macOS: the Windows media flyout and
 // media keys, macOS Now Playing. Linux has MPRIS in the main process instead.
 export interface SystemMediaState {
+  // -1 for the song saved on the server, shown while nothing is loaded.
   index: number; entryId: string; trackId: string;
   title: string; artist: string; album: string; coverArt: string | null;
   duration: number; position: number; playing: boolean;
@@ -229,8 +230,6 @@ export interface SystemMediaApi {
   // The current song and its state, or null when there is nothing to show (or exclusive output
   // needs the device to itself). Sent on changes, whether or not the window is visible.
   subscribe(listener: (state: SystemMediaState | null) => void): () => void;
-  // Whether the session is live. Until it is, the main process takes the media keys itself.
-  live(on: boolean): Promise<Result>;
 }
 
 export interface DesktopBridge {

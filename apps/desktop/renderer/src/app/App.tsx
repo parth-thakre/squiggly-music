@@ -247,32 +247,21 @@ function Volume() {
 
 // The signal path as a sentence. Unknown stays unknown, and a request is called a request:
 // asking Navidrome for the original file doesn't prove the original arrived.
+// One quiet line: what the file is, and on the desktop where it plays. Notes appear only when
+// something changes what you hear. The full decoder and output detail is on the Diagnostics page.
 function SignalPath({ track }: { track: Track }) {
-  const audio = usePlayer(s => s.audio);
   const devices = usePlayer(s => s.devices);
   const device = usePlayer(s => s.device);
   const volume = usePlayer(s => Math.round(s.volume));
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
-  const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(', ');
-  const source = track.source === 'navidrome'
-    ? `${format || 'Unknown format'}, the original file requested from Navidrome`
-    : `${format || 'Unknown format'} from this computer`;
-  const level = volume >= 100 ? 'Full volume' : `Volume at ${volume}% attenuates the signal`;
-  // In a browser there's nothing to inspect, so say only what changes what you hear.
-  if (mode === 'web') {
-    const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
-      volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean);
-    return notes.length ? <p className="signal">{notes.join(' ')}</p> : null;
-  }
-  const output = <DeviceChoice devices={devices} device={device} />;
-  if (!audio || !audio.decoderFormat) return <p className="signal">{source}, playing on {output}. {level}. <span>Decoder and output formats appear once it plays.</span></p>;
-  const extra = [audio.replayGain && audio.replayGain !== 'no' ? `ReplayGain ${audio.replayGain}` : 'no ReplayGain', audio.filters ? `filters: ${audio.filters}` : 'no filters'];
+  const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
+  const notes = [delivery === 'mp3-fallback' && 'This browser can\'t play the original file, so it\'s playing a 320 kbps MP3 from the server.',
+    volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
+  if (mode === 'web') return notes ? <p className="signal">{notes}</p> : null;
   return <p className="signal">
-    {source}. Decoded to {audio.decoderFormat}{audio.decoderRate ? ` at ${kHz(audio.decoderRate)}` : ''} and handed to {audio.outputBackend ?? 'the system'}
-    {audio.outputRate ? ` at ${kHz(audio.outputRate)}` : ''}{audio.outputFormat ? ` as ${audio.outputFormat}` : ''}, playing on {output}. {[level, ...extra].join(', ')}.
-    {audio.buffering && ' Buffering.'} <span>The system mixer's final format isn't reported.</span>
+    {format && <>{format} on </>}<DeviceChoice devices={devices} device={device} />{notes && <> {notes}</>}
   </p>;
 }
 function DeviceChoice({ devices, device }: { devices: AudioDevice[]; device: string }) {

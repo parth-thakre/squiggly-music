@@ -9,7 +9,7 @@ import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
 import { TrackTable } from './TrackTable';
-import { Cover, Glyph, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
+import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
@@ -639,6 +639,7 @@ function Disconnect() {
 export function DiagnosticsView() {
   const diagnostics = usePlayer(s => s.diagnostics);
   const mode = usePlayer(s => s.mode);
+  const audio = usePlayer(s => s.audio);
   const [message, setMessage] = useState<string | null>(null);
   if (mode === 'web') return <><Head title="Diagnostics" /><Status>Process and memory figures come from the desktop app. The browser version has none to show.</Status></>;
   return <>
@@ -654,6 +655,9 @@ export function DiagnosticsView() {
       <tr><th>Total memory</th><td>{diagnostics.processes.reduce((sum, p) => sum + p.memoryMB, 0).toFixed(0)} MB</td><td /></tr>
       <tr><th>Main thread delay</th><td>{diagnostics.eventLoopDelayMs.toFixed(1)} ms</td><td /></tr>
       <tr><th>Audio host messages</th><td>{diagnostics.playerMessagesPerSecond.toFixed(1)} per second</td><td /></tr>
+      {/* What mpv decoded into and handed to the system. The system mixer's final format isn't reported. */}
+      {audio?.decoderFormat && <tr><th>Decoded</th><td>{[audio.decoderFormat, kHz(audio.decoderRate)].filter(Boolean).join(' · ')}</td><td /></tr>}
+      {audio?.outputBackend && <tr><th>Handed to</th><td>{[audio.outputBackend, kHz(audio.outputRate), audio.outputFormat].filter(Boolean).join(' · ')}</td><td /></tr>}
     </tbody></table>
   </>;
 }

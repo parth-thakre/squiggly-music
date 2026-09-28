@@ -58,7 +58,6 @@ const media: SystemMediaApi = {
   // The main process adds this argument only to the main window, and not on Linux.
   hosted: process.argv.includes('--squiggly-media-session'),
   subscribe: listener => listen<SystemMediaState | null>('squiggly:media', listener),
-  live: on => ipcRenderer.invoke('squiggly:window:media-session', on),
 };
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),

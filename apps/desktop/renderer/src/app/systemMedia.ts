@@ -6,8 +6,9 @@ import type { SystemMediaState } from '../../../../../packages/core/contracts';
 // session while a page plays audio itself. So the main window plays a looping clip of digital
 // silence that follows mpv's play and pause, and sends the session's buttons to mpv. The main
 // process sends the song and its state (SystemMediaState) whether or not the window is visible,
-// and stops sending one when exclusive output needs the device to itself. Linux has MPRIS in the
-// main process instead, so there the main process never asks a window to host this.
+// and stops sending one when exclusive output needs the device to itself. With nothing loaded it
+// sends the song saved on the server (index -1), paused, and Play resumes that queue. Linux has
+// MPRIS in the main process instead, so there the main process never asks a window to host this.
 export function startSystemMedia() {
   const bridge = window.squiggly;
   if (!bridge?.media.hosted || !('mediaSession' in navigator)) return;
@@ -16,8 +17,6 @@ export function startSystemMedia() {
   clip.loop = true;
   let silence: string | null = null;
   let current: SystemMediaState | null = null;
-  let live = false;
-  const setLive = (on: boolean) => { if (on !== live) { live = on; void bridge.media.live(on); } };
   let art: { coverArt: string; url: string | null } | null = null;
 
   const command = (type: 'play' | 'pause' | 'stop' | 'next' | 'previous') => void bridge.command({ type });
@@ -33,7 +32,7 @@ export function startSystemMedia() {
   let clock = { position: 0, at: 0 };
   const position = () => !current ? 0 : Math.min(clock.position + (current.playing ? (performance.now() - clock.at) / 1000 : 0), current.duration || Infinity);
   function seek(seconds: number | undefined) {
-    if (!current || seconds === undefined || !Number.isFinite(seconds)) return;
+    if (!current || current.index < 0 || seconds === undefined || !Number.isFinite(seconds)) return;
     const { index, trackId, entryId, duration } = current;
     void bridge!.command({ type: 'seek', seconds: Math.max(0, Math.min(seconds, duration || seconds)), queueIndex: index, trackId, entryId });
   }
@@ -56,7 +55,6 @@ export function startSystemMedia() {
     current = null;
     clip.pause(); clip.removeAttribute('src'); clip.load();
     session.metadata = null; session.playbackState = 'none';
-    setLive(false);
   }
   function apply(next: SystemMediaState | null) {
     if (!next) { end(); return; }
@@ -76,11 +74,13 @@ export function startSystemMedia() {
     }
     session.playbackState = next.playing ? 'playing' : 'paused';
     // The session begins with the clip's first play and then stays, paused or not, until end().
-    if (next.playing && clip.paused) {
+    // A paused song still needs that first play, so it starts and stops at once.
+    if (!clip.src) {
       silence ??= silentClip();
-      if (!clip.src) clip.src = silence;
-      void clip.play().then(() => setLive(current !== null), () => setLive(false));
-    } else if (!next.playing && !clip.paused) clip.pause();
+      clip.src = silence;
+      void clip.play().then(() => { if (!current?.playing) clip.pause(); }, () => undefined);
+    } else if (next.playing && clip.paused) void clip.play().catch(() => undefined);
+    else if (!next.playing && !clip.paused) clip.pause();
   }
   bridge.media.subscribe(apply);
 }
