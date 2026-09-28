@@ -19,6 +19,7 @@
   <link rel="preload" href="fonts/young-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/familjen-grotesk-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
+  <script>document.documentElement.className = "js";</script>
   <script src="app.js" defer></script>
 </head>
 <body>
@@ -30,6 +31,9 @@
       <path d="M404 256h24" stroke="currentColor" stroke-opacity=".35" stroke-width="12" stroke-linecap="round"/>
     </symbol>
   </svg>
+
+  <!-- The page's seek bar: how far you've scrolled, drawn the way the app draws a song's progress. -->
+  <div class="seek" aria-hidden="true"><canvas data-wave="seek"></canvas></div>
 
   <header class="top">
     <a class="lockup" href="#" aria-label="Squiggly">
@@ -44,7 +48,11 @@
 
   <main id="main">
 
-    <section class="hero" aria-labelledby="hero-title">
+    <section class="hero" data-room="paper" aria-labelledby="hero-title">
+      <div class="hero-wave" aria-hidden="true">
+        <canvas data-wave="hero"></canvas>
+        <svg class="mark hero-mark" viewBox="0 0 355 172" focusable="false"><use href="#mark"/></svg>
+      </div>
       <h1 id="hero-title">A desktop player for Navidrome that leaves the signal alone.</h1>
       <p class="lede">Squiggly plays your own music from your own server. It asks Navidrome for the original files, plays them through libmpv, and tells you what it knows about the signal path. The window takes its colours from the record that's playing.</p>
 
@@ -59,46 +67,58 @@
       </p>
       <p class="cta-note">Windows 10/11 and Fedora. There are no macOS builds.</p>
 
-      <figure class="shot shot-hero">
-        <img src="desktop-records.webp" width="1760" height="1100" alt="Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover." decoding="async" fetchpriority="high">
+      <figure class="shot shot-hero" data-room="warm">
+        <img class="drift" src="desktop-records.webp" width="1760" height="1100" alt="Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover." decoding="async" fetchpriority="high">
       </figure>
     </section>
 
-    <section class="does" aria-labelledby="does-title">
+    <section class="does" data-room="warm" aria-labelledby="does-title">
       <div class="cols">
-        <h2 id="does-title">What it does</h2>
-        <div>
+        <h2 id="does-title" class="reveal">What it does</h2>
+        <div class="reveal">
           <h3>Library</h3>
           <p>Browse records, artists, playlists, and favorites, and search across them. Build automatic playlists by genre, by decade, and from what's new. Start a radio station from any song, record, or artist.</p>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Queue</h3>
           <p>Edit the queue and your playlists. The queue follows you between devices through the server.</p>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Lyrics</h3>
           <p>Synced lyrics fill in word by word. They come from your server; looking up missing ones on LRCLIB is off until you turn it on.</p>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Desktop</h3>
           <p>A mini player, the tray, media keys, and the system media controls: the Windows media flyout, MPRIS on Linux. It remembers your sign-in, with the password kept only as your system encrypts it. Files from your computer play with their own cover and tags.</p>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Yours to change</h3>
           <p>Find any action with Ctrl+K. Set your own keys in <code>keybindings.json</code>. Add colour themes as files, and extensions as folders of TypeScript in the config folder that reload when you save.</p>
         </div>
       </div>
     </section>
 
-    <section class="lyrics" aria-labelledby="lyrics-title">
-      <figure class="shot">
-        <img src="desktop-lyrics.webp" width="1760" height="1100" alt="Synced lyrics filling in word by word, in Hindi and English, beside the playing record's sleeve." loading="lazy" decoding="async">
-        <figcaption id="lyrics-title">Lyrics fill in word by word as the song plays, set in the same type as the rest of the window.</figcaption>
+    <section class="lyrics" data-room="warm" aria-labelledby="lyrics-title">
+      <div class="lyrics-head">
+        <div class="prose reveal">
+          <h2 id="lyrics-title">Word by word.</h2>
+          <p>Synced lyrics fill in as they're sung, set in the same type as the rest of the window. They come from your server; looking up missing ones on LRCLIB is off until you turn it on.</p>
+        </div>
+        <div class="sing reveal" data-sing aria-label="Four lines of a song filling in word by word, as Squiggly shows synced lyrics">
+          <p class="sing-line past"><span class="w on">Leave</span> <span class="w on">the</span> <span class="w on">lights</span> <span class="w on">on</span> <span class="w on">in</span> <span class="w on">the</span> <span class="w on">hallway,</span></p>
+          <p class="sing-line past"><span class="w on">let</span> <span class="w on">the</span> <span class="w on">record</span> <span class="w on">find</span> <span class="w on">its</span> <span class="w on">side.</span></p>
+          <p class="sing-line current"><span class="w on">Every</span> <span class="w on">word</span> <span class="w on">arrives</span> <span class="w" style="--p:.55">on</span> <span class="w">time,</span></p>
+          <p class="sing-line"><span class="w">and</span> <span class="w">the</span> <span class="w">room</span> <span class="w">is</span> <span class="w">warm</span> <span class="w">inside.</span></p>
+        </div>
+      </div>
+      <figure class="shot reveal">
+        <img class="drift" src="desktop-lyrics.webp" width="1760" height="1100" alt="Synced lyrics filling in word by word, in Hindi and English, beside the playing record's sleeve." loading="lazy" decoding="async">
+        <figcaption>Lyrics in Hindi and English, beside the sleeve.</figcaption>
       </figure>
     </section>
 
-    <section class="signal" aria-labelledby="signal-title">
-      <div class="prose">
+    <section class="signal" data-room="studio" aria-labelledby="signal-title">
+      <div class="prose reveal">
         <h2 id="signal-title">It leaves the signal alone.</h2>
         <p>No EQ, no crossfade, no loudness levelling, no ReplayGain. Squiggly asks the server for the original file and hands it to libmpv as it is. Under the song it shows what the file is, and if you turn the volume below 100% it says so, since that's attenuation.</p>
         <p>On Windows it can ask for exclusive output. It reports what mpv accepted, and doesn't claim more than it can see.</p>
@@ -108,78 +128,84 @@
       </div>
     </section>
 
-    <section class="phone" aria-labelledby="phone-title">
-      <div class="prose">
+    <section class="phone" data-room="paper" aria-labelledby="phone-title">
+      <div class="prose reveal">
         <h2 id="phone-title">On your phone, from your own machine.</h2>
         <p>There's a browser version too. It's served from your computer, works on phones, and uses the same library and queue, so what you were listening to at the desk is waiting when you pick up the phone.</p>
       </div>
-      <figure class="shot shot-phone">
-        <img src="phone.webp" width="1973" height="1400" alt="The browser version on a phone: the library with the playing song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet." loading="lazy" decoding="async">
+      <figure class="shot shot-phone reveal">
+        <img class="drift" src="phone.webp" width="1973" height="1400" alt="The browser version on a phone: the library with the playing song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet." loading="lazy" decoding="async">
       </figure>
     </section>
 
-    <section class="trust" aria-labelledby="trust-title">
-      <h2 id="trust-title">Check what you download.</h2>
+    <section class="trust" data-room="paper" aria-labelledby="trust-title">
+      <h2 id="trust-title" class="reveal">Check what you download.</h2>
       <div class="cols cols-2">
-        <div>
+        <div class="reveal">
           <h3>Open source</h3>
           <p>Squiggly is MIT licensed. The Windows builds include an audio-only, LGPL build of libmpv, built reproducibly from source, and its complete source ships with each release.</p>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Checksums</h3>
           <p>Each release carries a <code>SHA256SUMS</code> file. Download it beside the build and check:</p>
           <pre><code>sha256sum --ignore-missing -c SHA256SUMS</code></pre>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Not signed yet</h3>
           <p>The builds aren't code-signed, so Windows SmartScreen warns you. Choose <em>More info</em>, then <em>Run anyway</em>.</p>
         </div>
-        <div>
+        <div class="reveal">
           <h3>Updates</h3>
           <p>The installed Windows app updates itself from GitHub releases. The portable exe and the RPM say when a new version is out. Nothing about you is sent.</p>
         </div>
       </div>
     </section>
 
-    <section class="download" id="download" aria-labelledby="download-title">
-      <h2 id="download-title">Download</h2>
-      <p class="download-intro"><span data-version-long>The latest release</span> is on GitHub. It's early software.</p>
+    <section class="download" id="download" data-room="paper" aria-labelledby="download-title">
+      <div class="reveal">
+        <h2 id="download-title">Download</h2>
+        <p class="download-intro"><span data-version-long>The latest release</span> is on GitHub. It's early software.</p>
+      </div>
       <ul class="assets">
-        <li>
+        <li class="reveal">
           <a data-asset="setup" href="https://github.com/parth-thakre/squiggly-music/releases/latest">
             <span class="asset-name">Windows installer</span>
             <span class="asset-file" data-file="setup">Windows 10/11, x64</span>
           </a>
         </li>
-        <li>
+        <li class="reveal">
           <a data-asset="portable" href="https://github.com/parth-thakre/squiggly-music/releases/latest">
             <span class="asset-name">Windows portable</span>
             <span class="asset-file" data-file="portable">Windows 10/11, x64. Nothing to install.</span>
           </a>
         </li>
-        <li>
+        <li class="reveal">
           <a data-asset="rpm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">
             <span class="asset-name">Fedora RPM</span>
             <span class="asset-file" data-file="rpm">x86_64. Pulls in <code>mpv-libs</code>.</span>
           </a>
         </li>
-        <li>
+        <li class="reveal">
           <a data-asset="sums" href="https://github.com/parth-thakre/squiggly-music/releases/latest">
             <span class="asset-name">SHA256SUMS</span>
             <span class="asset-file">Checksums for every file above</span>
           </a>
         </li>
       </ul>
-      <p class="download-more">
+      <p class="download-more reveal">
         <a href="https://github.com/parth-thakre/squiggly-music/releases">All releases</a>
         <span class="sep" aria-hidden="true">·</span>
         <a href="https://github.com/parth-thakre/squiggly-music#run-from-source">Run from source</a>
       </p>
+      <div class="demo reveal">
+        <h3>Try it without a server</h3>
+        <p><a href="https://www.navidrome.org">Navidrome</a> runs a public demo full of Creative Commons music. Connect to <code>demo.navidrome.org</code> with the username <code>demo</code> and the password <code>demo</code>. It's Navidrome's server, shared by everyone, so it may be slow or reset.</p>
+      </div>
     </section>
 
   </main>
 
-  <footer class="foot">
+  <footer class="foot" data-room="paper">
     <p class="foot-brand">
       <svg class="mark" viewBox="0 0 355 172" aria-hidden="true" focusable="false"><use href="#mark"/></svg>
       <span>Squiggly is MIT licensed. Made by Parth Thakre.</span>

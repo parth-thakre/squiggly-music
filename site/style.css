@@ -1,4 +1,4 @@
-/* Squiggly — site styles. Two fonts, two themes, one accent. */
+/* Squiggly — site styles. Two fonts, one accent, and a room that takes its colours from the section you're in. */
 
 @font-face {
   font-family: "Young Serif";
@@ -16,10 +16,12 @@
   src: url("fonts/familjen-grotesk-latin-wght-normal.woff2") format("woff2-variations");
 }
 
+/* Palettes. Ink stays the same within a scheme; only the ground, the soft text, and the
+   surfaces move, so every crossfade stays between two AA endpoints. */
+
 :root {
   color-scheme: light dark;
 
-  /* Cover theme's neutral: warm paper, ink, soft. */
   --ground: #dcd8cc;
   --ink: #1c1b18;
   --soft: #5c574c;
@@ -28,6 +30,9 @@
   --surface: #e5e1d6;
   --accent: #9e2a1e;
   --shadow: 0 1px 2px rgba(28, 27, 24, 0.08), 0 24px 60px -24px rgba(28, 27, 24, 0.35);
+
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --tint: 700ms;
 
   --serif: "Young Serif", "Iowan Old Style", Georgia, serif;
   --sans: "Familjen Grotesk", system-ui, "Segoe UI", sans-serif;
@@ -38,9 +43,24 @@
   --gutter: clamp(1.25rem, 4vw, 3rem);
 }
 
+/* Main Vaapas Aaunga's paper, the record in the screenshots. */
+html[data-room="warm"] {
+  --ground: #d6c7a6;
+  --surface: #dfd2b6;
+  --soft: #514a3a;
+  --accent: #8e2418;
+}
+
+/* Studio: the theme for looking at the signal. */
+html[data-room="studio"] {
+  --ground: #e2e5e9;
+  --surface: #eaecef;
+  --soft: #585d66;
+  --accent: #b0221a;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
-    /* Night. */
     --ground: #121620;
     --ink: #ebe7dd;
     --soft: #a2a8b6;
@@ -49,6 +69,18 @@
     --surface: #1a1f2b;
     --accent: #eda43a;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 32px 80px -24px rgba(0, 0, 0, 0.8);
+  }
+  html[data-room="warm"] {
+    --ground: #1d1913;
+    --surface: #26211a;
+    --soft: #b3a993;
+    --accent: #eda43a;
+  }
+  html[data-room="studio"] {
+    --ground: #181c22;
+    --surface: #20252c;
+    --soft: #a6acb6;
+    --accent: #eda43a;
   }
 }
 
@@ -67,18 +99,15 @@ html {
   -webkit-text-size-adjust: 100%;
   text-rendering: optimizeLegibility;
   scroll-behavior: smooth;
+  transition: background-color var(--tint) var(--ease), color var(--tint) var(--ease);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  html {
-    scroll-behavior: auto;
-  }
-  *,
-  *::before,
-  *::after {
-    transition: none !important;
-    animation: none !important;
-  }
+/* Everything that wears a palette colour eases with the room. Interactive things override
+   this with their own quicker transitions below. */
+body * {
+  transition-property: color, background-color, border-color;
+  transition-duration: var(--tint);
+  transition-timing-function: var(--ease);
 }
 
 body {
@@ -124,7 +153,7 @@ a {
   text-decoration-thickness: 1px;
   text-underline-offset: 0.16em;
   text-decoration-color: var(--line-strong);
-  transition: text-decoration-color 120ms ease;
+  transition: text-decoration-color 120ms ease, color var(--tint) var(--ease);
 }
 
 a:hover {
@@ -175,6 +204,10 @@ img {
   height: auto;
 }
 
+canvas {
+  display: block;
+}
+
 /* Skip link */
 
 .skip {
@@ -192,6 +225,28 @@ img {
 
 .skip:focus {
   transform: none;
+}
+
+/* The page's seek bar */
+
+.seek {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 22px;
+  z-index: 5;
+  pointer-events: none;
+  color: var(--ink);
+}
+
+.seek canvas {
+  width: 100%;
+  height: 100%;
+}
+
+html:not(.js) .seek {
+  display: none;
 }
 
 /* Header */
@@ -266,7 +321,33 @@ main > section {
 /* Hero */
 
 .hero {
-  padding-top: clamp(4rem, 10vw, 7.5rem);
+  padding-top: clamp(3rem, 8vw, 6rem);
+}
+
+.hero-wave {
+  position: relative;
+  height: 3.25rem;
+  width: min(100%, 22rem);
+  margin-bottom: clamp(1.5rem, 4vw, 2.5rem);
+  color: var(--ink);
+}
+
+.hero-wave canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.hero-mark {
+  height: 100%;
+  display: none;
+}
+
+html:not(.js) .hero-wave canvas {
+  display: none;
+}
+
+html:not(.js) .hero-mark {
+  display: block;
 }
 
 .hero h1 {
@@ -305,12 +386,16 @@ main > section {
   line-height: 1.2;
   color: var(--ink);
   background: transparent;
-  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, transform 160ms var(--ease);
 }
 
 .btn:hover {
   border-color: var(--ink);
   background: var(--surface);
+}
+
+.btn:active {
+  transform: scale(0.97);
 }
 
 .btn-primary {
@@ -412,6 +497,70 @@ main > section {
 
 .lyrics {
   padding-top: clamp(5rem, 11vw, 9rem);
+}
+
+.lyrics-head {
+  display: grid;
+  gap: 2.5rem 4rem;
+  align-items: start;
+  margin-bottom: clamp(2.5rem, 6vw, 4rem);
+}
+
+.lyrics-head p {
+  color: var(--soft);
+}
+
+@media (min-width: 56rem) {
+  .lyrics-head {
+    grid-template-columns: minmax(0, 24rem) minmax(0, 1fr);
+  }
+}
+
+.sing {
+  font-family: var(--serif);
+  font-size: clamp(1.5rem, 1.05rem + 1.3vw, 2rem);
+  line-height: 1.22;
+  letter-spacing: -0.005em;
+  max-width: 22em;
+}
+
+.sing-line {
+  margin: 0;
+  padding: 0.14em 0;
+  color: color-mix(in srgb, var(--soft) 80%, var(--ground));
+  transition: color 500ms ease;
+  text-wrap: pretty;
+}
+
+.sing-line.past {
+  color: var(--soft);
+}
+
+.sing-line.current {
+  color: var(--ink);
+}
+
+.sing-line .w {
+  display: inline-block;
+}
+
+/* Each sung word fills left to right, as in the app: a gradient clipped to the letters,
+   driven by --p from 0 to 1, with a little lift as it lands. */
+.sing-line.current .w {
+  --edge: 0.12em;
+  --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
+  transform: translateY(calc(var(--p, 0) * -0.05em));
+  padding: 0.2em 0.18em;
+  margin: -0.2em -0.18em;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)), color-mix(in srgb, var(--soft) 80%, var(--ground)) calc(var(--at) + var(--edge)));
+  transition: none;
+}
+
+.sing-line.current .w.on {
+  --p: 1;
 }
 
 /* Signal */
@@ -530,6 +679,15 @@ main > section {
   gap: 0.35rem 0.6rem;
 }
 
+.demo {
+  margin-top: 3rem;
+  max-width: var(--measure);
+}
+
+.demo p {
+  color: var(--soft);
+}
+
 /* Footer */
 
 .foot {
@@ -566,20 +724,164 @@ main > section {
 
 .foot-nav a {
   text-decoration: none;
+  transition: color 120ms ease;
 }
 
 .foot-nav a:hover {
   color: var(--ink);
 }
 
+/* Motion. The hero assembles on load; below it, things rise into place as they enter the
+   viewport, and the screenshots drift a little slower than the page. Transform and opacity
+   only, and none of it under reduced motion. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(22px);
+  }
+}
+
+@keyframes settle {
+  from {
+    opacity: 0;
+    transform: translateY(28px) scale(0.975);
+  }
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(26px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes settle-in {
+  from {
+    opacity: 0;
+    transform: translateY(32px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes drift {
+  from {
+    transform: translateY(2.5%);
+  }
+  to {
+    transform: translateY(-2.5%);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .hero > * {
+    animation: rise 900ms var(--ease) both;
+  }
+  .hero > :nth-child(2) {
+    animation-delay: 90ms;
+  }
+  .hero > :nth-child(3) {
+    animation-delay: 200ms;
+  }
+  .hero > :nth-child(4) {
+    animation-delay: 300ms;
+  }
+  .hero > :nth-child(5),
+  .hero > :nth-child(6) {
+    animation-delay: 380ms;
+  }
+  .hero > .shot-hero {
+    animation-name: settle;
+    animation-duration: 1100ms;
+    animation-delay: 480ms;
+  }
+
+  @supports (animation-timeline: view()) {
+    .reveal {
+      animation: rise-in linear both;
+      animation-timeline: view();
+      animation-range: entry 0% entry 36%;
+    }
+    .shot.reveal {
+      animation-name: settle-in;
+      animation-range: entry 0% entry 42%;
+    }
+    .cols > .reveal:nth-child(3n + 2),
+    .assets > .reveal:nth-child(2) {
+      animation-range: entry 5% entry 41%;
+    }
+    .cols > .reveal:nth-child(3n),
+    .assets > .reveal:nth-child(3) {
+      animation-range: entry 10% entry 46%;
+    }
+    .assets > .reveal:nth-child(4) {
+      animation-range: entry 15% entry 51%;
+    }
+    .shot img.drift {
+      animation: drift linear both;
+      animation-timeline: view();
+      animation-range: entry 0% exit 100%;
+    }
+  }
+
+  /* Without scroll-driven animations, app.js watches the viewport and adds .in. */
+  .no-sda .reveal {
+    opacity: 0;
+    transform: translateY(26px);
+    transition: opacity 800ms var(--ease), transform 800ms var(--ease);
+  }
+  .no-sda .shot.reveal {
+    transform: translateY(32px) scale(0.97);
+  }
+  .no-sda .reveal.in {
+    opacity: 1;
+    transform: none;
+  }
+  .no-sda .cols > .reveal:nth-child(3n + 2),
+  .no-sda .assets > .reveal:nth-child(2) {
+    transition-delay: 70ms;
+  }
+  .no-sda .cols > .reveal:nth-child(3n),
+  .no-sda .assets > .reveal:nth-child(3) {
+    transition-delay: 140ms;
+  }
+  .no-sda .assets > .reveal:nth-child(4) {
+    transition-delay: 210ms;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  /* Colours may still crossfade; nothing moves. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition-property: color, background-color, border-color, text-decoration-color !important;
+  }
+}
+
 /* Small screens */
 
 @media (max-width: 40rem) {
   .top {
-    padding-top: 1.125rem;
+    padding-top: 1.625rem;
   }
   .wordmark {
     font-size: 1.375rem;
+  }
+  .hero-wave {
+    height: 2.75rem;
+    width: min(100%, 17rem);
   }
   .cta .btn {
     flex: 1 1 100%;
