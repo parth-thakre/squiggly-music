@@ -85,6 +85,42 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+  # Builds the audio-only LGPL libmpv-2.dll and its corresponding-source bundle from the
+  # pinned recipe in build/libmpv (see licenses/libmpv-windows/NOTICE.md). The output is
+  # cached by the recipe's contents; on a cache hit build.mjs only re-verifies it. The
+  # build is reproducible, and build.mjs fails unless the DLL matches the SHA-256 pinned in
+  # build/libmpv/sources.json.
+  libmpv:
+    name: Windows libmpv (LGPL, from source)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Cache the libmpv build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .local/libmpv-windows
+          key: libmpv-windows-${{ hashFiles('build/libmpv/**', 'scripts/fetch-common.mjs') }}
+      # build.mjs uses only Node's standard library, so no npm ci. It runs the build in a
+      # container with no network, after checking every source tarball's SHA-256.
+      - name: Build or verify libmpv
+        run: node build/libmpv/build.mjs
+        env:
+          SQUIGGLY_CONTAINER_ENGINE: docker
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: libmpv-windows
+          path: .local/libmpv-windows/
+          if-no-files-found: error
+          retention-days: 14
+
   linux:
     name: Linux RPM
     needs: [check, ui]
@@ -130,7 +166,7 @@ jobs:
 
   windows:
     name: Windows installer and portable
-    needs: [check, ui]
+    needs: [check, ui, libmpv]
     runs-on: windows-latest
     permissions:
       contents: read
@@ -150,9 +186,15 @@ jobs:
         with:
           path: .local/downloads
           key: windows-downloads-${{ hashFiles('scripts/fetch-windows-runtime.mjs', 'scripts/fetch-common.mjs') }}
+      # fetch-windows-runtime.mjs checks this build against build/libmpv before packaging it.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: libmpv-windows
+          path: .local/libmpv-windows
       - run: npm ci
       - run: npm run package:win
-      # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll.
+      # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll,
+      # and the unpacked esbuild binary.
       - name: Smoke-test the packaged audio runtime
         run: node scripts/smoke-runtime.mjs dist/win-unpacked
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -169,7 +211,7 @@ jobs:
   # assemble and publish only run on packages whose audio runtime started and decoded audio.
   assemble:
     name: Collect assets and checksums
-    needs: [linux, windows]
+    needs: [linux, windows, libmpv]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -189,6 +231,15 @@ jobs:
           pattern: '*-x64'
           path: release
           merge-multiple: true
+      # The LGPL corresponding source for the Windows libmpv-2.dll ships with every release.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: libmpv-windows
+          path: libmpv-windows
+      - name: Add the libmpv source bundle
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          cp libmpv-windows/libmpv-windows-x64-source.tar "release/Squiggly-Music-${version}-libmpv-windows-x64-source.tar"
       - run: node scripts/release-checksums.mjs release
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

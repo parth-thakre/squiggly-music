@@ -23,7 +23,8 @@
     "release:checksums": "node scripts/release-checksums.mjs",
     "test:source": "vitest run",
     "smoke:runtime": "node scripts/smoke-runtime.mjs",
-    "test:ui": "vite build && playwright test"
+    "test:ui": "vite build && playwright test",
+    "libmpv:build": "node build/libmpv/build.mjs"
   },
   "dependencies": {
     "@fontsource-variable/familjen-grotesk": "^5.3.0",
