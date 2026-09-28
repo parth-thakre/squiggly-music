@@ -129,3 +129,19 @@ test.describe('menus and the selection', () => {
     await expect(row).not.toHaveClass(/\bselected\b/);
   });
 });
+
+test.describe('credits with several artists', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+  test('each artist the server names separately has its own link and menu entry', async ({ app, page }) => {
+    await app.play('Quiet Harbor', 'Second Wind 2');
+    const credit = app.deck.locator('.deck-sub');
+    await expect(credit).toContainText('Bell Tower & Cinder Lane');
+    await expect(credit.getByRole('button', { name: 'Bell Tower', exact: true })).toBeVisible();
+    await app.openMenuOn(app.row('Second Wind 2'));
+    await app.menu.getByRole('menuitem', { name: 'Go to artist' }).click();
+    await expect(page.getByRole('menuitem', { name: 'Bell Tower', exact: true })).toBeVisible();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await credit.getByRole('button', { name: 'Cinder Lane', exact: true }).click();
+    await expect(app.heading).toHaveText('Cinder Lane');
+  });
+});

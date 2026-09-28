@@ -408,3 +408,16 @@ describe('OpenSubsonic playback extras', () => {
   });
 });
 
+
+describe('credited artists', () => {
+  it('keeps the artists a server lists separately, and leaves a single artist to artistId', async () => {
+    servePayload(albumPayload({ id: 's1', title: 'Aahun Aahun', artist: 'Master Saleem & Neeraj Shridhar', artistId: 'ar-1',
+      artists: [{ id: 'ar-1', name: 'Master Saleem' }, { id: 'ar-2', name: 'Neeraj Shridhar' }] }));
+    const [duet] = (await Effect.runPromise(client().album('a'))).tracks;
+    expect(duet.artist).toBe('Master Saleem & Neeraj Shridhar');
+    expect(duet.artists).toEqual([{ id: 'ar-1', name: 'Master Saleem' }, { id: 'ar-2', name: 'Neeraj Shridhar' }]);
+    servePayload(albumPayload({ id: 's2', title: 'Solo', artist: 'Master Saleem', artistId: 'ar-1', artists: [{ id: 'ar-1', name: 'Master Saleem' }] }));
+    const [solo] = (await Effect.runPromise(client().album('a'))).tracks;
+    expect(solo.artists).toBeUndefined();
+  });
+});

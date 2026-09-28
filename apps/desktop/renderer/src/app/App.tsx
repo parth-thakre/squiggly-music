@@ -7,6 +7,7 @@ import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
+import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
 import { useSwipeSongs } from './swipe';
@@ -170,7 +171,7 @@ const Deck = memo(function Deck() {
       <div className="deck-text">
         <h2 className="deck-title">{name.main}</h2>
         <p className="deck-sub">
-          {track.artistId ? <button type="button" className="link" onClick={() => nav.go({ view: 'artist', id: track.artistId! })}>{track.artist}</button> : track.artist}
+          <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
           {track.album && <>
             {' on '}
             {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
