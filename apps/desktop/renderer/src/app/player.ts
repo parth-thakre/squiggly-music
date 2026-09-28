@@ -118,6 +118,8 @@ if (desktop) {
       volume: p.volume, audio: sameFields(state.audio, p.audio) ? state.audio : p.audio,
       devices: !p.devices.length || sameList(state.devices, p.devices, sameFields) ? state.devices : p.devices, device: p.audio.requestedDevice,
       radio: p.radio?.label === state.radio?.label ? state.radio : p.radio,
+      // A queue loaded some other way (a play key resumes the saved one) replaces the offer.
+      resumable: p.queue.length ? null : state.resumable,
       // The desktop asks Navidrome for the original file; the host doesn't verify what came back.
       delivery: track?.source === 'navidrome' ? 'original-requested' : null,
       error, diagnostics: snapshot.diagnostics,

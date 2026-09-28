@@ -216,6 +216,22 @@ export interface ExtensionsApi {
   // For ctx.clipboard: the window's own clipboard API needs a permission the app doesn't grant.
   writeClipboard(text: string): Promise<Result>;
 }
+// The operating system's media controls on Windows and macOS: the Windows media flyout and
+// media keys, macOS Now Playing. Linux has MPRIS in the main process instead.
+export interface SystemMediaState {
+  index: number; entryId: string; trackId: string;
+  title: string; artist: string; album: string; coverArt: string | null;
+  duration: number; position: number; playing: boolean;
+}
+export interface SystemMediaApi {
+  // Whether this window hosts the media session: the main window, on Windows and macOS.
+  hosted: boolean;
+  // The current song and its state, or null when there is nothing to show (or exclusive output
+  // needs the device to itself). Sent on changes, whether or not the window is visible.
+  subscribe(listener: (state: SystemMediaState | null) => void): () => void;
+  // Whether the session is live. Until it is, the main process takes the media keys itself.
+  live(on: boolean): Promise<Result>;
+}
 
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
@@ -232,6 +248,7 @@ export interface DesktopBridge {
   library: LibraryApi;
   config: ConfigApi;
   extensions: ExtensionsApi;
+  media: SystemMediaApi;
   settings(): Promise<Settings>;
   updateSettings(changes: Partial<Settings>): Promise<Result<Settings>>;
   // The compact always-on-top window. Opening it from the mini player's own button returns to the full window.

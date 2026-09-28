@@ -16,7 +16,7 @@ import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
-import type { AppSnapshot, Result, PlayerCommand, Settings, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
 import { SubsonicClient, libraryCall, libraryMethods } from '../../../packages/adapter-opensubsonic/client';
@@ -134,7 +134,7 @@ function broadcast() {
 // Background consumers of each native snapshot: tray, OS media controls, play reports, queue sync.
 function observePlayer() {
   const player = state.player;
-  updateTray(); updateMedia(); void radio.topUp();
+  updateTray(); updateMedia(); updateSystemMedia(); void radio.topUp();
   queueSync.observe(player, connectionGeneration, settings.value.syncQueue && server !== null);
   const events = plays.update(player, performance.now());
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
@@ -276,6 +276,32 @@ function transport(action: HostRequest['action']) {
   void Effect.runPromise(Effect.either(metrics.measure('shell.command', semaphores.audio.withPermits(1)(send(action)))))
     .then(() => { shellPending--; broadcast(); });
 }
+// Loads the server-saved queue at its song and position, paused or playing.
+function resumeSaved(paused: boolean) {
+  return Effect.gen(function* () {
+    if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
+    const client = server;
+    const saved = yield* client.savedQueue();
+    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
+    if (!saved || !saved.tracks.length) return yield* Effect.fail(new Error('There is no saved queue on this server.'));
+    if (saved.tracks.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`The saved queue has more than ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`));
+    rememberTracks(saved.tracks);
+    const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
+    const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
+    endRadio();
+    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused });
+    queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
+  });
+}
+// Play from a media key, MPRIS, or the tray. With nothing loaded, the queue saved on the server
+// (when queue sync is on) starts where it left off, so a play key works right after launch.
+const canResume = () => state.player.engine === 'ready' && !state.player.queue.length && server !== null && settings.value.syncQueue;
+function shellPlay() {
+  if (!canResume()) { transport({ type: 'play' }); return; }
+  const generation = connectionGeneration;
+  const resume = Effect.suspend(() => generation === connectionGeneration && canResume() ? resumeSaved(false) : Effect.void);
+  void Effect.runPromise(Effect.either(metrics.measure('shell.resume', semaphores.server.withPermits(1)(resume)))).then(broadcast);
+}
 function seekTo(seconds: number) {
   const index = state.player.currentIndex; const track = state.player.queue[index];
   const entryId = state.player.entryIds[index];
@@ -349,6 +375,8 @@ function installHandlers() {
     server = candidate; knownTracks.clear();
     connectionGeneration++; resetSessionState();
     state.server = { connected: true, name: `${info.name} (${new URL(candidate.baseUrl).host})`, sessionId: randomUUID() };
+    // Play in the tray and MPRIS can now resume the saved queue.
+    updateTray(); updateMedia();
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
@@ -410,20 +438,7 @@ function installHandlers() {
   }), 'library');
   handle('radio:stop', () => Effect.sync(endRadio), 'library');
   // Loads the server-saved queue paused at its song and position. Playback starts only on play.
-  handle('resume-queue', () => Effect.gen(function* () {
-    if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
-    const client = server;
-    const saved = yield* client.savedQueue();
-    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
-    if (!saved || !saved.tracks.length) return yield* Effect.fail(new Error('There is no saved queue on this server.'));
-    if (saved.tracks.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`The saved queue has more than ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`));
-    rememberTracks(saved.tracks);
-    const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
-    const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
-    endRadio();
-    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused: true });
-    queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
-  }), 'server');
+  handle('resume-queue', () => resumeSaved(true), 'server');
   ipcMain.handle('squiggly:get-settings', event => { assertSender(event); return settings.value; });
   handle('update-settings', value => Effect.gen(function* () {
     const changes = yield* Schema.decodeUnknown(SettingsPatchSchema)(value, { onExcessProperty: 'error' }).pipe(Effect.mapError(() => new Error('Invalid settings.')));
@@ -435,7 +450,7 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();
-    applyMiniOnTop();
+    applyMiniOnTop(); updateTray(); updateMedia(); updateSystemMedia();
     return settings.value;
   }), 'settings');
   handle('window:toggle-mini', () => Effect.sync(toggleMini), 'window');
@@ -447,6 +462,11 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
+  // The main window's media session (systemMedia.ts) went live or ended.
+  handle('window:media-session', value => Effect.gen(function* () {
+    mediaSessionLive = yield* Schema.decodeUnknown(Schema.Boolean)(value).pipe(Effect.mapError(() => new Error('Invalid media session state.')));
+    applyMediaKeys();
+  }), 'window');
   handle('disconnect', () => Effect.gen(function* () {
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
@@ -481,7 +501,11 @@ function createWindow(mini: boolean) {
       preload: join(directory, '../preload/index.cjs'),
       contextIsolation: true, nodeIntegration: false, sandbox: true,
       // The preload reads the config folder's path from here, so ConfigApi.dir is ready at once.
-      additionalArguments: [...(mini ? ['--squiggly-mini'] : []), `--squiggly-config=${configDirectory()}`],
+      // Only the main window, which lives as long as the app, hosts the system media session.
+      additionalArguments: [
+        ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
+        `--squiggly-config=${configDirectory()}`,
+      ],
     },
   });
   target.setMenuBarVisibility(false);
@@ -494,6 +518,8 @@ function createWindow(mini: boolean) {
 }
 function createMainWindow() {
   const main = windows.main = createWindow(false);
+  // A freshly loaded window needs the current song for its media session.
+  main.webContents.on('did-finish-load', () => { systemMediaKey = null; updateSystemMedia(); });
   main.webContents.once('did-finish-load', () => {
     state.diagnostics.startupMs ??= performance.now() - started; broadcast();
   });
@@ -505,6 +531,11 @@ function createMainWindow() {
     if (settings.value.closeToTray && tray) main.hide(); else app.quit();
   });
   main.on('closed', () => { if (windows.main === main) windows.main = null; });
+  // A reloaded or crashed renderer has lost its media session until it reports a new one.
+  const sessionLost = () => { mediaSessionLive = false; applyMediaKeys(); };
+  main.webContents.on('did-start-navigation', details => { if (details.isMainFrame && !details.isSameDocument) sessionLost(); });
+  main.webContents.on('render-process-gone', sessionLost);
+  main.on('closed', sessionLost);
   return main;
 }
 // Saved bounds are reused only while they still overlap a connected display. Wayland
@@ -559,11 +590,12 @@ function updateTray() {
   if (!tray) return;
   const playing = state.player.playing;
   const ready = state.player.engine === 'ready' && state.player.queue.length > 0;
+  const resumable = canResume();
   // Rebuild only when a label or enabled state changes, not on every snapshot.
-  if (trayMenu === `${playing}:${ready}`) return;
-  trayMenu = `${playing}:${ready}`;
+  if (trayMenu === `${playing}:${ready}:${resumable}`) return;
+  trayMenu = `${playing}:${ready}:${resumable}`;
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: playing ? 'Pause' : 'Play', enabled: ready, click: () => transport({ type: playing ? 'pause' : 'play' }) },
+    { label: playing ? 'Pause' : 'Play', enabled: ready || resumable, click: () => playing ? transport({ type: 'pause' }) : shellPlay() },
     { label: 'Next', enabled: ready, click: () => transport({ type: 'next' }) },
     { label: 'Previous', enabled: ready, click: () => transport({ type: 'previous' }) },
     { type: 'separator' },
@@ -590,6 +622,7 @@ function createTray() {
 }
 
 // Linux: MPRIS. Its cover is a private temporary copy, since artUrl must not carry credentials.
+// Windows and macOS use Chromium's media session instead (updateSystemMedia, systemMedia.ts).
 let artDirectory: string | null = null;
 let art: { coverArt: string; path: string } | null = null;
 let artRequest: string | null = null;
@@ -599,7 +632,7 @@ function updateMedia() {
   const track = state.player.queue[state.player.currentIndex];
   const coverArt = state.player.engine === 'ready' && track?.source === 'navidrome' ? track.coverArt ?? null : null;
   if (coverArt && art?.coverArt !== coverArt && artRequest !== coverArt && server && artDirectory) void fetchArt(coverArt, server, artDirectory);
-  media.update(state.player, coverArt && art?.coverArt === coverArt ? pathToFileURL(art.path).href : null);
+  media.update(state.player, coverArt && art?.coverArt === coverArt ? pathToFileURL(art.path).href : null, canResume());
 }
 async function fetchArt(coverArt: string, client: SubsonicClient, directory: string) {
   artRequest = coverArt;
@@ -613,35 +646,72 @@ async function fetchArt(coverArt: string, client: SubsonicClient, directory: str
   if (previous) void rm(previous.path, { force: true }).catch(() => undefined);
   updateMedia();
 }
+// Windows media keys, taken directly only while the main window has no live media session
+// (systemMedia.ts in the renderer). Once it has one, Windows routes the keys to it, so they
+// follow whichever app is playing instead of always coming here. Registration fails when
+// another application owns a key; that key then stays with that application.
+const mediaKeys: Record<string, () => void> = {
+  MediaPlayPause: () => state.player.playing ? transport({ type: 'pause' }) : shellPlay(),
+  MediaNextTrack: () => transport({ type: 'next' }), MediaPreviousTrack: () => transport({ type: 'previous' }),
+  MediaStop: () => transport({ type: 'stop' }),
+};
+let mediaKeysHeld = false;
+let mediaSessionLive = false;
+function applyMediaKeys() {
+  if (process.platform !== 'win32') return;
+  const want = !mediaSessionLive && !quitting;
+  if (want === mediaKeysHeld) return;
+  mediaKeysHeld = want;
+  for (const [accelerator, run] of Object.entries(mediaKeys)) {
+    if (!want) { globalShortcut.unregister(accelerator); continue; }
+    try { if (!globalShortcut.register(accelerator, run)) metrics.record('shell.media-key-unavailable', 0, true); }
+    catch { metrics.record('shell.media-key-unavailable', 0, true); }
+  }
+}
+// Windows and macOS: what the main window's media session shows (systemMedia.ts). Sent only on a
+// change of song or state, or a jump in position, and whether or not the window is visible. With
+// exclusive output, the session's silent stream would contend with mpv for the device, so there is
+// no session and the media keys come here instead.
+let systemMediaKey: string | null = null;
+let systemMediaClock = { position: 0, at: 0, playing: false };
+function updateSystemMedia() {
+  const target = windows.main;
+  if (process.platform === 'linux' || !alive(target) || target.webContents.isDestroyed()) return;
+  const p = state.player;
+  const exclusive = settings.value.exclusiveOutput || p.audio.exclusiveRequested === true;
+  const track = p.engine === 'ready' && !exclusive ? p.queue[p.currentIndex] : undefined;
+  const entryId = p.entryIds[p.currentIndex];
+  const now = performance.now();
+  const next: SystemMediaState | null = track && entryId ? {
+    index: p.currentIndex, entryId, trackId: track.id, title: track.title, artist: track.artist, album: track.album,
+    coverArt: track.source === 'navidrome' ? track.coverArt ?? null : null,
+    duration: p.duration > 0 ? p.duration : track.duration ?? 0, position: p.position, playing: p.playing,
+  } : null;
+  const expected = systemMediaClock.position + (systemMediaClock.playing ? (now - systemMediaClock.at) / 1000 : 0);
+  const key = next ? JSON.stringify({ ...next, position: 0 }) : '';
+  if (key === systemMediaKey && (!next || Math.abs(next.position - expected) <= 1.5)) return;
+  systemMediaKey = key;
+  systemMediaClock = { position: next?.position ?? 0, at: now, playing: next?.playing ?? false };
+  target.webContents.send('squiggly:media', next);
+}
 function startMediaControls() {
   if (process.platform === 'linux') {
     try { artDirectory = mkdtempSync(join(app.getPath('temp'), 'squiggly-art-')); } catch { artDirectory = null; }
     void startMpris({
-      command: type => transport({ type }), seek: seekTo, volume: percent => transport({ type: 'volume', percent }),
+      command: type => type === 'play' ? shellPlay() : transport({ type }), seek: seekTo, volume: percent => transport({ type: 'volume', percent }),
       raise: showMain, quit: () => app.quit(),
     }, () => { media = null; metrics.record('shell.mpris-unavailable', 0, true); }).then(session => { media = session; updateMedia(); });
   }
-  // Windows media keys. Chromium's handling only covers audio it plays itself. Registration
-  // fails when another application owns a key; that key then stays with that application.
-  // TODO(windows-smtc): the System Media Transport Controls overlay has no Electron API and no
-  // maintained Node binding. Add it once one exists, rather than a silent HTML audio element.
-  if (process.platform === 'win32') {
-    const keys: Record<string, () => void> = {
-      MediaPlayPause: () => transport({ type: state.player.playing ? 'pause' : 'play' }),
-      MediaNextTrack: () => transport({ type: 'next' }), MediaPreviousTrack: () => transport({ type: 'previous' }),
-      MediaStop: () => transport({ type: 'stop' }),
-    };
-    for (const [accelerator, run] of Object.entries(keys)) {
-      try { if (!globalShortcut.register(accelerator, run)) metrics.record('shell.media-key-unavailable', 0, true); }
-      catch { metrics.record('shell.media-key-unavailable', 0, true); }
-    }
-  }
+  applyMediaKeys();
 }
 
 if (primary) app.on('second-instance', () => showMain());
 app.whenReady().then(async () => {
   if (!primary) return;
   app.setName('Squiggly Music');
+  // The installer's shortcuts carry this id (appId in electron-builder.yml), so Windows shows the
+  // app's name and icon in the media flyout and notifications.
+  if (process.platform === 'win32') app.setAppUserModelId('dev.squiggly.music');
   const userData = app.getPath('userData');
   settings = new JsonStore(join(userData, 'settings.json'), SettingsFileSchema, defaultSettings());
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});

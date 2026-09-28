@@ -447,6 +447,16 @@ describe('MPRIS media controls', () => {
     expect(service.metadata['mpris:trackid']).not.toBe(first);
   });
 
+  it('offers Play with nothing loaded only when the saved queue can be resumed', async () => {
+    const { session, service, controls } = await mpris();
+    session.update(snapshot({ queue: [], currentIndex: -1 }), null);
+    expect(service).toMatchObject({ canPlay: false, playbackStatus: 'Stopped' });
+    session.update(snapshot({ queue: [], currentIndex: -1 }), null, true);
+    expect(service).toMatchObject({ canPlay: true, canPause: false, playbackStatus: 'Stopped' });
+    service.emit('playpause');
+    expect(controls.command).toHaveBeenLastCalledWith('play');
+  });
+
   it('stops publishing after a bus error', async () => {
     const { session, service, onError } = await mpris();
     service.emit('error', new Error('no session bus'));

@@ -16,7 +16,7 @@ It's early software. It runs on Windows and Fedora, and a browser version works 
 - Start a radio station from any song, record, or artist.
 - Build automatic playlists from your library by genre, by decade, and from what's new.
 - Show synced lyrics from your files. Looking up missing lyrics on LRCLIB is off until you turn it on.
-- Run as a mini player or from the tray, with media keys, and with MPRIS on Linux.
+- Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
 - Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.
 - Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.

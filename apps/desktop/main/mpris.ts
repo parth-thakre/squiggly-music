@@ -7,7 +7,8 @@ export interface MediaControls {
   raise(): void;
   quit(): void;
 }
-export interface MediaSession { update(player: PlayerSnapshot, artUrl: string | null): void }
+// canResume: nothing is loaded, but Play would start the queue saved on the server.
+export interface MediaSession { update(player: PlayerSnapshot, artUrl: string | null, canResume?: boolean): void }
 
 // Linux MPRIS over the session bus. Audio plays in mpv, not Chromium, so Chromium's own
 // MediaSession/MPRIS integration never sees it. Shells show these controls and route media
@@ -63,7 +64,7 @@ export async function startMpris(controls: MediaControls, onError: () => void): 
     if (service[key] !== value) service[key] = value;
   };
   return {
-    update(player, artUrl) {
+    update(player, artUrl, canResume = false) {
       if (failed) return;
       const track = player.engine === 'ready' ? player.queue[player.currentIndex] : undefined;
       const now = performance.now();
@@ -90,7 +91,7 @@ export async function startMpris(controls: MediaControls, onError: () => void): 
       if (nextKey !== metadataKey) { metadataKey = nextKey; service.metadata = metadata; }
       assign('volume', player.volume / 100);
       assign('playbackStatus', !track ? 'Stopped' : player.playing ? 'Playing' : 'Paused');
-      assign('canPlay', player.engine === 'ready' && player.queue.length > 0);
+      assign('canPlay', player.engine === 'ready' && (player.queue.length > 0 || canResume));
       assign('canPause', Boolean(track));
       assign('canSeek', Boolean(track) && duration > 0);
       assign('canGoNext', Boolean(track) && player.currentIndex < player.queue.length - 1);

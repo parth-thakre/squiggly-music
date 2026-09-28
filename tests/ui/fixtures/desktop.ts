@@ -7,9 +7,13 @@ import type { Page } from '@playwright/test';
 //
 // `extensions` are listed by window.squiggly.extensions, each with the URL its module is served
 // from (the test routes that URL to a compiled bundle).
+//
+// `mediaHost` makes the page the window that hosts the system media session (systemMedia.ts):
+// window.pushMedia(state) stands in for the main process, and player commands and live reports
+// are recorded in bridgeCalls.
 export interface FakeExtension { id: string; name: string; url: string; error?: string }
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[] } = {}) {
-  await page.addInitScript(({ extensions: given }) => {
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -40,7 +44,12 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     Object.assign(window, { squiggly: {
       snapshot: async () => snapshot(),
       subscribe: (listener: (snapshot: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
-      command: async () => ({ ok: true, value: undefined }),
+      command: async (command: unknown) => { if (mediaHost) calls.push(`command:${JSON.stringify(command)}`); return { ok: true, value: undefined }; },
+      media: {
+        hosted: mediaHost,
+        subscribe: (listener: (state: unknown) => void) => { Object.assign(window, { pushMedia: listener }); return () => undefined; },
+        live: async (on: boolean) => { calls.push(`media-live:${on}`); return { ok: true, value: undefined }; },
+      },
       settings: async () => settings,
       updateSettings: async () => ({ ok: true, value: settings }),
       library,
@@ -62,5 +71,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [] });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false });
 }
