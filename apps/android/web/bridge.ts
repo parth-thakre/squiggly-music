@@ -3,7 +3,7 @@ import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSessi
 import { Metrics } from '../../../packages/core/metrics';
 import { ConnectionSchema, SaveM3uSchema } from '../../../packages/core/validation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
-import { stationIdOf } from '../../../packages/core/stations';
+import { isStation, stationIdOf } from '../../../packages/core/stations';
 import { SubsonicClient, libraryCall, resolveServerAddress, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
 import { nativeFetch } from './http';
 import { Squiggly, type NativeItem, type NativeOp, type NativePlayback } from './plugin';
@@ -132,8 +132,9 @@ const playbackListeners = new Set<(playback: AndroidPlayback) => void>();
 const resetListeners = new Set<() => void>();
 
 function item(track: Track, id: string, current: SubsonicClient): NativeItem {
-  // A station plays its own stream, from the station list the page read through this client; it
-  // has no MP3 to fall back to. (An unknown one gets no address, and the player says it failed.)
+  // A station plays its own stream, from the station list this client read (sync reads it first
+  // when it hasn't); it has no MP3 to fall back to. One the server no longer lists gets no
+  // address, and the player says it failed.
   const station = track.source === 'station' ? current.knownStationLocation(stationIdOf(track)) ?? '' : null;
   return {
     id, url: station ?? current.streamLocation(track.id), fallbackUrl: station ?? current.streamLocation(track.id, 'mp3'),
@@ -142,8 +143,15 @@ function item(track: Track, id: string, current: SubsonicClient): NativeItem {
   };
 }
 let latest: { queue: readonly Track[]; entryIds: readonly string[] } = { queue: [], entryIds: [] };
-function sync(queue: readonly Track[], entryIds: readonly string[]) {
+// A station this client hasn't listed has no address yet: after a relaunch the page restores the
+// queue before anything reads the station list. The list is read first, and the native queue,
+// with the commands that name its entries, waits for it. The sync after the list (listedBy, the
+// client that read it) sends what it has, so a station the server no longer lists, or a list
+// that failed, can't hold the queue up.
+let lookup: Promise<void> | null = null;
+function sync(queue: readonly Track[], entryIds: readonly string[], listedBy: SubsonicClient | null = null) {
   latest = { queue, entryIds };
+  if (lookup) return;
   const ops = planQueue(mirrored, entryIds);
   if (!ops.length) return;
   const current = client;
@@ -151,6 +159,12 @@ function sync(queue: readonly Track[], entryIds: readonly string[]) {
   // Without an account there are no stream addresses; the next sync after connecting sends these.
   if (adds && !current) return;
   const byId = new Map(entryIds.map((id, i) => [id, queue[i]]));
+  const unlisted = current && listedBy !== current && ops.some(op => (op.type === 'replace' || op.type === 'insert')
+    && op.ids.some(id => isStation(byId.get(id)) && current.knownStationLocation(stationIdOf(byId.get(id)!)) === null));
+  if (unlisted) {
+    lookup = Effect.runPromise(Effect.either(current.radioStations())).then(() => { lookup = null; sync(latest.queue, latest.entryIds, current); });
+    return;
+  }
   const native = ops.map((op): NativeOp => op.type === 'replace' ? { type: 'replace', items: op.ids.map(id => item(byId.get(id)!, id, current!)) }
     : op.type === 'insert' ? { type: 'insert', at: op.at, items: op.ids.map(id => item(byId.get(id)!, id, current!)) } : op);
   mirrored = [...entryIds];
@@ -162,6 +176,8 @@ function sync(queue: readonly Track[], entryIds: readonly string[]) {
     if (mine === edits && !same(ids, mirrored)) { mirrored = ids; sync(latest.queue, latest.entryIds); }
   }, () => { if (mine === edits) void Squiggly.restore().then(({ items }) => { mirrored = items.map(entry => entry.id); sync(latest.queue, latest.entryIds); }); });
 }
+// Commands naming an entry the native queue may not hold yet.
+const afterLookup = (run: () => void) => { if (lookup) void lookup.then(run); else run(); };
 const same = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((id, i) => id === b[i]);
 
 async function clearPlayer() {
@@ -238,11 +254,16 @@ export const androidBridge: AndroidBridge = {
   },
   player: {
     restore,
-    sync,
-    load(entryId, { play, position }) { void Squiggly.load({ id: entryId, position, play, seq: ++seq }); },
+    sync: (queue, entryIds) => sync(queue, entryIds),
+    load(entryId, { play, position }) {
+      const send = () => void Squiggly.load({ id: entryId, position, play, seq: ++seq });
+      // Waiting on a station lookup: reports from before this load are dropped from now on, and it
+      // goes after the queue edit it follows, with a later number than that edit's.
+      if (lookup) { ++seq; void lookup.then(send); } else send();
+    },
     play() { void Squiggly.play(); },
     pause() { void Squiggly.pause(); },
-    seek(entryId, seconds) { void Squiggly.seek({ id: entryId, position: seconds }); },
+    seek(entryId, seconds) { afterLookup(() => void Squiggly.seek({ id: entryId, position: seconds })); },
     volume(percent) { void Squiggly.volume({ volume: percent / 100 }); },
     subscribe(listener) { playbackListeners.add(listener); return () => { playbackListeners.delete(listener); }; },
     onReset(listener) { resetListeners.add(listener); return () => { resetListeners.delete(listener); }; },
