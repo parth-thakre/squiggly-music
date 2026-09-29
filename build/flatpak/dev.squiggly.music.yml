@@ -1,0 +1,194 @@
+# Flatpak manifest for Squiggly Music.
+#
+# Untested: flatpak-builder wasn't available when this was written, so nothing here has been
+# built or run. The YAML, the metainfo, and the desktop file were validated, and
+# tests/packaging.test.ts checks the pins. docs/packaging.md says how to try it.
+#
+# The app is the unpacked electron-builder output (dist/linux-unpacked from
+# `npm run package:linux`), which carries its own Node for the audio process in
+# resources/runtime/node; neither the runtime nor the Electron base app has one. libmpv is
+# built here, audio only and LGPL, from the same pinned sources as the Windows libmpv
+# (build/libmpv/sources.json). Electron runs through zypak, from the Electron base app.
+#
+# Runtime 26.08, not 24.08: 24.08's two years of support ended in August 2026, and the
+# ffmpeg-full extension stops at 24.08, so FFmpeg is built here too. The runtime supplies
+# FreeType, HarfBuzz, FriBiDi, GnuTLS, ALSA, PulseAudio, and PipeWire.
+app-id: dev.squiggly.music
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: '26.08'
+command: squiggly-music.sh
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --filesystem=xdg-run/pipewire-0:ro
+  - --device=dri
+  # Music in the Music folder opens without the file chooser portal.
+  - --filesystem=xdg-music:ro
+  # safeStorage keeps the saved sign-in in the desktop keyring.
+  - --talk-name=org.freedesktop.secrets
+  # The tray icon. Chromium names it org.freedesktop.StatusNotifierItem-<pid>-<id>, and the
+  # sandbox's pid is 2 (Flathub's Obsidian grants the same name).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.freedesktop.StatusNotifierItem-2-1
+  # apps/desktop/main/mpris.ts registers org.mpris.MediaPlayer2.squiggly.
+  - --own-name=org.mpris.MediaPlayer2.squiggly
+  - --own-name=org.mpris.MediaPlayer2.squiggly.*
+  # The audio process loads libmpv from here.
+  - --env=SQUIGGLY_LIBMPV_PATH=/app/lib/libmpv.so.2
+
+cleanup:
+  - /include
+  - /lib/pkgconfig
+  - /share/man
+  - '*.la'
+  - '*.a'
+
+modules:
+  # mpv needs libass and libplacebo to build even though the player never draws video.
+  - name: libass
+    buildsystem: meson
+    config-opts:
+      - -Dfontconfig=disabled
+      - -Dasm=disabled
+      - -Dlibunibreak=disabled
+      - -Drequire-system-font-provider=false
+      - -Dtest=disabled
+      - -Dcompare=disabled
+      - -Dprofile=disabled
+      - -Dfuzz=disabled
+      - -Dcheckasm=disabled
+    sources:
+      - type: archive
+        url: https://github.com/libass/libass/releases/download/0.17.5/libass-0.17.5.tar.xz
+        sha256: 2dca25c0e0c837ddf00b52011b3f82cac1e4ddd3ad018227806b0c2288864acc
+
+  - name: libplacebo
+    buildsystem: meson
+    config-opts:
+      - -Dvulkan=disabled
+      - -Dopengl=disabled
+      - -Dd3d11=disabled
+      - -Dglslang=disabled
+      - -Dshaderc=disabled
+      - -Dlcms=disabled
+      - -Ddovi=disabled
+      - -Dlibdovi=disabled
+      - -Dunwind=disabled
+      - -Dxxhash=disabled
+      - -Ddemos=false
+      - -Dtests=false
+      - -Dbench=false
+      - -Dfuzz=false
+    sources:
+      - type: archive
+        url: https://github.com/haasn/libplacebo/archive/refs/tags/v7.360.1.tar.gz
+        sha256: d05fdf90bea2f629eaa2d115e909fd356388ac639e54f77b87a018a6d76224bd
+      # The tag's submodules, unpacked where the tag expects them.
+      - type: archive
+        url: https://github.com/fastfloat/fast_float/archive/97b54ca9e75f5303507699d27c6b4f4efe4641a1.tar.gz
+        sha256: 2b132274539286e41f37857cac22aa8441d21bd86d55de825a3342b149f66801
+        dest: 3rdparty/fast_float
+      - type: archive
+        url: https://github.com/pallets/jinja/archive/15206881c006c79667fe5154fe80c01c65410679.tar.gz
+        sha256: b88a20dcc2e34072fcf4159325bc6c34cd4b29a81a8b83d15d2f28ba561da296
+        dest: 3rdparty/jinja
+      - type: archive
+        url: https://github.com/pallets/markupsafe/archive/297fc8e356e6836a62087949245d09a28e9f1b13.tar.gz
+        sha256: da7c010c9c81a66ac73036558c1fcb6212b50482f43211cd1254035b94f82414
+        dest: 3rdparty/markupsafe
+      - type: archive
+        url: https://github.com/KhronosGroup/Vulkan-Headers/archive/450bd2232225d6c7728a4108055ac2e37cef6475.tar.gz
+        sha256: 26df9841c30806a994e2fdf42f7c87bcb1ced9db9a06033469123939fb3fa075
+        dest: 3rdparty/Vulkan-Headers
+
+  # The Windows build's component list, with GnuTLS for HTTPS in place of Schannel. No
+  # --enable-gpl, --enable-version3, or --enable-nonfree, so it stays LGPL-2.1-or-later.
+  - name: ffmpeg
+    config-opts:
+      - --enable-shared
+      - --disable-static
+      - --enable-pic
+      - --disable-autodetect
+      - --disable-everything
+      - --disable-programs
+      - --disable-doc
+      - --disable-debug
+      - --disable-avdevice
+      - --enable-network
+      - --enable-gnutls
+      - --enable-demuxer=aac,aiff,ape,asf,caf,dsf,flac,iff,matroska,mov,mp3,mpc,mpc8,ogg,tta,w64,wav,wv
+      - --enable-decoder=aac,aac_latm,alac,ape,dsd_lsbf,dsd_lsbf_planar,dsd_msbf,dsd_msbf_planar,dst,flac,mp1,mp1float,mp2,mp2float,mp3,mp3float,mpc7,mpc8,opus,tta,vorbis,wavpack,wmalossless,wmapro,wmav1,wmav2,pcm_*
+      - --enable-parser=aac,aac_latm,flac,mpegaudio,opus,vorbis
+      - --enable-protocol=file,http,https,httpproxy,tcp,tls,data
+      - --enable-filter=acompressor,aformat,alimiter,anull,aresample,bass,dynaudnorm,equalizer,highpass,loudnorm,lowpass,pan,treble,volume
+      - --enable-bsf=null
+    sources:
+      - type: archive
+        url: https://ffmpeg.org/releases/ffmpeg-8.1.3.tar.xz
+        sha256: 7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+
+  - name: mpv
+    buildsystem: meson
+    config-opts:
+      - -Dauto_features=disabled
+      - -Dgpl=false
+      - -Dlibmpv=true
+      - -Dcplayer=false
+      - -Dtests=false
+      - -Dfuzzers=false
+      - -Dbuild-date=false
+      # C plugins stay on only so mpv defines the load-scripts option, which the app sets to no.
+      - -Dcplugins=enabled
+      - -Dlua=disabled
+      - -Dgl=disabled
+      - -Dalsa=enabled
+      - -Dpulse=enabled
+      - -Dpipewire=enabled
+    sources:
+      - type: archive
+        url: https://github.com/mpv-player/mpv/archive/refs/tags/v0.41.0.tar.gz
+        sha256: ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209
+
+  - name: squiggly-music
+    buildsystem: simple
+    build-commands:
+      - cp -a app /app/squiggly-music
+      # These belong to the deb and RPM. A Flatpak takes its updates from its store.
+      - rm -f /app/squiggly-music/resources/package-type /app/squiggly-music/resources/app-update.yml /app/squiggly-music/resources/apparmor-profile
+      # Electron names its window after package.json's desktopName; make it this package's.
+      - patch-electron-desktop-filename /app/squiggly-music/resources/app.asar
+      - install -Dm755 squiggly-music.sh /app/bin/squiggly-music.sh
+      - install -Dm644 dev.squiggly.music.desktop /app/share/applications/dev.squiggly.music.desktop
+      - install -Dm644 dev.squiggly.music.metainfo.xml /app/share/metainfo/dev.squiggly.music.metainfo.xml
+      - install -Dm644 icon.svg /app/share/icons/hicolor/scalable/apps/dev.squiggly.music.svg
+      - install -Dm644 icon-512.png /app/share/icons/hicolor/512x512/apps/dev.squiggly.music.png
+      # The libmpv components built above: the license texts that go with them.
+      - install -d /app/share/licenses/dev.squiggly.music/libmpv
+      - cp libmpv-licenses/{mpv-LICENSE.LGPL.txt,mpv-Copyright.txt,ffmpeg-COPYING.LGPLv2.1.txt,ffmpeg-LICENSE.md,libass-COPYING.txt,libplacebo-LICENSE.txt,fast_float-LICENSE-MIT.txt} /app/share/licenses/dev.squiggly.music/libmpv/
+    sources:
+      # Run `npm run package:linux` first.
+      - type: dir
+        path: ../../dist/linux-unpacked
+        dest: app
+      - type: file
+        path: squiggly-music.sh
+      - type: file
+        path: dev.squiggly.music.desktop
+      - type: file
+        path: dev.squiggly.music.metainfo.xml
+      - type: dir
+        path: ../../licenses/libmpv-windows
+        dest: libmpv-licenses
+      - type: file
+        path: ../../apps/desktop/renderer/public/icon.svg
+      - type: file
+        path: ../icons/512x512.png
+        dest-filename: icon-512.png

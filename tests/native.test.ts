@@ -6,6 +6,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import type { HostMessage, HostRequest } from '../packages/player-mpv/protocol';
 import { emptyPlayer, type PlayerSnapshot } from '../packages/core/contracts';
 import { clearPlayerSession } from '../packages/player-mpv/session';
+import { libmpvMissing } from '../packages/player-mpv/libraries';
 
 let worker: ChildProcess | undefined;
 let fixtureDirectory: string | undefined;
@@ -44,6 +45,22 @@ describe('isolated audio host', () => {
     await expect.poll(() => replies.has(1)).toBe(true);
     expect(replies.get(1)).toContain('libmpv');
     expect(snapshots.at(-1)?.playing).toBe(false);
+  });
+
+  it('tells AppImage users which package to install when libmpv is missing', async () => {
+    const { snapshots } = start('/nonexistent/squiggly/libmpv.so', { APPIMAGE: '/tmp/Squiggly-Music.AppImage' });
+    await expect.poll(() => snapshots.at(-1)?.engine).toBe('unavailable');
+    expect(snapshots.at(-1)?.error).toContain('This AppImage doesn\'t include it');
+    expect(snapshots.at(-1)?.error).toContain('libmpv2');
+  });
+
+  it('names the packages only for an AppImage on Linux', () => {
+    const appImage = libmpvMissing('linux', undefined, { APPIMAGE: '/home/me/Squiggly-Music-0.2.0-x86_64.AppImage' });
+    expect(appImage).toContain('This AppImage doesn\'t include it');
+    expect(appImage).toContain('libmpv2 on Debian and Ubuntu, mpv-libs on Fedora');
+    for (const message of [libmpvMissing('linux', undefined, {}), libmpvMissing('win32', undefined, { APPIMAGE: 'x' })]) {
+      expect(message).toBe('libmpv could not be loaded. Install the libmpv runtime or set SQUIGGLY_LIBMPV_PATH, then restart the audio engine.');
+    }
   });
 
   it.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('decodes real PCM through libmpv, reports format, and handles transport commands', async () => {

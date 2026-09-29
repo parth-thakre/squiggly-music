@@ -23,6 +23,7 @@
     "release:checksums": "node scripts/release-checksums.mjs",
     "test:source": "vitest run",
     "smoke:runtime": "node scripts/smoke-runtime.mjs",
+    "smoke:packaged": "node scripts/packaged-smoke.mjs",
     "test:ui": "vite build && playwright test",
     "libmpv:build": "node build/libmpv/build.mjs",
     "android:build": "node scripts/android.mjs build",

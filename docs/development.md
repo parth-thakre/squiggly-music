@@ -42,7 +42,9 @@ The native decoding tests skip unless `SQUIGGLY_LIBMPV_PATH` is set. They decode
 
 The Android app's pure parts run with the rest: `tests/androidQueue.test.ts` checks how the page's queue is mirrored to the native player. [android.md](android.md) covers the emulator.
 
-`npm run test:desktop` starts the real Electron app and checks the preload bridge and process isolation. It needs a display (a graphical session, or Xvfb on Linux).
+`npm run test:desktop` starts the real Electron app and checks the preload bridge and process isolation. It needs a display (a graphical session, or Xvfb on Linux). `npm run smoke:packaged -- <executable>` does the same for a packaged build; [packaging.md](packaging.md) has the details.
+
+`tests/packaging.test.ts` checks the Linux packaging config: the RPM, deb, and AppImage targets, their libmpv dependencies, and the Flatpak manifest's pins against `build/libmpv/sources.json`.
 
 ## Limits
 

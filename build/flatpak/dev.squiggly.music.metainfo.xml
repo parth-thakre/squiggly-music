@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.squiggly.music</id>
+  <name>Squiggly Music</name>
+  <summary>Plays your Navidrome library and leaves the signal alone</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="io.github.parth-thakre">
+    <name>Parth Thakre</name>
+  </developer>
+  <description>
+    <p>Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know.</p>
+    <p>Browse records, artists, genres, playlists, and favorites. Edit the queue, rate songs, start a radio from any song, and show synced lyrics. Media keys and the system media controls work through MPRIS.</p>
+    <p>This is the desktop app. Its audio plays through libmpv, built into this package without video, scripting, or disc support.</p>
+  </description>
+  <launchable type="desktop-id">dev.squiggly.music.desktop</launchable>
+  <url type="homepage">https://squiggly.psthl.com</url>
+  <url type="bugtracker">https://github.com/parth-thakre/squiggly-music/issues</url>
+  <url type="vcs-browser">https://github.com/parth-thakre/squiggly-music</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Records, with the window taking its colours from the one playing</caption>
+      <image type="source" width="1760" height="1100">https://raw.githubusercontent.com/parth-thakre/squiggly-music/main/docs/screenshots/desktop-records.webp</image>
+    </screenshot>
+    <screenshot>
+      <caption>Synced lyrics, filling in word by word</caption>
+      <image type="source" width="1760" height="1100">https://raw.githubusercontent.com/parth-thakre/squiggly-music/main/docs/screenshots/desktop-lyrics.webp</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <categories>
+    <category>AudioVideo</category>
+    <category>Audio</category>
+    <category>Player</category>
+  </categories>
+  <provides>
+    <binary>squiggly-music.sh</binary>
+  </provides>
+  <releases>
+    <release version="0.2.0" date="2026-09-29" />
+    <release version="0.1.0" date="2026-09-28" />
+  </releases>
+</component>
