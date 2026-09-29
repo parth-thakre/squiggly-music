@@ -39,8 +39,9 @@ export class Radio<C extends RadioClient> {
   }
 
   // Asking the server for songs like an artist can take over ten seconds, so artist and record
-  // radio start from a song: an artist's top song, or a record's first track.
-  start(seed: RadioSeed): Effect.Effect<void, Error> {
+  // radio start from a song: an artist's top song, or a record's first track. Succeeds with
+  // whether the station began: false when other playback took over while the queue was replaced.
+  start(seed: RadioSeed): Effect.Effect<boolean, Error> {
     const radio = this;
     return Effect.gen(function* () {
       const client = radio.shell.client();
@@ -60,9 +61,10 @@ export class Radio<C extends RadioClient> {
       const player = radio.shell.player();
       if (player.queue[player.currentIndex]?.id === start.id) yield* radio.shell.follow(client, tracks.slice(1));
       else yield* radio.shell.replace(client, tracks);
-      if (generation !== radio.generation) return;
+      if (generation !== radio.generation) return false;
       radio.station = { generation, view: { label: seed.label }, topping: false, tried: null };
       radio.shell.changed();
+      return true;
     });
   }
 

@@ -276,4 +276,22 @@ test.describe('repeat and shuffle', () => {
     await expect(app.deck.getByText(/^Radio from /)).toBeHidden();
     await expect(repeat(app)).toHaveAccessibleName('Repeat all');
   });
+
+  test('turning repeat on while a station is on its way cancels it, and repeat stays on', async ({ app, page }) => {
+    await app.play('Test Pressing', 'Long Run');
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/similarSongs', async route => { await held; await route.continue(); });
+    await app.chooseFromMenu(app.row('Long Run'), 'Start radio');
+    await expect(app.deck.getByText(/^Finding songs like /)).toBeVisible();
+    await repeat(app).click();
+    await expect(repeat(app)).toHaveAccessibleName('Repeat all');
+    const answered = page.waitForResponse('**/api/similarSongs');
+    release();
+    await answered;
+    await expect(app.deck.getByText(/^Finding songs like /)).toBeHidden();
+    await expect(app.deck.getByText(/^Radio from /)).toBeHidden();
+    await expect(repeat(app)).toHaveAccessibleName('Repeat all');
+    await app.expectPlaying('Long Run');
+  });
 });

@@ -25,6 +25,10 @@ export interface PlayerState {
   queue: Track[];
   // One id per queue entry, parallel to `queue`. Two copies of a song are two entries.
   entryIds: string[];
+  // Changes whenever a song starts from the top (another entry, the same one again, a repeat-one
+  // loop, a jump to the song playing), never on a seek: PlayerSnapshot.playId on the desktop, a
+  // load in the browser, the native player's playId on Android. '' before anything has played.
+  playId: string;
   index: number; playing: boolean; position: number; duration: number; buffering: boolean;
   volume: number; audio: AudioPath | null; devices: AudioDevice[]; device: string;
   // What was asked of the server for the current song. A request, not proof of what arrived.
@@ -66,7 +70,7 @@ const saveModes = () => { try { localStorage.setItem(MODES, JSON.stringify({ rep
 let state: PlayerState = {
   mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop || android ? null : 'Navidrome',
   sessionId: null, access: desktop ? 'open' : 'checking',
-  queue: [], entryIds: [], index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
+  queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
@@ -147,7 +151,7 @@ if (desktop) {
       update: snapshot.update && sameFields(state.update, snapshot.update) ? state.update : snapshot.update ?? null,
       engine: p.engine, connected: snapshot.server.connected, serverName: snapshot.server.name, sessionId,
       queue: sameList(state.queue, p.queue, sameTrack) ? state.queue : p.queue,
-      entryIds: sameList(state.entryIds, p.entryIds, Object.is) ? state.entryIds : p.entryIds,
+      entryIds: sameList(state.entryIds, p.entryIds, Object.is) ? state.entryIds : p.entryIds, playId: p.playId ?? '',
       index: p.currentIndex, playing: p.playing, position: p.position, duration: p.duration, buffering: p.audio.buffering,
       volume: p.volume, audio: sameFields(state.audio, p.audio) ? state.audio : p.audio,
       devices: !p.devices.length || sameList(state.devices, p.devices, sameFields) ? state.devices : p.devices, device: p.audio.requestedDevice,
@@ -212,7 +216,7 @@ function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play
   web.standby.removeAttribute('src'); web.standby.dataset.entry = ''; web.standby.load();
   plays.instance++; plays.track = track; plays.lastPosition = startAt; plays.listened = 0; plays.startAt = startAt;
   if (startAt && web.active.readyState >= HTMLMediaElement.HAVE_METADATA) { web.active.currentTime = startAt; plays.startAt = 0; }
-  set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false,
+  set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false, playId: `web.${plays.instance}`,
     delivery: web.active.dataset.mp3 ? 'mp3-fallback' : 'original-requested' });
   if (play) void web.active.play().catch(() => set({ playing: false, buffering: false }));
   session(track);
@@ -388,6 +392,7 @@ function nativePlayback(playback: AndroidPlayback) {
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
     plays.instance++; plays.track = track; plays.listened = 0; plays.lastPosition = playback.position; plays.startAt = 0;
+    patch.playId = `android.${playback.playId}`;
     if (before) saveSoon();
   } else {
     const step = playback.position - plays.lastPosition;
@@ -481,8 +486,9 @@ export const player = {
     if (!tracks.length) return;
     let chosen = queueWindow(tracks, start);
     // With shuffle on, a list plays from the chosen song with the rest in random order. Radio
-    // keeps its own order.
-    if (state.shuffle && !radio) {
+    // keeps its own order. The desktop's audio host does this itself (the 'queue' case in
+    // packages/player-mpv/host.ts), for opened files too.
+    if (local && state.shuffle && !radio) {
       const order = shuffleOrder(chosen.items.length, chosen.start);
       chosen = { items: order.map(i => chosen.items[i]), start: chosen.start };
     }
@@ -612,8 +618,9 @@ export const player = {
   },
   repeat(mode: RepeatMode) {
     if (desktop) { void desktop.command({ type: 'repeat', mode }).then(report); return; }
-    // Turning repeat on stops radio (see startStation).
-    if (mode !== 'off' && state.radio) station++;
+    // Turning repeat on stops radio (see startStation), and a station still on its way: its
+    // request finds the counter moved and gives up.
+    if (mode !== 'off') station++;
     set({ repeat: mode, ...(mode !== 'off' && state.radio ? { radio: null } : {}) });
     android?.player.repeat(mode);
     saveModes();

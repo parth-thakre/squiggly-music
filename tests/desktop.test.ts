@@ -177,29 +177,29 @@ describe('play reporting', () => {
     expect(tracker.update(snapshot({ playing: true }), 250)).toEqual([{ trackId: 'a', event: 'started' }]);
   });
 
-  it('starts a new play for another entry but not for a queue edit that shifts the current one', () => {
+  it('starts a new play whenever the host says one began, but not for a queue edit that shifts the current one', () => {
     const tracker = new PlayTracker();
-    play(tracker, 20);
+    play(tracker, 20, 0, { playId: 'p1' });
     // The current song moved from index 0 to 1 while playing on.
-    expect(tracker.update(snapshot({ playing: true, position: 20.25, queue: [track('b'), track('a')], currentIndex: 1 }), 20_250)).toEqual([]);
+    expect(tracker.update(snapshot({ playing: true, position: 20.25, queue: [track('b'), track('a')], currentIndex: 1, playId: 'p1' }), 20_250)).toEqual([]);
     // The same song again at another entry restarts from zero.
-    const repeated = snapshot({ playing: true, position: 0, queue: [track('a'), track('a')], currentIndex: 0 });
+    const repeated = snapshot({ playing: true, position: 0, queue: [track('a'), track('a')], currentIndex: 1, playId: 'p2' });
     expect(tracker.update(repeated, 21_000)).toEqual([{ trackId: 'a', event: 'started' }]);
-    expect(tracker.update(snapshot({ playing: true, position: 1, currentIndex: 1 }), 22_000)).toEqual([{ trackId: 'b', event: 'started' }]);
+    expect(tracker.update(snapshot({ playing: true, position: 1, currentIndex: 1, playId: 'p3' }), 22_000)).toEqual([{ trackId: 'b', event: 'started' }]);
     // Stopping ends the play; playing the song again reports a new start.
-    expect(tracker.update(snapshot({ currentIndex: -1 }), 23_000)).toEqual([]);
-    expect(tracker.update(snapshot({ playing: true, currentIndex: 1 }), 24_000)).toEqual([{ trackId: 'b', event: 'started' }]);
+    expect(tracker.update(snapshot({ currentIndex: -1, playId: 'p3' }), 23_000)).toEqual([]);
+    expect(tracker.update(snapshot({ playing: true, currentIndex: 1, playId: 'p4' }), 24_000)).toEqual([{ trackId: 'b', event: 'started' }]);
   });
 
-  it('follows queue entry ids when the snapshot has them', () => {
+  it('counts each listen under repeat one, where neither the song nor the entry changes', () => {
     const tracker = new PlayTracker();
-    const queue = [track('a'), track('b'), track('a')];
-    const at = (currentIndex: number, position: number, entryIds = ['e1', 'e2', 'e3']) => snapshot({ playing: true, queue, entryIds, currentIndex, position });
-    expect(tracker.update(at(0, 5), 0)).toEqual([{ trackId: 'a', event: 'started' }]);
-    // The same entry moved to the end while playing on: the same play, whatever the position does.
-    expect(tracker.update(at(2, 5.25, ['e2', 'e3', 'e1']), 250)).toEqual([]);
-    // The other copy of A, even at a later position than the first reached, is a new play.
-    expect(tracker.update(at(2, 9, ['e2', 'e1', 'e3']), 500)).toEqual([{ trackId: 'a', event: 'started' }]);
+    // Two full listens of the same entry: the host gives the second its own playId.
+    const first = play(tracker, 200, 0, { playId: 'p1' });
+    const second = play(tracker, 200, 0, { playId: 'p2' }, 200_250);
+    expect(first).toEqual([{ trackId: 'a', event: 'started' }, { trackId: 'a', event: 'finished' }]);
+    expect(second).toEqual(first);
+    // A seek back to the start within one play is not another listen.
+    expect(play(tracker, 10, 0, { playId: 'p2' }, 400_500)).toEqual([]);
   });
 });
 
@@ -539,7 +539,7 @@ describe('main-process radio', () => {
   it('starts artist radio from a top song and never asks for songs like the artist id', async () => {
     const { radio, client, known, log, setSimilar } = fixture();
     setSimilar(() => songs('top1', 's1', 's2', 's1'));
-    expect(await run(radio.start({ kind: 'artist', id: 'ar1', label: 'Artist' }))).toEqual(Either.right(undefined));
+    expect(await run(radio.start({ kind: 'artist', id: 'ar1', label: 'Artist' }))).toEqual(Either.right(true));
     expect(client.topSongs).toHaveBeenCalledWith('ar1', 5);
     expect(client.similarSongs.mock.calls).toEqual([['top1', 40]]);
     // The start song first, then similar songs once each.
@@ -638,6 +638,19 @@ describe('main-process radio', () => {
       expect(log.filter(entry => entry.startsWith('append'))).toEqual([]);
       expect(radio.view).toEqual(change === 'restart' ? { label: 'New' } : change === 'stop' ? null : { label: 'Old' });
     }
+  });
+
+  it('says no station began when other playback took over while the queue was replaced', async () => {
+    // Turning repeat on ends radio (setPlayMode in main/index.ts), even while the queue is replaced;
+    // radio:start then leaves repeat alone.
+    const client = { topSongs: () => Effect.succeed(songs('top1')), album: () => Effect.die('unused'), similarSongs: () => Effect.succeed(songs('s1', 's2')) };
+    const radio: Radio<typeof client> = new Radio({
+      client: () => client, player: () => snapshot(), known: () => undefined, remember: () => undefined,
+      replace: () => Effect.sync(() => radio.end()), follow: () => Effect.void, append: () => Effect.void,
+      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined,
+    });
+    expect(await Effect.runPromise(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }))).toBe(false);
+    expect(radio.view).toBeNull();
   });
 
   it('refuses a start that finishes after other playback began, and keeps the queue when stopped', async () => {

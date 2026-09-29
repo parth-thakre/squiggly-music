@@ -124,7 +124,7 @@ function rememberTracks(tracks: readonly Track[]) {
 // Radio keeps going while every window is hidden: top-ups follow host snapshots, not the renderer.
 const radio = new Radio<SubsonicClient>({
   client: () => server, player: () => state.player, known: id => knownTracks.get(id), remember: rememberTracks,
-  replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => client.playable(track)) }),
+  replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => client.playable(track)), ordered: true }),
   follow: (client, tracks) => send({ type: 'queue-clear' }).pipe(Effect.zipRight(send({ type: 'queue-add', tracks: tracks.map(track => client.playable(track)), where: 'end' }))),
   append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => client.playable(track)), where: 'end' }),
   // Already one request at a time, so it never takes a sync permit from the final queue save.
@@ -356,7 +356,7 @@ function resumeSaved(paused: boolean) {
     const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
     const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
     endRadio();
-    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused });
+    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused, ordered: true });
     queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
   });
 }
@@ -524,9 +524,10 @@ function installHandlers() {
   }));
   handle('radio:start', value => Effect.gen(function* () {
     const seed = yield* Schema.decodeUnknown(RadioSeedSchema)(value).pipe(Effect.mapError(() => new Error('Invalid radio request.')));
-    yield* radio.start(seed);
-    // Radio and repeat exclude each other (setPlayMode): a station turns repeat off.
-    if (state.player.repeat !== 'off') yield* semaphores.audio.withPermits(1)(setPlayMode({ type: 'repeat', mode: 'off' }));
+    const began = yield* radio.start(seed);
+    // Radio and repeat exclude each other (setPlayMode): a station turns repeat off. A start that
+    // other playback overtook began no station, so repeat stays as it is.
+    if (began && state.player.repeat !== 'off') yield* semaphores.audio.withPermits(1)(setPlayMode({ type: 'repeat', mode: 'off' }));
   }), 'library');
   handle('radio:stop', () => Effect.sync(endRadio), 'library');
   // Loads the server-saved queue paused at its song and position. Playback starts only on play.
