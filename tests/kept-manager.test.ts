@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { KeepKind, Track } from '../packages/core/contracts';
 import { KEPT_MESSAGES, limitMessage, MB } from '../packages/core/kept';
-import { Unreachable } from '../packages/adapter-opensubsonic/client';
+import { ServerError, Unreachable } from '../packages/adapter-opensubsonic/client';
 import { KeptStore } from '../apps/desktop/main/keptStore';
 import { choosePlayable, KeepManager, pickLocation, type KeepDeps } from '../apps/desktop/main/keepManager';
 
@@ -210,6 +210,42 @@ describe('keeping songs on the desktop', () => {
     await t.manager.idle();
     expect(job(t.manager, 'al-1')).toBeUndefined();
     expect(t.store.presentIds().sort()).toEqual(['a', 'b', 'c', 'd']);
+  });
+  it('pauses and asks about the server when a song times out or its body drops, and carries on when it is back', async () => {
+    const whole = (id: string) => { const bytes = bytesOf(id); return new Response(bytes, { headers: { 'content-type': 'audio/flac', 'content-length': String(bytes.length) } }); };
+    const failures: Record<string, (id: string) => Response> = {
+      // Headers and one chunk, then nothing.
+      stalls: () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new Uint8Array(4)); },
+        pull: () => new Promise<void>(() => {}),
+      }), { headers: { 'content-type': 'audio/flac' } }),
+      // Headers and one chunk, then the connection drops.
+      drops: () => new Response(new ReadableStream<Uint8Array>({
+        start(controller) { controller.enqueue(new Uint8Array(4)); },
+        pull(controller) { controller.error(new TypeError('terminated')); },
+      }), { headers: { 'content-type': 'audio/flac' } }),
+    };
+    for (const name of ['headers', 'stalls', 'drops']) {
+      let down = true;
+      // Connected, but no headers: the connector's fetch settles only when aborted, and then says
+      // "Keeping was stopped." as SubsonicClient.original does.
+      const silent = name === 'headers' ? { open: (id: string, signal: AbortSignal) => down
+        ? new Promise<Response>((_, reject) => signal.addEventListener('abort', () => reject(new ServerError('Keeping was stopped.')), { once: true }))
+        : Promise.resolve(whole(id)) } : {};
+      const t = await setup({ concurrency: 1, headerTimeoutMs: 50, idleTimeoutMs: 50, respond: id => down ? failures[name](id) : whole(id), ...silent });
+      t.learn(song('a', { coverArt: null }), song('b', { coverArt: null }));
+      await t.manager.keep(t.request('album', 'al-1', ['a', 'b'], null));
+      await t.manager.idle();
+      expect(job(t.manager, 'al-1'), name).toMatchObject({ state: 'paused', done: 0, failed: 0, error: null });
+      expect(t.unreachable, name).toHaveBeenCalledOnce();
+      expect((await readdir(t.dir)).filter(file => file.endsWith('.part')), name).toEqual([]);
+      down = false;
+      t.manager.resumePaused();
+      await t.manager.idle();
+      expect(job(t.manager, 'al-1'), name).toBeUndefined();
+      expect(t.store.presentIds().sort(), name).toEqual(['a', 'b']);
+      await rm(t.dir, { recursive: true, force: true });
+    }
   });
   it('keeps again without fetching what is already kept', async () => {
     const t = await setup();

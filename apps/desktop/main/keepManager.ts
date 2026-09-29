@@ -49,6 +49,9 @@ interface Job extends KeptJob {
   pauses: number;
 }
 class LimitReached extends Error {}
+// Not shown: a keep that got no answer pauses without a message.
+const NO_HEADERS = 'The server did not start sending the song within 15 seconds.';
+const DROPPED = 'The server stopped sending the song.';
 const refusedTypes = (type: string) => type.startsWith('text/') || type === 'application/json' || type === 'application/xml';
 const fail = (error: string): Result => ({ ok: false, error });
 
@@ -322,9 +325,20 @@ export class KeepManager {
   // leaves, and exactly as many as the server said it would send.
   private async fetchSong(track: Track, controller: AbortController, started: (part: string) => void): Promise<number> {
     const { store } = this.d;
-    const headers = setTimeout(() => controller.abort(), this.d.headerTimeoutMs ?? 15_000);
+    // A timeout is no answer (Unreachable): the keep pauses and the host checks the server. Only
+    // the timers set `late`; a cancel, a pause, or a stopped keep aborts without it.
+    let late = false;
+    const giveUp = () => { late = true; controller.abort(); };
+    let headers: ReturnType<typeof setTimeout> | undefined;
+    const opening = this.d.open(track.id, controller.signal);
+    const waited = new Promise<never>((_, reject) => { headers = setTimeout(() => { giveUp(); reject(new Unreachable(NO_HEADERS)); }, this.d.headerTimeoutMs ?? 15_000); });
     let response: Response;
-    try { response = await this.d.open(track.id, controller.signal); } finally { clearTimeout(headers); }
+    try { response = await Promise.race([opening, waited]); }
+    catch (error) {
+      // A response that comes after the timeout is let go.
+      if (late) { opening.then(slow => slow.body?.cancel().catch(() => {}), () => {}); throw new Unreachable(NO_HEADERS); }
+      throw error;
+    } finally { clearTimeout(headers); }
     const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
     if (!response.ok || !response.body || refusedTypes(type)) { await response.body?.cancel().catch(() => {}); throw new Error('The server sent an error instead of the song.'); }
     // Every download counts against one room: what is kept, plus what each running download has
@@ -348,7 +362,7 @@ export class KeepManager {
     let count = 0;
     let idle: ReturnType<typeof setTimeout> | undefined;
     const idleMs = this.d.idleTimeoutMs ?? 30_000;
-    const kick = () => { clearTimeout(idle); idle = setTimeout(() => controller.abort(), idleMs); };
+    const kick = () => { clearTimeout(idle); idle = setTimeout(giveUp, idleMs); };
     const counter = new Transform({
       transform: (chunk: Buffer, _encoding, done) => {
         count += chunk.byteLength;
@@ -356,9 +370,21 @@ export class KeepManager {
         done(reserve(Math.max(count, promised)) ? null : new LimitReached(), chunk);
       },
     });
+    // A body that fails while it is read is a connection that dropped: no answer, as the connector
+    // says for its own reads. Disk errors and the limit come from the other stages and stay as they are.
+    const reader = response.body.getReader();
+    const body = new ReadableStream<Uint8Array>({
+      async pull(stream) {
+        const next = await reader.read().catch(error => { throw controller.signal.aborted ? error : new Unreachable(DROPPED); });
+        try { if (next.done) stream.close(); else stream.enqueue(next.value); } catch { /* cancelled meanwhile */ }
+      },
+      cancel: reason => reader.cancel(reason),
+    });
     kick();
     try {
-      await pipeline(Readable.fromWeb(response.body as WebReadableStream<Uint8Array>, { signal: controller.signal }), counter, createWriteStream(part, { mode: 0o600 }), { signal: controller.signal });
+      await pipeline(Readable.fromWeb(body as WebReadableStream<Uint8Array>, { signal: controller.signal }), counter, createWriteStream(part, { mode: 0o600 }), { signal: controller.signal });
+    } catch (error) {
+      throw late ? new Unreachable(DROPPED) : error;
     } finally { clearTimeout(idle); }
     if (Number.isFinite(declared) && declared !== count) throw new Error('The song arrived incomplete.');
     const handle = await open(part, 'r+');
