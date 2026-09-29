@@ -31,7 +31,11 @@
 .deck-slot.under-controls { margin-top: 10px; max-height: 5.8em; }
 .deck-slot.quiet-line, .deck-slot.quiet-line > * { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
 .deck-slot.quiet-line { margin-top: 4px; max-height: 1.55em; font-size: calc(12.5px * var(--text)); line-height: 1.55; }
-.mini .deck-slot.quiet-line { margin-top: 1px; }
+/* The mini player's quiet lines run one after another on the window buttons' line. contain: size
+   keeps them from making that line taller, and the ones that don't fit are cut at its end. */
+.mini-slots { contain: size; flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: calc(12px * var(--text)); color: var(--soft); }
+.mini .deck-slot.quiet-line { display: inline-block; max-width: 100%; margin: 0; vertical-align: top; font-size: inherit; line-height: 1.45; }
+.mini .deck-slot.quiet-line + .deck-slot { margin-left: 12px; }
 .mini .extension-notices { right: 8px; bottom: 8px; left: 8px; max-width: none; }
 .mini .extension-notice { padding: 6px 10px; font-size: calc(12.5px * var(--text)); }
 /* The phone's strip has room for the song alone; the open sheet shows the slots, and drops the

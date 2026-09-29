@@ -134,7 +134,7 @@ Pages can use the app's own class names (`head`, `head-text`, `facts`, `note`, `
 | --- | --- | --- |
 | `under-title` | Under the song's title and artist | A box about three lines tall |
 | `under-controls` | Under the row of toggles (lyrics, queue, favorite, shuffle, repeat) | A box about four lines tall |
-| `quiet-line` | Under the signal path, the quiet line that says what the file is | One line, cut off with an ellipsis. The mini player shows these too |
+| `quiet-line` | Under the signal path, the quiet line that says what the file is | One line, cut off with an ellipsis. The mini player shows these too, one after another on the line with its window buttons, where the ones that don't fit are cut off |
 
 What doesn't fit is cut off, not scrolled, so keep a slot short. A slot styled with the app's own colours (`var(--soft)`, `var(--accent-text)`) matches the room as the sleeve changes it. The phone's collapsed strip has room for the song alone, so slots show when the sheet is open.
 

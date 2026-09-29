@@ -37,14 +37,15 @@ export function Mini() {
       {/* One line either way: the artist, or what went wrong (in full on hover). */}
       {problem ? <p className="mini-sub" role="alert" title={problem}>{problem}</p>
         : <p className="mini-sub">{track ? track.artist : 'Pick something in the full window.'}</p>}
-      {/* Extensions' quiet lines; the other deck placements need more room than this window has. */}
-      <DeckSlots placement="quiet-line" track={track} />
       {track && <Position track={track} palette={palette} />}
     </div>
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>
     <div className="mini-window">
+      {/* Extensions' quiet lines, all on this one line beside the buttons, so they take no room from
+          the song. The other deck placements need more room than this window has. */}
+      <div className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></div>
       {failed ? <button type="button" className="text-button" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
         : problem && <button type="button" className="text-button" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
       <button type="button" className="text-button" aria-pressed={onTop} title="Keep the mini player above other windows" onClick={() => void pin()}>{onTop ? 'Unpin' : 'Pin'}</button>

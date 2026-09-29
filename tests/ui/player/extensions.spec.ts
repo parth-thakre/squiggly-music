@@ -199,6 +199,36 @@ test.describe('deck slots and sections', { tag: '@slots' }, () => {
     await expect(page.getByText('Marked in the mini window.')).toBeVisible();
   });
 
+  test('quiet lines in the mini player leave the song, the squiggle, and the window buttons their room', async ({ page }) => {
+    await withSlots(page, true, ['deck-note', 'lines']);
+    const mini = page.locator('.mini');
+    const box = async (locator: import('@playwright/test').Locator) => (await locator.boundingBox())!;
+    // The window's default size, then its smallest.
+    for (const [width, height] of [[420, 112], [320, 96]] as const) {
+      await page.setViewportSize({ width, height });
+      if (page.url() === 'about:blank') await page.goto('/');
+      const slots = mini.locator('.deck-slot.quiet-line');
+      await expect(slots).toHaveCount(4);
+      await expect(mini.getByText('From 1977.')).toBeVisible();
+      const title = await box(mini.locator('.mini-title'));
+      const squiggle = await box(mini.locator('.squiggle'));
+      const pin = await box(mini.getByRole('button', { name: 'Pin' }));
+      expect(title.y).toBeGreaterThanOrEqual(0);
+      if (width === 420) expect(squiggle.y + squiggle.height).toBeLessThanOrEqual(pin.y);
+      // The slots share the window buttons' line, left of them and inside the window.
+      const line = await box(mini.locator('.mini-slots'));
+      expect(line.y).toBeGreaterThanOrEqual(pin.y - 1);
+      expect(line.y + line.height).toBeLessThanOrEqual(Math.min(pin.y + pin.height + 1, height));
+      expect(line.x + line.width).toBeLessThanOrEqual(pin.x);
+      // Taking the slots away moves nothing else: they took no room from the song.
+      await page.addStyleTag({ content: '.mini .deck-slot { display: none !important; }' });
+      expect(await box(mini.locator('.mini-title'))).toEqual(title);
+      expect(await box(mini.locator('.squiggle'))).toEqual(squiggle);
+      expect(await box(mini.getByRole('button', { name: 'Pin' }))).toEqual(pin);
+      await page.evaluate(() => document.head.lastElementChild!.remove());
+    }
+  });
+
   test('settings saved in both windows at the same moment keep both changes', async ({ page }) => {
     type Store = { set(key: string, value: unknown): Promise<void>; all(): Record<string, unknown> };
     const miniPage = await page.context().newPage();
