@@ -81,6 +81,7 @@
       if (!asset) return;
       var links = doc.querySelectorAll('[data-asset="' + key + '"]');
       for (var j = 0; j < links.length; j++) links[j].href = asset.browser_download_url;
+      // Only the data-file element changes. What the file needs sits beside it and stays.
       var file = doc.querySelector('[data-file="' + key + '"]');
       if (file) file.textContent = asset.name + (asset.size > 1000000 ? ", " + Math.round(asset.size / 1000000) + " MB" : "");
     });
