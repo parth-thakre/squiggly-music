@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import type { Share } from '../../../../../packages/core/contracts';
 import { copyText } from './exports';
-import { api, invalidate, useResource } from './library';
+import { api, invalidate, onLibraryReset, useResource } from './library';
 import { nav } from './route';
 import { plural } from './ui';
 import './share.css';
@@ -40,6 +40,8 @@ function finishClose() {
 function closeShare() {
   if (inHistory) nav.closeOverlay(); else finishClose();
 }
+// Another account, or signed out: the dialog belonged to the last one.
+onLibraryReset(closeShare);
 
 const DAY = 86_400_000;
 const expiries: { id: string; label: string; at: () => number | undefined }[] = [
@@ -81,6 +83,8 @@ function Dialog({ target }: { target: ShareRequest }) {
   const create = async () => {
     setBusy(true); setError(null);
     const result = await api.createShare(target.ids, description.trim() || undefined, expiries.find(e => e.id === expiry)?.at());
+    // Closed meanwhile, or the session ended: this answer is no longer the dialog's.
+    if (request !== target) return;
     setBusy(false);
     if (!result.ok) { setError(result.error); return; }
     invalidate('shares');

@@ -104,6 +104,22 @@ test.describe('shares', () => {
     await expect.poll(() => fake.callsTo('shares').length).toBeGreaterThan(0);
     await expect(app.main.getByRole('heading', { name: 'Shares' })).toHaveCount(0);
   });
+
+  test('a session that ends while the dialog is open closes it and shows the sign-in screen', async ({ app, page, fake }) => {
+    await app.openAlbum('Quiet Harbor');
+    await app.main.getByRole('button', { name: 'More', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Share…' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Share “Quiet Harbor”' });
+    await expect(dialog).toBeVisible();
+    // The server forgets the session: its 30-day lifetime runs out.
+    fake.clock.now += 31 * DAY;
+    await dialog.getByRole('button', { name: 'Create' }).click();
+    await expect(app.signInPassword).toBeVisible();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByText('Sign in to use this library.')).toHaveCount(0);
+    await app.signInPassword.click();
+    await expect(app.signInPassword).toBeFocused();
+  });
 });
 
 // On a phone the dialog is a bottom sheet, and Back closes it as it closes the menu. Android's
