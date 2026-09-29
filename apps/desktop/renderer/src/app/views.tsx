@@ -1319,7 +1319,8 @@ function Stations() {
 
 // Mixes ------------------------------------------------------------------------------------------
 // Every automatic playlist the library can build, grouped by what it draws from. The two every
-// library has come first; the groups after them are hidden when they have nothing. This is the
+// library has come first; the groups after them are hidden when they have nothing, and show the
+// error when their lookup failed, since a failure says nothing about what's there. This is the
 // page for the decades, so it looks for them (nine small requests, kept under the same key the
 // Playlists page and Records' Decade use), and their group appears once they're found.
 const historyMixes = new Set(['repeat', 'lately']);
@@ -1341,8 +1342,10 @@ export function Mixes() {
   return <>
     <MixesHead />
     <div className="shelf-section"><MixGrid mixes={always} /></div>
-    {played.length > 0 && <MixGroup id="mixes-played" title="From what you play"><MixGrid mixes={played} /></MixGroup>}
-    {byGenre.length > 0 && <MixGroup id="mixes-genre" title="By genre"><MixGrid mixes={byGenre} /></MixGroup>}
+    {!history.ok ? <MixGroup id="mixes-played" title="From what you play"><Status>{history.error}</Status></MixGroup>
+      : played.length > 0 && <MixGroup id="mixes-played" title="From what you play"><MixGrid mixes={played} /></MixGroup>}
+    {!genres.ok ? <MixGroup id="mixes-genre" title="By genre"><Status>{genres.error}</Status></MixGroup>
+      : byGenre.length > 0 && <MixGroup id="mixes-genre" title="By genre"><MixGrid mixes={byGenre} /></MixGroup>}
     {decades && !decades.ok ? <MixGroup id="mixes-decade" title="By decade"><Status>{decades.error}</Status></MixGroup>
       : byDecade.length > 0 && <MixGroup id="mixes-decade" title="By decade"><MixGrid mixes={byDecade} /></MixGroup>}
   </>;

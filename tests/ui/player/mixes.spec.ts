@@ -41,6 +41,27 @@ test.describe('mixes', () => {
     await expect(group(app, 'From what you play')).toHaveCount(0);
   });
 
+  test('a failed genre or history lookup says why instead of leaving its group out', async ({ app, fake, page }) => {
+    fake.frequent = ['al-3', 'al-5'];
+    await app.signIn();
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('m');
+    await expect(names(app, 'By genre')).toHaveCount(3);
+    // A reload keeps the page and forgets the answers, so these are the page's own lookups.
+    fake.failNext('genres', 'The server is busy.');
+    fake.failNext('albums', 'The server is not answering.');
+    await page.reload();
+    await expect(app.heading).toHaveText('Mixes');
+    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['From what you play', 'By genre', 'By decade']);
+    await expect(group(app, 'From what you play')).toContainText('The server is not answering.');
+    await expect(names(app, 'From what you play')).toHaveCount(0);
+    await expect(group(app, 'By genre')).toContainText('The server is busy.');
+    await expect(names(app, 'By genre')).toHaveCount(0);
+    await expect(app.main.locator('ul.grid').first().locator('.grid-name')).toHaveText(['Everything, shuffled', 'Recently added']);
+    await expect(names(app, 'By decade')).toHaveCount(4);
+  });
+
   test('a mix that answers after another song started leaves that song playing', async ({ app, fake, page }) => {
     await page.setViewportSize({ width: 1100, height: 480 });
     await app.signIn();
