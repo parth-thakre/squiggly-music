@@ -2,6 +2,7 @@ import { Effect, Either, Schema } from 'effect';
 import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
+  AlbumYears, ArtistInfo, DiscTitle,
 } from '../core/contracts';
 import type { PlayableTrack } from '../player-mpv/protocol';
 import { Metrics } from '../core/metrics';
@@ -42,7 +43,10 @@ const AlbumFields = {
   artists: ArtistRefsSchema,
   userRating: RatingSchema,
 };
-const AlbumSchema = Schema.Struct({ ...AlbumFields, song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) });
+const AlbumSchema = Schema.Struct({ ...AlbumFields, song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))),
+  // OpenSubsonic: the names some releases give their discs.
+  discTitles: Schema.optional(Schema.Array(Schema.Struct({ disc: CountSchema, title: Schema.optional(Schema.String.pipe(Schema.maxLength(1024))) })).pipe(Schema.maxItems(500))),
+});
 const ArtistFields = {
   id: IdSchema, name: Schema.String, albumCount: Schema.optional(CountSchema),
   coverArt: Schema.optional(ReferenceSchema), starred: Schema.optional(Schema.String),
@@ -129,6 +133,15 @@ const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Sc
 const SongListSchema = Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(200))) });
 const SimilarSongsSchema = Schema.Struct({ similarSongs: SongListSchema });
 const TopSongsSchema = Schema.Struct({ topSongs: SongListSchema });
+const SongsByGenreSchema = Schema.Struct({ songsByGenre: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
+// Navidrome fills these from its Last.fm and Spotify agents; with the agents off, or nothing
+// found, every field is missing or empty. Similar artists outside the library have no id.
+const TextFieldSchema = Schema.optional(Schema.String.pipe(Schema.maxLength(100_000)));
+const ArtistInfoSchema = Schema.Struct({ artistInfo2: Schema.Struct({
+  biography: TextFieldSchema, musicBrainzId: Schema.optional(ReferenceSchema), lastFmUrl: TextFieldSchema,
+  smallImageUrl: TextFieldSchema, mediumImageUrl: TextFieldSchema, largeImageUrl: TextFieldSchema,
+  similarArtist: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.optional(ReferenceSchema), name: Schema.String.pipe(Schema.maxLength(1024)) })).pipe(Schema.maxItems(200))),
+}) });
 const LegacyLyricsSchema = Schema.Struct({ lyrics: Schema.optional(Schema.Struct({ value: Schema.optional(Schema.String.pipe(Schema.maxLength(200_000))) })) });
 // Saved queues. Positions are milliseconds. Legacy servers name the current song; indexBasedQueue gives its index.
 const QueueFields = {
@@ -236,6 +249,31 @@ const playlistEditMessages: Record<number, string> = {
   50: 'This playlist cannot be changed. Only its owner can edit it, and smart or imported playlists are read-only.',
   70: 'This playlist no longer exists. Refresh your playlists.',
 };
+// Last.fm's biographies arrive as HTML ending in a "Read more on Last.fm" link. The page shows
+// text only: the link goes, then every tag, then the entities are decoded and the spacing tidied.
+const entities: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+export function plainText(html: string): string | null {
+  const text = html
+    .replace(/<a\b[^>]*>\s*Read more on Last\.fm\s*<\/a>\.?/gi, ' ')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (entity, name: string) => {
+      if (name[0] !== '#') return entities[name.toLowerCase()] ?? entity;
+      const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : Number(name.slice(1));
+      return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+    })
+    .replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+// Addresses to show or follow later: http(s) only, anything else is unknown.
+const webAddress = (value: string | undefined) => {
+  if (!value?.trim()) return null;
+  try { return ['http:', 'https:'].includes(new URL(value.trim()).protocol) ? value.trim() : null; } catch { return null; }
+};
+// Only discs the files actually name; an album without any leaves the field out.
+function discTitles(titles: readonly { disc: number; title?: string }[] | undefined): { discTitles?: DiscTitle[] } {
+  const named = (titles ?? []).filter(item => item.title?.trim()).map(item => ({ disc: item.disc, title: item.title!.trim() }));
+  return named.length ? { discTitles: named } : {};
+}
 const toItems = (items: Schema.Schema.Type<ReturnType<typeof itemsSchema>>): LibraryItems => ({
   artists: (items.artist ?? []).map(toArtist), albums: (items.album ?? []).map(toAlbum), tracks: (items.song ?? []).map(song => toTrack(song)),
 });
@@ -356,9 +394,10 @@ export class SubsonicClient {
       name: result.type?.toLowerCase() === 'navidrome' ? 'Navidrome' : 'OpenSubsonic',
     })));
   }
-  albumList(type: AlbumListType, offset: number, size: number) {
+  albumList(type: AlbumListType, offset: number, size: number, years?: AlbumYears) {
     const count = clamp(size, 1, 500);
-    return this.request('getAlbumList2', AlbumsSchema, { type, size: String(count), offset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)) }).pipe(Effect.flatMap(result => {
+    const range: Params = type === 'byYear' && years ? { fromYear: String(clamp(years.fromYear, 0, 9999)), toYear: String(clamp(years.toYear, 0, 9999)) } : {};
+    return this.request('getAlbumList2', AlbumsSchema, { type, size: String(count), offset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)), ...range }).pipe(Effect.flatMap(result => {
       const albums = result.albumList2.album ?? [];
       // Reject an oversized page rather than silently truncating it.
       return albums.length > count ? Effect.fail(new ServerError('The server returned more albums than requested.')) : Effect.succeed(albums.map(toAlbum));
@@ -367,7 +406,7 @@ export class SubsonicClient {
   album(id: string) {
     return this.request('getAlbum', AlbumResponseSchema, { id }).pipe(Effect.flatMap(({ album }) => album.id !== id
       ? Effect.fail(new ServerError('The server did not return the requested album. Refresh the library.'))
-      : Effect.succeed<AlbumDetail>({ album: toAlbum({ ...album, songCount: album.songCount ?? album.song?.length }), tracks: (album.song ?? []).map(song => toTrack(song, album)) })));
+      : Effect.succeed<AlbumDetail>({ album: toAlbum({ ...album, songCount: album.songCount ?? album.song?.length }), tracks: (album.song ?? []).map(song => toTrack(song, album)), ...discTitles(album.discTitles) })));
   }
   artists() {
     return this.request('getArtists', ArtistsSchema).pipe(Effect.flatMap(result => {
@@ -606,6 +645,29 @@ export class SubsonicClient {
     return location.href;
   }
   playable(track: Track): PlayableTrack { return { track, location: this.streamLocation(track.id) }; }
+  // An artist's biography, links and similar artists, as the server's agents found them.
+  artistInfo(artistId: string) {
+    return this.request('getArtistInfo2', ArtistInfoSchema, { id: artistId, count: '20' }).pipe(Effect.map(({ artistInfo2: info }): ArtistInfo => {
+      const seen = new Set<string>();
+      return {
+        biography: info.biography ? plainText(info.biography) : null,
+        musicBrainzId: info.musicBrainzId?.trim() || null,
+        lastFmUrl: webAddress(info.lastFmUrl),
+        images: { small: webAddress(info.smallImageUrl), medium: webAddress(info.mediumImageUrl), large: webAddress(info.largeImageUrl) },
+        similar: (info.similarArtist ?? []).flatMap(artist => {
+          const name = artist.name.trim();
+          if (!artist.id || !name || artist.id === artistId || seen.has(artist.id)) return [];
+          seen.add(artist.id);
+          return [{ id: artist.id, name }];
+        }),
+      };
+    }));
+  }
+  songsByGenre(genre: string, offset: number, size: number) {
+    const count = clamp(size, 1, 500);
+    return this.request('getSongsByGenre', SongsByGenreSchema, { genre, count: String(count), offset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)) })
+      .pipe(Effect.flatMap(result => songList(result.songsByGenre.song, count)));
+  }
 }
 
 // The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
@@ -632,7 +694,7 @@ interface LibraryEntry<A, R> {
 }
 const entry = <A, I, R>(schema: Schema.Schema<A, I>, run: (client: SubsonicClient, args: A) => Effect.Effect<R, Error>, tracks: (value: R) => readonly Track[] = () => []): LibraryEntry<A, R> => ({ schema, run, tracks });
 const library = {
-  albums: entry(LibraryRequestSchemas.albums, (client, [type, offset, size]) => client.albumList(type, offset, size)),
+  albums: entry(LibraryRequestSchemas.albums, (client, [type, offset, size, years]) => client.albumList(type, offset, size, years)),
   album: entry(LibraryRequestSchemas.album, (client, [id]) => client.album(id), value => value.tracks),
   artists: entry(LibraryRequestSchemas.artists, client => client.artists()),
   artist: entry(LibraryRequestSchemas.artist, (client, [id]) => client.artist(id)),
@@ -657,6 +719,8 @@ const library = {
   savedQueue: entry(LibraryRequestSchemas.savedQueue, client => client.savedQueue(), value => value?.tracks ?? []),
   saveQueue: entry(LibraryRequestSchemas.saveQueue, (client, [trackIds, currentIndex, position]) => client.saveQueue(trackIds, currentIndex, position)),
   rate: entry(LibraryRequestSchemas.rate, (client, [, id, rating]) => client.setRating(id, rating)),
+  artistInfo: entry(LibraryRequestSchemas.artistInfo, (client, [artistId]) => client.artistInfo(artistId)),
+  songsByGenre: entry(LibraryRequestSchemas.songsByGenre, (client, [genre, offset, size]) => client.songsByGenre(genre, offset, size), value => value),
 } satisfies { [K in LibraryMethod]: LibraryEntry<any, LibraryValue<K>> };
 export const libraryMethods = Object.keys(library) as LibraryMethod[];
 export const isLibraryMethod = (method: string): method is LibraryMethod => Object.hasOwn(library, method);

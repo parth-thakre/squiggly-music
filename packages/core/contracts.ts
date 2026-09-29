@@ -41,7 +41,12 @@ export interface Album {
   userRating?: number;
 }
 export interface Artist { id: string; name: string; albumCount: number; coverArt: string | null; starred: boolean; userRating?: number }
-export interface AlbumDetail { album: Album; tracks: Track[] }
+export interface AlbumDetail {
+  album: Album; tracks: Track[];
+  // OpenSubsonic's discTitles: the discs the files name ("Live at the Roundhouse"). Absent when none do.
+  discTitles?: DiscTitle[];
+}
+export interface DiscTitle { disc: number; title: string }
 export interface ArtistDetail { artist: Artist; albums: Album[] }
 export interface Playlist {
   id: string; name: string; comment: string | null; owner: string | null;
@@ -52,7 +57,9 @@ export interface Playlist {
 export interface PlaylistDetail { playlist: Playlist; tracks: Track[] }
 export interface Genre { name: string; songCount: number; albumCount: number }
 export interface LibraryItems { artists: Artist[]; albums: Album[]; tracks: Track[] }
-export type AlbumListType = 'newest' | 'recent' | 'frequent' | 'highest' | 'random' | 'starred' | 'alphabeticalByName' | 'alphabeticalByArtist';
+export type AlbumListType = 'newest' | 'recent' | 'frequent' | 'highest' | 'random' | 'starred' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'byYear';
+// The years a byYear list covers, inclusive. Only byYear takes them.
+export interface AlbumYears { fromYear: number; toYear: number }
 export interface RandomSongOptions { size: number; genre?: string; fromYear?: number; toYear?: number }
 // The Records sorts, for tracks. Most and recently played list played tracks only, and top
 // rated (highest) rated tracks only.
@@ -67,7 +74,7 @@ export type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 // Library browsing, shared by the desktop bridge (IPC to the main process) and the
 // browser preview (HTTP to the dev server). Both call the same OpenSubsonic connector.
 export interface LibraryApi {
-  albums(type: AlbumListType, offset: number, size: number): Promise<Result<Album[]>>;
+  albums(type: AlbumListType, offset: number, size: number, years?: AlbumYears): Promise<Result<Album[]>>;
   album(id: string): Promise<Result<AlbumDetail>>;
   artists(): Promise<Result<Artist[]>>;
   artist(id: string): Promise<Result<ArtistDetail>>;
@@ -103,6 +110,21 @@ export interface LibraryApi {
   rate(target: StarTarget, id: string, rating: Rating): Promise<Result>;
   // A URL the renderer may load directly. It never contains credentials.
   coverUrl(coverArt: string, size: number): string;
+  // What the server's agents (Last.fm, Spotify) know about an artist. Every field may be empty.
+  artistInfo(artistId: string): Promise<Result<ArtistInfo>>;
+  // One genre's songs, a page at a time. Fewer than size: the last page.
+  songsByGenre(genre: string, offset: number, size: number): Promise<Result<Track[]>>;
+}
+export interface ArtistInfo {
+  // Plain text: the server's HTML with its tags and its "Read more on Last.fm" link taken out.
+  biography: string | null;
+  musicBrainzId: string | null;
+  lastFmUrl: string | null;
+  // External addresses (Last.fm and the like). The renderer doesn't load them: its CSP only
+  // allows covers served through the app.
+  images: { small: string | null; medium: string | null; large: string | null };
+  // Only artists in this library: the server gives ids to those alone.
+  similar: ArtistRef[];
 }
 export interface LyricsQuery { id: string; title: string; artist: string; album: string; duration: number | null }
 // Times are seconds from the beginning of the song. A synced line's words, joined, spell its

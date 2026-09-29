@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
+import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, usePlayer } from './player';
@@ -10,7 +11,7 @@ import { Credits } from './credits';
 import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
-import { TrackTable } from './TrackTable';
+import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
@@ -147,7 +148,7 @@ const sorts: { type: TrackSort; label: string }[] = [
   { type: 'frequent', label: 'Most played' }, { type: 'recent', label: 'Recently played' }, { type: 'random', label: 'Random' },
   { type: 'highest', label: 'Top rated' },
 ];
-function Sorts({ list, type }: { list: 'records' | 'tracks'; type: AlbumListType }) {
+function Sorts({ list, type, children }: { list: 'records' | 'tracks'; type: AlbumListType; children?: ReactNode }) {
   return <div className="choices" role="group" aria-label={`Sort ${list}`}>
     {sorts.map(sort => <button key={sort.type} type="button" aria-pressed={sort.type === type} onClick={() => {
       // Choosing Random again is asking for a new draw.
@@ -156,6 +157,7 @@ function Sorts({ list, type }: { list: 'records' | 'tracks'; type: AlbumListType
       if (sort.type === 'highest' && type !== 'highest') paged.delete(`${list}:highest`);
       nav.go(list === 'records' ? { view: 'records', sort: sort.type } : { view: 'tracks', sort: sort.type }, true);
     }}>{sort.label}</button>)}
+    {children}
   </div>;
 }
 
@@ -165,14 +167,20 @@ const PAGE = 60;
 
 export function Records() {
   const route = useRoute();
-  const type = route.view === 'records' && route.sort ? route.sort : 'newest';
-  const albums = usePaged<Album>(`records:${type}`, PAGE, (offset, seed) =>
-    [`albums:${type}:${offset}:${PAGE}${type === 'random' ? `:${seed}` : ''}`, () => api.albums(type, offset, PAGE)], type === 'random');
+  // A decade, when chosen, lists that decade's records by year; the sort waits in the route for "All".
+  const decade = route.view === 'records' ? decadeOf(route.decade) : null;
+  const sort = route.view === 'records' && route.sort ? route.sort : 'newest';
+  const type = decade !== null ? 'byYear' : sort;
+  const list = decade !== null ? `byYear:${decade}` : type;
+  const albums = usePaged<Album>(`records:${list}`, PAGE, (offset, seed) =>
+    [`albums:${list}:${offset}:${PAGE}${type === 'random' ? `:${seed}` : ''}`, () => decade !== null
+      ? api.albums(type, offset, PAGE, { fromYear: decade, toYear: decade + 9 }) : api.albums(type, offset, PAGE)], type === 'random');
   const sentinel = useMore(albums.more, albums.items.length);
   return <>
-    <Head title="Records"><Sorts list="records" type={type} /></Head>
+    <Head title="Records"><Sorts list="records" type={type}><Decades sort={route.view === 'records' ? route.sort : undefined} decade={decade} /></Sorts></Head>
     {albums.items.length ? <AlbumGrid albums={albums.items} /> : albums.done
-      ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.'
+      ? <Status>{decade !== null ? `No records from the ${decade}s.`
+        : type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.'
         : type === 'highest' ? 'Nothing rated yet. Records you rate will collect here, best first.' : 'No records on this server yet.'}</Status>
       : albums.error ? <Status>{albums.error}</Status> : <p className="status loading">Opening your records</p>}
     {albums.error && albums.items.length > 0 && <Status>{albums.error}</Status>}
@@ -241,7 +249,7 @@ function PlayOver({ label, play, small = false }: { label: string; play(): Promi
 export function AlbumPage({ id }: { id: string }) {
   const result = useResource(`album:${id}`, () => api.album(id));
   const playingHere = usePlayer(s => current(s)?.albumId === id);
-  return <Pending result={result} waiting="Reading the tracklist">{({ album, tracks }) => {
+  return <Pending result={result} waiting="Reading the tracklist">{({ album, tracks, discTitles }) => {
     const title = splitTitle(album.name);
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
@@ -253,7 +261,7 @@ export function AlbumPage({ id }: { id: string }) {
           <MoreButton target={{ kind: 'album', album }} />
         </Actions>
       </Head>
-      <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" />
+      <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" groups={discGroups(tracks, discTitles)} />
     </>;
   }}</Pending>;
 }
@@ -358,6 +366,7 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
 export function ArtistPage({ id }: { id: string }) {
   const result = useResource(`artist:${id}`, () => api.artist(id));
   const top = useResource(`top:${id}`, () => api.topSongs(id, 10));
+  const info = useResource(`artistInfo:${id}`, () => api.artistInfo(id));
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Every record is loaded first; if any fails, nothing plays and the reason is shown.
@@ -384,8 +393,10 @@ export function ArtistPage({ id }: { id: string }) {
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>
+    {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
     {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
     <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>
+    {info?.ok && info.value.similar.length > 0 && <SimilarArtists artists={info.value.similar} />}
   </>}</Pending>;
 }
 
@@ -809,5 +820,135 @@ export function DiagnosticsView() {
       {audio?.decoderFormat && <tr><th>Decoded</th><td>{[audio.decoderFormat, kHz(audio.decoderRate)].filter(Boolean).join(' · ')}</td><td /></tr>}
       {audio?.outputBackend && <tr><th>Handed to</th><td>{[audio.outputBackend, kHz(audio.outputRate), audio.outputFormat].filter(Boolean).join(' · ')}</td><td /></tr>}
     </tbody></table>
+  </>;
+}
+
+// Artist bios and similar artists ---------------------------------------------------------
+// What the server's agents (Last.fm, Spotify) know. Nothing shows when they know nothing.
+
+// The first few sentences, and the rest behind More. The text is plain (client.ts strips the
+// server's HTML), and it is rendered as text.
+const BIO_SENTENCES = 3, BIO_LENGTH = 420;
+function bioSummary(text: string): string {
+  const sentences = text.match(/[^.!?]+(?:[.!?]+["'”’)\]]*|$)\s*/g) ?? [text];
+  let summary = '';
+  for (const sentence of sentences.slice(0, BIO_SENTENCES)) {
+    if (summary && summary.length + sentence.length > BIO_LENGTH) break;
+    summary += sentence;
+  }
+  summary = summary.trim();
+  // One long sentence: cut at a word.
+  if (summary.length > BIO_LENGTH) summary = `${summary.slice(0, BIO_LENGTH).replace(/\s+\S*$/, '')}…`;
+  return summary;
+}
+function Biography({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const summary = useMemo(() => bioSummary(text), [text]);
+  const more = summary !== text;
+  return <section className="bio" aria-label="About">
+    <p>{open || !more ? text : summary}{more && <>
+      {' '}<button type="button" className="link" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? 'Less' : 'More'}</button>
+    </>}</p>
+  </section>;
+}
+function SimilarArtists({ artists }: { artists: ArtistInfo['similar'] }) {
+  return <section className="shelf-section" aria-labelledby="similar-artists">
+    <h2 id="similar-artists">Similar artists</h2>
+    <ul className="similar">{artists.map(artist => <li key={artist.id}>
+      <button type="button" className="link" onClick={() => nav.go({ view: 'artist', id: artist.id })}>{artist.name}</button>
+    </li>)}</ul>
+  </section>;
+}
+
+// Discs --------------------------------------------------------------------------------------
+// A record on more than one disc gets a heading per disc: its title where the files name one,
+// else its number. A record on one disc, or with songs whose disc is unknown, stays one list.
+function discGroups(tracks: Track[], titles: DiscTitle[] = []): TrackGroup[] | undefined {
+  const discs = tracks.map(track => track.discNumber ?? null);
+  if (discs.some(disc => disc === null) || new Set(discs).size < 2) return undefined;
+  const named = new Map(titles.map(item => [item.disc, item.title]));
+  return discs.flatMap((disc, i) => i > 0 && discs[i - 1] === disc ? [] : [{ at: i, label: named.get(disc!) ?? `Disc ${disc}` }]);
+}
+
+// Decades on Records ---------------------------------------------------------------------------
+// The decades the automatic playlists found (mixes.ts), shared with the Playlists page. They are
+// asked for only once Decade is opened (a handful of small requests), not on every visit to
+// Records. Choosing one replaces the place, as a sort does, so Back returns with the filter on.
+const decadeOf = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 9990 && value % 10 === 0 ? value : null;
+function Decades({ sort, decade }: { sort: AlbumListType | undefined; decade: number | null }) {
+  const [open, setOpen] = useState(decade !== null);
+  const shown = open || decade !== null;
+  const found = useResource(shown ? 'decades' : null, decadesResult);
+  const known = found?.ok ? found.value : [];
+  const decades = decade !== null && !known.includes(decade) ? [...known, decade].sort((a, b) => b - a) : known;
+  const choose = (chosen: number | null) => nav.go({ view: 'records', ...(sort ? { sort } : {}), ...(chosen !== null ? { decade: chosen } : {}) }, true);
+  return <>
+    <button type="button" className={`decade-toggle${decade !== null ? ' on' : ''}`} aria-expanded={shown}
+      onClick={() => { if (decade !== null) choose(null); setOpen(!shown); }}>Decade</button>
+    {shown && <div className="decades" role="group" aria-label="Decade">
+      {!found ? <span className="status-inline">Finding the decades in your library</span>
+        : !found.ok ? <span className="status-inline">{found.error}</span>
+        : !decades.length ? <span className="status-inline">No decade has enough songs yet.</span>
+        : <>
+          <button type="button" aria-pressed={decade === null} onClick={() => choose(null)}>All</button>
+          {decades.map(value => <button key={value} type="button" aria-pressed={decade === value} onClick={() => choose(value)}>{value}s</button>)}
+        </>}
+    </div>}
+  </>;
+}
+
+// Genres ---------------------------------------------------------------------------------------
+
+const bySongs = (a: Genre, b: Genre) => b.songCount - a.songCount || a.name.localeCompare(b.name);
+export function Genres() {
+  const result = useResource('genres', () => api.genres());
+  return <>
+    <Head title="Genres" />
+    <Pending result={result} waiting="Gathering genres">{genres => genres.length ? <ul className="rows genres">
+      {[...genres].sort(bySongs).map(genre => <li key={genre.name}>
+        <button type="button" onClick={() => nav.go({ view: 'genre', name: genre.name })}>
+          <span className="row-text">
+            <span className="row-name">{genre.name}</span>
+            <span className="row-sub">{plural(genre.songCount, 'song')}, {plural(genre.albumCount, 'record')}</span>
+          </span>
+        </button>
+      </li>)}
+    </ul> : <Status>No genres yet. Genres come from the tags in your files.</Status>}</Pending>
+  </>;
+}
+
+// One genre's songs, 200 at a time as the list nears its end, like Tracks.
+const GENRE_PAGE = 200;
+export function GenrePage({ name }: { name: string }) {
+  const tracks = usePaged<Track>(`genre:${name}`, GENRE_PAGE, offset => [`genre:${name}:${offset}:${GENRE_PAGE}`, () => api.songsByGenre(name, offset, GENRE_PAGE)]);
+  const sentinel = useMore(tracks.more, tracks.items.length);
+  const genres = useResource('genres', () => api.genres());
+  const genre = genres?.ok ? genres.value.find(g => g.name === name) : undefined;
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Shuffle draws from the whole genre, not just the songs loaded so far.
+  const shuffle = async () => {
+    setProblem(null); setBusy(true);
+    const drawn = await api.randomSongs({ size: 500, genre: name });
+    setBusy(false);
+    if (!drawn.ok) { setProblem(drawn.error); return; }
+    if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+  };
+  return <>
+    <Head title={name}>
+      {genre && <p className="byline"><span>{plural(genre.songCount, 'song')}, {plural(genre.albumCount, 'record')}</span></p>}
+      <div className="actions">
+        <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
+          <span className="disc"><Glyph kind="play" /></span>Play
+        </button>
+        <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
+      </div>
+      {problem && <p className="note" role="alert">{problem}</p>}
+    </Head>
+    {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
+      ? <Status>No songs are tagged {name}.</Status>
+      : tracks.error ? <Status>{tracks.error}</Status> : <p className="status loading">Gathering songs</p>}
+    {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
+    <div ref={sentinel} className="sentinel" />
   </>;
 }

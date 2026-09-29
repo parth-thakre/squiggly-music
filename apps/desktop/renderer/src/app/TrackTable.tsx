@@ -21,7 +21,11 @@ function occurrenceKeys(tracks: Track[]) {
 // A song list. Click plays; ctrl/cmd-click and shift-click select; right-click or long-press
 // opens the menu for the selection. Where the list is editable, rows drag to reorder,
 // Alt+Up and Alt+Down move the focused or selected song, and Delete removes the selection.
-export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove }: {
+// A heading between rows (a record's discs): it sits above the row at index `at`.
+export interface TrackGroup { at: number; label: string }
+const noGroups: TrackGroup[] = [];
+
+export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, groups = noGroups }: {
   tracks: Track[]; album?: string; albumArtist?: string; showAlbum?: boolean; numbered?: 'position' | 'track';
   // In the queue, the entry id the click saw comes along: pass it to player.jump.
   onPick?(index: number, entryId?: string): void;
@@ -29,6 +33,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   playlist?: Playlist; queue?: boolean;
   onMove?(from: number, to: number): void;
   onRemove?(indexes: number[]): void;
+  // Headings only: rows keep one numbering of indexes, one selection, and one keyboard.
+  groups?: TrackGroup[];
 }) {
   useActiveTheme();
   const ROW = rowHeight();
@@ -71,7 +77,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     if (!scroller) return;
     const update = () => {
       const top = table.current!.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      const first = Math.max(0, Math.floor(-top / ROW) - 10);
+      // Headings take a row's height each, so a row sits up to groups.length rows lower.
+      const first = Math.max(0, Math.floor(-top / ROW) - 10 - groups.length);
       const last = Math.min(tracks.length, Math.ceil((scroller.clientHeight - top) / ROW) + 10);
       setRange(r => r[0] === first && r[1] === last ? r : [first, last]);
     };
@@ -79,7 +86,9 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     scroller.addEventListener('scroll', update, { passive: true });
     addEventListener('resize', update);
     return () => { scroller.removeEventListener('scroll', update); removeEventListener('resize', update); };
-  }, [windowed, tracks.length, ROW]);
+  }, [windowed, tracks.length, ROW, groups.length]);
+  // Where a row or heading sits, in rows, counting the headings above it.
+  const slot = (index: number, heading = false) => index + groups.filter(group => heading ? group.at < index : group.at <= index).length;
 
   const [first, last] = windowed ? range : [0, tracks.length];
   const selectedIndexes = () => [...selected].map(key => positions.get(key)).filter((i): i is number => i !== undefined).sort((a, b) => a - b);
@@ -132,7 +141,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
 
   return <>
     <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
-      style={windowed ? { height: tracks.length * ROW, position: 'relative' } : undefined}>
+      style={windowed ? { height: (tracks.length + groups.length) * ROW, position: 'relative' } : undefined}>
       {tracks.slice(first, last).map((track, offset) => {
         const index = first + offset;
         const key = keys[index];
@@ -142,8 +151,9 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const starred = isStarred(track.id, track.starred);
         const credit = track.artist !== albumArtist ? track.artist : null;
         const classes = [isNow && 'now', isSelected && 'selected', drag && drag.to === index && drag.from !== index && (drag.from < index ? 'drop-after' : 'drop-before')].filter(Boolean).join(' ');
-        return <li key={key} data-key={key} data-index={index} className={classes || undefined}
-          style={windowed ? { position: 'absolute', top: index * ROW, left: 0, right: 0 } : undefined}
+        const group = groups.length ? groups.find(g => g.at === index) : undefined;
+        const row = <li key={key} data-key={key} data-index={index} className={classes || undefined}
+          style={windowed ? { position: 'absolute', top: slot(index) * ROW, left: 0, right: 0 } : undefined}
           draggable={!!onMove} onContextMenu={event => menu(event, index)}
           onDragStart={event => { event.dataTransfer.effectAllowed = 'move'; setDrag({ from: index, to: index }); }}
           onDragOver={event => { if (!drag) return; event.preventDefault(); if (drag.to !== index) setDrag({ ...drag, to: index }); }}
@@ -161,6 +171,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
             aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
             onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>
         </li>;
+        return group ? [<li key={`group-${index}`} className="group-head"
+          style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}><h2>{group.label}</h2></li>, row] : row;
       })}
     </ol>
     {onMove && <p className="sr-only" aria-live="polite">{announcement}</p>}

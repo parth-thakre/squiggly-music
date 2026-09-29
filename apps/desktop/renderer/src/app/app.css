@@ -818,3 +818,22 @@ html:is([data-motion='reduced'], [data-motion='none'])::view-transition-group(*)
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-old(*),
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-new(*) { animation: none !important; }
 html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion='none'] *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+
+/* An artist's biography and similar artists (views.tsx). Text only; nothing shows when the
+   server's agents found nothing. */
+.bio { max-width: 68ch; margin: -6px 0 8px; }
+.bio p { margin: 0; font-size: calc(15px * var(--text)); line-height: 1.6; }
+.bio .link { font-size: calc(14px * var(--text)); }
+.similar { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 0; padding: 0; list-style: none; }
+.similar .link { font-size: calc(15.5px * var(--text)); }
+/* A heading between songs: a record's discs. It takes one row's height, as windowing expects. */
+.tracks li.group-head { align-items: flex-end; padding-bottom: 6px; }
+.group-head h2 { margin: 0; font: var(--display-weight) calc(19px * var(--display-size))/1.2 var(--font-display); }
+/* Decade, at the end of the Records sorts: it opens a row of decades under them. */
+.choices .decade-toggle.on { color: var(--ink); font-weight: 600; }
+.decades { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.decades .status-inline { color: var(--soft); }
+/* Six tabs on a narrow phone: the labels shrink a little further to stay on one line. */
+@media (max-width: 480px) {
+  .sections button { padding: 0 clamp(1px, 1vw, 6px); font-size: min(calc(15px * var(--text)), 3.6vw); }
+}

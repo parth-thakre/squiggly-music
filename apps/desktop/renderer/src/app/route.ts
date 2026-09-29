@@ -5,12 +5,14 @@ import type { AlbumListType, TrackSort } from '../../../../../packages/core/cont
 
 export type Route =
   // The sort is part of the place, so Back returns to the same order (and the same scroll offset).
-  | { view: 'records'; sort?: AlbumListType } | { view: 'artists' } | { view: 'tracks'; sort?: TrackSort } | { view: 'playlists' } | { view: 'favorites' }
+  | { view: 'records'; sort?: AlbumListType; decade?: number } | { view: 'artists' } | { view: 'tracks'; sort?: TrackSort } | { view: 'playlists' } | { view: 'favorites' }
   | { view: 'album'; id: string } | { view: 'artist'; id: string }
   | { view: 'playlist'; id: string } | { view: 'mix'; id: string }
   | { view: 'search'; query: string } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' }
   // A page an extension added; id is the page's namespaced id.
-  | { view: 'extension'; id: string };
+  | { view: 'extension'; id: string }
+  // Every genre, and one genre's songs.
+  | { view: 'genres' } | { view: 'genre'; name: string };
 
 // Navigation rides on the browser's own history, so a phone's back gesture (and Forward)
 // steps through the app instead of leaving it. Each history entry carries its route, a
@@ -18,7 +20,7 @@ export type Route =
 // however long the session runs; the app itself only remembers the current place and the
 // scroll offsets of the most recent places.
 interface Place { id: string; depth: number; route: Route; overlay?: boolean }
-const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension']);
+const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre']);
 function placeOf(state: unknown): Place | null {
   const s = state as { squiggly?: unknown; depth?: unknown; route?: { view?: unknown }; overlay?: unknown } | null;
   if (!s || typeof s.squiggly !== 'string' || typeof s.depth !== 'number' || !views.has(String(s.route?.view))) return null;

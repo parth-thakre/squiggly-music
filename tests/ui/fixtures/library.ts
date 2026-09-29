@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
-import { SubsonicClient } from '../../../packages/adapter-opensubsonic/client';
+import type { AlbumYears, ArtistInfo, DiscTitle } from '../../../packages/core/contracts';
+import { SubsonicClient, plainText } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
@@ -31,7 +32,15 @@ export const special = {
   thirtyTwo: 'tr-1-4', // 32 s: finished after 16 s of listening
   tailLight: 'tr-1-5', // 20 s
   wordByWord: 'tr-4-3', // 24 s on Northern Wires, lyrics with exact word times
+  twoDiscs: 'al-8', // Low Tide Radio: three songs on disc 1, two on disc 2 ("Night Side")
+  withBio: 'ar-1', // Ada Brass: a biography and one similar artist in the library
 } as const;
+// Low Tide Radio's second disc has a title of its own; its first has none.
+const discTitles: Record<string, DiscTitle[]> = { [special.twoDiscs]: [{ disc: 2, title: 'Night Side' }] };
+// Last.fm's HTML, as Navidrome passes it on, for Ada Brass. Everyone else has no information.
+export const adaBrassBio = 'Ada Brass is a <b>brass</b> quartet from the coast. They formed in 2009 &amp; toured every harbour town. '
+  + 'Their records are slow and warm. Critics compare them to foghorns. They still rehearse in a boathouse. '
+  + '<a href="https://www.last.fm/music/Ada+Brass">Read more on Last.fm</a>';
 const specialTracks: [string, number][] = [['Long Run', 45], ['Lyric Line', 30], ['Short Stop', 8], ['Thirty Two', 32], ['Tail Light', 20]];
 export const lyricLines = Array.from({ length: 10 }, (_, i) => ({ start: i * 3, text: `Line ${i + 1} of the lyric` }));
 // Word by Word: a line every 4 s from 1 s, each word with its own start and end, the last word
@@ -80,7 +89,9 @@ function buildLibrary() {
     const albumTracks = songs.map(([title, duration], n): Track => ({
       id: `tr-${k}-${n + 1}`, title, artist: k === 2 && n === 1 ? `${artist.name} & ${artists[2].name}` : artist.name, album: name, duration,
       source: 'navidrome', sourceFormat: 'wav', sourceSampleRate: 8000, sourceBitDepth: 16,
-      albumId: `al-${k}`, artistId: artist.id, coverArt: `al-${k}`, trackNumber: n + 1, discNumber: 1, year, genre, starred: false,
+      albumId: `al-${k}`, artistId: artist.id, coverArt: `al-${k}`, year, genre, starred: false,
+      // Low Tide Radio is on two discs, and its numbering starts again on the second.
+      ...(`al-${k}` === special.twoDiscs && n >= 3 ? { trackNumber: n - 2, discNumber: 2 } : { trackNumber: n + 1, discNumber: 1 }),
       ...(k === 2 && n === 1 ? { artists: [{ id: artist.id, name: artist.name }, { id: artists[2].id, name: artists[2].name }] } : {}),
     }));
     tracks.push(...albumTracks);
@@ -167,8 +178,11 @@ export class FakeNavidrome {
   private touch(p: ServerPlaylist) { p.changed = new Date(this.clock.now).toISOString(); }
 
   readonly client = {
-    albumList: (type: AlbumListType, offset: number, size: number) => this.op('albums', [type, offset, size], () => {
+    albumList: (type: AlbumListType, offset: number, size: number, years?: AlbumYears) => this.op('albums', years ? [type, offset, size, years] : [type, offset, size], () => {
       let list = catalog.albums.map(this.album);
+      // byYear: the records from those years, oldest first, as Navidrome lists them.
+      if (type === 'byYear') list = list.filter(a => a.year !== null && years && a.year >= years.fromYear && a.year <= years.toYear)
+        .sort((a, b) => a.year! - b.year! || a.name.localeCompare(b.name));
       if (type === 'alphabeticalByName') list.sort((a, b) => a.name.localeCompare(b.name));
       else if (type === 'alphabeticalByArtist') list.sort((a, b) => a.artist.localeCompare(b.artist) || a.name.localeCompare(b.name));
       else if (type === 'random') list = [...list].reverse();
@@ -180,7 +194,7 @@ export class FakeNavidrome {
     album: (id: string) => this.op('album', [id], () => {
       const album = catalog.albums.find(a => a.id === id);
       if (!album) return fail('That record is not on the server.');
-      return Effect.succeed({ album: this.album(album), tracks: catalog.tracks.filter(t => t.albumId === id).map(t => this.track(t.id)) });
+      return Effect.succeed({ album: this.album(album), tracks: catalog.tracks.filter(t => t.albumId === id).map(t => this.track(t.id)), ...(discTitles[id] ? { discTitles: discTitles[id] } : {}) });
     }),
     artists: () => this.op('artists', [], () => Effect.succeed(catalog.artists.map(a => ({ ...a, starred: this.starred.has(a.id), ...this.rated(a.id) })))),
     artist: (id: string) => this.op('artist', [id], () => {
@@ -270,6 +284,14 @@ export class FakeNavidrome {
       if (!k) return fail('Cover art is not available.');
       return Effect.succeed({ contentType: 'image/png', bytes: new Uint8Array(coverPng((k * 47) % 360)) });
     },
+    artistInfo: (id: string) => this.op('artistInfo', [id], () => Effect.succeed<ArtistInfo>(id === special.withBio
+      ? { biography: plainText(adaBrassBio), musicBrainzId: null, lastFmUrl: 'https://www.last.fm/music/Ada+Brass',
+        images: { small: null, medium: null, large: null },
+        // Only artists in the library have ids; the connector has already dropped the rest.
+        similar: [{ id: 'ar-2', name: 'Bell Tower' }] }
+      : { biography: null, musicBrainzId: null, lastFmUrl: null, images: { small: null, medium: null, large: null }, similar: [] })),
+    songsByGenre: (genre: string, offset: number, size: number) => this.op('songsByGenre', [genre, offset, size], () =>
+      Effect.succeed(catalog.tracks.filter(t => t.genre === genre).slice(offset, offset + size).map(t => this.track(t.id)))),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
   };
 

@@ -4,7 +4,7 @@ import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo,
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
 const library: LibraryApi = {
-  albums: (type, offset, size) => call('albums', type, offset, size),
+  albums: (type, offset, size, years) => call('albums', type, offset, size, ...(years ? [years] : [])),
   album: id => call('album', id),
   artists: () => call('artists'),
   artist: id => call('artist', id),
@@ -32,6 +32,8 @@ const library: LibraryApi = {
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', trackIds, currentIndex, positionSeconds),
   rate: (target, id, rating) => call('rate', target, id, rating),
   coverUrl: (coverArt, size) => `squiggly-art://cover/${encodeURIComponent(String(coverArt))}?size=${Math.min(1200, Math.max(32, Math.round(Number(size)) || 300))}`,
+  artistInfo: artistId => call('artistInfo', artistId),
+  songsByGenre: (genre, offset, size) => call('songsByGenre', genre, offset, size),
 };
 // Push channels from the main process, as subscribe functions.
 function listen<T>(channel: string, listener: (value: T) => void) {

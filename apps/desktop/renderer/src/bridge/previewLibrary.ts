@@ -50,7 +50,7 @@ export const webSession = {
 };
 
 export const previewLibrary: LibraryApi = {
-  albums: (type, offset, size) => call('albums', [type, offset, size]),
+  albums: (type, offset, size, years) => call('albums', years ? [type, offset, size, years] : [type, offset, size]),
   album: id => call('album', [id]),
   artists: () => call('artists', []),
   artist: id => call('artist', [id]),
@@ -77,4 +77,6 @@ export const previewLibrary: LibraryApi = {
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', [trackIds, currentIndex, positionSeconds]),
   rate: (target, id, rating) => call('rate', [target, id, rating]),
   coverUrl: (coverArt, size) => `/api/cover?id=${encodeURIComponent(coverArt)}&size=${Math.round(size)}`,
+  artistInfo: artistId => call('artistInfo', [artistId]),
+  songsByGenre: (genre, offset, size) => call('songsByGenre', [genre, offset, size]),
 };
