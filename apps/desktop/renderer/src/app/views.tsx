@@ -80,6 +80,54 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
   return [Math.min(range[0], rows), Math.min(range[1], rows)];
 }
 
+// Records and Songs load a page at a time as the list nears its end. The pages loaded outlive
+// the page itself, so coming Back renders the same entries at once and the scroll offset has
+// somewhere to land. `request` names a page for the library cache and fetches it.
+interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number }
+const paged = new Map<string, Paged<{ id: string }>>();
+onLibraryReset(() => paged.clear());
+type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
+function usePaged<T extends { id: string }>(list: string, size: number, request: PageRequest<T>, once = false) {
+  const session = useLibraryEpoch();
+  const [, redraw] = useState(0);
+  const more = useCallback(() => {
+    let p = paged.get(list) as Paged<T> | undefined;
+    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random() }; paged.set(list, p); }
+    if (p.busy || p.done) return;
+    const page = p;
+    page.busy = true; page.error = null;
+    void load(...request(page.count, page.seed)).then(result => {
+      page.busy = false;
+      if (paged.get(list) !== page) return;
+      if (!result.ok) page.error = result.error;
+      else {
+        page.count += result.value.length;
+        const seen = new Set(page.items.map(item => item.id));
+        page.items = [...page.items, ...result.value.filter(item => !seen.has(item.id))];
+        if (result.value.length < size || once) page.done = true;
+      }
+      redraw(v => v + 1);
+    });
+    redraw(v => v + 1);
+  }, [list]);
+  useEffect(() => { const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
+  const p = paged.get(list) as Paged<T> | undefined;
+  return { items: p?.items ?? none as T[], done: p?.done ?? false, error: p?.error ?? null, more };
+}
+const none: never[] = [];
+// Asks for more once the end of the list comes within a screen or so.
+function useMore(more: () => void, count: number) {
+  const sentinel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = sentinel.current;
+    if (!element) return;
+    const observer = new IntersectionObserver(entries => { if (entries[0].isIntersecting) more(); }, { root: nav.scroller, rootMargin: '600px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [more, count]);
+  return sentinel;
+}
+
 // Records ------------------------------------------------------------------------------
 
 const sorts: { type: AlbumListType; label: string }[] = [
@@ -87,68 +135,27 @@ const sorts: { type: AlbumListType; label: string }[] = [
   { type: 'frequent', label: 'Most played' }, { type: 'recent', label: 'Recently played' }, { type: 'random', label: 'Random' },
 ];
 const PAGE = 60;
-// The pages loaded for each sort outlive the page itself, so coming Back renders the same
-// records at once and the scroll offset has somewhere to land.
-interface Paged { albums: Album[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number }
-const paged = new Map<AlbumListType, Paged>();
-onLibraryReset(() => paged.clear());
-function usePagedAlbums(type: AlbumListType) {
-  const session = useLibraryEpoch();
-  const [, redraw] = useState(0);
-  const more = useCallback(() => {
-    let p = paged.get(type);
-    if (!p) { p = { albums: [], count: 0, done: false, busy: false, error: null, seed: Math.random() }; paged.set(type, p); }
-    if (p.busy || p.done) return;
-    const page = p;
-    page.busy = true; page.error = null;
-    const offset = page.count;
-    const key = `albums:${type}:${offset}:${PAGE}${type === 'random' ? `:${page.seed}` : ''}`;
-    void load(key, () => api.albums(type, offset, PAGE)).then(result => {
-      page.busy = false;
-      if (paged.get(type) !== page) return;
-      if (!result.ok) page.error = result.error;
-      else {
-        page.count += result.value.length;
-        const seen = new Set(page.albums.map(a => a.id));
-        page.albums = [...page.albums, ...result.value.filter(a => !seen.has(a.id))];
-        if (result.value.length < PAGE || type === 'random') page.done = true;
-      }
-      redraw(v => v + 1);
-    });
-    redraw(v => v + 1);
-  }, [type]);
-  useEffect(() => { const p = paged.get(type); if (!p || (!p.albums.length && !p.done && !p.busy)) more(); }, [more, session]);
-  const p = paged.get(type);
-  return { albums: p?.albums ?? none, done: p?.done ?? false, error: p?.error ?? null, more };
-}
-const none: Album[] = [];
 
 export function Records() {
   const route = useRoute();
   const type = route.view === 'records' && route.sort ? route.sort : 'newest';
-  const albums = usePagedAlbums(type);
-  const sentinel = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const element = sentinel.current;
-    if (!element) return;
-    const observer = new IntersectionObserver(entries => { if (entries[0].isIntersecting) albums.more(); }, { root: nav.scroller, rootMargin: '600px' });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [albums.more, albums.albums.length]);
+  const albums = usePaged<Album>(`albums:${type}`, PAGE, (offset, seed) =>
+    [`albums:${type}:${offset}:${PAGE}${type === 'random' ? `:${seed}` : ''}`, () => api.albums(type, offset, PAGE)], type === 'random');
+  const sentinel = useMore(albums.more, albums.items.length);
   return <>
     <Head title="Records">
       <div className="choices" role="group" aria-label="Sort records">
         {sorts.map(sort => <button key={sort.type} type="button" aria-pressed={sort.type === type} onClick={() => {
           // Choosing Random again is asking for a new draw.
-          if (sort.type === 'random' && type !== 'random') paged.delete('random');
+          if (sort.type === 'random' && type !== 'random') paged.delete('albums:random');
           nav.go({ view: 'records', sort: sort.type }, true);
         }}>{sort.label}</button>)}
       </div>
     </Head>
-    {albums.albums.length ? <AlbumGrid albums={albums.albums} /> : albums.done
+    {albums.items.length ? <AlbumGrid albums={albums.items} /> : albums.done
       ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.' : 'No records on this server yet.'}</Status>
       : albums.error ? <Status>{albums.error}</Status> : <p className="status loading">Opening your records</p>}
-    {albums.error && albums.albums.length > 0 && <Status>{albums.error}</Status>}
+    {albums.error && albums.items.length > 0 && <Status>{albums.error}</Status>}
     <div ref={sentinel} className="sentinel" />
   </>;
 }
@@ -360,6 +367,43 @@ export function ArtistPage({ id }: { id: string }) {
     {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
     <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>
   </>}</Pending>;
+}
+
+// Songs --------------------------------------------------------------------------------
+// Every song, in the server's own order. A row plays like any song list: the songs loaded so
+// far become the queue (as much as it holds around the one clicked).
+
+const SONGS = 200;
+const songPage: PageRequest<Track> = offset => [`songs:${offset}:${SONGS}`, () => api.songs(offset, SONGS)];
+
+export function Songs() {
+  const songs = usePaged('songs', SONGS, songPage);
+  const sentinel = useMore(songs.more, songs.items.length);
+  const [problem, setProblem] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // Shuffle draws from the whole library, not just the songs loaded so far.
+  const shuffle = async () => {
+    setProblem(null); setBusy(true);
+    const drawn = await api.randomSongs({ size: 500 });
+    setBusy(false);
+    if (!drawn.ok) { setProblem(drawn.error); return; }
+    if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+  };
+  return <>
+    <Head title="Songs">
+      <div className="actions">
+        <button type="button" className="play-action" disabled={!songs.items.length} onClick={() => void player.play(songs.items, 0).then(showNowPlaying)}>
+          <span className="disc"><Glyph kind="play" /></span>Play
+        </button>
+        <button type="button" className="text-button" disabled={busy || !songs.items.length} onClick={() => void shuffle()}>Shuffle</button>
+      </div>
+      {problem && <p className="note" role="alert">{problem}</p>}
+    </Head>
+    {songs.items.length ? <TrackTable tracks={songs.items} showAlbum /> : songs.done ? <Status>No songs on this server yet.</Status>
+      : songs.error ? <Status>{songs.error}</Status> : <p className="status loading">Gathering songs</p>}
+    {songs.error && songs.items.length > 0 && <Status>{songs.error}</Status>}
+    <div ref={sentinel} className="sentinel" />
+  </>;
 }
 
 // Playlists ----------------------------------------------------------------------------

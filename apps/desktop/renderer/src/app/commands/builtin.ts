@@ -52,6 +52,8 @@ add({
 const places: [id: string, title: string, route: Route, key: string][] = [
   ['records', 'Go to records', { view: 'records' }, 'g r'],
   ['artists', 'Go to artists', { view: 'artists' }, 'g a'],
+  // G then S is settings; T for tracks.
+  ['songs', 'Go to songs', { view: 'songs' }, 'g t'],
   ['playlists', 'Go to playlists', { view: 'playlists' }, 'g p'],
   ['favorites', 'Go to favorites', { view: 'favorites' }, 'g f'],
   ['queue', 'Go to the queue', { view: 'queue' }, 'g q'],

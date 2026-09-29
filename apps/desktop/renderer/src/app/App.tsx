@@ -11,15 +11,16 @@ import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
 import { useSwipeSongs } from './swipe';
-import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView } from './views';
+import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Songs } from './views';
 
 onMenuError(message => player.showError(message));
 
-const sections: { view: 'records' | 'artists' | 'playlists' | 'favorites'; label: string }[] = [
-  { view: 'records', label: 'Records' }, { view: 'artists', label: 'Artists' }, { view: 'playlists', label: 'Playlists' }, { view: 'favorites', label: 'Favorites' },
+const sections: { view: 'records' | 'artists' | 'songs' | 'playlists' | 'favorites'; label: string }[] = [
+  { view: 'records', label: 'Records' }, { view: 'artists', label: 'Artists' }, { view: 'songs', label: 'Songs' },
+  { view: 'playlists', label: 'Playlists' }, { view: 'favorites', label: 'Favorites' },
 ];
 // Places that need the server. Without one, they offer to connect instead.
-const library = new Set<Route['view']>(['records', 'artists', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search']);
+const library = new Set<Route['view']>(['records', 'artists', 'songs', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search']);
 const PaletteContext = createContext(neutral);
 const sectionOf = (route: Route) => route.view === 'album' ? 'records' : route.view === 'artist' ? 'artists'
   : route.view === 'playlist' || route.view === 'mix' ? 'playlists' : route.view;
@@ -112,6 +113,7 @@ const View = memo(function View() {
   switch (route.view) {
     case 'records': return <Records />;
     case 'artists': return <Artists />;
+    case 'songs': return <Songs />;
     case 'playlists': return <Playlists />;
     case 'favorites': return <Favorites />;
     case 'album': return <AlbumPage key={route.id} id={route.id} />;

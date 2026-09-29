@@ -7,7 +7,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | File | Role |
 | --- | --- |
 | `App.tsx` | Shell: bar, deck (now playing), page, connect screen |
-| `views.tsx` | Pages: records, album, artists, artist, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics |
+| `views.tsx` | Pages: records, album, artists, artist, songs, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics |
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself. Android (`mode: 'android'`) keeps the queue as web does and follows the native player's reports |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions do |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows |
@@ -34,6 +34,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `radio.start(seed)`, `radio.stop()` | Radio from a song, album, or artist. The main process owns it and keeps topping up the queue while every window is hidden |
 | `resumeQueue()` | Load the server-saved queue paused at its song and position |
 | `library.*` | `LibraryApi`: browse, search, star, playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics` |
+| `library.songs(offset, size)` | Every song on the server, up to 500 at a time, in the server's own order (`search3` with an empty query). A page shorter than `size` is the last. The Songs page asks for 200 at a time as it scrolls |
 | `library.coverUrl(coverArt, size)` | `squiggly-art://` URL; the main process fetches art, credentials never reach the renderer |
 | `settings()`, `updateSettings(changes)` | Stored preferences; re-read `settings()` after a failed update |
 | `extensions.list()`, `subscribe`, `setEnabled`, `reload`, `remove`, `openDir`, `writeClipboard` | Extensions in `<config>/extensions`. `remove` moves the folder to the trash. The runtime in `extensions/` is the only caller |

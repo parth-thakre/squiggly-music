@@ -109,7 +109,7 @@ The types in `@squiggly/extension-api` come from the app's own modules, so they 
 
 ### `ctx.library`
 
-The app's library API: `albums`, `album`, `artists`, `artist`, `playlists`, `playlist`, `genres`, `starred`, `randomSongs`, `search`, `star`, playlist editing, `similarSongs`, `topSongs`, `lyrics`, and `coverUrl(coverArt, size)` for an image URL. Calls return `{ ok: true, value }` or `{ ok: false, error }` and never throw. They use the app's server session. Server credentials are not part of the API, because nothing in it needs them.
+The app's library API: `albums`, `album`, `artists`, `artist`, `playlists`, `playlist`, `genres`, `starred`, `randomSongs`, `songs` (every song, a page at a time), `search`, `star`, playlist editing, `similarSongs`, `topSongs`, `lyrics`, and `coverUrl(coverArt, size)` for an image URL. Calls return `{ ok: true, value }` or `{ ok: false, error }` and never throw. They use the app's server session. Server credentials are not part of the API, because nothing in it needs them.
 
 ### `ctx.navigation`
 

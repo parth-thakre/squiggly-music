@@ -15,6 +15,8 @@ const albumNames = [
   'Hollow Pines', 'Winter Exchange', 'Copper Sky', 'Distant Rooms', 'Ember Road', 'Yellow Canal',
   'Open Window', 'Tin Roof Choir', 'Useful Weather', 'Brick Lullaby', 'Zero Hour Garden', 'Late Ferry',
   'Rust Belt Hymns', 'Jade Frequency', 'Cedar Lines', 'Slow Carousel', 'Xylophone Dusk', 'Quartz Evening',
+  // Long enough that Songs loads a second page. No year or genre, so no automatic playlist draws from it.
+  'Long Player',
 ];
 const trackWords = ['Opening', 'Second Wind', 'Middle Distance', 'Late Call', 'Coda', 'Encore'];
 const genres = ['Ambient', 'Folk', 'Rock'];
@@ -62,9 +64,11 @@ function buildLibrary() {
     const k = i + 1;
     const artist = artists[i % artists.length];
     artist.albumCount++;
-    const year = 2024 - i;
-    const genre = genres[k % genres.length];
+    const long = name === 'Long Player';
+    const year = long ? null : 2024 - i;
+    const genre = long ? null : genres[k % genres.length];
     const songs: [string, number][] = k === 1 ? specialTracks
+      : long ? Array.from({ length: 100 }, (_, n) => [`Take ${n + 1}`, 10 + n % 7])
       : Array.from({ length: 3 + (k % 3) }, (_, n) => k === 4 && n === 2 ? ['Word by Word', 24] : [`${trackWords[n]} ${k}`, 12 + ((k + n) % 5) * 3]);
     // Second Wind 2 is a duet: the server splits its credit into two artists (Track.artists).
     const albumTracks = songs.map(([title, duration], n): Track => ({
@@ -84,6 +88,7 @@ const trackById = new Map(catalog.tracks.map(track => [track.id, track]));
 export const trackOf = (id: string) => trackById.get(id)!;
 export const albumOf = (id: string) => catalog.albums.find(album => album.id === id)!;
 export const allAlbums = catalog.albums;
+export const allTracks = catalog.tracks;
 
 const initialPlaylists = (): ServerPlaylist[] => [
   { id: playlistIds.road, name: 'Road Mix', comment: null, readonly: false, trackIds: ['tr-2-1', 'tr-2-2', 'tr-3-1', 'tr-2-1', 'tr-3-2'], changed: '2026-09-01T00:00:00Z' },
@@ -178,6 +183,9 @@ export class FakeNavidrome {
       .filter(t => (!options.genre || t.genre === options.genre) && (options.fromYear === undefined || (t.year ?? 0) >= options.fromYear)
         && (options.toYear === undefined || (t.year ?? 0) <= options.toYear))
       .slice(0, options.size).map(t => this.track(t.id)))),
+    // search3 with an empty query: every song, in the order the server keeps them.
+    songs: (offset: number, size: number) => this.op('songs', [offset, size], () =>
+      Effect.succeed(catalog.tracks.slice(offset, offset + size).map(t => this.track(t.id)))),
     search: (query: string) => this.op('search', [query], () => {
       const q = query.toLowerCase();
       return Effect.succeed({

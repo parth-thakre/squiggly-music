@@ -77,6 +77,7 @@ const itemsSchema = (artists: number, albums: number, songs: number) => Schema.S
 });
 const StarredSchema = Schema.Struct({ starred2: itemsSchema(5000, 5000, 5000) });
 const SearchSchema = Schema.Struct({ searchResult3: itemsSchema(8, 16, 40) });
+const SongPageSchema = Schema.Struct({ searchResult3: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 const RandomSongsSchema = Schema.Struct({ randomSongs: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Schema.Struct({
   name: Schema.String.pipe(Schema.maxLength(256)), versions: Schema.Array(CountSchema).pipe(Schema.maxItems(100)),
@@ -340,6 +341,14 @@ export class SubsonicClient {
   search(query: string) {
     return this.request('search3', SearchSchema, { query, artistCount: '8', albumCount: '16', songCount: '40' }).pipe(Effect.map(result => toItems(result.searchResult3)));
   }
+  // OpenSubsonic servers answer an empty search3 query with every song. Navidrome keeps them in
+  // the order it first scanned them (by row), so offsets page through a stable list.
+  songs(offset: number, size: number) {
+    const count = clamp(size, 1, 500);
+    return this.request('search3', SongPageSchema, {
+      query: '""', artistCount: '0', albumCount: '0', songCount: String(count), songOffset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)),
+    }).pipe(Effect.flatMap(result => songList(result.searchResult3.song, count)));
+  }
   star(target: StarTarget, id: string, starred: boolean) {
     const key = { track: 'id', album: 'albumId', artist: 'artistId' }[target];
     return this.request(starred ? 'star' : 'unstar', StatusSchema, { [key]: id }).pipe(Effect.asVoid);
@@ -490,6 +499,7 @@ const library = {
   genres: entry(LibraryRequestSchemas.genres, client => client.genres()),
   starred: entry(LibraryRequestSchemas.starred, client => client.starred(), value => value.tracks),
   randomSongs: entry(LibraryRequestSchemas.randomSongs, (client, [options]) => client.randomSongs(options), value => value),
+  songs: entry(LibraryRequestSchemas.songs, (client, [offset, size]) => client.songs(offset, size), value => value),
   search: entry(LibraryRequestSchemas.search, (client, [query]) => client.search(query), value => value.tracks),
   star: entry(LibraryRequestSchemas.star, (client, [target, id, starred]) => client.star(target, id, starred)),
   createPlaylist: entry(LibraryRequestSchemas.createPlaylist, (client, [name, trackIds]) => client.createPlaylist(name, trackIds)),

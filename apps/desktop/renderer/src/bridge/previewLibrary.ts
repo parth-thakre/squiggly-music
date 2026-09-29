@@ -59,6 +59,7 @@ export const previewLibrary: LibraryApi = {
   genres: () => call('genres', []),
   starred: () => call('starred', []),
   randomSongs: options => call('randomSongs', [options]),
+  songs: (offset, size) => call('songs', [offset, size]),
   search: query => call('search', [query]),
   star: (target, id, starred) => call('star', [target, id, starred]),
   createPlaylist: (name, trackIds) => call('createPlaylist', [name, trackIds]),

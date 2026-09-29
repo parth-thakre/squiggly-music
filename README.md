@@ -13,7 +13,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 
 ## What it does
 
-- Browse records, artists, playlists, and favorites on your server, or play files from your computer.
+- Browse records, artists, songs, playlists, and favorites on your server, or play files from your computer.
 - Edit the queue and your playlists. The queue follows you between devices through the server.
 - Start a radio station from any song, record, or artist.
 - Build automatic playlists from your library by genre, by decade, and from what's new.
