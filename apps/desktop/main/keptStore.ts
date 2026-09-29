@@ -52,6 +52,7 @@ export class KeptStore {
 
   get account() { return this.index.account; }
   get songCount() { return Object.keys(this.index.songs).length; }
+  get containerCount() { return this.index.containers.length; }
   hasSongsFor(key: string) { return this.index.account === key && this.songCount > 0; }
 
   // Reads the index and cleans the folder. Anything unreadable starts empty; a broken index is

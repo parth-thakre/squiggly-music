@@ -92,6 +92,19 @@ describe('keeping songs on the desktop', () => {
     expect(t.opened).toEqual([]);
     expect(t.store.containers()).toEqual([]);
   });
+  it('refuses a new record past 2,000 kept, and still keeps one already kept again', async () => {
+    const t = await setup();
+    t.learn(song('a'), song('b'));
+    await t.manager.keep(t.request('album', 'al-1', ['a'], null));
+    await t.manager.idle();
+    vi.spyOn(t.store, 'containerCount', 'get').mockReturnValue(2_000);
+    expect(await t.manager.keep(t.request('playlist', 'pl-1', ['a'], null))).toEqual({ ok: false, error: KEPT_MESSAGES.tooManyContainers });
+    expect(t.store.record('playlist', 'pl-1')).toBeUndefined();
+    expect(await t.manager.keep(t.request('album', 'al-1', ['a', 'b'], null))).toEqual({ ok: true, value: undefined });
+    await t.manager.idle();
+    vi.restoreAllMocks();
+    expect(t.store.containers()).toMatchObject([{ kind: 'album', id: 'al-1', present: 2, total: 2 }]);
+  });
   it('refuses when the disk would be left with less than 256 MB', async () => {
     const t = await setup({ freeBytes: async () => 300 * MB });
     t.learn(song('a', { size: 60 * MB }));

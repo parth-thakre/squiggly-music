@@ -42,6 +42,7 @@ export const KEPT_MESSAGES = {
   away: 'Your server is out of reach. Keeping needs it.',
   notLoaded: 'Some of these songs are no longer loaded. Open the page again and try once more.',
   tooMany: 'Squiggly keeps up to 20,000 songs on a device. Forget something kept first.',
+  tooManyContainers: 'Squiggly keeps up to 2,000 records, playlists, and mixes on a device. Forget something kept first.',
   indexFull: 'The list of kept songs is full. Forget something kept first.',
   noDisk: (device: 'computer' | 'phone') => `There isn't enough free space on this ${device} to keep these songs.`,
   notKept: 'None of these songs are kept on this device. They play again when your server is back.',

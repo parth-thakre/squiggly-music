@@ -57,6 +57,7 @@ object Kept {
     private const val AWAY = "Your server is out of reach. Keeping needs it."
     private const val INVALID = "That keep request isn't valid."
     private const val TOO_MANY = "Squiggly keeps up to 20,000 songs on a device. Forget something kept first."
+    private const val TOO_MANY_CONTAINERS = "Squiggly keeps up to 2,000 records, playlists, and mixes on a device. Forget something kept first."
     private const val INDEX_FULL = "The list of kept songs is full. Forget something kept first."
     private const val NO_DISK = "There isn't enough free space on this phone to keep these songs."
     private const val BROKEN = "The list of kept songs couldn't be read, so they were cleared."
@@ -289,6 +290,8 @@ object Kept {
             val size = if (song.isNull("size")) null else song.optLong("size").takeIf { it > 0 }
             if (trackId !in pending) pending[trackId] = Pending(trackId, url, track.toString(), cover, size)
         }
+        // A new record, playlist, or mix past the bound is refused; one already kept can be kept again.
+        if (containers.none { it.kind == kind && it.id == id } && containers.size >= MAX_CONTAINERS) return@execute done(result(TOO_MANY_CONTAINERS))
         val missing = pending.values.filter { it.id !in songs && it.id !in downloading }
         if (songs.size + missing.size > MAX_SONGS) return@execute done(result(TOO_MANY))
         if (indexBytes + missing.sumOf { it.track.toByteArray().size + ENTRY_OVERHEAD } > WRITE_BUDGET) return@execute done(result(INDEX_FULL))

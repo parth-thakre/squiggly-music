@@ -98,6 +98,9 @@ export class KeepManager {
       const orphan = this.pending.get(trackId);
       if (orphan && !store.has(trackId)) { if (store.reclaim(orphan)) this.pending.delete(trackId); }
     }
+    // A new record, playlist, or mix past the bound is refused; one already kept can be kept again.
+    // The index is read whole or not at all, so one container too many would clear everything.
+    if (!store.record(request.kind, request.id) && store.containerCount >= KEPT_LIMITS.containers) return fail(KEPT_MESSAGES.tooManyContainers);
     const missing = [...tracks.keys()].filter(trackId => !store.has(trackId) && !this.downloading.has(trackId));
     if (store.songCount + missing.length > KEPT_LIMITS.songs) return fail(KEPT_MESSAGES.tooMany);
     const entries = missing.reduce((sum, trackId) => sum + jsonBytes(tracks.get(trackId)) + KEPT_LIMITS.entryOverhead, 0);
