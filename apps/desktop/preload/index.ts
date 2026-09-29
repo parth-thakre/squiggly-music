@@ -30,6 +30,7 @@ const library: LibraryApi = {
   reportPlay: (trackId, event) => call('reportPlay', trackId, event),
   savedQueue: () => call('savedQueue'),
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', trackIds, currentIndex, positionSeconds),
+  rate: (target, id, rating) => call('rate', target, id, rating),
   coverUrl: (coverArt, size) => `squiggly-art://cover/${encodeURIComponent(String(coverArt))}?size=${Math.min(1200, Math.max(32, Math.round(Number(size)) || 300))}`,
 };
 // Push channels from the main process, as subscribe functions.

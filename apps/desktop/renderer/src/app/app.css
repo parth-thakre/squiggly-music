@@ -145,6 +145,10 @@ img:is(.deck-cover, .head-cover) {
 .star-text { display: inline-flex; align-items: center; gap: 6px; }
 .star-text svg { width: 17px; }
 .star-text.on svg { color: var(--accent); }
+/* A rating, as small marks beside the byline: filled in the accent, the rest hollow. */
+.rating-marks { display: inline-flex; gap: 1px; margin-left: .5em; vertical-align: -1px; color: var(--soft); }
+.rating-marks svg { display: block; width: 13px; }
+.rating-marks .on { color: var(--accent); }
 
 /* Covers */
 .cover { display: block; object-fit: cover; background: var(--line); }

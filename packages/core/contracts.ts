@@ -26,6 +26,8 @@ export interface Track {
   year?: number | null;
   genre?: string | null;
   starred?: boolean;
+  // The account's own rating, 1 to 5. Absent when unrated (or rated 0, which is the same).
+  userRating?: number;
 }
 // One credited artist with their own page. See Track.artists.
 export interface ArtistRef { id: string; name: string }
@@ -35,8 +37,10 @@ export interface Album {
   coverArt: string | null; starred: boolean;
   // When the server splits the credit into several artists; `artist` stays the display text.
   artists?: ArtistRef[];
+  // The account's own rating, 1 to 5. Absent when unrated.
+  userRating?: number;
 }
-export interface Artist { id: string; name: string; albumCount: number; coverArt: string | null; starred: boolean }
+export interface Artist { id: string; name: string; albumCount: number; coverArt: string | null; starred: boolean; userRating?: number }
 export interface AlbumDetail { album: Album; tracks: Track[] }
 export interface ArtistDetail { artist: Artist; albums: Album[] }
 export interface Playlist {
@@ -50,12 +54,15 @@ export interface Genre { name: string; songCount: number; albumCount: number }
 export interface LibraryItems { artists: Artist[]; albums: Album[]; tracks: Track[] }
 export type AlbumListType = 'newest' | 'recent' | 'frequent' | 'highest' | 'random' | 'starred' | 'alphabeticalByName' | 'alphabeticalByArtist';
 export interface RandomSongOptions { size: number; genre?: string; fromYear?: number; toYear?: number }
-// The Records sorts, for tracks. Most and recently played list played tracks only.
-export type TrackSort = 'newest' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'frequent' | 'recent' | 'random';
+// The Records sorts, for tracks. Most and recently played list played tracks only, and top
+// rated (highest) rated tracks only.
+export type TrackSort = 'newest' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'frequent' | 'recent' | 'random' | 'highest';
 // sorted is false when the server can't sort tracks (only Navidrome's own API can): the page is
 // in the server's one fixed order, whatever sort was asked for.
 export interface TrackPage { tracks: Track[]; sorted: boolean }
 export type StarTarget = 'track' | 'album' | 'artist';
+// A rating from one to five stars; 0 clears it.
+export type Rating = 0 | 1 | 2 | 3 | 4 | 5;
 
 // Library browsing, shared by the desktop bridge (IPC to the main process) and the
 // browser preview (HTTP to the dev server). Both call the same OpenSubsonic connector.
@@ -92,6 +99,8 @@ export interface LibraryApi {
   reportPlay(trackId: string, event: 'started' | 'finished'): Promise<Result>;
   savedQueue(): Promise<Result<SavedQueue | null>>;
   saveQueue(trackIds: string[], currentIndex: number, positionSeconds: number): Promise<Result>;
+  // Rates a song, record, or artist for this account (Subsonic setRating). 0 clears the rating.
+  rate(target: StarTarget, id: string, rating: Rating): Promise<Result>;
   // A URL the renderer may load directly. It never contains credentials.
   coverUrl(coverArt: string, size: number): string;
 }

@@ -109,6 +109,8 @@ export class FakeNavidrome {
   calls: Call[] = [];
   reports: { id: string; event: 'started' | 'finished' }[] = [];
   starred = new Set<string>();
+  /** Ratings the account has given, 1 to 5, by song, record, or artist id. */
+  ratings = new Map<string, number>();
   saved: SavedQueue | null = null;
   /** Delays (ms) taken, one per call, by the named method before it touches any state. */
   private delays = new Map<string, number[]>();
@@ -130,6 +132,7 @@ export class FakeNavidrome {
     this.playlists = initialPlaylists(); this.calls = []; this.reports = []; this.starred.clear();
     this.saved = null; this.delays.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
+    this.ratings.clear();
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   /** A new native session token, as a sign-in or any answer gives out. */
@@ -139,8 +142,9 @@ export class FakeNavidrome {
   playlist(id: string) { return this.playlists.find(p => p.id === id); }
   callsTo(method: string) { return this.calls.filter(call => call.method === method); }
 
-  private track = (id: string): Track => ({ ...trackById.get(id)!, starred: this.starred.has(id) });
-  private album = (album: Album): Album => ({ ...album, starred: this.starred.has(album.id) });
+  private rated = (id: string) => this.ratings.has(id) ? { userRating: this.ratings.get(id)! } : {};
+  private track = (id: string): Track => ({ ...trackById.get(id)!, starred: this.starred.has(id), ...this.rated(id) });
+  private album = (album: Album): Album => ({ ...album, starred: this.starred.has(album.id), ...this.rated(album.id) });
   private summary(p: ServerPlaylist): Playlist {
     const songs = p.trackIds.map(this.track);
     return { id: p.id, name: p.name, comment: p.comment, owner: 'tester', songCount: songs.length,
@@ -169,6 +173,7 @@ export class FakeNavidrome {
       else if (type === 'alphabeticalByArtist') list.sort((a, b) => a.artist.localeCompare(b.artist) || a.name.localeCompare(b.name));
       else if (type === 'random') list = [...list].reverse();
       else if (type === 'starred') list = list.filter(a => a.starred);
+      else if (type === 'highest') list = list.filter(a => a.userRating).sort((a, b) => b.userRating! - a.userRating!);
       else if (type === 'frequent' || type === 'recent') list = [];
       return Effect.succeed(list.slice(offset, offset + size));
     }),
@@ -177,11 +182,11 @@ export class FakeNavidrome {
       if (!album) return fail('That record is not on the server.');
       return Effect.succeed({ album: this.album(album), tracks: catalog.tracks.filter(t => t.albumId === id).map(t => this.track(t.id)) });
     }),
-    artists: () => this.op('artists', [], () => Effect.succeed(catalog.artists.map(a => ({ ...a, starred: this.starred.has(a.id) })))),
+    artists: () => this.op('artists', [], () => Effect.succeed(catalog.artists.map(a => ({ ...a, starred: this.starred.has(a.id), ...this.rated(a.id) })))),
     artist: (id: string) => this.op('artist', [id], () => {
       const artist = catalog.artists.find(a => a.id === id);
       if (!artist) return fail('That artist is not on the server.');
-      return Effect.succeed({ artist: { ...artist, starred: this.starred.has(id) }, albums: catalog.albums.filter(a => a.artistId === id).map(this.album) });
+      return Effect.succeed({ artist: { ...artist, starred: this.starred.has(id), ...this.rated(id) }, albums: catalog.albums.filter(a => a.artistId === id).map(this.album) });
     }),
     playlists: () => this.op('playlists', [], () => Effect.succeed(this.playlists.map(p => this.summary(p)))),
     playlist: (id: string) => this.op('playlist', [id], () => {
@@ -215,6 +220,11 @@ export class FakeNavidrome {
     }),
     star: (_target: StarTarget, id: string, starred: boolean) => this.op('star', [_target, id, starred], () => {
       if (starred) this.starred.add(id); else this.starred.delete(id);
+      return Effect.void;
+    }),
+    // Subsonic's setRating: any id, 0 clears.
+    setRating: (id: string, rating: number) => this.op('rate', [id, rating], () => {
+      if (rating) this.ratings.set(id, rating); else this.ratings.delete(id);
       return Effect.void;
     }),
     createPlaylist: (name: string, trackIds: readonly string[]) => this.op('createPlaylist', [name, trackIds], () => {

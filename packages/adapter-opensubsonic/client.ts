@@ -22,6 +22,9 @@ const ReferenceSchema = Schema.String.pipe(Schema.maxLength(256));
 // OpenSubsonic lists each credited artist with an id when the server splits a credit such as
 // "A & B" (Navidrome does, by its tag settings). Older servers leave it out.
 const ArtistRefsSchema = Schema.optional(Schema.Array(Schema.Struct({ id: ReferenceSchema, name: Schema.String })).pipe(Schema.maxItems(50)));
+// The account's rating, 1 to 5; 0 or absent is unrated. Anything else is ignored rather than
+// failing the whole response (see rated()).
+const RatingSchema = Schema.optional(Schema.Number);
 const SongSchema = Schema.Struct({
   id: IdSchema, title: Schema.String,
   artist: Schema.optional(Schema.String), album: Schema.optional(Schema.String),
@@ -30,17 +33,20 @@ const SongSchema = Schema.Struct({
   albumId: Schema.optional(ReferenceSchema), artistId: Schema.optional(ReferenceSchema), coverArt: Schema.optional(ReferenceSchema),
   track: Schema.optional(KnownCountSchema), discNumber: Schema.optional(KnownCountSchema), year: Schema.optional(KnownCountSchema),
   genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.String), artists: ArtistRefsSchema,
+  userRating: RatingSchema,
 });
 const AlbumFields = {
   id: IdSchema, name: Schema.String, artist: Schema.optional(Schema.String), songCount: Schema.optional(CountSchema),
   artistId: Schema.optional(ReferenceSchema), year: Schema.optional(KnownCountSchema), genre: Schema.optional(Schema.String),
   duration: Schema.optional(DurationSchema), coverArt: Schema.optional(ReferenceSchema), starred: Schema.optional(Schema.String),
   artists: ArtistRefsSchema,
+  userRating: RatingSchema,
 };
 const AlbumSchema = Schema.Struct({ ...AlbumFields, song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) });
 const ArtistFields = {
   id: IdSchema, name: Schema.String, albumCount: Schema.optional(CountSchema),
   coverArt: Schema.optional(ReferenceSchema), starred: Schema.optional(Schema.String),
+  userRating: RatingSchema,
 };
 const ArtistSchema = Schema.Struct(ArtistFields);
 const PlaylistFields = {
@@ -89,6 +95,7 @@ const NativeSongSchema = Schema.Struct({
   genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.Boolean), starredAt: Schema.optional(Schema.String),
   playCount: Schema.optional(CountSchema), playDate: Schema.optional(Schema.NullOr(Schema.String)),
   participants: Schema.optional(Schema.Struct({ artist: ArtistRefsSchema })),
+  rating: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 const NativeSongsSchema = Schema.Array(NativeSongSchema).pipe(Schema.maxItems(500));
 const NativeLoginSchema = Schema.Struct({ token: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(8192)) });
@@ -98,6 +105,7 @@ type NativeSong = Schema.Schema.Type<typeof NativeSongSchema>;
 const nativeSorts: Record<TrackSort, [sort: string, order: 'asc' | 'desc']> = {
   newest: ['recently_added', 'desc'], alphabeticalByName: ['title', 'asc'], alphabeticalByArtist: ['artist', 'asc'],
   frequent: ['play_count', 'desc'], recent: ['play_date', 'desc'], random: ['random', 'asc'],
+  highest: ['rating', 'desc'],
 };
 // The same song as Subsonic describes it, so it maps to the same Track. Subsonic truncates the
 // duration, and names cover art as model.MediaFile.CoverArtID does: the song's own art, else its
@@ -112,6 +120,7 @@ const fromNative = (song: NativeSong): Song => ({
     : !song.albumId ? undefined : song.discNumber ? nativeHash(`dc-${song.albumId}:${song.discNumber}`, song.imageHash) : `al-${song.albumId}`,
   track: song.trackNumber, discNumber: song.discNumber, year: song.year, genre: song.genre,
   starred: song.starred ? song.starredAt ?? 'starred' : undefined, artists: song.participants?.artist,
+  userRating: song.rating ?? undefined,
 });
 const RandomSongsSchema = Schema.Struct({ randomSongs: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Schema.Struct({
@@ -188,15 +197,18 @@ const artistRefs = (refs: readonly { id: string; name: string }[] | undefined) =
   const named = (refs ?? []).filter(ref => ref.id && ref.name.trim()).map(ref => ({ id: ref.id, name: ref.name.trim() }));
   return named.length > 1 ? { artists: named } : {};
 };
+// A whole number from 1 to 5, or nothing.
+const rated = (rating: number | undefined) => rating !== undefined && Number.isInteger(rating) && rating >= 1 && rating <= 5 ? { userRating: rating } : {};
 function toAlbum(album: Schema.Schema.Type<Schema.Struct<typeof AlbumFields>>): Album {
   return {
     id: album.id, name: album.name, artist: album.artist ?? 'Unknown artist', songCount: album.songCount ?? 0,
     artistId: album.artistId || null, year: album.year ?? null, genre: album.genre || null, duration: album.duration ?? null,
     coverArt: album.coverArt || null, starred: Boolean(album.starred), ...artistRefs(album.artists),
+    ...rated(album.userRating),
   };
 }
 function toArtist(artist: Schema.Schema.Type<typeof ArtistSchema>): Artist {
-  return { id: artist.id, name: artist.name, albumCount: artist.albumCount ?? 0, coverArt: artist.coverArt || null, starred: Boolean(artist.starred) };
+  return { id: artist.id, name: artist.name, albumCount: artist.albumCount ?? 0, coverArt: artist.coverArt || null, starred: Boolean(artist.starred), ...rated(artist.userRating) };
 }
 function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
   return {
@@ -206,14 +218,17 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     albumId: song.albumId || null, artistId: song.artistId || null, coverArt: song.coverArt || null,
     trackNumber: song.track ?? null, discNumber: song.discNumber ?? null, year: song.year ?? null,
     genre: song.genre || null, starred: Boolean(song.starred), ...artistRefs(song.artists),
+    ...rated(song.userRating),
   };
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max
   ? Effect.fail(new ServerError('The server returned more tracks than requested.')) : Effect.succeed((songs ?? []).map(song => toTrack(song)));
-// Most and recently played list played tracks only, as Navidrome's own lists do. Their order
-// puts the rest last, so a page ends where they begin, and a short page is the last.
+// Most and recently played list played tracks only, as Navidrome's own lists do, and top rated
+// lists rated tracks only. Their order puts the rest last, so a page ends where they begin, and
+// a short page is the last.
 function played(sort: TrackSort, songs: readonly NativeSong[]) {
-  const keep = sort === 'frequent' ? (song: NativeSong) => (song.playCount ?? 0) > 0 : sort === 'recent' ? (song: NativeSong) => !!song.playDate : null;
+  const keep = sort === 'frequent' ? (song: NativeSong) => (song.playCount ?? 0) > 0 : sort === 'recent' ? (song: NativeSong) => !!song.playDate
+    : sort === 'highest' ? (song: NativeSong) => (song.rating ?? 0) > 0 : null;
   const end = keep ? songs.findIndex(song => !keep(song)) : -1;
   return end < 0 ? songs : songs.slice(0, end);
 }
@@ -476,6 +491,10 @@ export class SubsonicClient {
     const key = { track: 'id', album: 'albumId', artist: 'artistId' }[target];
     return this.request(starred ? 'star' : 'unstar', StatusSchema, { [key]: id }).pipe(Effect.asVoid);
   }
+  // Songs, albums, and artists share one id space here, so setRating takes any of them. 0 clears.
+  setRating(id: string, rating: number) {
+    return this.request('setRating', StatusSchema, { id, rating: String(clamp(rating, 0, 5)) }).pipe(Effect.asVoid);
+  }
   createPlaylist(name: string, trackIds: readonly string[]) {
     return this.request('createPlaylist', CreatedPlaylistSchema, { name, songId: trackIds }).pipe(Effect.flatMap(result => result.playlist
       ? Effect.succeed(this.toPlaylist(result.playlist))
@@ -637,6 +656,7 @@ const library = {
   reportPlay: entry(LibraryRequestSchemas.reportPlay, (client, [trackId, event]) => client.reportPlay(trackId, event)),
   savedQueue: entry(LibraryRequestSchemas.savedQueue, client => client.savedQueue(), value => value?.tracks ?? []),
   saveQueue: entry(LibraryRequestSchemas.saveQueue, (client, [trackIds, currentIndex, position]) => client.saveQueue(trackIds, currentIndex, position)),
+  rate: entry(LibraryRequestSchemas.rate, (client, [, id, rating]) => client.setRating(id, rating)),
 } satisfies { [K in LibraryMethod]: LibraryEntry<any, LibraryValue<K>> };
 export const libraryMethods = Object.keys(library) as LibraryMethod[];
 export const isLibraryMethod = (method: string): method is LibraryMethod => Object.hasOwn(library, method);

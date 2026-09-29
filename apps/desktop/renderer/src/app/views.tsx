@@ -15,6 +15,7 @@ import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave }
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
+import { RatingMarks } from './ratings';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -133,12 +134,15 @@ function useMore(more: () => void, count: number) {
 const sorts: { type: TrackSort; label: string }[] = [
   { type: 'newest', label: 'Newest' }, { type: 'alphabeticalByName', label: 'A to Z' }, { type: 'alphabeticalByArtist', label: 'By artist' },
   { type: 'frequent', label: 'Most played' }, { type: 'recent', label: 'Recently played' }, { type: 'random', label: 'Random' },
+  { type: 'highest', label: 'Top rated' },
 ];
 function Sorts({ list, type }: { list: 'records' | 'tracks'; type: AlbumListType }) {
   return <div className="choices" role="group" aria-label={`Sort ${list}`}>
     {sorts.map(sort => <button key={sort.type} type="button" aria-pressed={sort.type === type} onClick={() => {
       // Choosing Random again is asking for a new draw.
       if (sort.type === 'random' && type !== 'random') paged.delete(`${list}:random`);
+      // Ratings change as you listen, so Top rated is read again each time it's chosen.
+      if (sort.type === 'highest' && type !== 'highest') paged.delete(`${list}:highest`);
       nav.go(list === 'records' ? { view: 'records', sort: sort.type } : { view: 'tracks', sort: sort.type }, true);
     }}>{sort.label}</button>)}
   </div>;
@@ -157,7 +161,8 @@ export function Records() {
   return <>
     <Head title="Records"><Sorts list="records" type={type} /></Head>
     {albums.items.length ? <AlbumGrid albums={albums.items} /> : albums.done
-      ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.' : 'No records on this server yet.'}</Status>
+      ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.'
+        : type === 'highest' ? 'Nothing rated yet. Records you rate will collect here, best first.' : 'No records on this server yet.'}</Status>
       : albums.error ? <Status>{albums.error}</Status> : <p className="status loading">Opening your records</p>}
     {albums.error && albums.items.length > 0 && <Status>{albums.error}</Status>}
     <div ref={sentinel} className="sentinel" />
@@ -230,7 +235,7 @@ export function AlbumPage({ id }: { id: string }) {
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
       <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
-        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span></p>
+        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingMarks id={album.id} rating={album.userRating} /></p>
         <Actions tracks={tracks}>
           <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
@@ -356,7 +361,7 @@ export function ArtistPage({ id }: { id: string }) {
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
     <Head title={artist.name}>
-      <p className="byline"><span>{plural(albums.length, 'record')}</span></p>
+      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingMarks id={artist.id} rating={artist.userRating} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play
@@ -418,7 +423,8 @@ export function Tracks() {
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>
     {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
-      ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.' : 'No tracks on this server yet.'}</Status>
+      ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.'
+        : tracksSorted && sort === 'highest' ? 'Nothing rated yet. Songs you rate will collect here, best first.' : 'No tracks on this server yet.'}</Status>
       : tracks.error ? <Status>{tracks.error}</Status> : <p className="status loading">Gathering tracks</p>}
     {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
     <div ref={sentinel} className="sentinel" />

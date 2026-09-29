@@ -19,7 +19,7 @@ const added = (track: Track) => {
 const lower = (text: string) => text.toLowerCase();
 const compare = (a: string | number, b: string | number) => a < b ? -1 : a > b ? 1 : 0;
 // Ascending, as Navidrome's sort mappings are written; _order=desc reverses every column.
-const sorts: Record<string, (seed: string) => (a: Track, b: Track) => number> = {
+const sorts: Record<string, (seed: string, fake: FakeNavidrome) => (a: Track, b: Track) => number> = {
   recently_added: () => (a, b) => compare(added(a), added(b)) || compare(a.id, b.id),
   title: () => (a, b) => compare(lower(a.title), lower(b.title)),
   artist: () => (a, b) => compare(lower(a.artist), lower(b.artist)) || compare(lower(a.album), lower(b.album)) || compare(a.year ?? 0, b.year ?? 0)
@@ -28,6 +28,8 @@ const sorts: Record<string, (seed: string) => (a: Track, b: Track) => number> = 
   // Never played is null, which sorts first ascending and last descending.
   play_date: () => (a, b) => compare(plays.get(a.id)?.date ?? '', plays.get(b.id)?.date ?? ''),
   random: seed => (a, b) => compare(md5(seed + a.id), md5(seed + b.id)),
+  // Unrated counts as 0, so it comes last descending.
+  rating: (_, fake) => (a, b) => compare(fake.ratings.get(a.id) ?? 0, fake.ratings.get(b.id) ?? 0),
 };
 
 // model.MediaFile as JSON, and the same song as Subsonic describes it.
@@ -40,12 +42,14 @@ const nativeSong = (fake: FakeNavidrome, track: Track) => ({
   ...(plays.has(track.id) ? { playCount: plays.get(track.id)!.count, playDate: plays.get(track.id)!.date } : {}),
   participants: { artist: track.artists ?? [{ id: track.artistId, name: track.artist }] },
   missing: false, createdAt: new Date(added(track)).toISOString(),
+  ...(fake.ratings.has(track.id) ? { rating: fake.ratings.get(track.id) } : {}),
 });
 const subsonicSong = (fake: FakeNavidrome, track: Track) => ({
   id: track.id, title: track.title, artist: track.artist, album: track.album, albumId: track.albumId, artistId: track.artistId,
   duration: track.duration, suffix: track.sourceFormat, samplingRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth,
   coverArt: track.coverArt, track: track.trackNumber, discNumber: track.discNumber, year: track.year ?? undefined, genre: track.genre ?? undefined,
   ...(fake.starred.has(track.id) ? { starred: '2026-09-01T00:00:00Z' } : {}), ...(track.artists ? { artists: track.artists } : {}),
+  ...(fake.ratings.has(track.id) ? { userRating: fake.ratings.get(track.id) } : {}),
 });
 
 /** Answers the request if it is one of these routes; false leaves it to the stream server. */
@@ -86,7 +90,7 @@ export function serveNavidrome(fake: FakeNavidrome, request: IncomingMessage, re
       const token = /^Bearer (.+)$/i.exec(String(request.headers['x-nd-authorization'] ?? ''))?.[1];
       if (!token || !fake.sessions.has(token)) { reply(401, { error: 'Not authenticated' }); return true; }
       fake.nativeQueries.push(params);
-      const sort = sorts[params.get('_sort') ?? '']?.(params.get('seed') ?? '');
+      const sort = sorts[params.get('_sort') ?? '']?.(params.get('seed') ?? '', fake);
       const direction = params.get('_order')?.toLowerCase() === 'desc' ? -1 : 1;
       const list = sort ? [...allTracks].sort((a, b) => direction * sort(a, b)) : allTracks;
       const start = Number(params.get('_start') ?? 0), end = Number(params.get('_end') ?? list.length);

@@ -107,6 +107,7 @@ const library: LibraryApi = {
   reportPlay: (trackId, event) => call('reportPlay', [trackId, event]),
   savedQueue: () => call('savedQueue', []),
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', [trackIds, currentIndex, positionSeconds]),
+  rate: (target, id, rating) => call('rate', [target, id, rating]),
   // Same address as the browser build; the native side fetches it with the account's credentials.
   coverUrl: (coverArt, size) => `/api/cover?id=${encodeURIComponent(coverArt)}&size=${Math.round(size)}`,
 };

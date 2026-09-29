@@ -6,6 +6,7 @@ import { nav, type Route } from '../route';
 import { getThemes, onThemesChange, selectTheme } from '../theme';
 import { splitTitle } from '../ui';
 import { openConfigFolder } from '../config';
+import { setRating } from '../ratings';
 import { onCommandError } from './keymap';
 import { togglePalette } from './palette-state';
 
@@ -46,6 +47,17 @@ add({
     const now = volumeNow();
     if (now > 0) { beforeMute = now; setVolume(0); } else { setVolume(beforeMute ?? 100); beforeMute = null; }
   },
+});
+// Ratings for the playing song, which must be from the server. setRating shows its own failures.
+const playingOnServer = () => getPlayer().connected && current(getPlayer())?.source === 'navidrome';
+for (const n of [1, 2, 3, 4, 5] as const) add({
+  id: `rate-${n}`, title: `Rate the playing song ${n === 1 ? '1 star' : `${n} stars`}`, category: 'Playback', keys: [`ctrl+${n}`],
+  when: playingOnServer, run: async () => { await setRating('track', [current(getPlayer())!.id], n); },
+});
+add({
+  id: 'rate-clear', title: 'Clear the playing song\'s rating', category: 'Playback',
+  when: playingOnServer,
+  run: async () => { await setRating('track', [current(getPlayer())!.id], 0); },
 });
 
 // Go to

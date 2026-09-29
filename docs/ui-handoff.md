@@ -17,7 +17,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | `config.ts` | The desktop's config folder (`keybindings.json`, `themes/*.json`), read once and shared by keys and themes. The main process reads and watches it (`main/config.ts`, wired up in `main/configBridge.ts`) |
 | `transport.tsx` | The room's palette (`useRoomPalette`: theme colours or the sleeve), its CSS variables, transport buttons, and the position squiggle, shared by the deck and the mini player |
 | `ui.tsx` | Small shared pieces: covers, glyphs, palettes from sleeves, title splitting, `time()`, `shuffled()`, formatting |
-| `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites |
+| `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts`, `ratings.tsx` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites, optimistic ratings and their marks |
 
 ## Desktop contract
 
@@ -33,8 +33,8 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `queue.jump(index, entryId)` | Play a queue entry. The entry id makes the jump land on that exact entry, even when the same song appears twice |
 | `radio.start(seed)`, `radio.stop()` | Radio from a song, album, or artist. The main process owns it and keeps topping up the queue while every window is hidden |
 | `resumeQueue()` | Load the server-saved queue paused at its song and position |
-| `library.*` | `LibraryApi`: browse, search, star, playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics` |
-| `library.tracks(sort, offset, size, seed)` | Every track on the server, up to 500 at a time, sorted as Records sorts (Newest, A to Z, By artist, Most played, Recently played, Random; `seed` keeps a random order across pages). A page shorter than `size` is the last. Navidrome's own API does the sorting: the connector signs in to it with the account's password (`POST /auth/login`), keeps the session token in memory, takes the fresh one each answer brings, and signs in again when it's refused. Other servers, or a Navidrome whose own API is out of reach, answer in the server's one order (`search3` with an empty query) with `sorted: false`, and the Tracks page hides its sorts. The page asks for 200 at a time as it scrolls |
+| `library.*` | `LibraryApi`: browse, search, star, rate (`rate(kind, id, 0 to 5)`, where 0 clears; items carry `userRating` when rated), playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics` |
+| `library.tracks(sort, offset, size, seed)` | Every track on the server, up to 500 at a time, sorted as Records sorts (Newest, A to Z, By artist, Most played, Recently played, Random, Top rated; `seed` keeps a random order across pages). A page shorter than `size` is the last. Navidrome's own API does the sorting: the connector signs in to it with the account's password (`POST /auth/login`), keeps the session token in memory, takes the fresh one each answer brings, and signs in again when it's refused. Other servers, or a Navidrome whose own API is out of reach, answer in the server's one order (`search3` with an empty query) with `sorted: false`, and the Tracks page hides its sorts. The page asks for 200 at a time as it scrolls |
 | `library.coverUrl(coverArt, size)` | `squiggly-art://` URL; the main process fetches art, credentials never reach the renderer |
 | `settings()`, `updateSettings(changes)` | Stored preferences; re-read `settings()` after a failed update |
 | `extensions.list()`, `subscribe`, `setEnabled`, `reload`, `remove`, `openDir`, `writeClipboard` | Extensions in `<config>/extensions`. `remove` moves the folder to the trash. The runtime in `extensions/` is the only caller |

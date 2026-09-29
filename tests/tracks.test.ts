@@ -18,17 +18,17 @@ const natives = [
     playCount: 1120, playDate: '2026-09-28T00:37:33.512658942Z', starred: true, starredAt: '2026-09-29T04:19:14.672579401Z', imageHash: '51f5041620034dc3',
     id: '3KB8ZWlZgex99I9sWcgXb1', title: '"polar expedition"', album: 'Live at The Casbah - 2005-04-29', artistId: '7i6ciuZJca8cG0V2xXwDcC', artist: 'The New Deal',
     albumId: '1wg9e3B8bWmiVRZWZBJux3', hasCoverArt: true, trackNumber: 4, discNumber: 1, year: 2005, suffix: 'flac', duration: 178.77, bitRate: 880,
-    sampleRate: 44100, bitDepth: 16, channels: 2, genre: '', missing: false,
+    sampleRate: 44100, bitDepth: 16, channels: 2, genre: '', missing: false, rating: 5,
     participants: { albumartist: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal', missing: false }], artist: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal', missing: false }] },
   },
   {
     playCount: 3, playDate: '2026-09-27T00:00:00Z', imageHash: 'aa11', id: 'duet', title: 'Duet', album: 'Pairs', artistId: 'ar-a', artist: 'A & B', albumId: 'al-pairs',
-    hasCoverArt: false, trackNumber: 2, discNumber: 2, year: 0, suffix: 'wav', duration: 61.9, sampleRate: 96000, bitDepth: 24, genre: 'Jazz',
+    hasCoverArt: false, trackNumber: 2, discNumber: 2, year: 0, suffix: 'wav', duration: 61.9, sampleRate: 96000, bitDepth: 24, genre: 'Jazz', rating: 3,
     participants: { artist: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B', subRole: '' }] },
   },
   {
     id: 'loose', title: 'Loose', album: 'Singles', artistId: 'ar-c', artist: 'C', albumId: 'al-singles', hasCoverArt: false, trackNumber: 0, discNumber: 0,
-    year: 1999, suffix: 'mp3', duration: 12, sampleRate: 0, genre: '', participants: { artist: [{ id: 'ar-c', name: 'C' }] },
+    year: 1999, suffix: 'mp3', duration: 12, sampleRate: 0, genre: '', participants: { artist: [{ id: 'ar-c', name: 'C' }] }, rating: 0,
   },
 ];
 const subsonics = [
@@ -36,11 +36,11 @@ const subsonics = [
     id: '3KB8ZWlZgex99I9sWcgXb1', parent: '1wg9e3B8bWmiVRZWZBJux3', isDir: false, title: '"polar expedition"', album: 'Live at The Casbah - 2005-04-29', artist: 'The New Deal',
     track: 4, year: 2005, coverArt: 'mf-3KB8ZWlZgex99I9sWcgXb1_51f5041620034dc3', suffix: 'flac', starred: '2026-09-29T04:19:14.672579401Z', duration: 178, bitRate: 880,
     playCount: 1120, discNumber: 1, albumId: '1wg9e3B8bWmiVRZWZBJux3', artistId: '7i6ciuZJca8cG0V2xXwDcC', samplingRate: 44100, bitDepth: 16, genres: [],
-    artists: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal' }], displayArtist: 'The New Deal',
+    artists: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal' }], displayArtist: 'The New Deal', userRating: 5,
   },
   {
     id: 'duet', title: 'Duet', album: 'Pairs', artist: 'A & B', track: 2, coverArt: 'dc-al-pairs:2_aa11', suffix: 'wav', duration: 61, discNumber: 2,
-    albumId: 'al-pairs', artistId: 'ar-a', samplingRate: 96000, bitDepth: 24, genre: 'Jazz', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }],
+    albumId: 'al-pairs', artistId: 'ar-a', samplingRate: 96000, bitDepth: 24, genre: 'Jazz', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }], userRating: 3,
   },
   {
     id: 'loose', title: 'Loose', album: 'Singles', artist: 'C', year: 1999, coverArt: 'al-al-singles_0f0f', suffix: 'mp3', duration: 12, albumId: 'al-singles', artistId: 'ar-c',
@@ -117,6 +117,7 @@ describe("Navidrome's own API", () => {
     const expected: Record<TrackSort, [string, string]> = {
       newest: ['recently_added', 'desc'], alphabeticalByName: ['title', 'asc'], alphabeticalByArtist: ['artist', 'asc'],
       frequent: ['play_count', 'desc'], recent: ['play_date', 'desc'], random: ['random', 'asc'],
+      highest: ['rating', 'desc'],
     };
     for (const sort of Object.keys(expected) as TrackSort[]) expect((await run(client.tracks(sort, 0, 200, 'seed-1'))).sorted).toBe(true);
     expect(state.logins).toHaveLength(1);
@@ -126,7 +127,7 @@ describe("Navidrome's own API", () => {
       _sort: sort, _order: order, _start: '0', _end: '200', missing: 'false', ...(i === 5 ? { seed: 'seed-1' } : {}),
     })));
     // The sign-in's token, then each answer's fresh one.
-    expect(state.queries.map(query => query.token)).toEqual(['jwt-1', 'jwt-2', 'jwt-3', 'jwt-4', 'jwt-5', 'jwt-6']);
+    expect(state.queries.map(query => query.token)).toEqual(['jwt-1', 'jwt-2', 'jwt-3', 'jwt-4', 'jwt-5', 'jwt-6', 'jwt-7']);
     // Offsets and sizes are bounded as search3's are.
     await run(client.tracks('newest', -5, 5000, ''));
     expect(Object.fromEntries(state.queries.at(-1)!.params)).toMatchObject({ _start: '0', _end: '500' });
@@ -163,6 +164,14 @@ describe("Navidrome's own API", () => {
     expect((await run(client.tracks('alphabeticalByName', 0, 3, ''))).tracks).toHaveLength(3);
   });
 
+  it('keeps rated tracks only for top rated, with their ratings', async () => {
+    const { client } = await navidrome();
+    // In rating order: the first two are rated, the third's 0 is unrated.
+    const highest = await run(client.tracks('highest', 0, 3, ''));
+    expect(highest.tracks.map(track => [track.id, track.userRating])).toEqual([['3KB8ZWlZgex99I9sWcgXb1', 5], ['duet', 3]]);
+    expect((await run(client.tracks('newest', 0, 3, ''))).tracks[2]).not.toHaveProperty('userRating');
+  });
+
   it('maps a song to the same Track as Subsonic does', async () => {
     const native = (await run((await navidrome()).client.tracks('newest', 0, 3, ''))).tracks;
     const subsonic = (await run((await navidrome({ type: 'gonic' })).client.tracks('newest', 0, 3, ''))).tracks;
@@ -178,7 +187,7 @@ describe("Navidrome's own API", () => {
     const { client } = await navidrome();
     const called = await run(libraryCall(client, 'tracks', ['alphabeticalByArtist', 0, 200, '']));
     expect(called.tracks.map(track => track.id)).toEqual(['3KB8ZWlZgex99I9sWcgXb1', 'duet', 'loose']);
-    await expect(run(libraryCall(client, 'tracks', ['highest', 0, 200, '']))).rejects.toThrow('Invalid library request.');
+    await expect(run(libraryCall(client, 'tracks', ['starred', 0, 200, '']))).rejects.toThrow('Invalid library request.');
   });
 });
 
