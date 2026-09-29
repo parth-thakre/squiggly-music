@@ -68,6 +68,13 @@ export const wordLines = wordTimes.map(([start, words]) => {
 });
 
 export const playlistIds = { road: 'pl-road', readonly: 'pl-server' } as const;
+// Two internet radio stations. Their streams are endless WAV from the fixture server (server.ts,
+// /radio/<id>); the page only ever sees /api/station?id=<id>.
+export const stationIds = { harbour: 'st-1', night: 'st-2' } as const;
+const stations = [
+  { id: stationIds.harbour, name: 'Harbour FM', homePageUrl: 'https://www.harbour.example/listen' },
+  { id: stationIds.night, name: 'Night Signal', homePageUrl: null },
+];
 // The account tracks() signs in to over HTTP (see native.ts), and the plays it remembers there.
 export const account = { username: 'tester', password: 'fixture password' };
 export const seededPlays: [id: string, count: number, lastPlayed: string][] = [
@@ -172,6 +179,8 @@ export class FakeNavidrome {
   logins = 0;
   sessions = new Set<string>();
   nativeQueries: URLSearchParams[] = [];
+  /** Station streams the fixture server has been asked for, by station id. */
+  stationStreams: string[] = [];
   private issued = 0;
   private http: SubsonicClient | null = null;
 
@@ -184,6 +193,7 @@ export class FakeNavidrome {
     this.ratings.clear(); this.failures.clear(); this.large = false;
     this.recent = []; this.frequent = []; this.listening = [];
     this.shareList = []; this.sharing = true; this.sharesMade = 0;
+    this.stationStreams = [];
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -364,7 +374,11 @@ export class FakeNavidrome {
       return Effect.void;
     }),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
+    radioStations: () => this.op('radioStations', [], () => Effect.succeed(stations.map(station => ({ ...station, streamUrl: this.stationUrl(station.id) })))),
+    stationLocation: (id: string) => this.op('stationLocation', [id], () => stations.some(station => station.id === id)
+      ? Effect.succeed(this.stationUrl(id)) : fail('This station is no longer on the server. Refresh the stations and try again.')),
   };
+  private stationUrl = (id: string) => `${this.audioBase()}/radio/${encodeURIComponent(id)}`;
 
   get subsonic() { return this.client as unknown as SubsonicClient; }
 }

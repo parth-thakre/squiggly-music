@@ -6,7 +6,7 @@ import { preview } from 'vite';
 import { navidromePreview } from '../../../scripts/navidrome-preview';
 import { FakeNavidrome, trackOf } from './library';
 import { serveNavidrome } from './native';
-import { toneWav } from './media';
+import { liveWavHeader, toneWav } from './media';
 
 export const webPassword = 'squiggly test password';
 const root = resolve(import.meta.dirname, '../../..');
@@ -19,6 +19,8 @@ async function audioServer(navidrome: (request: IncomingMessage, response: Serve
   const server: Server = createServer((request, response) => {
     if (navidrome(request, response)) return;
     const url = new URL(request.url ?? '/', 'http://audio');
+    const station = /^\/radio\/(st-\d+)$/.exec(url.pathname)?.[1];
+    if (station) return void live(station, request, response);
     const id = url.searchParams.get('id') ?? '';
     const track = /^tr-\d+-\d+$/.test(id) ? trackOf(id) : undefined;
     if (!track) { response.writeHead(200, { 'content-type': 'application/json' }); return void response.end('{"subsonic-response":{"status":"failed"}}'); }
@@ -39,6 +41,23 @@ async function audioServer(navidrome: (request: IncomingMessage, response: Serve
   return { url: `http://127.0.0.1:${port}`, close: () => { server.closeAllConnections(); return new Promise<void>(done => server.close(() => done())); } };
 }
 
+// An internet radio station: a WAV stream that never ends, a second of tone looped (330 whole
+// cycles, so the joins are seamless), sent about as fast as it plays until the listener goes.
+// Chunked, with no length, as a live stream is.
+let hearing: ((id: string) => void) | undefined;
+function live(id: string, request: IncomingMessage, response: ServerResponse) {
+  hearing?.(id);
+  response.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'no-cache' });
+  if (request.method === 'HEAD') return void response.end();
+  const second = toneWav(1, 330).subarray(44);
+  // A burst first, as a station's server sends from its buffer: Chrome doesn't open a stream
+  // until it holds about 256 KB, sixteen seconds of this. Then one second a second.
+  response.write(liveWavHeader());
+  for (let i = 0; i < 16; i++) response.write(second);
+  const timer = setInterval(() => { if (!response.destroyed) response.write(second); }, 1000);
+  response.on('close', () => clearInterval(timer));
+}
+
 // The browser build (out/web) served by Vite's real preview server with the real
 // navidrome-preview plugin, backed by the fake account. One per Playwright worker.
 export async function startPreview() {
@@ -47,6 +66,7 @@ export async function startPreview() {
   let fake: FakeNavidrome | undefined;
   const audio = await audioServer((request, response) => serveNavidrome(fake!, request, response));
   fake = new FakeNavidrome(() => audio.url);
+  hearing = id => fake!.stationStreams.push(id);
   const server = await preview({
     configFile: false, root: resolve(root, 'apps/desktop/renderer'), logLevel: 'warn',
     build: { outDir },

@@ -117,6 +117,7 @@ const library: LibraryApi = {
   createShare: (ids, description, expiresAt) => call('createShare', [ids, description ?? null, expiresAt ?? null]),
   shares: () => call('shares', []),
   deleteShare: id => call('deleteShare', [id]),
+  radioStations: () => call('radioStations', []),
 };
 
 // Player -----------------------------------------------------------------------------------
@@ -130,10 +131,13 @@ const playbackListeners = new Set<(playback: AndroidPlayback) => void>();
 const resetListeners = new Set<() => void>();
 
 function item(track: Track, id: string, current: SubsonicClient): NativeItem {
+  // A station plays its own stream, from the station list the page read through this client; it
+  // has no MP3 to fall back to. (An unknown one gets no address, and the player says it failed.)
+  const station = track.source === 'station' ? current.knownStationLocation(track.id) ?? '' : null;
   return {
-    id, url: current.streamLocation(track.id), fallbackUrl: current.streamLocation(track.id, 'mp3'),
+    id, url: station ?? current.streamLocation(track.id), fallbackUrl: station ?? current.streamLocation(track.id, 'mp3'),
     title: track.title, artist: track.artist, album: track.album, coverArt: track.coverArt ?? null, duration: track.duration,
-    track: JSON.stringify(track),
+    track: JSON.stringify(track), live: station !== null,
   };
 }
 let latest: { queue: readonly Track[]; entryIds: readonly string[] } = { queue: [], entryIds: [] };
@@ -168,7 +172,7 @@ async function clearPlayer() {
 
 function playback(native: NativePlayback): AndroidPlayback {
   const { entryId, playId, playing, buffering, ended, position, duration, fallback, error } = native;
-  return { entryId, playId, playing, buffering, ended, position, duration, fallback, error };
+  return { entryId, playId, playing, buffering, ended, position, duration, fallback, error, stationTitle: native.stationTitle ?? null };
 }
 void Squiggly.addListener('playback', native => {
   if (native.seq < seq) return;

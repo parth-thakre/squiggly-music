@@ -2,9 +2,10 @@ import { Effect, Either, Schema } from 'effect';
 import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
-  AlbumYears, ArtistInfo, DiscTitle, SearchOptions, SearchResults, Share,
+  AlbumYears, ArtistInfo, DiscTitle, RadioStation, SearchOptions, SearchResults, Share,
   NowPlayingEntry,
 } from '../core/contracts';
+import { stationTrack } from '../core/stations';
 import type { PlayableTrack } from '../player-mpv/protocol';
 import { Metrics } from '../core/metrics';
 import { IdSchema, LibraryRequestSchemas } from '../core/validation';
@@ -162,6 +163,12 @@ const ArtistInfoSchema = Schema.Struct({ artistInfo2: Schema.Struct({
 const NowPlayingSchema = Schema.Struct({ nowPlaying: Schema.optional(Schema.Struct({ entry: Schema.optional(Schema.Array(Schema.Struct({
   ...SongSchema.fields, username: Schema.optional(Schema.String.pipe(Schema.maxLength(256))),
 })).pipe(Schema.maxItems(500))) })) });
+// Internet radio stations, as the server's administrators entered them. Older Navidrome releases
+// spell the home page homepageUrl.
+const StationTextSchema = Schema.optional(Schema.String.pipe(Schema.maxLength(4096)));
+const RadioStationsSchema = Schema.Struct({ internetRadioStations: Schema.Struct({ internetRadioStation: Schema.optional(Schema.Array(Schema.Struct({
+  id: IdSchema, name: StationTextSchema, streamUrl: StationTextSchema, homePageUrl: StationTextSchema, homepageUrl: StationTextSchema,
+})).pipe(Schema.maxItems(1000))) }) });
 const LegacyLyricsSchema = Schema.Struct({ lyrics: Schema.optional(Schema.Struct({ value: Schema.optional(Schema.String.pipe(Schema.maxLength(200_000))) })) });
 // Saved queues. Positions are milliseconds. Legacy servers name the current song; indexBasedQueue gives its index.
 const QueueFields = {
@@ -346,6 +353,11 @@ export function searchResults(items: LibraryItems, pages: SearchPages): SearchRe
   } };
 }
 
+// A station as the connector knows it: with its stream address, which, like streamLocation's,
+// stays with the desktop's main and audio processes, the browser build's host, and the Android
+// player. LibraryApi.radioStations hands out RadioStation, without it.
+export interface StationSource extends RadioStation { streamUrl: string }
+
 // How the client reaches the server. The Android app passes a fetch that runs natively
 // (bridge/android/http.ts), which has no CORS or mixed-content rules to satisfy.
 export interface ClientOptions { fetch?: typeof globalThis.fetch }
@@ -361,6 +373,8 @@ export class SubsonicClient {
   #native: boolean | null = null;
   #jwt: string | null = null;
   #signingIn: Effect.Effect<string, Error> | null = null;
+  // Each station's stream address, from the last station list.
+  #stations = new Map<string, string>();
   // lrclib overrides the LRCLIB address and fetch for tests; it is only contacted when a lyrics lookup allows it.
   constructor(connection: Connection, private metrics: Metrics, private lrclib: LrclibOptions = {}, private options: ClientOptions = {}) {
     this.baseUrl = normalizeServerUrl(connection.url);
@@ -771,6 +785,38 @@ export class SubsonicClient {
       Effect.map(result => (result.shares?.share ?? []).flatMap(share => toShare(share) ?? [])));
   }
   deleteShare(id: string) { return this.request('deleteShare', StatusSchema, { id }).pipe(Effect.mapError(shareError), Effect.asVoid); }
+  // The server's internet radio stations, in its order. A station whose stream isn't an http(s)
+  // address is left out; a home page that isn't one is unknown.
+  radioStations(): Effect.Effect<StationSource[], Error> {
+    return this.request('getInternetRadioStations', RadioStationsSchema).pipe(Effect.map(result => {
+      const stations = new Map<string, StationSource>();
+      for (const station of result.internetRadioStations.internetRadioStation ?? []) {
+        const streamUrl = webAddress(station.streamUrl);
+        if (!streamUrl || stations.has(station.id)) continue;
+        stations.set(station.id, {
+          id: station.id, name: station.name?.trim() || 'Untitled station', streamUrl,
+          homePageUrl: webAddress(station.homePageUrl ?? station.homepageUrl),
+        });
+      }
+      this.#stations = new Map([...stations.values()].map(station => [station.id, station.streamUrl]));
+      return [...stations.values()];
+    }));
+  }
+  // A station's stream address, from the last station list, or from a fresh one when this client
+  // hasn't listed the stations (or the station is new). It must stay where streamLocation's does.
+  stationLocation(id: string): Effect.Effect<string, Error> {
+    return Effect.suspend(() => {
+      const known = this.#stations.get(id);
+      if (known) return Effect.succeed(known);
+      return this.radioStations().pipe(Effect.flatMap(() => {
+        const found = this.#stations.get(id);
+        return found ? Effect.succeed(found) : Effect.fail(new ServerError('This station is no longer on the server. Refresh the stations and try again.'));
+      }));
+    });
+  }
+  // The same, without asking the server: for the Android bridge, which builds the native queue
+  // synchronously. Null when the station list hasn't been read.
+  knownStationLocation(id: string): string | null { return this.#stations.get(id) ?? null; }
 }
 
 // The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
@@ -828,6 +874,9 @@ const library = {
   createShare: entry(LibraryRequestSchemas.createShare, (client, [ids, description, expiresAt]) => client.createShare(ids, description, expiresAt)),
   shares: entry(LibraryRequestSchemas.shares, client => client.shares()),
   deleteShare: entry(LibraryRequestSchemas.deleteShare, (client, [id]) => client.deleteShare(id)),
+  // Stream addresses stay here. The station tracks let the desktop queue a station by its id.
+  radioStations: entry(LibraryRequestSchemas.radioStations, client => client.radioStations().pipe(
+    Effect.map(stations => stations.map(({ id, name, homePageUrl }): RadioStation => ({ id, name, homePageUrl })))), value => value.map(stationTrack)),
 } satisfies { [K in LibraryMethod]: LibraryEntry<any, LibraryValue<K>> };
 export const libraryMethods = Object.keys(library) as LibraryMethod[];
 export const isLibraryMethod = (method: string): method is LibraryMethod => Object.hasOwn(library, method);

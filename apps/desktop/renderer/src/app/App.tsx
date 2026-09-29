@@ -9,6 +9,7 @@ import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
+import { isStation } from '../../../../../packages/core/stations';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
@@ -182,6 +183,8 @@ const Deck = memo(function Deck() {
   const engine = usePlayer(s => s.engine);
   const radio = usePlayer(s => s.radio);
   const starting = usePlayer(s => s.radioStarting);
+  // A station's byline: what it says is on, when it says (see useByline).
+  const announced = usePlayer(s => s.stationTitle);
   const [expanded, setExpanded] = useState(false);
   const [sheetLyrics, setSheetLyrics] = useState(false);
   const route = useRoute();
@@ -212,16 +215,18 @@ const Deck = memo(function Deck() {
         <button type="button" className="deck-hide text-button" aria-pressed={sheetLyrics} onClick={() => setSheetLyrics(v => !v)}>{sheetLyrics ? 'Sleeve' : 'Lyrics'}</button>
       </div>
       {/* Keyed by song, so a new sleeve settles in rather than snapping. */}
-      {expanded && sheetLyrics ? <Lyrics compact /> : <Cover key={track.id} id={track.coverArt} name={track.album} size={600} className="deck-cover" />}
+      {expanded && sheetLyrics ? <Lyrics compact /> : <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />}
     </div>
     <div className="deck-bottom">
       <div className="deck-text">
         <h2 className="deck-title">{name.main}</h2>
         <p className="deck-sub">
-          <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
-          {track.album && <>
-            {' on '}
-            {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
+          {isStation(track) ? announced ?? 'Internet radio' : <>
+            <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
+            {track.album && <>
+              {' on '}
+              {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
+            </>}
           </>}
         </p>
         <DeckSlots placement="under-title" track={track} />
@@ -338,11 +343,18 @@ function SignalPath({ track }: { track: Track }) {
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
+  const codec = usePlayer(s => s.audio?.codec ?? null);
+  const decoderRate = usePlayer(s => s.audio?.decoderRate ?? null);
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
   const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
     volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
+  // A station: a live stream, and what mpv says it decodes, if anything. The server's list says
+  // nothing about the stream, and the browser can't hear what the station says is on.
+  const decoded = [codec?.toUpperCase(), kHz(decoderRate)].filter(Boolean).join(' at ');
+  const live = mode === 'desktop' ? `A live stream${decoded ? `, which mpv decodes as ${decoded}` : ''}.`
+    : mode === 'web' ? 'A live stream, played by this browser, which can\'t tell what the station says is on.' : 'A live stream.';
   // What the file is. The Android app asks for the original file too, and plays it itself.
-  const line = [mode !== 'web' && format, notes].filter(Boolean).join('. ');
+  const line = isStation(track) ? [live, notes].filter(Boolean).join(' ') : [mode !== 'web' && format, notes].filter(Boolean).join('. ');
   return line ? <p className="signal">{line}</p> : null;
 }
 

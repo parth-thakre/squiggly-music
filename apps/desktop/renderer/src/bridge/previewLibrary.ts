@@ -83,4 +83,5 @@ export const previewLibrary: LibraryApi = {
   createShare: (ids, description, expiresAt) => call('createShare', [ids, description ?? null, expiresAt ?? null]),
   shares: () => call('shares', []),
   deleteShare: id => call('deleteShare', [id]),
+  radioStations: () => call('radioStations', []),
 };

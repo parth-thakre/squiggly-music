@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Schema } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 
@@ -653,5 +653,52 @@ describe('playing elsewhere', () => {
     const decode = (value: unknown) => Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.nowPlaying)(value));
     expect(decode([])).toBe(true);
     expect(decode(['sam'])).toBe(false);
+  });
+});
+
+describe('internet radio stations', () => {
+  const stations = { internetRadioStations: { internetRadioStation: [
+    { id: 'st1', name: ' Jazz FM ', streamUrl: 'https://stream.example/jazz?token=private', homePageUrl: 'https://jazz.example/' },
+    { id: 'st2', name: '', streamUrl: ' http://stream.example/talk ', homepageUrl: 'javascript:alert(1)' },
+    { id: 'st3', name: 'A file', streamUrl: 'file:///etc/passwd', homePageUrl: 'https://file.example/' },
+    { id: 'st4', name: 'No stream' },
+    { id: 'st1', name: 'The same id again', streamUrl: 'https://stream.example/other' },
+  ] } };
+  it('reads stations with http(s) streams only, and keeps home pages that are web addresses', async () => {
+    const mock = servePayload(stations);
+    expect(await Effect.runPromise(client().radioStations())).toEqual([
+      { id: 'st1', name: 'Jazz FM', streamUrl: 'https://stream.example/jazz?token=private', homePageUrl: 'https://jazz.example/' },
+      { id: 'st2', name: 'Untitled station', streamUrl: 'http://stream.example/talk', homePageUrl: null },
+    ]);
+    expect(new URL(mock.mock.calls[1][0]).pathname).toBe('/navidrome/rest/getInternetRadioStations.view');
+    servePayload({ internetRadioStations: {} });
+    expect(await Effect.runPromise(client().radioStations())).toEqual([]);
+    servePayload({ internetRadioStations: { internetRadioStation: [{ name: 'No id', streamUrl: 'https://stream.example/x' }] } });
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(client().radioStations())))).toBe(true);
+  });
+  it('gives the library stations without their stream addresses, and the tracks that queue them', async () => {
+    servePayload(stations);
+    const { value, tracks } = await Effect.runPromise(libraryCall(client(), 'radioStations', []));
+    expect(value).toEqual([{ id: 'st1', name: 'Jazz FM', homePageUrl: 'https://jazz.example/' }, { id: 'st2', name: 'Untitled station', homePageUrl: null }]);
+    expect(JSON.stringify(value)).not.toContain('stream.example');
+    expect(tracks).toEqual([
+      { id: 'st1', title: 'Jazz FM', artist: '', album: '', duration: null, source: 'station', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null, albumId: null, artistId: null, coverArt: null },
+      expect.objectContaining({ id: 'st2', title: 'Untitled station', source: 'station' }),
+    ]);
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(libraryCall(client(), 'radioStations', ['extra']))))).toBe(true);
+  });
+  it('finds a station stream in the last list, asks again for one it hasn\'t seen, and fails plainly for a missing one', async () => {
+    const mock = servePayload(stations);
+    const subject = client();
+    expect(subject.knownStationLocation('st2')).toBeNull();
+    // Nothing listed yet: the list is read.
+    expect(await Effect.runPromise(subject.stationLocation('st2'))).toBe('http://stream.example/talk');
+    const asked = mock.mock.calls.length;
+    expect(await Effect.runPromise(subject.stationLocation('st1'))).toBe('https://stream.example/jazz?token=private');
+    expect(mock.mock.calls.length).toBe(asked);
+    expect(subject.knownStationLocation('st1')).toBe('https://stream.example/jazz?token=private');
+    const missing = await Effect.runPromise(Effect.either(subject.stationLocation('st3')));
+    expect(Either.isLeft(missing) && missing.left.message).toBe('This station is no longer on the server. Refresh the stations and try again.');
+    expect(mock.mock.calls.length).toBe(asked + 1);
   });
 });

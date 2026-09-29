@@ -4,6 +4,7 @@ import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
 import { following, preceding, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
 import { finishThreshold } from '../../../../../packages/core/plays';
+import { isStation, repeatFor } from '../../../../../packages/core/stations';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
 import { VolumeCommandCoalescer } from '../volumeCommands';
 import { api, resetLibraryCaches } from './library';
@@ -48,6 +49,10 @@ export interface PlayerState {
   // Queue modes. The desktop's audio host owns them; the browser and Android keep them here, in
   // local storage (MODES below).
   repeat: RepeatMode; shuffle: boolean;
+  // An internet radio station playing: what its stream says is on (ICY), from mpv on the desktop
+  // and ExoPlayer on Android. The browser can't read it, so it stays null there, as it does
+  // whenever a station says nothing.
+  stationTitle: string | null;
 }
 export type SignInState = Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
 
@@ -77,6 +82,7 @@ let state: PlayerState = {
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
   update: null,
   ...(local ? storedModes() : { repeat: 'off', shuffle: false }),
+  stationTitle: null,
 };
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
@@ -166,6 +172,7 @@ if (desktop) {
       delivery: track?.source === 'navidrome' ? 'original-requested' : null,
       error, diagnostics: snapshot.diagnostics,
       repeat: p.repeat ?? 'off', shuffle: p.shuffle ?? false,
+      stationTitle: p.stationTitle ?? null,
     });
   };
   let received = false;
@@ -177,8 +184,10 @@ if (desktop) {
 // Browser playback ----------------------------------------------------------------------
 // Two elements take turns: while one plays, the other loads the next song near the end,
 // so the change between songs is short. Streams come through the host's /api/stream,
-// which keeps the Navidrome credentials off the device.
-const stream = (id: string, mp3 = false) => `/api/stream?id=${encodeURIComponent(id)}${mp3 ? '&format=mp3' : ''}`;
+// which keeps the Navidrome credentials off the device. A station comes through /api/station,
+// which keeps its stream address on the host too.
+const stream = (track: Track, mp3 = false) => isStation(track) ? `/api/station?id=${encodeURIComponent(track.id)}`
+  : `/api/stream?id=${encodeURIComponent(track.id)}${mp3 ? '&format=mp3' : ''}`;
 const web = local && !android ? { active: new Audio(), standby: new Audio() } : null;
 // Every real load is a new playback instance. Play reports belong to the instance, so
 // replaying a song counts again and moving an already counted entry doesn't. Shared by the
@@ -202,7 +211,7 @@ let requests = 0;
 export const playRequests = () => requests;
 
 function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = false) {
-  element.src = stream(track.id, mp3);
+  element.src = stream(track, mp3);
   element.dataset.entry = entry;
   element.dataset.mp3 = mp3 ? '1' : '';
   element.volume = state.volume / 100;
@@ -213,7 +222,8 @@ function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play
   if (android && track && entry) {
     // set() sends the queue to the native player before the load that names the entry. The new
     // play instance begins when the player reports the entry started (see nativePlayback).
-    set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false, delivery: 'original-requested' });
+    set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false,
+      delivery: isStation(track) ? null : 'original-requested', stationTitle: null });
     android.player.load(entry, { play, position: startAt });
     saveSoon();
     return;
@@ -227,7 +237,7 @@ function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play
   plays.instance++; plays.track = track; plays.lastPosition = startAt; plays.listened = 0; plays.startAt = startAt;
   if (startAt && web.active.readyState >= HTMLMediaElement.HAVE_METADATA) { web.active.currentTime = startAt; plays.startAt = 0; }
   set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false, playId: `web.${plays.instance}`,
-    delivery: web.active.dataset.mp3 ? 'mp3-fallback' : 'original-requested' });
+    delivery: isStation(track) ? null : web.active.dataset.mp3 ? 'mp3-fallback' : 'original-requested' });
   if (play) void web.active.play().catch(() => set({ playing: false, buffering: false }));
   session(track);
   saveSoon();
@@ -261,14 +271,16 @@ if (web) {
       }
       // The song that follows, which is this one again under repeat one: the standby element
       // then holds a second copy, and the swap starts it over as quickly as a new song.
-      const upcoming = following(state.index, state.queue.length, state.repeat, 'ended');
+      const upcoming = following(state.index, state.queue.length, repeatFor(state.repeat, current(state)), 'ended');
       const next = state.queue[upcoming], nextEntry = state.entryIds[upcoming];
-      if (next && nextEntry && web.standby.dataset.entry !== nextEntry && element.duration - position < 25) { prepare(web.standby, next, nextEntry); web.standby.load(); }
+      // A station waits for its turn: loaded early, it would start its stream early and fall behind.
+      if (next && nextEntry && !isStation(next) && web.standby.dataset.entry !== nextEntry && element.duration - position < 25) { prepare(web.standby, next, nextEntry); web.standby.load(); }
       if (Math.floor(position) % 5 === 0) positionState();
     });
     element.addEventListener('ended', () => {
       if (!mine()) return;
-      const next = following(state.index, state.queue.length, state.repeat, 'ended');
+      // A station's stream only ends when it drops; repeat one doesn't dial it again.
+      const next = following(state.index, state.queue.length, repeatFor(state.repeat, current(state)), 'ended');
       if (next >= 0) webLoad(next);
       else set({ playing: false, position: 0 });
     });
@@ -282,14 +294,14 @@ if (web) {
       void (network ? Promise.resolve(true) : stillSignedIn()).then(signedIn => {
         if (!signedIn || instance !== plays.instance || !mine() || !track) return;
         // Some originals (ALAC, DSD) are beyond the browser; ask the server for a 320 kbps MP3 once.
-        if (!network && !element.dataset.mp3) {
+        if (!network && !element.dataset.mp3 && !isStation(track)) {
           plays.startAt = plays.lastPosition;
           prepare(element, track, element.dataset.entry!, true);
           set({ delivery: 'mp3-fallback' });
           if (wanted && paused === pauses) void element.play().catch(() => undefined);
           return;
         }
-        set({ playing: false, buffering: false, error: 'This song could not be played here. Try another, or check the connection.' });
+        set({ playing: false, buffering: false, error: isStation(track) ? stationFailed : 'This song could not be played here. Try another, or check the connection.' });
       });
     });
   }
@@ -297,6 +309,7 @@ if (web) {
   setInterval(() => { if (!web.active.paused) saveSoon(); }, 30000);
   addEventListener('pagehide', () => saveNow());
 }
+const stationFailed = 'This station could not be played here. It may be off the air, or its stream may be in a format this player can\'t play.';
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 function saveSoon() { if (local) { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 3000); } }
 function saveNow() {
@@ -400,8 +413,9 @@ function nativePlayback(playback: AndroidPlayback) {
   const track = state.queue[index];
   const patch: Partial<PlayerState> = {
     index, playing: playback.playing, buffering: playback.buffering,
-    delivery: playback.fallback ? 'mp3-fallback' : 'original-requested',
+    delivery: isStation(track) ? null : playback.fallback ? 'mp3-fallback' : 'original-requested',
     duration: playback.duration > 0 ? playback.duration : track.duration ?? 0,
+    stationTitle: isStation(track) ? playback.stationTitle ?? null : null,
   };
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
@@ -418,7 +432,7 @@ function nativePlayback(playback: AndroidPlayback) {
   if (playback.ended) { patch.playing = false; patch.buffering = false; patch.position = 0; }
   // A song that can't be played says so once.
   if (playback.error && (before?.error !== playback.error || before.playId !== playback.playId)) {
-    patch.error = 'This song could not be played here. Try another, or check the connection.';
+    patch.error = isStation(track) ? stationFailed : 'This song could not be played here. Try another, or check the connection.';
   }
   set(patch);
 }
@@ -468,6 +482,7 @@ async function startStation(seed: RadioStart) {
   }
   const mine = ++station;
   let start: Track | undefined;
+  if (seed.kind === 'song' && isStation(seed.track)) { set({ error: 'Radio starts from a song, record, or artist, not from a station.' }); return; }
   if (seed.kind === 'song') start = seed.track;
   else if (seed.kind === 'artist') { const top = await api.topSongs(seed.id, 5); start = top.ok ? top.value[0] : undefined; }
   else { const album = await api.album(seed.id); start = album.ok ? album.value.tracks[0] : undefined; }
@@ -663,7 +678,9 @@ export const player = {
   previous() {
     if (local) {
       const previous = preceding(state.index, state.queue.length, state.repeat);
-      if ((web ? web.active.currentTime : livePosition()) > 3 || previous < 0) player.seek(0); else webLoad(previous);
+      // A station has no start to go back to: Previous only moves back in the queue.
+      if (!isStation(current(state)) && ((web ? web.active.currentTime : livePosition()) > 3 || previous < 0)) player.seek(0);
+      else if (previous >= 0) webLoad(previous);
       return;
     }
     void desktop!.command({ type: 'previous' }).then(report);
@@ -692,7 +709,8 @@ export const player = {
   // `entryId`, when given, is the entry the gesture started on; another entry is never seeked.
   seek(seconds: number, entryId?: string) {
     const track = current(state);
-    if (!track || (entryId !== undefined && entryId !== currentEntry(state))) return;
+    // A station is live: there is no position to seek to.
+    if (!track || isStation(track) || (entryId !== undefined && entryId !== currentEntry(state))) return;
     if (android) {
       android.player.seek(currentEntry(state)!, seconds);
       plays.lastPosition = seconds; set({ position: seconds }); saveSoon(); return;

@@ -51,6 +51,7 @@ import { IdSchema } from '../packages/core/validation';
 //   -> { ok: true, value } | { ok: false, error }   (200, or 400/401/403/404/405/502/503)
 // GET  /api/cover?id=<coverArt>&size=<32..1200>  -> image bytes, or 404 with a Result
 // GET  /api/stream?id=<song>[&format=mp3]         -> audio bytes (Range supported), or 404 with a Result
+// GET  /api/station?id=<station>                  -> an internet radio station's live stream, or 404/502 with a Result
 // Audio and image elements load cover and stream same-origin, so the cookie rides along.
 // Writes (playlist edits, reportPlay, saveQueue) reach the configured account. `lyrics` contacts
 // LRCLIB only when the browser passes lookup=true as its second argument.
@@ -276,6 +277,38 @@ async function sendStream(client: SubsonicClient, request: IncomingMessage, resp
   Readable.fromWeb(upstream.body as WebReadableStream<Uint8Array>).on('error', () => response.destroy()).pipe(response);
 }
 
+// An internet radio station, relayed. Its stream address comes from the server's station list and
+// stays here, as a song's does; the browser sees /api/station?id=... . Stations live elsewhere on
+// the web, so redirects are followed (to http or https only, as fetch does). Only audio passes, and
+// no ICY metadata is asked for, so the bytes are the stream alone. The relay runs until the
+// browser lets go.
+async function sendStation(client: SubsonicClient, request: IncomingMessage, response: ServerResponse, searchParams: URLSearchParams) {
+  const id = searchParams.get('id') ?? '';
+  if (!Schema.is(IdSchema)(id)) return json(response, 404, { ok: false, error: 'This station is not available.' });
+  const location = await Effect.runPromise(Effect.either(client.stationLocation(id)));
+  if (Either.isLeft(location)) return json(response, 404, { ok: false, error: location.left.message });
+  const controller = new AbortController();
+  response.on('close', () => controller.abort());
+  // Fifteen seconds to answer; the stream itself has no end.
+  const timer = setTimeout(() => controller.abort(), 15_000);
+  let upstream: Response;
+  try {
+    upstream = await fetch(location.right, { signal: controller.signal, redirect: 'follow' });
+  } catch { return json(response, 502, { ok: false, error: 'The station did not answer.' }); }
+  finally { clearTimeout(timer); }
+  const type = upstream.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+  if (!upstream.ok || !upstream.body || !(type.startsWith('audio/') || type === 'application/ogg')) {
+    await upstream.body?.cancel().catch(() => {});
+    return json(response, 502, { ok: false, error: 'The station did not send audio this browser can play.' });
+  }
+  response.statusCode = 200;
+  response.setHeader('content-type', type);
+  response.setHeader('cache-control', 'no-store');
+  response.setHeader('x-content-type-options', 'nosniff');
+  if (request.method === 'HEAD') { await upstream.body.cancel().catch(() => {}); return response.end(); }
+  Readable.fromWeb(upstream.body as WebReadableStream<Uint8Array>).on('error', () => response.destroy()).pipe(response);
+}
+
 // Why /api must stay closed on this bind, or null when it may serve.
 export function refusal(host: string | boolean | undefined, password: string | undefined) {
   if (password !== undefined && password.length < minimumPasswordLength) return `SQUIGGLY_WEB_PASSWORD must be at least ${minimumPasswordLength} characters.`;
@@ -317,6 +350,10 @@ export function navidromePreview({ env = process.env, client = createClient(env)
         if (pathname === '/stream') {
           if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { ok: false, error: 'Use GET.' });
           return await sendStream(client, request, response, searchParams);
+        }
+        if (pathname === '/station') {
+          if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { ok: false, error: 'Use GET.' });
+          return await sendStation(client, request, response, searchParams);
         }
         const method = pathname.slice(1);
         if (!isLibraryMethod(method)) return json(response, 404, { ok: false, error: 'Unknown library method.' });

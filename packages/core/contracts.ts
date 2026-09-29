@@ -10,7 +10,9 @@ export interface Track {
   artist: string;
   album: string;
   duration: number | null;
-  source: 'local' | 'navidrome';
+  // 'station': an internet radio station from the server's list (RadioStation), a live stream
+  // with no duration, album, or cover. Its id is the station's id.
+  source: 'local' | 'navidrome' | 'station';
   sourceFormat: string | null;
   sourceSampleRate: number | null;
   sourceBitDepth: number | null;
@@ -132,6 +134,9 @@ export interface LibraryApi {
   createShare(ids: string[], description?: string, expiresAt?: number): Promise<Result<Share>>;
   shares(): Promise<Result<Share[]>>;
   deleteShare(id: string): Promise<Result>;
+  // The server's internet radio stations (getInternetRadioStations), read-only. Their stream
+  // addresses stay with the connector's host, as song streams do; stationTrack() queues one.
+  radioStations(): Promise<Result<RadioStation[]>>;
 }
 // One of someone else's players, as the server last heard from it.
 export interface NowPlayingEntry { username: string; track: Track }
@@ -150,6 +155,8 @@ export interface Share {
   entries: ShareEntry[];
 }
 export interface ShareEntry { id: string; title: string }
+// An internet radio station. homePageUrl is http(s) only, or null.
+export interface RadioStation { id: string; name: string; homePageUrl: string | null }
 export interface ArtistInfo {
   // Plain text: the server's HTML with its tags and its "Read more on Last.fm" link taken out.
   biography: string | null;
@@ -252,6 +259,9 @@ export interface PlayerSnapshot {
   // after the current one were put in random order (shuffle). See packages/core/playOrder.ts.
   repeat: RepeatMode;
   shuffle: boolean;
+  // A station playing: the title its stream announces (ICY StreamTitle), as mpv reads it. Null
+  // when it announces none, and for anything but a station. Absent from older hosts.
+  stationTitle?: string | null;
 }
 // off: the queue stops after its last song. all: it wraps to the first. one: a finished song
 // starts again; Next still moves on.
@@ -415,7 +425,7 @@ export const emptyAudio = (): AudioPath => ({
 export const emptyPlayer = (): PlayerSnapshot => ({
   engine: 'starting', error: null, playing: false, position: 0, duration: 0,
   volume: 100, currentIndex: -1, queue: [], entryIds: [], playId: '', radio: null, devices: [], audio: emptyAudio(),
-  repeat: 'off', shuffle: false,
+  repeat: 'off', shuffle: false, stationTitle: null,
 });
 export const emptyDiagnostics = (): Diagnostics => ({
   uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0,
@@ -445,6 +455,9 @@ export interface AndroidPlayback {
   // The original couldn't be decoded, so the server's 320 kbps MP3 is playing instead.
   fallback: boolean;
   error: string | null;
+  // A station playing: the title its stream announces, from ExoPlayer's ICY metadata. Null when
+  // it announces none.
+  stationTitle?: string | null;
 }
 export interface AndroidQueueSnapshot { queue: Track[]; entryIds: string[]; index: number; playback: AndroidPlayback }
 export interface AndroidBridge {

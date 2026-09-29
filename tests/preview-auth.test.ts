@@ -33,6 +33,9 @@ async function setup({ password = webPassword as string | null, host = '127.0.0.
     deletePlaylist: (id: string) => Effect.sync(() => { deleted.push(id); }),
     coverArt: () => Effect.succeed({ contentType: 'image/png', bytes: png }),
     streamLocation: (id: string) => `http://127.0.0.1:${port}/rest/stream.view?id=${encodeURIComponent(id)}&t=secret`,
+    // One internet radio station, whose stream is the same fixture; any other id is unknown.
+    stationLocation: (id: string) => id === 'st1' ? Effect.succeed(`http://127.0.0.1:${port}/live?listener=secret`)
+      : Effect.fail(new Error('This station is no longer on the server. Refresh the stations and try again.')),
   } as unknown as SubsonicClient;
   const clock = { now: 1_800_000_000_000 };
   const preview = await previewServer({ env: password === null ? {} : { SQUIGGLY_WEB_PASSWORD: password }, client, now: () => clock.now }, host);
@@ -49,7 +52,7 @@ describe('browser preview authentication', () => {
       expect(response.status, method).toBe(401);
       expect(await response.json()).toEqual(signedOut);
     }
-    for (const [path, method] of [['/api/cover?id=c1&size=300', 'GET'], ['/api/stream?id=s1', 'GET'], ['/api/stream?id=s1', 'HEAD'], ['/api/deletePlaylist', 'GET']] as const) {
+    for (const [path, method] of [['/api/cover?id=c1&size=300', 'GET'], ['/api/stream?id=s1', 'GET'], ['/api/stream?id=s1', 'HEAD'], ['/api/station?id=st1', 'GET'], ['/api/deletePlaylist', 'GET']] as const) {
       const response = await preview.fetch(path, { method });
       expect(response.status, `${method} ${path}`).toBe(401);
     }
@@ -184,6 +187,22 @@ describe('browser preview authentication', () => {
     expect(part.headers.get('content-range')).toBe('bytes 10-19/1000');
     expect(Buffer.from(await part.arrayBuffer())).toEqual(audio.subarray(10, 20));
     expect((await preview.fetch('/api/stream?id=s1', { method: 'HEAD', headers: { cookie } })).status).toBe(200);
+  });
+
+  it('relays an internet radio station without showing its address', async () => {
+    const { preview } = await setup();
+    const { cookie } = await preview.signIn();
+    const live = await preview.fetch('/api/station?id=st1', { headers: { cookie } });
+    expect(live.status).toBe(200);
+    expect(live.headers.get('content-type')).toBe('audio/flac');
+    expect(live.headers.get('cache-control')).toBe('no-store');
+    expect(Buffer.from(await live.arrayBuffer())).toEqual(audio);
+    for (const id of ['st9', '']) {
+      const missing = await preview.fetch(`/api/station?id=${id}`, { headers: { cookie } });
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).not.toContain('secret');
+    }
+    expect((await preview.fetch('/api/station?id=st1', { method: 'POST', headers: { cookie } })).status).toBe(405);
   });
 });
 

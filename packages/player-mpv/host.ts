@@ -19,6 +19,14 @@ const entryPrefix = randomBytes(3).toString('hex');
 let entrySequence = 0;
 const toEntry = (item: PlayableTrack): Entry => ({ ...item, entry: `${entryPrefix}.${(++entrySequence).toString(36)}` });
 let playableQueue: Entry[] = [];
+// Internet radio stations are live streams (packages/core/stations.ts): no position to seek to,
+// and no end for repeat one to start again from.
+const isStationAt = (index: number) => playableQueue[index]?.track.source === 'station';
+// What the station says is on, from its ICY StreamTitle. Unknown stays null.
+function announced(title: string | null) {
+  const text = title?.replace(/\s+/g, ' ').trim().slice(0, 500);
+  return text || null;
+}
 // The snapshot's queue and entry ids always come from the private list, in one place.
 function publishQueue() {
   player.queue = playableQueue.map(item => item.track);
@@ -46,7 +54,7 @@ function followPlay({ starts, seeks }: { starts: number; seeks: number }) {
   } else if (!entry) return;
   if (starts && startPending) { starts--; startPending = false; }
   if (starts) newPlay();
-  else if (seeks && !hostSeek && player.repeat === 'one' && player.position < 2) newPlay();
+  else if (seeks && !hostSeek && loopFile === 'inf' && player.position < 2) newPlay();
 }
 // The exclusive-output option last accepted by mpv. Requested, not verified.
 let exclusive = false;
@@ -90,7 +98,7 @@ const port = {
 function resetTrack() {
   // Whatever plays next starts a new play, even the same entry.
   playEntry = undefined; startPending = false;
-  player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0,
+  player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0, stationTitle: null,
     audio: { ...emptyAudio(), requestedDevice: player.audio.requestedDevice,
       replayGain: player.audio.replayGain, filters: player.audio.filters, exclusiveRequested: player.audio.exclusiveRequested },
   };
@@ -117,20 +125,30 @@ function applyExclusive(on: boolean) {
 // Repeat is mpv's own looping, so the queue wraps (loop-playlist) or a song starts again
 // (loop-file) without waiting on a snapshot. playlist-next and playlist-prev still move between
 // entries under loop-file, so Next skips a repeating song. Neither option touches the signal.
+// loop-file is off while a station plays, whatever the mode (followLoop): looping a live stream
+// would only dial it again forever when it drops. loopFile is its value as last set.
+let loopFile = 'no';
+const loopFor = (mode: RepeatMode) => mode === 'one' && !isStationAt(player.currentIndex) ? 'inf' : 'no';
 function applyRepeat(mode: RepeatMode) {
   if (!native) return;
   const previous = player.repeat;
   try {
-    native.set('loop-file', mode === 'one' ? 'inf' : 'no');
+    native.set('loop-file', loopFor(mode)); loopFile = loopFor(mode);
     native.set('loop-playlist', mode === 'all' ? 'inf' : 'no');
     player.repeat = mode;
   } catch {
     try {
-      native.set('loop-file', previous === 'one' ? 'inf' : 'no');
+      native.set('loop-file', loopFor(previous)); loopFile = loopFor(previous);
       native.set('loop-playlist', previous === 'all' ? 'inf' : 'no');
     } catch { /* The error below is the one to act on. */ }
     throw new Error('The audio engine could not change the repeat mode.');
   }
+}
+// Each poll: loop-file follows the entry playing, off for a station and back on after it.
+function followLoop() {
+  const want = loopFor(player.repeat);
+  if (!native || want === loopFile) return;
+  try { native.set('loop-file', want); loopFile = want; } catch { /* Tried again on the next poll. */ }
 }
 function restoreSeek() {
   const seek = pendingSeek;
@@ -221,7 +239,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         publishQueue();
         if (!action.paused) native.set('pause', 'no');
         const seconds = action.startPosition ?? 0;
-        if (Number.isFinite(seconds) && seconds > 0) pendingSeek = { id: action.tracks[start].track.id, seconds, polls: 0 };
+        if (Number.isFinite(seconds) && seconds > 0 && !isStationAt(start)) pendingSeek = { id: action.tracks[start].track.id, seconds, polls: 0 };
         break;
       }
       case 'queue-add': case 'queue-move': case 'queue-remove': case 'queue-clear':
@@ -256,6 +274,8 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
           || (action.entryId !== undefined && playableQueue[action.queueIndex]?.entry !== action.entryId)) {
           throw new Error('The track changed before the seek completed. Try again.');
         }
+        // A station is live: there is no position to seek to, so the seek does nothing.
+        if (isStationAt(action.queueIndex)) break;
         native.command('seek', String(action.seconds), 'absolute+exact'); hostSeek = 4; break;
       }
       case 'volume': native.set('volume', String(action.percent)); break;
@@ -269,7 +289,8 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         // The entry playing starts over, a new play. (Newer mpv ignores playlist-pos set to its
         // current value; older mpv reloads the file.)
         else if (native.number('playlist-pos') === action.index) {
-          native.command('seek', '0', 'absolute+exact'); hostSeek = 4; newPlay();
+          // A station has no start to go back to; it plays on.
+          if (!isStationAt(action.index)) { native.command('seek', '0', 'absolute+exact'); hostSeek = 4; newPlay(); }
           native.set('pause', 'no'); break;
         }
         native.set('playlist-pos', String(action.index)); native.set('pause', 'no'); break;
@@ -314,6 +335,8 @@ timer = setInterval(() => {
       currentIndex: native.number('playlist-pos') ?? -1,
       audio: native.audio(),
     };
+    player.stationTitle = isStationAt(player.currentIndex) ? announced(native.property('metadata/by-key/icy-title')) : null;
+    followLoop();
     followPlay(events);
     if (hostSeek) hostSeek--;
     restoreSeek();

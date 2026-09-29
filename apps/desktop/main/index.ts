@@ -135,6 +135,11 @@ const radio = new Radio<SubsonicClient>({
 }, QUEUE_LIMIT);
 // Starting any other playback, or losing the engine or session, ends radio. The queue stays.
 const endRadio = () => radio.end();
+// What the audio host loads for a library track. A station's stream address comes from the
+// server's station list (the connector keeps it) and, like a song's, never reaches a window.
+const playableOf = (client: SubsonicClient, track: Track) => track.source === 'station'
+  ? client.stationLocation(track.id).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
+  : Effect.succeed(client.playable(track));
 
 // Must precede app ready. Covers are fetched here so server credentials never reach the renderer.
 // CORS lets the renderer read cover pixels on a canvas for its palette.
@@ -509,8 +514,9 @@ function installHandlers() {
     for (const id of ids) {
       const track = knownTracks.get(id);
       if (!track) return yield* Effect.fail(new Error('Some tracks are no longer loaded. Refresh the library and try again.'));
-      tracks.push(client.playable(track));
+      tracks.push(yield* playableOf(client, track));
     }
+    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
     rememberTracks(tracks.map(item => item.track));
     endRadio();
     yield* send({ type: 'queue', tracks, startIndex });
@@ -523,8 +529,9 @@ function installHandlers() {
     for (const id of ids) {
       const track = knownTracks.get(id);
       if (!track) return yield* Effect.fail(new Error('Some tracks are no longer loaded. Refresh the library and try again.'));
-      tracks.push(client.playable(track));
+      tracks.push(yield* playableOf(client, track));
     }
+    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
     rememberTracks(tracks.map(item => item.track));
     yield* send({ type: 'queue-add', tracks, where });
   }), 'server');
@@ -848,7 +855,9 @@ function updateSystemMedia() {
   const entryId = saved ? 'saved' : p.entryIds[p.currentIndex];
   const now = performance.now();
   const next: SystemMediaState | null = track && entryId ? {
-    index: saved ? -1 : p.currentIndex, entryId, trackId: track.id, title: track.title, artist: track.artist, album: track.album,
+    index: saved ? -1 : p.currentIndex, entryId, trackId: track.id, title: track.title, album: track.album,
+    // A station's line is what it says is on, when it says.
+    artist: track.source === 'station' ? p.stationTitle ?? '' : track.artist,
     coverArt: track.coverArt ?? null,
     duration: saved ? track.duration ?? 0 : p.duration > 0 ? p.duration : track.duration ?? 0,
     position: saved ? saved.position : p.position, playing: saved ? false : p.playing,

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
 import { canDrag, carriesItems, readPayload, startDrag, type DragPayload } from './drag';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -200,11 +201,12 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
             <span className="title"><span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
               {credit && <span className="credit">{credit}</span>}</span>
             {showAlbum && <span className="album">{splitTitle(track.album).main}</span>}
-            <span className="figure">{time(track.duration)}</span>
+            <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
           </button>
-          <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
+          {/* A station can't be a favorite: the server stars songs, records, and artists. */}
+          {isStation(track) ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
             aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
-            onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>
+            onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>}
         </li>;
         return group ? [<li key={`group-${index}`} className="group-head"
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
