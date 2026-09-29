@@ -67,7 +67,8 @@ object Playback {
             .build()
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
-                if (item?.mediaId != current) { current = item?.mediaId; playId++; error = null }
+                // A song repeating (repeat one, or repeat all with one song) starts over: a new play.
+                if (item?.mediaId != current || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) { current = item?.mediaId; playId++; error = null }
                 report()
             }
             override fun onEvents(player: Player, events: Player.Events) {
@@ -144,6 +145,19 @@ object Playback {
 
     fun volume(value: Double) {
         player.volume = value.toFloat().coerceIn(0f, 1f)
+    }
+
+    /**
+     * The page's repeat mode, so the queue wraps or a song repeats with the screen off. ExoPlayer's
+     * Next (the notification's too) still moves on under repeat one. Shuffle stays with the page,
+     * which reorders its queue and sends the moves, so ExoPlayer's own shuffle is never turned on.
+     */
+    fun repeat(mode: String) {
+        player.repeatMode = when (mode) {
+            "all" -> Player.REPEAT_MODE_ALL
+            "one" -> Player.REPEAT_MODE_ONE
+            else -> Player.REPEAT_MODE_OFF
+        }
     }
 
     /** The queue with each entry's Track JSON, and the state, for a page that just loaded. */

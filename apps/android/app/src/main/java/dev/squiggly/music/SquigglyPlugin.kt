@@ -141,6 +141,12 @@ class SquigglyPlugin : Plugin() {
     @PluginMethod
     fun restore(call: PluginCall) { onMain(call) { Playback.restore() } }
 
+    @PluginMethod
+    fun repeat(call: PluginCall) {
+        val mode = call.getString("mode") ?: "off"
+        onMain(call) { Playback.repeat(mode); null }
+    }
+
     // The window behind the page takes the room's colour, and the status and navigation bars'
     // icons go light on a dark room. With a WebView older than 140, Capacitor pads the window by
     // the system bars instead of letting the page draw under them, and this colour shows there.

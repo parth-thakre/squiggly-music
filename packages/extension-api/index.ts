@@ -52,7 +52,7 @@ export interface MenuContribution extends Omit<MenuItem, 'owner' | 'section' | '
 export type ThemeContribution = Omit<ThemeInput, 'tokens'> & { tokens: ThemeTokensInput };
 
 // Player state as the window sees it. Positions are seconds.
-export type PlayerState = Pick<AppPlayerState, 'engine' | 'connected' | 'queue' | 'entryIds' | 'index' | 'playing' | 'position' | 'duration' | 'volume' | 'radio' | 'error'>;
+export type PlayerState = Pick<AppPlayerState, 'engine' | 'connected' | 'queue' | 'entryIds' | 'index' | 'playing' | 'position' | 'duration' | 'volume' | 'radio' | 'error' | 'repeat' | 'shuffle'>;
 export type RadioSeed = RadioStart;
 
 // Per-extension settings, kept in the window's local storage. Removed with the extension.

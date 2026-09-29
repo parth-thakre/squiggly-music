@@ -655,6 +655,89 @@ describe('queue entry identity', () => {
   });
 });
 
+describe('repeat and shuffle', () => {
+  const loops = (native: { set: ReturnType<typeof vi.fn> }) => native.set.mock.calls.filter(([name]) => name === 'loop-file' || name === 'loop-playlist');
+
+  it('repeats with mpv\'s own looping and reports the mode', async () => {
+    const { run, reply, snapshot, native } = await editableHost();
+    expect(snapshot().repeat).toBe('off');
+    native.set.mockClear();
+    expect(reply(run({ type: 'repeat', mode: 'all' }))).toMatchObject(ok);
+    expect(loops(native)).toEqual([['loop-file', 'no'], ['loop-playlist', 'inf']]);
+    expect(snapshot().repeat).toBe('all');
+    native.set.mockClear();
+    run({ type: 'repeat', mode: 'one' });
+    expect(loops(native)).toEqual([['loop-file', 'inf'], ['loop-playlist', 'no']]);
+    expect(snapshot().repeat).toBe('one');
+    // Next under repeat one is still mpv's playlist-next, which moves on past a looping file.
+    native.command.mockClear();
+    run({ type: 'next' });
+    expect(native.command).toHaveBeenCalledWith('playlist-next', 'weak');
+    native.set.mockClear();
+    run({ type: 'repeat', mode: 'off' });
+    expect(loops(native)).toEqual([['loop-file', 'no'], ['loop-playlist', 'no']]);
+    // Nothing else about playback is touched.
+    expect(native.set.mock.calls.filter(([name]) => !['loop-file', 'loop-playlist'].includes(name))).toEqual([]);
+  });
+
+  it('keeps the old mode when mpv refuses a new one', async () => {
+    const { run, reply, snapshot, native } = await editableHost();
+    run({ type: 'repeat', mode: 'all' });
+    native.set.mockImplementation((name: string, value: string) => { if (name === 'loop-file' && value === 'inf') throw new Error('Audio engine rejected loop-file.'); });
+    expect(reply(run({ type: 'repeat', mode: 'one' }))).toMatchObject({ error: expect.stringContaining('repeat') });
+    expect(snapshot().repeat).toBe('all');
+    expect(native.set).toHaveBeenLastCalledWith('loop-playlist', 'inf');
+  });
+
+  it('shuffles the songs after the current one and leaves the rest in place', async () => {
+    const ids = Array.from({ length: 30 }, (_, index) => `t${index}`);
+    const { run, reply, snapshot, order, consistent, native } = await editableHost(ids, 4);
+    const entries = snapshot().entryIds;
+    native.set.mockClear();
+    expect(reply(run({ type: 'shuffle', on: true }))).toMatchObject(ok);
+    expect(snapshot().shuffle).toBe(true);
+    // The current song and the ones already played keep their places; nothing starts over.
+    expect(order().slice(0, 5)).toEqual(ids.slice(0, 5));
+    expect(snapshot().currentIndex).toBe(4);
+    expect(snapshot().entryIds[4]).toBe(entries[4]);
+    expect(native.set).not.toHaveBeenCalledWith('playlist-pos', expect.anything());
+    // The same songs after it, with their entry ids, in another order.
+    expect([...order().slice(5)].sort()).toEqual([...ids.slice(5)].sort());
+    expect(order().slice(5)).not.toEqual(ids.slice(5));
+    expect(snapshot().entryIds.map(entry => ids[entries.indexOf(entry)])).toEqual(order());
+    consistent();
+    // Off leaves the shuffled order as it is; on again while on does nothing.
+    const shuffled = order();
+    run({ type: 'shuffle', on: false });
+    expect(snapshot().shuffle).toBe(false);
+    expect(order()).toEqual(shuffled);
+    run({ type: 'shuffle', on: true });
+    const again = order();
+    run({ type: 'shuffle', on: true });
+    expect(order()).toEqual(again);
+    consistent();
+  });
+
+  it('shuffles the whole queue when nothing is current', async () => {
+    const ids = Array.from({ length: 20 }, (_, index) => `t${index}`);
+    const { run, order, consistent, snapshot } = await editableHost(ids, 0);
+    run({ type: 'stop' });
+    run({ type: 'shuffle', on: true });
+    expect([...order()].sort()).toEqual([...ids].sort());
+    expect(order()).not.toEqual(ids);
+    expect(snapshot().currentIndex).toBe(-1);
+    consistent();
+  });
+
+  it('starts with the modes the desktop saved', async () => {
+    vi.stubEnv('SQUIGGLY_REPEAT', 'one');
+    vi.stubEnv('SQUIGGLY_SHUFFLE', '1');
+    const { native, snapshots } = await mockHost();
+    expect(native.set).toHaveBeenCalledWith('loop-file', 'inf');
+    expect(snapshots()[0].player).toMatchObject({ repeat: 'one', shuffle: true });
+  });
+});
+
 describe('restoring a saved queue', () => {
   it('loads paused at the saved song and seeks once it is seekable', async () => {
     const { command, native, deliver } = await mockHost(true);
@@ -771,6 +854,30 @@ async function serve(files: Record<string, Buffer>) {
 const streamed = (location: string, id: string, rate: number) => ({ location, track: {
   id, title: id, artist: '', album: '', duration: 2, source: 'navidrome' as const, sourceFormat: 'wav', sourceSampleRate: rate, sourceBitDepth: 16,
 } });
+
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('repeat in real libmpv', () => {
+  it('wraps from the last song to the first with repeat all, and replays one song with repeat one', async () => {
+    const file = await wavFixture(1);
+    const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+    await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+    const item = (id: string) => ({ location: file, track: { id, title: id, artist: '', album: '', duration: 1, source: 'local' as const,
+      sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null } });
+    send({ id: 1, action: { type: 'repeat', mode: 'all' } });
+    await expect.poll(() => replies.get(1)).toBeNull();
+    send({ id: 2, action: { type: 'queue', tracks: ['a', 'b'].map(item), startIndex: 1 } });
+    await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
+    // The last song ends and the first plays, rather than the queue stopping.
+    await expect.poll(() => snapshots.at(-1)?.currentIndex, { timeout: 5000 }).toBe(0);
+    expect(snapshots.at(-1)).toMatchObject({ playing: true, repeat: 'all' });
+    send({ id: 3, action: { type: 'repeat', mode: 'one' } });
+    await expect.poll(() => replies.get(3)).toBeNull();
+    // Played past its one second, the song is still current and has started over.
+    await new Promise(resolve => setTimeout(resolve, 2500));
+    expect(snapshots.at(-1)).toMatchObject({ currentIndex: 0, playing: true, repeat: 'one' });
+    send({ id: 4, action: { type: 'next' } });
+    await expect.poll(() => snapshots.at(-1)?.currentIndex).toBe(1);
+  });
+});
 
 describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('gapless playback in real libmpv', () => {
   it('plays two halves of one tone as one tone, even when the second stream is slow to start', async () => {

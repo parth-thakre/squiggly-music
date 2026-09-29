@@ -1,4 +1,5 @@
-import type { PlayerSnapshot } from '../../../packages/core/contracts';
+import type { PlayerSnapshot, RepeatMode } from '../../../packages/core/contracts';
+import { following, preceding } from '../../../packages/core/playOrder';
 
 export interface MediaControls {
   command(type: 'play' | 'pause' | 'next' | 'previous' | 'stop'): void;
@@ -6,7 +7,12 @@ export interface MediaControls {
   volume(percent: number): void;
   raise(): void;
   quit(): void;
+  repeat(mode: RepeatMode): void;
+  shuffle(on: boolean): void;
 }
+// MPRIS's LoopStatus names for the repeat modes.
+const loopStatus = { off: 'None', one: 'Track', all: 'Playlist' } as const;
+const repeatOf = { None: 'off', Track: 'one', Playlist: 'all' } as const;
 // canResume: nothing is loaded, but Play would start the queue saved on the server.
 export interface MediaSession { update(player: PlayerSnapshot, artUrl: string | null, canResume?: boolean): void }
 
@@ -58,9 +64,12 @@ export async function startMpris(controls: MediaControls, onError: () => void): 
 
   // Volume is attenuation only, as in the app: MPRIS 1.0 maps to unity (100%).
   service.on('volume', volume => { if (Number.isFinite(volume)) controls.volume(Math.round(Math.min(1, Math.max(0, volume)) * 100)); });
+  // Repeat and shuffle, as the app's own buttons set them. Unknown values are ignored.
+  service.on('loopStatus', status => { const mode = repeatOf[status]; if (mode) controls.repeat(mode); });
+  service.on('shuffle', on => { if (typeof on === 'boolean') controls.shuffle(on); });
 
   // Properties change only when their values do, to keep PropertiesChanged traffic low.
-  const assign = <K extends 'playbackStatus' | 'volume' | 'canPlay' | 'canPause' | 'canSeek' | 'canGoNext' | 'canGoPrevious'>(key: K, value: (typeof service)[K]) => {
+  const assign = <K extends 'playbackStatus' | 'volume' | 'canPlay' | 'canPause' | 'canSeek' | 'canGoNext' | 'canGoPrevious' | 'loopStatus' | 'shuffle'>(key: K, value: (typeof service)[K]) => {
     if (service[key] !== value) service[key] = value;
   };
   return {
@@ -94,8 +103,10 @@ export async function startMpris(controls: MediaControls, onError: () => void): 
       assign('canPlay', player.engine === 'ready' && (player.queue.length > 0 || canResume));
       assign('canPause', Boolean(track));
       assign('canSeek', Boolean(track) && duration > 0);
-      assign('canGoNext', Boolean(track) && player.currentIndex < player.queue.length - 1);
-      assign('canGoPrevious', Boolean(track) && player.currentIndex > 0);
+      assign('canGoNext', Boolean(track) && following(player.currentIndex, player.queue.length, player.repeat, 'skip') >= 0);
+      assign('canGoPrevious', Boolean(track) && preceding(player.currentIndex, player.queue.length, player.repeat) >= 0);
+      assign('loopStatus', loopStatus[player.repeat]);
+      assign('shuffle', player.shuffle);
     },
   };
 }

@@ -1,8 +1,8 @@
 import { randomBytes } from 'node:crypto';
-import { emptyAudio, emptyPlayer } from '../core/contracts';
+import { emptyAudio, emptyPlayer, type RepeatMode } from '../core/contracts';
 import { NativePlayer } from './native';
 import { clearPlayerSession } from './session';
-import { editQueue, QUEUE_LIMIT } from './queue';
+import { editQueue, QUEUE_LIMIT, shuffleQueue } from './queue';
 import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 
 // A standalone Node process keeps Chromium and its native libraries out of this
@@ -88,6 +88,24 @@ function applyExclusive(on: boolean) {
     throw new Error(on ? exclusiveError : 'The audio output could not leave exclusive mode. Restart the audio engine.');
   }
 }
+// Repeat is mpv's own looping, so the queue wraps (loop-playlist) or a song starts again
+// (loop-file) without waiting on a snapshot. playlist-next and playlist-prev still move between
+// entries under loop-file, so Next skips a repeating song. Neither option touches the signal.
+function applyRepeat(mode: RepeatMode) {
+  if (!native) return;
+  const previous = player.repeat;
+  try {
+    native.set('loop-file', mode === 'one' ? 'inf' : 'no');
+    native.set('loop-playlist', mode === 'all' ? 'inf' : 'no');
+    player.repeat = mode;
+  } catch {
+    try {
+      native.set('loop-file', previous === 'one' ? 'inf' : 'no');
+      native.set('loop-playlist', previous === 'all' ? 'inf' : 'no');
+    } catch { /* The error below is the one to act on. */ }
+    throw new Error('The audio engine could not change the repeat mode.');
+  }
+}
 function restoreSeek() {
   const seek = pendingSeek;
   if (!native || !seek) return;
@@ -137,6 +155,12 @@ try {
   if (process.env.SQUIGGLY_AUDIO_EXCLUSIVE === '1') {
     try { applyExclusive(true); } catch (error) { exclusive = false; player.error = error instanceof Error ? error.message : exclusiveError; }
   }
+  // The saved queue modes (main/index.ts keeps them). The queue starts empty, so nothing to shuffle yet.
+  const repeat = process.env.SQUIGGLY_REPEAT;
+  if (repeat === 'all' || repeat === 'one') {
+    try { applyRepeat(repeat); } catch (error) { player.error = error instanceof Error ? error.message : null; }
+  }
+  player.shuffle = process.env.SQUIGGLY_SHUFFLE === '1';
 } catch (error) {
   player.engine = 'unavailable';
   player.error = error instanceof Error ? error.message : 'Audio engine unavailable.';
@@ -215,6 +239,19 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         if (reloadPlaylistAfterStop) loadPlayableQueue();
         native.set('playlist-pos', String(action.index)); native.set('pause', 'no'); break;
       }
+      case 'repeat': applyRepeat(action.mode); break;
+      case 'shuffle':
+        // Turning shuffle on reorders what's left once. Turning it off leaves the queue as it is:
+        // the order from before isn't kept, since edits made while shuffled (adds, moves, removes)
+        // would leave no clear order to go back to. The same holds in the browser and on Android.
+        if (action.on && !player.shuffle) {
+          try { shuffleQueue(native, playableQueue, !reloadPlaylistAfterStop); }
+          finally {
+            publishQueue();
+            player.currentIndex = reloadPlaylistAfterStop ? -1 : native.number('playlist-pos') ?? -1;
+          }
+        }
+        player.shuffle = action.on; break;
       case 'restart': throw new Error('Restart must be handled by the desktop process.');
     }
     port.postMessage({ type: 'reply', id, error: null });

@@ -184,3 +184,96 @@ test.describe('one sleeve', () => {
     await expect(head.locator('.head-cover')).toHaveCSS('opacity', '1');
   });
 });
+
+test.describe('repeat and shuffle', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+  const repeat = (app: App) => app.deck.getByRole('button', { name: /^Repeat/ });
+  const shuffle = (app: App) => app.deck.getByRole('button', { name: 'Shuffle', exact: true });
+
+  test('repeat all wraps from the last song to the first, and repeat one plays a song again', async ({ app, page }) => {
+    await app.play('Test Pressing', 'Tail Light');
+    await expect(repeat(app)).toHaveAccessibleName('Repeat');
+    await expect(repeat(app)).toHaveAttribute('aria-pressed', 'false');
+    await repeat(app).click();
+    await expect(repeat(app)).toHaveAccessibleName('Repeat all');
+    await expect(repeat(app)).toHaveAttribute('aria-pressed', 'true');
+    // The last song now has a next: the first.
+    await expect(app.deck.getByText('Next:')).toContainText('Long Run');
+    await (await pressSeek(app, .95)).up();
+    await app.expectPlaying('Long Run', { timeout: 10_000 });
+
+    // The r key goes on to repeat one: a finished song starts over.
+    await page.keyboard.press('r');
+    await expect(repeat(app)).toHaveAccessibleName('Repeat one');
+    await (await pressSeek(app, .97)).up();
+    await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(42);
+    await expect.poll(() => app.seconds(), { timeout: 10_000 }).toBeLessThan(5);
+    await app.expectPlaying('Long Run');
+    // Next still moves on.
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.expectPlaying('Lyric Line');
+    await page.keyboard.press('r');
+    await expect(repeat(app)).toHaveAccessibleName('Repeat');
+    await expect(repeat(app)).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  test('Next stops at the last song with repeat off and wraps to the first with repeat all', async ({ app }) => {
+    await app.play('Test Pressing', 'Tail Light');
+    const next = app.deck.getByRole('button', { name: 'Next', exact: true });
+    await next.click();
+    // Nothing to wait for but time itself: the last song must not change.
+    await app.page.waitForTimeout(500);
+    await app.expectPlaying('Tail Light');
+    await repeat(app).click();
+    await next.click();
+    await app.expectPlaying('Long Run');
+  });
+
+  test('shuffle keeps the playing song and the ones before it, reorders the rest, and off leaves that order', async ({ app, page }) => {
+    await app.play('Long Player', 'Take 3');
+    const album = await app.titles();
+    await app.openQueue();
+    expect(await app.titles()).toEqual(album);
+    await shuffle(app).click();
+    await expect(shuffle(app)).toHaveAttribute('aria-pressed', 'true');
+    await expect(app.main.getByText('Shuffled.')).toBeVisible();
+    const shuffled = await app.titles();
+    expect(shuffled.slice(0, 3)).toEqual(album.slice(0, 3));
+    expect(shuffled.slice(3)).not.toEqual(album.slice(3));
+    expect([...shuffled].sort()).toEqual([...album].sort());
+    await app.expectPlaying('Take 3');
+
+    // The s key turns it off, and the queue stays as it is.
+    await page.keyboard.press('s');
+    await expect(shuffle(app)).toHaveAttribute('aria-pressed', 'false');
+    await expect(app.main.getByText('Shuffled.')).toBeHidden();
+    expect(await app.titles()).toEqual(shuffled);
+  });
+
+  test('with shuffle on, a record plays from the chosen song with the rest in random order, and the modes last across visits', async ({ app, page }) => {
+    await app.play('Long Player', 'Take 1');
+    await shuffle(app).click();
+    await repeat(app).click();
+    // A new visit: the route comes back from the address, the queue doesn't.
+    await page.reload();
+    await expect(app.heading).toHaveText('Long Player');
+    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await app.play('Long Player', 'Take 2');
+    await expect(shuffle(app)).toHaveAttribute('aria-pressed', 'true');
+    await expect(repeat(app)).toHaveAccessibleName('Repeat all');
+    await app.openQueue();
+    const queue = await app.titles();
+    expect(queue.slice(0, 2)).toEqual(['Take 1', 'Take 2']);
+    expect(queue.slice(2, 12)).not.toEqual(Array.from({ length: 10 }, (_, i) => `Take ${i + 3}`));
+    await expect(app.main.getByText('Shuffled, and the queue repeats.')).toBeVisible();
+  });
+
+  test('turning repeat on stops radio', async ({ app }) => {
+    await app.play('Test Pressing', 'Long Run');
+    await app.chooseFromMenu(app.row('Long Run'), 'Start radio');
+    await expect(app.deck.getByText(/^Radio from /)).toBeVisible();
+    await repeat(app).click();
+    await expect(app.deck.getByText(/^Radio from /)).toBeHidden();
+    await expect(repeat(app)).toHaveAccessibleName('Repeat all');
+  });
+});

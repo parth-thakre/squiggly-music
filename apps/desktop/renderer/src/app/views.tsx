@@ -660,12 +660,17 @@ export function Queue() {
   const queue = usePlayer(s => s.queue);
   const index = usePlayer(s => s.index);
   const radio = usePlayer(s => s.radio);
+  const repeat = usePlayer(s => s.repeat);
+  const shuffle = usePlayer(s => s.shuffle);
   const [saved, setSaved] = useState<string | null>(null);
   if (!queue.length) return <><Head title="Queue" /><Status>Nothing queued. Play a record, playlist, or song, or right-click one and choose Add to queue.</Status></>;
   const upcoming = queue.length - index - 1;
+  const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
+  const modes = shuffle ? (repeats ? `Shuffled, and ${repeats}.` : 'Shuffled.') : repeats && `${repeats[0].toUpperCase()}${repeats.slice(1)}.`;
   return <>
     <Head title="Queue">
-      <p className="byline"><span>{upcoming > 0 ? `${plural(upcoming, 'song')} up next, ${length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}` : 'This is the last song.'}</span></p>
+      <p className="byline"><span>{upcoming > 0 ? `${plural(upcoming, 'song')} up next, ${length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}` : 'This is the last song.'}</span>
+        {modes && <>{upcoming > 0 ? '. ' : ' '}<span>{modes}</span></>}</p>
       {radio && <p className="note">Radio from {radio.label}. Songs like these are added as you listen. <button type="button" className="link" onClick={player.stopRadio}>Stop radio</button></p>}
       <div className="actions">
         <button type="button" className="text-button" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
