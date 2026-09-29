@@ -39,3 +39,18 @@ it('keeps Back and Forward working past any number of places, with the sheet and
   nav.go({ view: 'records' }); nav.go({ view: 'records', sort: 'random' }, true); nav.go({ view: 'artists' });
   nav.back(); expect(nav.current).toEqual({ view: 'records', sort: 'random' });
 });
+
+it('keeps the records decade, the genres and a genre across Back', async () => {
+  const { nav } = await import('../apps/desktop/renderer/src/app/route');
+  nav.go({ view: 'genres' });
+  nav.go({ view: 'genre', name: 'Rock & Roll' });
+  nav.go({ view: 'records', sort: 'alphabeticalByName' });
+  nav.go({ view: 'records', sort: 'alphabeticalByName', decade: 1990 }, true);
+  nav.go({ view: 'album', id: 'a' });
+  nav.back(); expect(nav.current).toEqual({ view: 'records', sort: 'alphabeticalByName', decade: 1990 });
+  // "All" replaces the filter in place, and the sort it waited behind comes back.
+  nav.go({ view: 'records', sort: 'alphabeticalByName' }, true);
+  nav.back(); expect(nav.current).toEqual({ view: 'genre', name: 'Rock & Roll' });
+  nav.back(); expect(nav.current).toEqual({ view: 'genres' });
+  (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'genre', name: 'Rock & Roll' });
+});

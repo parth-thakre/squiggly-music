@@ -83,7 +83,7 @@ async function call<T>(method: LibraryMethod, args: unknown[]): Promise<Result<T
   return Either.isRight(result) ? { ok: true, value: result.right.value as T } : { ok: false, error: message(result.left, 'The request failed.') };
 }
 const library: LibraryApi = {
-  albums: (type, offset, size) => call('albums', [type, offset, size]),
+  albums: (type, offset, size, years) => call('albums', years ? [type, offset, size, years] : [type, offset, size]),
   album: id => call('album', [id]),
   artists: () => call('artists', []),
   artist: id => call('artist', [id]),
@@ -110,6 +110,8 @@ const library: LibraryApi = {
   rate: (target, id, rating) => call('rate', [target, id, rating]),
   // Same address as the browser build; the native side fetches it with the account's credentials.
   coverUrl: (coverArt, size) => `/api/cover?id=${encodeURIComponent(coverArt)}&size=${Math.round(size)}`,
+  artistInfo: artistId => call('artistInfo', [artistId]),
+  songsByGenre: (genre, offset, size) => call('songsByGenre', [genre, offset, size]),
 };
 
 // Player -----------------------------------------------------------------------------------

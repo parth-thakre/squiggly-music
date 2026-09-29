@@ -194,6 +194,10 @@ const mint = (count: number) => Array.from({ length: count }, () => `${entryPref
 let station = 0;
 // Bumped by player.pause(), so a retry still waiting on the session doesn't start the song again.
 let pauses = 0;
+// Bumped by every request to play something else (a list, radio, a saved queue, a queue entry),
+// so a page that asked the server for songs first can tell it was overtaken while it waited.
+let requests = 0;
+export const playRequests = () => requests;
 
 function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = false) {
   element.src = stream(track.id, mp3);
@@ -488,6 +492,7 @@ export type RadioStart = { kind: 'song'; track: Track; label: string } | { kind:
 export const player = {
   async play(tracks: Track[], start: number, radio: PlayerState['radio'] = null) {
     if (!tracks.length) return;
+    requests++;
     let chosen = queueWindow(tracks, start);
     // With shuffle on, a list plays from the chosen song with the rest in random order. Radio
     // keeps its own order. The desktop's audio host does this itself (the 'queue' case in
@@ -505,6 +510,7 @@ export const player = {
   // a song is fast, while asking by artist can take longer than the request limit.
   async radio(seed: RadioStart) {
     // The deck says a station is on its way until it plays or fails; servers can take seconds.
+    requests++;
     set({ error: null, radioStarting: seed.label });
     try { await startStation(seed); } finally { if (state.radioStarting === seed.label) set({ radioStarting: null }); }
   },
@@ -517,6 +523,7 @@ export const player = {
     const saved = state.resumable;
     set({ resumable: null });
     if (!saved) return;
+    requests++;
     if (desktop) { report(await desktop.resumeQueue()); return; }
     const chosen = queueWindow(saved.tracks, saved.currentIndex);
     station++;
@@ -626,6 +633,7 @@ export const player = {
   // underneath, the entry is refused rather than playing whatever now sits at that index.
   jump(index: number, entryId: string | undefined = state.entryIds[index]) {
     if (!state.queue[index] || !entryId) return;
+    requests++;
     if (local) { if (state.entryIds[index] === entryId) webLoad(index); return; }
     void desktop!.queue.jump(index, entryId).then(report);
   },

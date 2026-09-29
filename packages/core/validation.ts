@@ -35,9 +35,11 @@ const TextSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)
 const TrackIdsSchema = Schema.Array(IdSchema).pipe(Schema.maxItems(QUEUE_LIMIT));
 const PlaylistNameSchema = Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(256));
 const LyricsTextSchema = Schema.String.pipe(Schema.maxLength(1024));
-export const AlbumListTypeSchema = Schema.Literal('newest', 'recent', 'frequent', 'highest', 'random', 'starred', 'alphabeticalByName', 'alphabeticalByArtist');
+export const AlbumListTypeSchema = Schema.Literal('newest', 'recent', 'frequent', 'highest', 'random', 'starred', 'alphabeticalByName', 'alphabeticalByArtist', 'byYear');
 export const LibraryRequestSchemas = {
-  albums: Schema.Tuple(AlbumListTypeSchema, IntSchema(0, 1_000_000), IntSchema(1, 500)),
+  // byYear, and only byYear, carries the years it covers.
+  albums: Schema.Tuple(AlbumListTypeSchema, IntSchema(0, 1_000_000), IntSchema(1, 500), Schema.optionalElement(Schema.Struct({ fromYear: IntSchema(0, 9999), toYear: IntSchema(0, 9999) })))
+    .pipe(Schema.filter(([type, , , years]) => (type === 'byYear') === (years !== undefined))),
   album: Schema.Tuple(IdSchema), artists: Schema.Tuple(), artist: Schema.Tuple(IdSchema),
   playlists: Schema.Tuple(), playlist: Schema.Tuple(IdSchema), genres: Schema.Tuple(), starred: Schema.Tuple(),
   randomSongs: Schema.Tuple(Schema.Struct({
@@ -69,6 +71,8 @@ export const LibraryRequestSchemas = {
     .pipe(Schema.filter(([trackIds, currentIndex]) => currentIndex < Math.max(1, trackIds.length))),
   // 0 clears the rating.
   rate: Schema.Tuple(Schema.Literal('track', 'album', 'artist'), IdSchema, Schema.Literal(0, 1, 2, 3, 4, 5)),
+  artistInfo: Schema.Tuple(IdSchema),
+  songsByGenre: Schema.Tuple(TextSchema, IntSchema(0, 10_000_000), IntSchema(1, 500)),
 };
 // Track IDs must already be known to the main process; startIndex is checked against their count.
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);

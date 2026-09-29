@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
-import { SubsonicClient } from '../../../packages/adapter-opensubsonic/client';
+import type { AlbumYears, ArtistInfo, DiscTitle } from '../../../packages/core/contracts';
+import { SubsonicClient, plainText } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
@@ -31,7 +32,21 @@ export const special = {
   thirtyTwo: 'tr-1-4', // 32 s: finished after 16 s of listening
   tailLight: 'tr-1-5', // 20 s
   wordByWord: 'tr-4-3', // 24 s on Northern Wires, lyrics with exact word times
+  twoDiscs: 'al-8', // Low Tide Radio: three songs on disc 1, two on disc 2 ("Night Side")
+  withBio: 'ar-1', // Ada Brass: a biography and one similar artist in the library
+  badBio: 'ar-3', // Cinder Lane: a biography of broken HTML
+  twoNights: 'al-40', // Two Nights Live, with fake.large on: 210 songs on two discs, the only record tagged Live
 } as const;
+// Low Tide Radio's second disc has a title of its own; its first has none.
+const discTitles: Record<string, DiscTitle[]> = { [special.twoDiscs]: [{ disc: 2, title: 'Night Side' }],
+  [special.twoNights]: [{ disc: 2, title: 'Live at the Royal Albert Hall, London, 1971' }] };
+// Last.fm's HTML, as Navidrome passes it on, for Ada Brass. Everyone else has no information.
+export const adaBrassBio = 'Ada Brass is a <b>brass</b> quartet from the coast. They formed in 2009 &amp; toured every harbour town. '
+  + 'Their records are slow and warm. Critics compare them to foghorns. They still rehearse in a boathouse. '
+  + '<a href="https://www.last.fm/music/Ada+Brass">Read more on Last.fm</a>';
+// Cinder Lane's: unclosed and nested tags, a script, and tags spelled out in entities.
+export const cinderLaneBio = 'Cinder Lane <b>began <i>as a duo</b> in a <script>alert(1)</script> garage. '
+  + 'They sing about &lt;b&gt;weather&lt;/b&gt; &amp; tides. <a href="https://example.com/cinder" and it never closes';
 const specialTracks: [string, number][] = [['Long Run', 45], ['Lyric Line', 30], ['Short Stop', 8], ['Thirty Two', 32], ['Tail Light', 20]];
 export const lyricLines = Array.from({ length: 10 }, (_, i) => ({ start: i * 3, text: `Line ${i + 1} of the lyric` }));
 // Word by Word: a line every 4 s from 1 s, each word with its own start and end, the last word
@@ -80,7 +95,9 @@ function buildLibrary() {
     const albumTracks = songs.map(([title, duration], n): Track => ({
       id: `tr-${k}-${n + 1}`, title, artist: k === 2 && n === 1 ? `${artist.name} & ${artists[2].name}` : artist.name, album: name, duration,
       source: 'navidrome', sourceFormat: 'wav', sourceSampleRate: 8000, sourceBitDepth: 16,
-      albumId: `al-${k}`, artistId: artist.id, coverArt: `al-${k}`, trackNumber: n + 1, discNumber: 1, year, genre, starred: false,
+      albumId: `al-${k}`, artistId: artist.id, coverArt: `al-${k}`, year, genre, starred: false,
+      // Low Tide Radio is on two discs, and its numbering starts again on the second.
+      ...(`al-${k}` === special.twoDiscs && n >= 3 ? { trackNumber: n - 2, discNumber: 2 } : { trackNumber: n + 1, discNumber: 1 }),
       ...(k === 2 && n === 1 ? { artists: [{ id: artist.id, name: artist.name }, { id: artists[2].id, name: artists[2].name }] } : {}),
     }));
     tracks.push(...albumTracks);
@@ -90,7 +107,23 @@ function buildLibrary() {
   return { artists, albums, tracks };
 }
 const catalog = buildLibrary();
-const trackById = new Map(catalog.tracks.map(track => [track.id, track]));
+// Two Nights Live: past where song lists start windowing (120), with a disc heading past the
+// first window, and a genre longer than a page (200). Off unless a spec sets fake.large, so the
+// other specs' counts and orders stay as they are.
+function buildLarge() {
+  const artist = catalog.artists[2];
+  const tracks = Array.from({ length: 210 }, (_, i): Track => {
+    const disc = i < 110 ? 1 : 2, n = disc === 1 ? i + 1 : i - 109;
+    return { id: `tr-40-${i + 1}`, title: `Night ${disc === 1 ? 'One' : 'Two'} ${n}`, artist: artist.name, album: 'Two Nights Live', duration: 10 + i % 7,
+      source: 'navidrome', sourceFormat: 'wav', sourceSampleRate: 8000, sourceBitDepth: 16,
+      albumId: special.twoNights, artistId: artist.id, coverArt: special.twoNights, year: null, genre: 'Live', starred: false, trackNumber: n, discNumber: disc };
+  });
+  const album: Album = { id: special.twoNights, name: 'Two Nights Live', artist: artist.name, songCount: tracks.length, artistId: artist.id, year: null, genre: 'Live',
+    duration: tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0), coverArt: special.twoNights, starred: false };
+  return { album, tracks };
+}
+const large = buildLarge();
+const trackById = new Map([...catalog.tracks, ...large.tracks].map(track => [track.id, track]));
 export const trackOf = (id: string) => trackById.get(id)!;
 export const albumOf = (id: string) => catalog.albums.find(album => album.id === id)!;
 export const allAlbums = catalog.albums;
@@ -114,6 +147,10 @@ export class FakeNavidrome {
   saved: SavedQueue | null = null;
   /** Delays (ms) taken, one per call, by the named method before it touches any state. */
   private delays = new Map<string, number[]>();
+  /** Errors returned, one per call, by the named method instead of answering. */
+  private failures = new Map<string, string[]>();
+  /** Adds Two Nights Live (special.twoNights) and its genre, Live, to the library. */
+  large = false;
   private created = 0;
   /** The preview plugin's clock; advancing it past 30 days ends every session. */
   clock = { now: Date.UTC(2026, 8, 25) };
@@ -132,9 +169,10 @@ export class FakeNavidrome {
     this.playlists = initialPlaylists(); this.calls = []; this.reports = []; this.starred.clear();
     this.saved = null; this.delays.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
-    this.ratings.clear();
+    this.ratings.clear(); this.failures.clear(); this.large = false;
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
+  failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
   /** A new native session token, as a sign-in or any answer gives out. */
   issueToken() { const token = `jwt-${++this.issued}`; this.sessions.add(token); return token; }
   /** The server forgets every session (a restart with a new key); the next request signs in again. */
@@ -154,6 +192,8 @@ export class FakeNavidrome {
   private op<T>(method: string, args: unknown[], run: () => Effect.Effect<T, Error>): Effect.Effect<T, Error> {
     return Effect.suspend(() => {
       this.calls.push({ method, args, at: Date.now() });
+      const failure = this.failures.get(method)?.shift();
+      if (failure) return fail(failure);
       const wait = this.delays.get(method)?.shift() ?? 0;
       return wait ? Effect.promise(() => sleep(wait)).pipe(Effect.flatMap(run)) : run();
     });
@@ -165,10 +205,15 @@ export class FakeNavidrome {
     return Effect.succeed(p);
   }
   private touch(p: ServerPlaylist) { p.changed = new Date(this.clock.now).toISOString(); }
+  private albums = () => this.large ? [...catalog.albums, large.album] : catalog.albums;
+  private songs = () => this.large ? [...catalog.tracks, ...large.tracks] : catalog.tracks;
 
   readonly client = {
-    albumList: (type: AlbumListType, offset: number, size: number) => this.op('albums', [type, offset, size], () => {
-      let list = catalog.albums.map(this.album);
+    albumList: (type: AlbumListType, offset: number, size: number, years?: AlbumYears) => this.op('albums', years ? [type, offset, size, years] : [type, offset, size], () => {
+      let list = this.albums().map(this.album);
+      // byYear: the records from those years, oldest first, as Navidrome lists them.
+      if (type === 'byYear') list = list.filter(a => a.year !== null && years && a.year >= years.fromYear && a.year <= years.toYear)
+        .sort((a, b) => a.year! - b.year! || a.name.localeCompare(b.name));
       if (type === 'alphabeticalByName') list.sort((a, b) => a.name.localeCompare(b.name));
       else if (type === 'alphabeticalByArtist') list.sort((a, b) => a.artist.localeCompare(b.artist) || a.name.localeCompare(b.name));
       else if (type === 'random') list = [...list].reverse();
@@ -178,15 +223,15 @@ export class FakeNavidrome {
       return Effect.succeed(list.slice(offset, offset + size));
     }),
     album: (id: string) => this.op('album', [id], () => {
-      const album = catalog.albums.find(a => a.id === id);
+      const album = this.albums().find(a => a.id === id);
       if (!album) return fail('That record is not on the server.');
-      return Effect.succeed({ album: this.album(album), tracks: catalog.tracks.filter(t => t.albumId === id).map(t => this.track(t.id)) });
+      return Effect.succeed({ album: this.album(album), tracks: this.songs().filter(t => t.albumId === id).map(t => this.track(t.id)), ...(discTitles[id] ? { discTitles: discTitles[id] } : {}) });
     }),
     artists: () => this.op('artists', [], () => Effect.succeed(catalog.artists.map(a => ({ ...a, starred: this.starred.has(a.id), ...this.rated(a.id) })))),
     artist: (id: string) => this.op('artist', [id], () => {
       const artist = catalog.artists.find(a => a.id === id);
       if (!artist) return fail('That artist is not on the server.');
-      return Effect.succeed({ artist: { ...artist, starred: this.starred.has(id), ...this.rated(id) }, albums: catalog.albums.filter(a => a.artistId === id).map(this.album) });
+      return Effect.succeed({ artist: { ...artist, starred: this.starred.has(id), ...this.rated(id) }, albums: this.albums().filter(a => a.artistId === id).map(this.album) });
     }),
     playlists: () => this.op('playlists', [], () => Effect.succeed(this.playlists.map(p => this.summary(p)))),
     playlist: (id: string) => this.op('playlist', [id], () => {
@@ -194,8 +239,8 @@ export class FakeNavidrome {
       if (!p) return fail('That playlist no longer exists on the server.');
       return Effect.succeed({ playlist: this.summary(p), tracks: p.trackIds.map(this.track) });
     }),
-    genres: () => this.op('genres', [], () => Effect.succeed(genres.map(name => {
-      const albums = catalog.albums.filter(a => a.genre === name);
+    genres: () => this.op('genres', [], () => Effect.succeed((this.large ? [...genres, 'Live'] : genres).map(name => {
+      const albums = this.albums().filter(a => a.genre === name);
       return { name, albumCount: albums.length, songCount: albums.reduce((sum, a) => sum + a.songCount, 0) };
     }))),
     starred: () => this.op('starred', [], () => Effect.succeed({
@@ -203,7 +248,7 @@ export class FakeNavidrome {
       albums: catalog.albums.filter(a => this.starred.has(a.id)).map(this.album),
       tracks: catalog.tracks.filter(t => this.starred.has(t.id)).map(t => this.track(t.id)),
     })),
-    randomSongs: (options: RandomSongOptions) => this.op('randomSongs', [options], () => Effect.succeed(catalog.tracks
+    randomSongs: (options: RandomSongOptions) => this.op('randomSongs', [options], () => Effect.succeed(this.songs()
       .filter(t => (!options.genre || t.genre === options.genre) && (options.fromYear === undefined || (t.year ?? 0) >= options.fromYear)
         && (options.toYear === undefined || (t.year ?? 0) <= options.toYear))
       .slice(0, options.size).map(t => this.track(t.id)))),
@@ -270,6 +315,15 @@ export class FakeNavidrome {
       if (!k) return fail('Cover art is not available.');
       return Effect.succeed({ contentType: 'image/png', bytes: new Uint8Array(coverPng((k * 47) % 360)) });
     },
+    artistInfo: (id: string) => this.op('artistInfo', [id], () => Effect.succeed<ArtistInfo>(id === special.withBio
+      ? { biography: plainText(adaBrassBio), musicBrainzId: null, lastFmUrl: 'https://www.last.fm/music/Ada+Brass',
+        images: { small: null, medium: null, large: null },
+        // Only artists in the library have ids; the connector has already dropped the rest.
+        similar: [{ id: 'ar-2', name: 'Bell Tower' }] }
+      : id === special.badBio ? { biography: plainText(cinderLaneBio), musicBrainzId: null, lastFmUrl: null, images: { small: null, medium: null, large: null }, similar: [] }
+      : { biography: null, musicBrainzId: null, lastFmUrl: null, images: { small: null, medium: null, large: null }, similar: [] })),
+    songsByGenre: (genre: string, offset: number, size: number) => this.op('songsByGenre', [genre, offset, size], () =>
+      Effect.succeed(this.songs().filter(t => t.genre === genre).slice(offset, offset + size).map(t => this.track(t.id)))),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
   };
 

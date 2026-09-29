@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Schema } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, normalizeServerUrl, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 
@@ -500,5 +500,91 @@ describe('credited artists', () => {
     servePayload(albumPayload({ id: 's2', title: 'Solo', artist: 'Master Saleem', artistId: 'ar-1', artists: [{ id: 'ar-1', name: 'Master Saleem' }] }));
     const [solo] = (await Effect.runPromise(client().album('a'))).tracks;
     expect(solo.artists).toBeUndefined();
+  });
+});
+
+describe('artist information, genres, years and discs', () => {
+  const sentParams = (mock: ReturnType<typeof serve>) => mock.mock.calls.slice(1).map(([url, init]) => ({
+    endpoint: new URL(url).pathname.split('/').pop(), params: init.body as URLSearchParams,
+  }));
+  it('turns a Last.fm biography into plain text and keeps only similar artists in the library', async () => {
+    const mock = servePayload({ artistInfo2: {
+      biography: 'Radiohead are an <b>English</b> rock band &amp; more&#46; &lt;script&gt; &#x1F3B8; <a href="https://www.last.fm/music/Radiohead">Read more on Last.fm</a>',
+      musicBrainzId: 'a74b1b7f-71a5-4011-9441-d0b5e4122711', lastFmUrl: 'https://www.last.fm/music/Radiohead',
+      smallImageUrl: 'https://img.example/s.jpg', mediumImageUrl: 'javascript:alert(1)', largeImageUrl: '',
+      similarArtist: [{ id: 'ar2', name: ' Portishead ' }, { id: '', name: 'Not in the library' }, { name: 'No id either' }, { id: 'ar2', name: 'Portishead' }, { id: 'ar1', name: 'Radiohead' }],
+    } });
+    expect(await Effect.runPromise(client().artistInfo('ar1'))).toEqual({
+      biography: 'Radiohead are an English rock band & more. 🎸', musicBrainzId: 'a74b1b7f-71a5-4011-9441-d0b5e4122711',
+      lastFmUrl: 'https://www.last.fm/music/Radiohead', images: { small: 'https://img.example/s.jpg', medium: null, large: null },
+      similar: [{ id: 'ar2', name: 'Portishead' }],
+    });
+    const [request] = sentParams(mock);
+    expect([request.endpoint, request.params.get('id'), request.params.get('count')]).toEqual(['getArtistInfo2.view', 'ar1', '20']);
+  });
+  it('reads a biography once however many "<" it holds, and leaves no tag in it', () => {
+    // A tag stripper that looks ahead to the next ">" from every "<" takes seconds on these.
+    for (const html of ['<'.repeat(100_000), '<a '.repeat(33_000), '<a'.repeat(50_000), '&lt;a'.repeat(20_000)]) {
+      const started = performance.now();
+      plainText(html);
+      expect(performance.now() - started).toBeLessThan(100);
+    }
+    const tag = /<[a-z!?/]/i;
+    for (const [html, text] of [
+      ['<b<i>nested</i></b> and <<b>>doubled', 'nested and < >doubled'],
+      ['Formed <script>alert(1)</script> in 1985 <a href="https://x" and never closed', 'Formed alert(1) in 1985'],
+      ['&lt;b&gt;escaped&lt;/b&gt; &#60;script&#62;twice&#x3c;/script&#x3e; &amp;lt;i&amp;gt;', 'escaped twice &lt;i&gt;'],
+      ['a &lt; b, and <3', 'a < b, and <3'],
+    ]) {
+      expect(plainText(html)).toBe(text);
+      expect(plainText(html)).not.toMatch(tag);
+    }
+  });
+  it('leaves everything unknown when the server knows nothing about an artist', async () => {
+    servePayload({ artistInfo2: {} });
+    expect(await Effect.runPromise(client().artistInfo('ar1'))).toEqual({
+      biography: null, musicBrainzId: null, lastFmUrl: null, images: { small: null, medium: null, large: null }, similar: [],
+    });
+    servePayload({ artistInfo2: { biography: ' <a href="https://www.last.fm/music/x">Read more on Last.fm</a> ', musicBrainzId: '' } });
+    expect(await Effect.runPromise(client().artistInfo('ar1'))).toMatchObject({ biography: null, musicBrainzId: null });
+  });
+  it('pages through a genre and rejects a page longer than asked for', async () => {
+    const mock = servePayload({ songsByGenre: { song: [{ id: 's1', title: 'One', genre: 'Jazz' }, { id: 's2', title: 'Two', genre: 'Jazz' }] } });
+    expect((await Effect.runPromise(client().songsByGenre('Jazz', 200, 900))).map(track => track.id)).toEqual(['s1', 's2']);
+    const [request] = sentParams(mock);
+    expect([request.endpoint, request.params.get('genre'), request.params.get('offset'), request.params.get('count')]).toEqual(['getSongsByGenre.view', 'Jazz', '200', '500']);
+    servePayload({ songsByGenre: {} });
+    expect(await Effect.runPromise(client().songsByGenre('Jazz', 0, 200))).toEqual([]);
+    servePayload({ songsByGenre: { song: [{ id: 's1', title: 'One' }, { id: 's2', title: 'Two' }] } });
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(client().songsByGenre('Jazz', 0, 1))))).toBe(true);
+  });
+  it('asks for records by year with the years, and for other lists without them', async () => {
+    const mock = servePayload({ albumList2: { album: [{ id: 'a', name: 'a', year: 1994 }] } });
+    expect((await Effect.runPromise(client().albumList('byYear', 0, 60, { fromYear: 1990, toYear: 1999 })))[0]).toMatchObject({ id: 'a', year: 1994 });
+    await Effect.runPromise(client().albumList('newest', 0, 60, { fromYear: 1990, toYear: 1999 }));
+    const [byYear, newestList] = sentParams(mock).filter(request => request.endpoint === 'getAlbumList2.view').map(request => request.params);
+    expect([byYear.get('type'), byYear.get('fromYear'), byYear.get('toYear')]).toEqual(['byYear', '1990', '1999']);
+    expect([newestList.has('fromYear'), newestList.has('toYear')]).toEqual([false, false]);
+  });
+  it('keeps the disc titles an album names, and leaves them out when it names none', async () => {
+    servePayload({ album: { id: 'a', name: 'a', song: [{ id: 's1', title: 'One', discNumber: 1, track: 1 }, { id: 's2', title: 'Two', discNumber: 2, track: 1 }],
+      discTitles: [{ disc: 1, title: '' }, { disc: 2, title: ' Live ' }, { disc: 3 }] } });
+    const detail = await Effect.runPromise(client().album('a'));
+    expect(detail.discTitles).toEqual([{ disc: 2, title: 'Live' }]);
+    expect(detail.tracks.map(track => [track.discNumber, track.trackNumber])).toEqual([[1, 1], [2, 1]]);
+    servePayload(albumPayload());
+    expect('discTitles' in await Effect.runPromise(client().album('a'))).toBe(false);
+  });
+  it('validates the new library arguments', () => {
+    const decode = <A, I>(schema: Schema.Schema<A, I>, value: unknown) => Either.isRight(Schema.decodeUnknownEither(schema)(value));
+    expect(decode(LibraryRequestSchemas.albums, ['byYear', 0, 60, { fromYear: 1990, toYear: 1999 }])).toBe(true);
+    expect(decode(LibraryRequestSchemas.albums, ['newest', 0, 60])).toBe(true);
+    for (const value of [['byYear', 0, 60], ['newest', 0, 60, { fromYear: 1990, toYear: 1999 }], ['byYear', 0, 60, { fromYear: 1990 }], ['byYear', 0, 60, { fromYear: -1, toYear: 1999 }], ['byYear', 0, 60, null]]) {
+      expect(decode(LibraryRequestSchemas.albums, value)).toBe(false);
+    }
+    expect(decode(LibraryRequestSchemas.artistInfo, ['ar1'])).toBe(true);
+    expect(decode(LibraryRequestSchemas.artistInfo, [''])).toBe(false);
+    expect(decode(LibraryRequestSchemas.songsByGenre, ['Rock', 0, 200])).toBe(true);
+    for (const value of [['', 0, 200], ['Rock', -1, 200], ['Rock', 0, 0], ['Rock', 0, 501], ['x'.repeat(257), 0, 200]]) expect(decode(LibraryRequestSchemas.songsByGenre, value)).toBe(false);
   });
 });

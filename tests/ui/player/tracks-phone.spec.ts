@@ -1,10 +1,10 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures/test';
 
-// The tabs along the bottom: all five on one line, none cut off, however narrow the phone.
+// The tabs along the bottom: all six on one line, none cut off, however narrow the phone.
 async function expectTabsFit(page: Page) {
   const tabs = page.getByRole('navigation', { name: 'Library' }).getByRole('button');
-  await expect(tabs).toHaveText(['Records', 'Artists', 'Tracks', 'Playlists', 'Favorites']);
+  await expect(tabs).toHaveText(['Records', 'Artists', 'Tracks', 'Playlists', 'Favorites', 'Genres']);
   const width = page.viewportSize()!.width;
   const boxes = await tabs.evaluateAll(buttons => buttons.map(button => {
     const box = button.getBoundingClientRect();
@@ -34,7 +34,7 @@ test.describe('phone', () => {
     await app.expectPlaying('Opening 5');
   });
 
-  test('the five tabs fit a 320px screen, even with the largest theme text', async ({ page }) => {
+  test('the six tabs fit a 320px screen, even with the largest theme text', async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 780 });
     await expectTabsFit(page);
     // A theme's text size of 20px, the most it allows.

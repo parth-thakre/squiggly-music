@@ -16,18 +16,20 @@ import { useSwipeSongs } from './swipe';
 import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
+import { GenrePage, Genres } from './views';
 
 onMenuError(message => player.showError(message));
 
-const sections: { view: 'records' | 'artists' | 'tracks' | 'playlists' | 'favorites'; label: string }[] = [
+const sections: { view: 'records' | 'artists' | 'tracks' | 'playlists' | 'favorites' | 'genres'; label: string }[] = [
   { view: 'records', label: 'Records' }, { view: 'artists', label: 'Artists' }, { view: 'tracks', label: 'Tracks' },
   { view: 'playlists', label: 'Playlists' }, { view: 'favorites', label: 'Favorites' },
+  { view: 'genres', label: 'Genres' },
 ];
 // Places that need the server. Without one, they offer to connect instead.
-const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search']);
+const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre']);
 const PaletteContext = createContext(neutral);
 const sectionOf = (route: Route) => route.view === 'album' ? 'records' : route.view === 'artist' ? 'artists'
-  : route.view === 'playlist' || route.view === 'mix' ? 'playlists' : route.view;
+  : route.view === 'playlist' || route.view === 'mix' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
 
 // App re-renders only when the connection or the playing record's sleeve changes. Position
 // snapshots reach the deck's own subscribers, never the page.
@@ -131,6 +133,8 @@ const View = memo(function View() {
     case 'settings': return <SettingsView />;
     case 'diagnostics': return <DiagnosticsView />;
     case 'extension': return <ExtensionPage key={route.id} id={route.id} />;
+    case 'genres': return <Genres />;
+    case 'genre': return <GenrePage key={route.name} name={route.name} />;
   }
 });
 
