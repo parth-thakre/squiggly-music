@@ -76,9 +76,14 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         openDir: async () => ({ ok: true, value: undefined }),
         writeClipboard: async (text: string) => { calls.push(`clipboard:${text}`); return { ok: true, value: undefined }; },
       },
-      // Files dropped on the window: the path stands in for Electron's webUtils, and the call is recorded.
-      filePath: (file: File) => `/drop/${file.name}`,
-      openPaths: async (paths: string[], mode: string) => { calls.push(`open-paths:${JSON.stringify(paths)}:${mode}`); return { ok: true, value: { opened: paths.length, skipped: 0 } }; },
+      // Files dropped on the window, as the preload takes them: the Files themselves (the page has
+      // no paths to give). The call is recorded with the files' names; more than a full queue is
+      // refused, as the main process refuses it.
+      openDropped: async (files: File[], mode: string) => {
+        calls.push(`open-dropped:${files.length}:${JSON.stringify(files.slice(0, 3).map(file => file instanceof File ? file.name : typeof file))}:${mode}`);
+        if (files.length > 1000) return { ok: false, error: 'Drop up to 1,000 files at a time.' };
+        return { ok: true, value: { opened: files.length, skipped: 0 } };
+      },
       connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
       disconnect: async () => {
         calls.push('disconnect');

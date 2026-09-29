@@ -8,9 +8,10 @@ export { QUEUE_LIMIT };
 const IndexSchema = Schema.Number.pipe(Schema.int(), Schema.between(0, QUEUE_LIMIT - 1));
 // Where: next, the end, or before the entry at an index (a drop onto the queue).
 export const QueueAddSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), Schema.Union(Schema.Literal('next', 'end'), IndexSchema));
-// Files dropped on the window: paths the main process checks again (checkAudioPaths in
-// main/localFiles.ts), and whether they play now or join the end of the queue.
-const PathSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(4096));
+// Files dropped on the window: paths the preload looked up, which the main process checks
+// again (checkAudioPaths in main/localFiles.ts), and whether they play now or join the end of
+// the queue. '' is a dropped File with no path on disk; it is counted as left out.
+const PathSchema = Schema.String.pipe(Schema.maxLength(4096));
 export const OpenPathsSchema = Schema.Tuple(Schema.Array(PathSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), Schema.Literal('play', 'queue'));
 export const QueueMoveSchema = Schema.Tuple(IndexSchema, IndexSchema);
 export const QueueRemoveSchema = Schema.Tuple(Schema.Array(IndexSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)));

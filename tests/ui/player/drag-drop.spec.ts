@@ -156,12 +156,20 @@ test.describe('drag and drop', () => {
 test.describe('files dropped on the desktop window', () => {
   test.beforeEach(async ({ page }) => { await installDesktopBridge(page); });
 
-  test('go to the main process as paths through the preload, to play', async ({ page }) => {
+  const calls = (page: Page) => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls);
+  test('go to the preload as the Files themselves, to play', async ({ page }) => {
     await page.goto('/');
     await expect(page.locator('.deck')).toBeVisible();
     const result = await dropFiles(page, ['a.flac', 'b.mp3'], true);
     expect(result.dropTaken).toBe(true);
-    await expect.poll(() => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls))
-      .toContain('open-paths:["/drop/a.flac","/drop/b.mp3"]:play');
+    await expect.poll(() => calls(page)).toContain('open-dropped:2:["a.flac","b.mp3"]:play');
+  });
+
+  test('more than a full queue go on whole, to be refused, not cut short', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('.deck')).toBeVisible();
+    await dropFiles(page, Array.from({ length: 1001 }, (_, i) => `${i + 1}.flac`));
+    await expect.poll(() => calls(page)).toContain('open-dropped:1001:["1.flac","2.flac","3.flac"]:play');
+    await expect(page.getByRole('alert')).toContainText('Drop up to 1,000 files at a time.');
   });
 });

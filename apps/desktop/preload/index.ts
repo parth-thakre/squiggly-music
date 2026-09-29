@@ -78,9 +78,11 @@ const bridge: DesktopBridge = {
   },
   command: command => ipcRenderer.invoke('squiggly:command', command),
   openFiles: () => ipcRenderer.invoke('squiggly:open-files'),
-  // A dropped File's path on disk ('' for one that isn't a file on disk). Only paths cross to the main process.
-  filePath: file => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
-  openPaths: (paths, mode) => ipcRenderer.invoke('squiggly:open-paths', [paths, mode]),
+  // Files dropped on the window. Their paths are looked up here and go straight to the main
+  // process, which checks them; the page never sees one. A File that isn't on disk (one the page
+  // made) has no path, and is sent as '' so the main process counts it among those left out.
+  openDropped: (files, mode) => ipcRenderer.invoke('squiggly:open-paths', [
+    (Array.isArray(files) ? files : []).map(file => { try { return webUtils.getPathForFile(file); } catch { return ''; } }), mode]),
   connect: connection => ipcRenderer.invoke('squiggly:connect', connection),
   playTracks: (trackIds, startIndex) => ipcRenderer.invoke('squiggly:play-tracks', [trackIds, startIndex]),
   resumeQueue: () => ipcRenderer.invoke('squiggly:resume-queue'),

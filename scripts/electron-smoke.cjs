@@ -59,6 +59,10 @@ app.on('browser-window-created', (_event, window) => {
         if (ready.player.engine !== 'ready') throw new Error(ready.player.error);
         const invalid = await bridge.command({type:'volume',percent:101});
         if (invalid.ok) throw new Error('Invalid IPC command accepted');
+        // A File the page made has no path on disk: the preload finds none, and nothing opens.
+        const made = await bridge.openDropped([new File(['x'], 'a.flac')], 'queue');
+        if (made.ok || !/Nothing dropped could be played/.test(made.error)) throw new Error('A File made by the page opened: ' + JSON.stringify(made));
+        if ('filePath' in bridge || 'openPaths' in bridge) throw new Error('Paths are offered to the page');
         const opened = await bridge.openFiles();
         if (!opened.ok) throw new Error(opened.error);
         const playing = await until(s => s.player.playing && s.player.audio.decoderRate === 48000);
@@ -69,7 +73,7 @@ app.on('browser-window-created', (_event, window) => {
         return { engine: playing.player.engine, decoderRate: playing.player.audio.decoderRate,
           outputBackend: playing.player.audio.outputBackend, queue: playing.player.queue.length,
           startupMs: measured.diagnostics.startupMs, processCount: measured.diagnostics.processes.length,
-          nodeIsolated: true, invalidCommandRejected: !invalid.ok };
+          nodeIsolated: true, invalidCommandRejected: !invalid.ok, madeFileRefused: !made.ok };
       })()`);
       assert.equal(result.outputBackend, 'null');
       assert.equal(result.queue, 1);

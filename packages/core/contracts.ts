@@ -339,12 +339,13 @@ export interface DesktopBridge {
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
   command(command: PlayerCommand): Promise<Result>;
   openFiles(): Promise<Result>;
-  // Files dropped on the window: the path of a dropped File (Electron's webUtils; '' when it has
-  // none), then those paths opened as openFiles opens its choice. The main process keeps only
-  // regular files with an audio extension; folders are left out and counted in `skipped`.
-  // 'play' replaces the queue; 'queue' adds to the end when something is loaded.
-  filePath(file: File): string;
-  openPaths(paths: string[], mode: 'play' | 'queue'): Promise<Result<{ opened: number; skipped: number }>>;
+  // Files dropped on the window, opened as openFiles opens its choice. The preload looks up each
+  // File's path on disk (Electron's webUtils) and sends the paths straight to the main process;
+  // they never come back to the page. A File the page made itself has no path. The main process
+  // keeps only regular files with an audio extension; folders and anything else are left out
+  // and counted in `skipped`. More than a full queue is refused. 'play' replaces the queue;
+  // 'queue' adds to the end when something is loaded.
+  openDropped(files: File[], mode: 'play' | 'queue'): Promise<Result<{ opened: number; skipped: number }>>;
   connect(connection: Connection): Promise<Result>;
   // Replaces the queue with library tracks the main process has already seen, then plays from startIndex.
   playTracks(trackIds: string[], startIndex: number): Promise<Result>;

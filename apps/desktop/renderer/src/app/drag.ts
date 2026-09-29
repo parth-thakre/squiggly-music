@@ -161,9 +161,10 @@ export function useDropTarget(onDrop: (payload: DragPayload, event: ReactDragEve
 }
 
 // Files from the computer, dropped anywhere on the desktop app's window: they play, or join the
-// end of the queue when something is already loaded (Shift plays them now). Only their paths
-// cross to the main process, which checks them as it checks Open files. The browser and Android
-// builds take no files: the drop is swallowed so the page isn't replaced by the file.
+// end of the queue when something is already loaded (Shift plays them now). The Files go to the
+// preload, which sends their paths to the main process; the page never sees a path. The main
+// process checks them as it checks Open files, and refuses more than a full queue. The browser
+// and Android builds take no files: the drop is swallowed so the page isn't replaced by the file.
 const carriesFiles = (data: DataTransfer | null) => !!data && data.types.includes('Files') && !data.types.includes(DRAG_TYPE);
 export function useFileDrops() {
   const depth = useRef(0);
@@ -190,11 +191,11 @@ export function useFileDrops() {
       if (!carriesFiles(event.dataTransfer)) return;
       event.preventDefault();
       depth.current = 0; show(false);
-      if (!desktop?.filePath || !desktop.openPaths) return;
-      const paths = [...event.dataTransfer!.files].map(file => { try { return desktop.filePath(file); } catch { return ''; } }).filter(Boolean);
-      if (!paths.length) return;
+      if (!desktop?.openDropped) return;
+      const files = [...event.dataTransfer!.files];
+      if (!files.length) return;
       const state = getPlayer();
-      void desktop.openPaths(paths.slice(0, QUEUE_LIMIT), event.shiftKey || state.index < 0 ? 'play' : 'queue').then(result => {
+      void desktop.openDropped(files, event.shiftKey || state.index < 0 ? 'play' : 'queue').then(result => {
         if (!result.ok) { player.showError(result.error); return; }
         const { opened, skipped } = result.value;
         if (skipped) showNotice('', `Opened ${plural(opened, 'file')} and left out ${plural(skipped, 'item')}. Only audio files open, not folders.`);

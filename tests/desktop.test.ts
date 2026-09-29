@@ -67,7 +67,9 @@ describe('desktop request schemas', () => {
     const open = Schema.decodeUnknownSync(OpenPathsSchema);
     expect(open([['/music/a.flac'], 'play'])).toEqual([['/music/a.flac'], 'play']);
     expect(open([['/music/a.flac', '/music/b.mp3'], 'queue'])).toEqual([['/music/a.flac', '/music/b.mp3'], 'queue']);
-    for (const bad of [[[], 'play'], [[''], 'play'], [['/a.flac'], 'next'], [[1], 'play'], [['/'.repeat(4097)], 'play'],
+    // '' is a dropped File with no path on disk, sent so the main process counts it as left out.
+    expect(open([['', '/music/a.flac'], 'queue'])).toEqual([['', '/music/a.flac'], 'queue']);
+    for (const bad of [[[], 'play'], [['/a.flac'], 'next'], [[1], 'play'], [['/'.repeat(4097)], 'play'],
       [Array(QUEUE_LIMIT + 1).fill('/a.flac'), 'play'], ['/a.flac', 'play'], [['/a.flac']]]) {
       expect(() => open(bad)).toThrow();
     }
@@ -81,8 +83,8 @@ describe('desktop request schemas', () => {
     const folder = await mkdtemp(join(directory, 'Album.flac-'));
     const disguised = join(directory, 'folder.flac');
     await mkdir(disguised);
-    const checked = await checkAudioPaths([song, join(directory, 'notes.txt'), folder, disguised, 'relative/c.flac', join(directory, 'missing.flac'), `${song}\0.flac`, other]);
-    expect(checked).toEqual({ files: [song, other], skipped: 6 });
+    const checked = await checkAudioPaths([song, join(directory, 'notes.txt'), folder, disguised, 'relative/c.flac', join(directory, 'missing.flac'), `${song}\0.flac`, '', other]);
+    expect(checked).toEqual({ files: [song, other], skipped: 7 });
     expect(await checkAudioPaths([folder])).toEqual({ files: [], skipped: 1 });
   });
 

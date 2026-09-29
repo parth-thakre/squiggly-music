@@ -465,9 +465,10 @@ function installHandlers() {
     endRadio();
     yield* send({ type: 'queue', tracks });
   }), 'dialog');
-  // Files dropped on the window. The renderer sends only paths (the preload's filePath); they are
-  // checked here as Open files limits its dialog: audio extensions, regular files, up to a full
-  // queue. Folders aren't walked. `queue` adds them to the end when something is loaded.
+  // Files dropped on the window. The preload sends their paths ('' for one with none), which
+  // never reach the page; they are checked here as Open files limits its dialog: audio
+  // extensions, regular files, up to a full queue. Folders aren't walked. `queue` adds them to
+  // the end when something is loaded.
   handle('open-paths', value => Effect.gen(function* () {
     if (Array.isArray(value) && Array.isArray(value[0]) && value[0].length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`Drop up to ${QUEUE_LIMIT.toLocaleString('en-US')} files at a time.`));
     const [paths, mode] = yield* Schema.decodeUnknown(OpenPathsSchema)(value).pipe(Effect.mapError(() => new Error('Those files could not be opened.')));
