@@ -35,12 +35,13 @@ On Linux, the main process asks the sound server what it runs the sink at, and t
 How it asks:
 
 - `pw-dump` when it's there (it comes with `pipewire-utils` on Fedora). Otherwise `pactl -f json list sinks` and `list sink-inputs`, which PulseAudio 16 or newer and pipewire-pulse answer. A pipewire-pulse sink is reported as PipeWire's.
-- It finds the sink by following mpv's own stream: the stream that belongs to the audio process, and the sink the server has linked it to. When there's no such stream, mpv's output device (`pipewire/<name>`, `pulse/<name>`) names the sink, or else the server's default sink. Those two are guesses, since the session manager can move a stream elsewhere, so the stream always comes first. A stream linked to something other than one sink leaves the line blank.
+- For mpv's PipeWire output, PipeWire's answer settles it. mpv's other outputs may be talking to another server: PulseAudio can play while PipeWire runs only for screen sharing, as on Ubuntu 22.04, and `PULSE_SERVER` can point anywhere. So for them PipeWire's answer counts only when mpv's stream is in it, and otherwise `pactl` is asked. With no `pactl`, the line stays blank.
+- It finds the sink by following mpv's own stream: the stream that belongs to the audio process, and the sink the server has linked it to. When there's no such stream, mpv's output device (`pipewire/<name>`, `pulse/<name>`) names the sink, or else the server's default sink. Those two are guesses, since the session manager can move a stream elsewhere, so the stream always comes first. A guessed sink says so on the Diagnostics page ("the default sink", "the sink mpv asked for"), whether the server resamples stays unknown, and the deck says nothing. It's asked again after 3 seconds, in case the stream has turned up. A stream linked to something other than one sink leaves the line blank.
 - Only on Linux, and only while a song is loaded and mpv plays through PipeWire, PulseAudio, ALSA, or JACK. ALSA and JACK are found by their stream alone; ALSA straight to the hardware has no server in the way, and no line.
 - When a song starts or mpv's output changes, and every 10 seconds while playing. Never more often than once every 3 seconds, one ask at a time, and each tool gets 2 seconds before it's stopped. The row disappears as soon as mpv's output rate, format, channels, or device change, until the server has answered for the new ones.
 - If neither tool is installed or answers, the row stays blank. Nothing else depends on it.
 
-What it can tell: the sample rate, sample format, and channel count the server has opened the sink with, and whether that rate differs from the rate mpv hands over, in which case the server resamples. The sentence says "matches" when the two rates are equal.
+What it can tell: the sample rate, sample format, and channel count the server has opened the sink with, and, for a sink found through mpv's stream, whether that rate differs from the rate mpv hands over, in which case the server resamples. The sentence says "matches" when the two rates are equal.
 
 What it can't tell:
 
