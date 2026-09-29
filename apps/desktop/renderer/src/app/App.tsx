@@ -7,6 +7,8 @@ import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
+import { PlayModes } from './transport';
+import { following } from '../../../../../packages/core/playOrder';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
@@ -137,7 +139,8 @@ const View = memo(function View() {
 const Deck = memo(function Deck() {
   const track = usePlayer(current);
   const playing = usePlayer(s => s.playing);
-  const upNext = usePlayer(s => s.queue[s.index + 1] as Track | undefined);
+  // What Next plays: the first song after the last one under repeat all.
+  const upNext = usePlayer(s => s.queue[following(s.index, s.queue.length, s.repeat, 'skip')] as Track | undefined);
   const error = usePlayer(s => s.error);
   const engine = usePlayer(s => s.engine);
   const radio = usePlayer(s => s.radio);
@@ -197,6 +200,7 @@ const Deck = memo(function Deck() {
         <button type="button" className="icon-button" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /></button>
         <button type="button" className="icon-button" aria-label="Queue" title="Queue" aria-pressed={route.view === 'queue'} onClick={() => route.view === 'queue' ? nav.back() : nav.go({ view: 'queue' })}><ListMusic aria-hidden="true" /></button>
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
+        <PlayModes />
       </div>
       <SignalPath track={track} />
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}

@@ -216,6 +216,7 @@ export const androidBridge: AndroidBridge = {
     volume(percent) { void Squiggly.volume({ volume: percent / 100 }); },
     subscribe(listener) { playbackListeners.add(listener); return () => { playbackListeners.delete(listener); }; },
     onReset(listener) { resetListeners.add(listener); return () => { resetListeners.delete(listener); }; },
+    repeat(mode) { void Squiggly.repeat({ mode }); },
   },
 };
 

@@ -43,3 +43,12 @@ export const WindowStateSchema = Schema.Struct({
   mini: Schema.optional(Schema.Struct({ x: CoordinateSchema, y: CoordinateSchema, width: SizeSchema, height: SizeSchema })),
 });
 export type WindowState = Schema.Schema.Type<typeof WindowStateSchema>;
+
+// Repeat and shuffle (play-modes.json), set by player commands rather than Settings, and handed to
+// the audio host when it starts. Missing keys take their default, as in settings.
+export const PlayModesSchema = Schema.Struct({
+  repeat: Schema.optionalWith(Schema.Literal('off', 'all', 'one'), { default: () => 'off' as const }),
+  shuffle: setting(false),
+});
+export type PlayModes = Schema.Schema.Type<typeof PlayModesSchema>;
+export const defaultPlayModes = (): PlayModes => Schema.decodeUnknownSync(PlayModesSchema)({});

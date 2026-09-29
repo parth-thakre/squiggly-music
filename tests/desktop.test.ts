@@ -381,7 +381,7 @@ describe('MPRIS media controls', () => {
     class FakePlayer extends EventEmitter {
       static instance: FakePlayer;
       metadata: Record<string, unknown> = {};
-      playbackStatus = 'Stopped'; volume = 0; canPlay = true; canPause = true; canSeek = true; canGoNext = true; canGoPrevious = true;
+      playbackStatus = 'Stopped'; loopStatus = 'None'; shuffle = false; volume = 0; canPlay = true; canPause = true; canSeek = true; canGoNext = true; canGoPrevious = true;
       getPosition = () => 0;
       seeked = vi.fn();
       constructor(readonly options: unknown) { super(); FakePlayer.instance = this; }
@@ -389,7 +389,7 @@ describe('MPRIS media controls', () => {
     }
     vi.doMock('@jellybrick/mpris-service', () => ({ default: FakePlayer }));
     const { startMpris } = await import('../apps/desktop/main/mpris');
-    const controls = { command: vi.fn(), seek: vi.fn(), volume: vi.fn(), raise: vi.fn(), quit: vi.fn() };
+    const controls = { command: vi.fn(), seek: vi.fn(), volume: vi.fn(), raise: vi.fn(), quit: vi.fn(), repeat: vi.fn(), shuffle: vi.fn() };
     const onError = vi.fn();
     const session = (await startMpris(controls, onError))!;
     return { session, service: FakePlayer.instance, controls, onError };
@@ -457,6 +457,23 @@ describe('MPRIS media controls', () => {
     expect(service).toMatchObject({ canPlay: true, canPause: false, playbackStatus: 'Stopped' });
     service.emit('playpause');
     expect(controls.command).toHaveBeenLastCalledWith('play');
+  });
+
+  it('shows repeat and shuffle as LoopStatus and Shuffle, and passes changes back', async () => {
+    const { session, service, controls } = await mpris();
+    session.update(snapshot({ currentIndex: 1 }), null);
+    expect(service).toMatchObject({ loopStatus: 'None', shuffle: false, canGoNext: false, canGoPrevious: true });
+    // Under repeat all the last song has a next (the first), and the first a previous.
+    session.update(snapshot({ currentIndex: 1, repeat: 'all', shuffle: true }), null);
+    expect(service).toMatchObject({ loopStatus: 'Playlist', shuffle: true, canGoNext: true });
+    session.update(snapshot({ currentIndex: 0, repeat: 'all' }), null);
+    expect(service).toMatchObject({ canGoPrevious: true });
+    session.update(snapshot({ currentIndex: 1, repeat: 'one' }), null);
+    expect(service).toMatchObject({ loopStatus: 'Track', canGoNext: false });
+    service.emit('loopStatus', 'Playlist'); service.emit('loopStatus', 'Sometimes');
+    expect(controls.repeat.mock.calls).toEqual([['all']]);
+    service.emit('shuffle', true);
+    expect(controls.shuffle).toHaveBeenCalledWith(true);
   });
 
   it('stops publishing after a bus error', async () => {

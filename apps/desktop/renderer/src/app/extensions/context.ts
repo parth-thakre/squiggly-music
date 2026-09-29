@@ -22,6 +22,7 @@ export function playerView(state: AppPlayerState): PlayerState {
     view = {
       engine: state.engine, connected: state.connected, queue: state.queue, entryIds: state.entryIds, index: state.index,
       playing: state.playing, position: state.position, duration: state.duration, volume: state.volume, radio: state.radio, error: state.error,
+      repeat: state.repeat, shuffle: state.shuffle,
     };
     views.set(state, view);
   }

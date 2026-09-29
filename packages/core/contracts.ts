@@ -185,7 +185,14 @@ export interface PlayerSnapshot {
   radio: { label: string } | null;
   devices: AudioDevice[];
   audio: AudioPath;
+  // Queue behaviour, never the signal: what follows the last song (repeat), and whether the songs
+  // after the current one were put in random order (shuffle). See packages/core/playOrder.ts.
+  repeat: RepeatMode;
+  shuffle: boolean;
 }
+// off: the queue stops after its last song. all: it wraps to the first. one: a finished song
+// starts again; Next still moves on.
+export type RepeatMode = 'off' | 'all' | 'one';
 export interface OperationMetric { name: string; count: number; errors: number; cancelled?: number; p50Ms: number; p95Ms: number }
 export interface ProcessMetric { name: string; cpuPercent: number; memoryMB: number }
 export interface Diagnostics {
@@ -325,6 +332,7 @@ export const emptyAudio = (): AudioPath => ({
 export const emptyPlayer = (): PlayerSnapshot => ({
   engine: 'starting', error: null, playing: false, position: 0, duration: 0,
   volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio: emptyAudio(),
+  repeat: 'off', shuffle: false,
 });
 export const emptyDiagnostics = (): Diagnostics => ({
   uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0,
@@ -379,6 +387,9 @@ export interface AndroidBridge {
     subscribe(listener: (playback: AndroidPlayback) => void): () => void;
     // The bridge emptied the native queue (a new sign-in, or disconnecting); the page empties its own.
     onReset(listener: () => void): () => void;
+    // ExoPlayer's repeat mode, so the queue wraps or a song repeats with the page asleep. The page
+    // shuffles its own queue and sends the new order with sync().
+    repeat(mode: RepeatMode): void;
   };
 }
 

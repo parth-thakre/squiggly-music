@@ -1,3 +1,4 @@
+import { shuffleOrder } from '../core/playOrder';
 import type { PlayableTrack, QueueEdit } from './protocol';
 
 // Same bound as QUEUE_LIMIT in core/validation.ts, kept here so the host bundle avoids Effect schemas.
@@ -58,5 +59,17 @@ export function editQueue<T extends PlayableTrack>(native: PlaylistEngine, queue
   }
   if (live && native.number('playlist-count') !== queue.length) {
     throw new Error('The audio engine queue changed unexpectedly. Replace the queue to continue.');
+  }
+}
+
+// Shuffle mode turning on: the entries after the current one (all of them, with nothing current)
+// are put in random order, one playlist-move at a time, so mpv's playlist and the host's copy stay
+// the same list throughout. The current entry and those before it keep their places.
+export function shuffleQueue<T extends PlayableTrack>(native: PlaylistEngine, queue: T[], live: boolean, random: () => number = Math.random) {
+  const current = live ? native.number('playlist-pos') ?? -1 : -1;
+  const wanted = shuffleOrder(queue.length, current, random).map(index => queue[index]);
+  for (let index = Math.max(0, current + 1); index < wanted.length; index++) {
+    const from = queue.indexOf(wanted[index], index);
+    if (from !== index) editQueue(native, queue, live, { type: 'queue-move', from, to: index });
   }
 }

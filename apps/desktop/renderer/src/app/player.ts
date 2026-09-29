@@ -1,6 +1,8 @@
 import { useSyncExternalStore } from 'react';
 import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
+import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
+import { following, preceding, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
 import { finishThreshold } from '../../../../../packages/core/plays';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
 import { VolumeCommandCoalescer } from '../volumeCommands';
@@ -38,6 +40,9 @@ export interface PlayerState {
   signIn: SignInState;
   // Desktop only: updates from GitHub releases. Null in the browser.
   update: UpdateState | null;
+  // Queue modes. The desktop's audio host owns them; the browser and Android keep them here, in
+  // local storage (MODES below).
+  repeat: RepeatMode; shuffle: boolean;
 }
 export type SignInState = Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
 
@@ -49,6 +54,15 @@ const desktop = window.squiggly;
 const android = desktop ? undefined : window.squigglyAndroid;
 // The browser and Android keep the queue in the page; the desktop's main process keeps its own.
 const local = !desktop;
+// The browser's and Android's repeat and shuffle, kept like their settings (settings.ts).
+const MODES = 'squiggly.playModes';
+function storedModes(): Pick<PlayerState, 'repeat' | 'shuffle'> {
+  try {
+    const value = JSON.parse(localStorage.getItem(MODES) ?? '{}') as { repeat?: unknown; shuffle?: unknown };
+    return { repeat: repeatModes.find(mode => mode === value.repeat) ?? 'off', shuffle: value.shuffle === true };
+  } catch { return { repeat: 'off', shuffle: false }; }
+}
+const saveModes = () => { try { localStorage.setItem(MODES, JSON.stringify({ repeat: state.repeat, shuffle: state.shuffle })); } catch { /* Kept for this visit only. */ } };
 let state: PlayerState = {
   mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop || android ? null : 'Navidrome',
   sessionId: null, access: desktop ? 'open' : 'checking',
@@ -57,6 +71,7 @@ let state: PlayerState = {
   radio: null, radioStarting: null, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
   update: null,
+  ...(local ? storedModes() : { repeat: 'off', shuffle: false }),
 };
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
@@ -142,6 +157,7 @@ if (desktop) {
       // The desktop asks Navidrome for the original file; the host doesn't verify what came back.
       delivery: track?.source === 'navidrome' ? 'original-requested' : null,
       error, diagnostics: snapshot.diagnostics,
+      repeat: p.repeat ?? 'off', shuffle: p.shuffle ?? false,
     });
   };
   let received = false;
@@ -229,13 +245,17 @@ if (web) {
         if (step > 0 && step < 2 && !element.paused) listened(step);
         plays.lastPosition = position; set({ position });
       }
-      const next = state.queue[state.index + 1], nextEntry = state.entryIds[state.index + 1];
+      // The song that follows, which is this one again under repeat one: the standby element
+      // then holds a second copy, and the swap starts it over as quickly as a new song.
+      const upcoming = following(state.index, state.queue.length, state.repeat, 'ended');
+      const next = state.queue[upcoming], nextEntry = state.entryIds[upcoming];
       if (next && nextEntry && web.standby.dataset.entry !== nextEntry && element.duration - position < 25) { prepare(web.standby, next, nextEntry); web.standby.load(); }
       if (Math.floor(position) % 5 === 0) positionState();
     });
     element.addEventListener('ended', () => {
       if (!mine()) return;
-      if (state.index + 1 < state.queue.length) webLoad(state.index + 1);
+      const next = following(state.index, state.queue.length, state.repeat, 'ended');
+      if (next >= 0) webLoad(next);
       else set({ playing: false, position: 0 });
     });
     element.addEventListener('error', () => {
@@ -401,6 +421,8 @@ if (android) {
   });
   android.session.subscribe(nativeSession);
   nativeSession(android.session.get());
+  // The native player wraps the queue or repeats a song itself, so it does so with the page asleep.
+  android.player.repeat(state.repeat);
   // The app was swiped away while playing and the player kept going: show what it holds.
   void android.player.restore().then(held => {
     if (!held || state.queue.length) return;
@@ -442,9 +464,11 @@ async function startStation(seed: RadioStart) {
   if (playing?.id === start.id && entry && !(web?.active.ended || native?.ended)) {
     station++;
     set({ queue: [playing, ...tracks.slice(1)], entryIds: [entry, ...mint(tracks.length - 1)], index: 0, radio: { label: seed.label }, error: null, resumable: null });
-    saveSoon(); return;
-  }
-  await player.play(tracks, 0, { label: seed.label });
+    saveSoon();
+  } else await player.play(tracks, 0, { label: seed.label });
+  // Radio and repeat exclude each other, as on the desktop (setPlayMode in main/index.ts): radio
+  // keeps adding songs, so a station turns repeat off, and turning repeat on stops the station.
+  if (state.radio && state.repeat !== 'off') player.repeat('off');
 }
 
 const volumeCommands = desktop ? new VolumeCommandCoalescer(percent => desktop.command({ type: 'volume', percent }), error => set({ error })) : null;
@@ -455,7 +479,13 @@ export type RadioStart = { kind: 'song'; track: Track; label: string } | { kind:
 export const player = {
   async play(tracks: Track[], start: number, radio: PlayerState['radio'] = null) {
     if (!tracks.length) return;
-    const chosen = queueWindow(tracks, start);
+    let chosen = queueWindow(tracks, start);
+    // With shuffle on, a list plays from the chosen song with the rest in random order. Radio
+    // keeps its own order.
+    if (state.shuffle && !radio) {
+      const order = shuffleOrder(chosen.items.length, chosen.start);
+      chosen = { items: order.map(i => chosen.items[i]), start: chosen.start };
+    }
     set({ error: null, resumable: null });
     if (local) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return; }
     report(await desktop!.playTracks(chosen.items.map(track => track.id), chosen.start));
@@ -567,13 +597,38 @@ export const player = {
     if (local) { if (state.entryIds[index] === entryId) webLoad(index); return; }
     void desktop!.queue.jump(index, entryId).then(report);
   },
+  // Next moves on under repeat one too, and wraps to the first song under repeat all.
   next() {
-    if (local) { if (state.index + 1 < state.queue.length) webLoad(state.index + 1); return; }
+    if (local) { const next = following(state.index, state.queue.length, state.repeat, 'skip'); if (next >= 0) webLoad(next); return; }
     void desktop!.command({ type: 'next' }).then(report);
   },
   previous() {
-    if (local) { if ((web ? web.active.currentTime : livePosition()) > 3 || state.index <= 0) player.seek(0); else webLoad(state.index - 1); return; }
+    if (local) {
+      const previous = preceding(state.index, state.queue.length, state.repeat);
+      if ((web ? web.active.currentTime : livePosition()) > 3 || previous < 0) player.seek(0); else webLoad(previous);
+      return;
+    }
     void desktop!.command({ type: 'previous' }).then(report);
+  },
+  repeat(mode: RepeatMode) {
+    if (desktop) { void desktop.command({ type: 'repeat', mode }).then(report); return; }
+    // Turning repeat on stops radio (see startStation).
+    if (mode !== 'off' && state.radio) station++;
+    set({ repeat: mode, ...(mode !== 'off' && state.radio ? { radio: null } : {}) });
+    android?.player.repeat(mode);
+    saveModes();
+  },
+  // Shuffle on puts the songs after the current one in random order; the current song and the
+  // ones before it stay where they are. Off leaves the queue as it is, as on the desktop (the
+  // 'shuffle' case in packages/player-mpv/host.ts).
+  shuffle(on: boolean) {
+    if (desktop) { void desktop.command({ type: 'shuffle', on }).then(report); return; }
+    if (on && !state.shuffle && state.queue.length) {
+      const order = shuffleOrder(state.queue.length, state.index);
+      set({ queue: order.map(i => state.queue[i]), entryIds: order.map(i => state.entryIds[i]), shuffle: true });
+      saveSoon();
+    } else set({ shuffle: on });
+    saveModes();
   },
   // `entryId`, when given, is the entry the gesture started on; another entry is never seeked.
   seek(seconds: number, entryId?: string) {

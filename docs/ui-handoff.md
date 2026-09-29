@@ -27,6 +27,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | --- | --- |
 | `snapshot()`, `subscribe(listener)` | Authoritative player, diagnostics, and server state |
 | `command(command)` | Play, pause, stop, previous/next, seek, volume, output device, restart |
+| `command({ type: 'repeat', mode })`, `command({ type: 'shuffle', on })` | Queue modes, owned by the audio host and shown as `player.repeat` (`off`, `all`, `one`) and `player.shuffle` in the snapshot. Shuffle on reorders the songs after the current one; off leaves the queue as it is. Repeat on stops radio, and starting radio turns repeat off. The main process saves both (`play-modes.json`) for the next launch |
 | `openFiles()`, `connect(connection)`, `disconnect()` | Local files; server login, saved encrypted when the system allows (`server.saved`, `server.canRemember` in the snapshot) and reconnected at launch (`server.reconnecting`, `server.reconnectError`). Settings › Disconnect calls `disconnect()`, which stops playback, forgets the saved sign-in, and returns to the connect screen |
 | `playTracks(trackIds, startIndex)` | Replace the queue with up to 500 library tracks the main process has returned |
 | `queue.add(ids, 'next' \| 'end')`, `queue.move`, `queue.remove`, `queue.clear` | Edit the queue (up to 1000). The playing song cannot be removed. Indexes refer to the latest snapshot |
