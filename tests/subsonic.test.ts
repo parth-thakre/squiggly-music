@@ -154,6 +154,45 @@ describe('OpenSubsonic', () => {
     const params = calls[1][1].body as URLSearchParams;
     expect(params.get('size')).toBe('48'); expect(params.get('offset')).toBe('48');
   });
+  it('pages through every song with an empty search3 query, mapped like any other song', async () => {
+    const library = Array.from({ length: 7 }, (_, i) => ({
+      id: `s${i}`, title: `Song ${i}`, artist: 'A & B', suffix: 'flac', samplingRate: 96000, bitDepth: 24, coverArt: `mf-s${i}`,
+      artists: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+    }));
+    // Navidrome's answer: the songs at that offset, and no song key past the end.
+    const fetchMock = vi.fn((input: string, init: RequestInit) => {
+      if (new URL(input).pathname.endsWith('/getOpenSubsonicExtensions.view')) return Promise.resolve(discoveryResponse());
+      const params = init.body as URLSearchParams;
+      const offset = Number(params.get('songOffset')), count = Number(params.get('songCount'));
+      return Promise.resolve(Response.json(envelope({ searchResult3: offset < library.length ? { song: library.slice(offset, offset + count) } : {} })));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const subject = client();
+    const pages: string[][] = [];
+    for (let offset = 0; ; offset += 3) {
+      const page = await Effect.runPromise(subject.songs(offset, 3));
+      pages.push(page.map(track => track.id));
+      if (page.length < 3) break;
+    }
+    expect(pages).toEqual([['s0', 's1', 's2'], ['s3', 's4', 's5'], ['s6']]);
+    const sent = () => fetchMock.mock.calls.filter(([url]) => url.endsWith('/search3.view')).map(([url, init]) => [new URL(url).pathname,
+      ...['query', 'songCount', 'songOffset', 'artistCount', 'albumCount'].map(key => (init.body as URLSearchParams).get(key))]);
+    expect(sent()).toEqual([0, 3, 6].map(offset => ['/navidrome/rest/search3.view', '""', '3', String(offset), '0', '0']));
+    const [track] = await Effect.runPromise(subject.songs(6, 3));
+    expect(track).toEqual({
+      id: 's6', title: 'Song 6', artist: 'A & B', album: '', duration: null, source: 'navidrome', sourceFormat: 'flac', sourceSampleRate: 96000, sourceBitDepth: 24,
+      albumId: null, artistId: null, coverArt: 'mf-s6', trackNumber: null, discNumber: null, year: null, genre: null, starred: false,
+      artists: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+    });
+    fetchMock.mockClear();
+    expect(await Effect.runPromise(subject.songs(-4, 5000))).toHaveLength(7);
+    expect(sent()[0].slice(2, 4)).toEqual(['500', '0']);
+    expect(await Effect.runPromise(subject.songs(100, 3))).toEqual([]);
+  });
+  it('rejects a song page longer than asked for', async () => {
+    servePayload({ searchResult3: { song: Array.from({ length: 4 }, (_, id) => ({ id: String(id), title: 's' })) } });
+    await expectRedactedFailure(client().songs(0, 3));
+  });
   it('rejects an oversized album page rather than truncating it', async () => {
     servePayload({ albumList2: { album: Array.from({ length: 49 }, (_, id) => ({ id: String(id), name: 'a' })) } });
     await expectRedactedFailure(newest(0));
@@ -370,6 +409,8 @@ describe('OpenSubsonic', () => {
     expect(decode(LibraryRequestSchemas.albums, ['alphabeticalByArtist', 0, 500])).toBe(true);
     expect(decode(LibraryRequestSchemas.randomSongs, [{ size: 5, genre: 'Jazz', fromYear: 1990, toYear: 2000 }])).toBe(true);
     expect(decode(LibraryRequestSchemas.randomSongs, [{ size: 0 }])).toBe(false);
+    expect(decode(LibraryRequestSchemas.songs, [40_000, 500])).toBe(true);
+    for (const value of [[-1, 200], [0, 0], [0, 501], [0.5, 200], [0]]) expect(decode(LibraryRequestSchemas.songs, value)).toBe(false);
     expect(decode(LibraryRequestSchemas.createPlaylist, ['name', Array.from({ length: 1001 }, () => 's')])).toBe(false);
     expect(Schema.decodeUnknownSync(LibraryRequestSchemas.search)(['  q  '])).toEqual(['q']);
     expect(decode(PlayTracksSchema, [['a', 'a'], 1])).toBe(true);

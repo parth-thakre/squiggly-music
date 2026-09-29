@@ -64,6 +64,8 @@ export interface LibraryApi {
   genres(): Promise<Result<Genre[]>>;
   starred(): Promise<Result<LibraryItems>>;
   randomSongs(options: RandomSongOptions): Promise<Result<Track[]>>;
+  // Every song on the server, a page at a time, in the server's own order. Fewer than size: the last page.
+  songs(offset: number, size: number): Promise<Result<Track[]>>;
   search(query: string): Promise<Result<LibraryItems>>;
   star(target: StarTarget, id: string, starred: boolean): Promise<Result>;
   createPlaylist(name: string, trackIds: string[]): Promise<Result<Playlist>>;
