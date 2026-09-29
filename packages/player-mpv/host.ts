@@ -22,6 +22,18 @@ let playableQueue: Entry[] = [];
 // Internet radio stations are live streams (packages/core/stations.ts): no position to seek to,
 // and no end for repeat one to start again from.
 const isStationAt = (index: number) => playableQueue[index]?.track.source === 'station';
+// mpv's prefetch-playlist opens the next entry's stream while this one ends (native.ts). A
+// station opened early would play from what it sent then, minutes behind, rather than joining
+// live when its turn comes, so while a station is anywhere in the queue nothing is opened early.
+// It's set before a station reaches mpv's playlist, since mpv may open the next entry at once.
+let prefetch = true;
+function followPrefetch(queue: readonly PlayableTrack[]) {
+  const want = !queue.some(item => item.track.source === 'station');
+  if (!native || want === prefetch) return;
+  native.set('prefetch-playlist', want ? 'yes' : 'no'); prefetch = want;
+}
+// After an edit that may have taken the last station out. If mpv refuses, it stays off.
+const relaxPrefetch = () => { try { followPrefetch(playableQueue); } catch { /* Off is safe. */ } };
 // What the station says is on, from its ICY StreamTitle. Unknown stays null.
 function announced(title: string | null) {
   const text = title?.replace(/\s+/g, ' ').trim().slice(0, 500);
@@ -222,6 +234,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         if (action.tracks.length > QUEUE_LIMIT) throw new Error(`The queue holds up to ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`);
         const start = action.startIndex ?? 0;
         if (!Number.isInteger(start) || start < 0 || start >= action.tracks.length) throw new Error('Choose a track in the queue.');
+        followPrefetch(action.tracks);
         native.command('stop');
         native.command('playlist-clear');
         resetTrack();
@@ -243,9 +256,10 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         break;
       }
       case 'queue-add': case 'queue-move': case 'queue-remove': case 'queue-clear':
+        if (action.type === 'queue-add') followPrefetch([...playableQueue, ...action.tracks]);
         try { editQueue(native, playableQueue, !reloadPlaylistAfterStop, action.type === 'queue-add' ? { ...action, tracks: action.tracks.map(toEntry) } : action); }
         finally {
-          publishQueue();
+          publishQueue(); relaxPrefetch();
           player.currentIndex = reloadPlaylistAfterStop ? -1 : native.number('playlist-pos') ?? -1;
         }
         break;
@@ -256,7 +270,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         playableQueue = [];
         reloadPlaylistAfterStop = false;
         clearPlayerSession(native, player);
-        publishQueue(); resetTrack();
+        publishQueue(); resetTrack(); relaxPrefetch();
         break;
       case 'play':
         if (!player.queue.length) throw new Error('Add music to the queue first.');

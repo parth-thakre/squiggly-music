@@ -1117,6 +1117,37 @@ describe('internet radio stations', () => {
     expect(native.command).toHaveBeenCalledWith('seek', '10', 'absolute+exact');
   });
 
+  it('opens nothing early while a station is queued, so a station joins live when its turn comes', async () => {
+    const { run, reply, native, mpv, tick } = await radioHost();
+    const prefetch = () => native.set.mock.calls.filter(([name]) => name === 'prefetch-playlist').map(([, value]) => value);
+    // When each call happened, to check prefetch is off before mpv holds a station's address.
+    const order = (mock: typeof native.set, match: (args: string[]) => boolean) => mock.mock.invocationCallOrder[mock.mock.calls.findIndex(args => match(args as string[]))];
+    const prefetchOff = () => order(native.set, ([name, value]) => name === 'prefetch-playlist' && value === 'no');
+    const loaded = (id: string) => order(native.command, ([name, location]) => name === 'loadfile' && location.includes(`/${id}.mp3`));
+    // Songs only: prefetch stays on (native.ts), for gapless playback over the network.
+    run({ type: 'queue', tracks: [playable('a'), playable('b')] });
+    tick();
+    expect(prefetch()).toEqual([]);
+    expect(reply(run({ type: 'queue-add', tracks: [station('jazz')], where: 'end' }))).toMatchObject(ok);
+    expect(prefetch()).toEqual(['no']);
+    expect(prefetchOff()).toBeLessThan(loaded('jazz'));
+    // Removing the station turns it back on.
+    expect(reply(run({ type: 'queue-remove', indexes: [2] }))).toMatchObject(ok);
+    expect(mpv.locations()).toEqual(['/a.flac', '/b.flac']);
+    expect(prefetch()).toEqual(['no', 'yes']);
+    // A new queue holding a station: off before any of it is loaded.
+    native.set.mockClear(); native.command.mockClear();
+    expect(reply(run({ type: 'queue', tracks: [playable('c'), station('talk')] }))).toMatchObject(ok);
+    expect(prefetch()).toEqual(['no']);
+    expect(prefetchOff()).toBeLessThan(loaded('talk'));
+    run({ type: 'clear-session' });
+    expect(prefetch()).toEqual(['no', 'yes']);
+    // If mpv won't turn it off, the station isn't added.
+    native.set.mockImplementation((name: string) => { if (name === 'prefetch-playlist') throw new Error('rejected'); });
+    expect(reply(run({ type: 'queue-add', tracks: [station('jazz')], where: 'end' }))).toMatchObject({ error: expect.any(String) });
+    expect(mpv.locations().some(location => location.includes('jazz'))).toBe(false);
+  });
+
   it('keeps repeat one off while a station plays, and on again after it', async () => {
     const { run, native, mpv, snapshot, tick } = await radioHost();
     const loopFile = () => native.set.mock.calls.filter(([name]) => name === 'loop-file').map(([, value]) => value);
@@ -1136,5 +1167,44 @@ describe('internet radio stations', () => {
     run({ type: 'repeat', mode: 'off' }); mpv.select(1); tick();
     run({ type: 'repeat', mode: 'one' });
     expect(loopFile().at(-1)).toBe('no');
+  });
+});
+
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('internet radio in real libmpv', () => {
+  it('connects to a station only when its turn comes, not while the song before it plays', async () => {
+    const { createServer } = await import('node:http');
+    const rate = 48000, seconds = 3;
+    const song = await serve({ '/song.wav': tone(rate, seconds) });
+    // A live station: an endless WAV, a tenth of a second at a time, as a broadcast sends it.
+    // Each connection is noted, from when the queue was sent.
+    let sent = 0;
+    const connections: number[] = [];
+    const chunk = tone(rate, 0.1).subarray(44);
+    const station = createServer((_request, response) => {
+      connections.push(performance.now() - sent);
+      const header = tone(rate, 0).subarray(0, 44);
+      header.writeUInt32LE(0x7fffffff, 4); header.writeUInt32LE(0x7fffffff - 36, 40);
+      response.writeHead(200, { 'content-type': 'audio/wav' });
+      response.write(header);
+      const timer = setInterval(() => response.write(chunk), 100);
+      response.on('close', () => clearInterval(timer));
+    });
+    await new Promise<void>(done => station.listen(0, '127.0.0.1', done));
+    const live = `http://127.0.0.1:${(station.address() as { port: number }).port}/live`;
+    try {
+      const { snapshots, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      sent = performance.now();
+      send({ id: 1, action: { type: 'queue', tracks: [streamed(song.url('/song.wav'), 'song', rate), { location: live, track: {
+        id: 'station:1', title: 'Live', artist: '', album: '', duration: null, source: 'station',
+        sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null,
+      } }] } });
+      await expect.poll(() => snapshots.at(-1)?.currentIndex, { timeout: 10_000 }).toBe(1);
+      await expect.poll(() => snapshots.at(-1)?.playing, { timeout: 5000 }).toBe(true);
+      // The song's whole file arrives at once, which is when mpv would open the next entry. The
+      // station's stream was opened once, near the end of the song, and never before.
+      expect(connections).toHaveLength(1);
+      expect(connections[0]).toBeGreaterThan((seconds - 0.5) * 1000);
+    } finally { song.close(); station.closeAllConnections(); station.close(); }
   });
 });
