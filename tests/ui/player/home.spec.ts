@@ -48,7 +48,7 @@ test.describe('home', () => {
       await expect(app.heading).toHaveText('Home');
     }
     await seeAll(app, 'Your mixes').click();
-    await expect(app.heading).toHaveText('Playlists');
+    await expect(app.heading).toHaveText('Mixes');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(app.heading).toHaveText('Home');
   });

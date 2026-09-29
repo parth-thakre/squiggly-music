@@ -7,7 +7,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | File | Role |
 | --- | --- |
 | `App.tsx` | Shell: bar, deck (now playing), page, connect screen. The bar's search field searches after a 250 ms pause; Enter searches at once and moves to the first result, Escape empties it and goes back. Recent searches (`squiggly.searches`, the query text only) and that Enter request live in `searches.ts`. `/` opens the Search page, which lists them until you type |
-| `views.tsx` | Pages: records, album, artists, artist, tracks, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics, home |
+| `views.tsx` | Pages: records, album, artists, artist, tracks, playlists, playlist editor, mix, mixes (every automatic playlist, grouped: from what you play, by genre, by decade), favorites, search, queue, lyrics, settings, diagnostics, genres, genre, home |
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself. Android (`mode: 'android'`) keeps the queue as web does and follows the native player's reports |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items, commands, deck slots, and Playlists sections. Built-in items register the same way extensions do |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows. Rows (or the selection) drag onto the queue and playlists; with `onDropItems`, drops from outside land before the row under the pointer, drawn with the reorder line |
