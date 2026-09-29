@@ -145,7 +145,7 @@ done
 
 `smoke-runtime.mjs` uses the system's libmpv. Without one installed, put an unpacked copy on the loader path with `LD_LIBRARY_PATH=.local/runtime/usr/lib64`. `release-notices.mjs` reads `package-lock.json` and `node_modules`, so run it from the repository.
 
-`npm run smoke:packaged -- <executable>` starts a packaged app and checks that its window has the preload bridge without Node, that the audio engine is ready, and that the update mode is the package's (`notify` unless you pass `--update-mode`). It uses a private profile, the null audio output, and no session bus. It needs a display; on a machine without one, use Xvfb:
+`npm run smoke:packaged -- <executable>` starts a packaged app and checks that its window has the preload bridge without Node, that the audio engine is ready, and that the update mode is the package's (`notify` unless you pass `--update-mode`). It uses a private profile, the null audio output, and no session bus. It gives the app 60 seconds to open its DevTools port and as long again to come up (`--timeout <seconds>` changes both), then fails, even when the page never answers. It needs a display; on a machine without one, use Xvfb:
 
 ```bash
 xvfb-run -a -s "-screen 0 1280x800x24" node scripts/packaged-smoke.mjs .local/check/appimage/squashfs-root/AppRun
