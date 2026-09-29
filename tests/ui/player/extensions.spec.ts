@@ -229,6 +229,28 @@ test.describe('deck slots and sections', { tag: '@slots' }, () => {
     }
   });
 
+  test('a slot that fails in the mini player alone is reported in Settings in the main window', async ({ page }) => {
+    await withSlots(page, false, ['twin']);
+    await page.goto('/');
+    const deck = page.getByRole('complementary', { name: 'Now playing' });
+    await expect(deck.locator('[data-slot="twin:window"]')).toHaveText('Fine in the main window.');
+    const miniPage = await page.context().newPage();
+    await withSlots(miniPage, true, ['twin']);
+    await miniPage.goto('/');
+    await expect(miniPage.locator('.mini-title')).toHaveText('Dawn Chorus');
+    await expect(miniPage.locator('[data-slot="twin:window"]')).toBeEmpty();
+
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.locator('.extensions-settings').getByRole('alert'))
+      .toHaveText('In the mini player: The deck slot “twin:window” failed: mini boom');
+    // The main window's own copy carries on.
+    await expect(deck.locator('[data-slot="twin:window"]')).toHaveText('Fine in the main window.');
+    // A new version starts clean: the report was about the last one.
+    await page.locator('.extensions-settings').getByRole('button', { name: 'Reload all' }).click();
+    await expect(page.locator('.extensions-settings').getByRole('status')).toHaveText('Reloaded every extension.');
+    await expect(page.locator('.extensions-settings').getByRole('alert')).toHaveCount(0);
+  });
+
   test('settings saved in both windows at the same moment keep both changes', async ({ page }) => {
     type Store = { set(key: string, value: unknown): Promise<void>; all(): Record<string, unknown> };
     const miniPage = await page.context().newPage();

@@ -146,7 +146,7 @@ ctx.deck.register({
 });
 ```
 
-The rules are the ones commands follow: the id is prefixed with the extension's, a live id can't be registered twice, and the slot goes when the extension unloads or reloads. A slot that throws while rendering shows nothing, and the error appears on the extension's row in Settings › Extensions; the rest of the deck carries on.
+The rules are the ones commands follow: the id is prefixed with the extension's, a live id can't be registered twice, and the slot goes when the extension unloads or reloads. A slot that throws while rendering shows nothing, and the error appears on the extension's row in Settings › Extensions; the rest of the deck carries on. A slot that throws in the mini player is reported there too, in the main window, starting with "In the mini player", until the extension reloads.
 
 ### `ctx.themes`
 
@@ -186,7 +186,7 @@ To share an extension, share its folder: a git repository or an archive that som
 
 ## Where extensions run
 
-Extensions run in the desktop app only. The main window and the mini player each load every enabled extension from the same list, through the same bridge, so `activate()` runs once in each window. The main window has everything. The mini player shows quiet-line deck slots and runs extension commands from their keys; it has no pages, menus, or palette, so pages and menu items registered there go unused. Each window keeps its own copy of an extension's state, so something that should happen once, such as a timer, can check `ctx.window === 'main'`. Settings are shared: a change saved in one window reaches the other's `ctx.settings.subscribe` listeners.
+Extensions run in the desktop app only. The main window and the mini player each load every enabled extension from the same list, through the same bridge, so `activate()` runs once in each window. The main window has everything. The mini player shows quiet-line deck slots and runs extension commands from their keys; it has no pages, menus, or palette, so pages and menu items registered there go unused. It has no Settings either, so what fails there (a slot, or `activate()`) is sent to the main window and shown in its Settings › Extensions. Each window keeps its own copy of an extension's state, so something that should happen once, such as a timer, can check `ctx.window === 'main'`. Settings are shared: a change saved in one window reaches the other's `ctx.settings.subscribe` listeners.
 
 The browser build and the Android app don't run extensions. Extensions are TypeScript folders compiled on the computer they sit on, by esbuild in the desktop app's main process, which reads the config folder and watches it for saves. The browser build has no config folder of its own, and the Android app has neither esbuild nor a folder to watch: it runs the renderer in a web view, with no Node process to compile anything. Loading prebuilt code on the phone would need a way to install and trust it there, which doesn't exist yet.
 
