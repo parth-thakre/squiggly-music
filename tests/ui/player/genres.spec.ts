@@ -2,6 +2,10 @@ import { expect, test } from '../fixtures/test';
 
 // Genres: every genre with its counts, most songs first, and each genre's songs a page at a time.
 // Records can be narrowed to a decade, and the filter is part of the place, as the sort is.
+// Home's mix tiles draw their sleeves on sign-in (a few random songs each); these are the calls a test makes itself.
+const decadeLookups = (fake: { callsTo(method: string): { args: unknown[] }[] }) => fake.callsTo('randomSongs').filter(call => (call.args[0] as { fromYear?: number }).fromYear);
+const shuffleDraws = (fake: { callsTo(method: string): { args: unknown[] }[] }) => fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 500);
+
 test.describe('genres', () => {
   test.beforeEach(async ({ app }) => { await app.signIn(); });
 
@@ -65,7 +69,7 @@ test.describe('genres', () => {
     await app.rowButton(app.row('Opening 5')).click();
     await app.expectPlaying('Opening 5');
     await page.waitForTimeout(1200);
-    expect(fake.callsTo('randomSongs')).toHaveLength(1);
+    expect(shuffleDraws(fake)).toHaveLength(1);
     await expect(app.heading).toHaveText('Rock');
     await app.expectPlaying('Opening 5');
   });
@@ -83,7 +87,7 @@ test.describe('genres', () => {
     const records = app.main.locator('ul.grid > li');
     await expect(records.first()).toContainText('Test Pressing');
     // The decades are only looked for once asked.
-    expect(fake.callsTo('randomSongs')).toEqual([]);
+    expect(decadeLookups(fake)).toEqual([]);
     await app.main.getByRole('group', { name: 'Sort records' }).getByRole('button', { name: 'A to Z', exact: true }).click();
     await expect(records.first()).toContainText('Amber Field');
     await toggle.click();
@@ -134,7 +138,7 @@ test.describe('genres', () => {
     await expect(decades).toHaveCount(0);
     await toggle.click();
     await expect(decades.getByRole('button')).toHaveText(['All', '2020s', '2010s', '2000s', '1990s']);
-    expect(fake.callsTo('randomSongs')).toHaveLength(18);
+    expect(decadeLookups(fake)).toHaveLength(18);
   });
 
   test('six tabs, Back, and the search field fit a narrow desktop window', async ({ app, page }) => {
