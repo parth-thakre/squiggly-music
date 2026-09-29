@@ -585,7 +585,8 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .deck.open .signal { display: none; }
 }
 
-/* The Flip 7's cover screen: small and nearly square. Keep to the essentials. */
+/* Short phone windows (split screen, a small phone on its side): keep to the essentials. The
+   Flip's cover screen has a view of its own, below. */
 @media (max-width: 760px) and (max-height: 520px) {
   .wordmark, .source { display: none; }
   .bar-top { padding-top: calc(6px + env(safe-area-inset-top)); }
@@ -614,6 +615,128 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .deck.open .signal, .deck.open .up-next { display: none; }
   .deck.open .deck-links { padding-top: 4px; }
   .deck:has(.deck-empty) .deck-links .quiet-link { min-height: 40px; }
+}
+
+/* The Flip's cover screen (CoverScreen.tsx; the query is COVER_SCREEN in nowPlaying.ts). Held
+   upright, the cameras sit to the bottom right on every model and the bottom-left corner is free.
+   On the Flip 5 and 6 (wider than tall) the screen stops short of them: its bottom edge steps up
+   about a tenth of the height from a little left of the middle to the right edge, and the lenses
+   sit in the glass below. The view keeps that strip (--band) empty. The Flip 7 is taller than
+   wide, and the flash and lenses sit inside the screen along the bottom, from a little left of
+   the middle to the right edge; Android reports that band as a cutout. There the transport sits
+   above the band, and the band's free left end holds only the smaller buttons. */
+@media (max-width: 630px) and (max-height: 700px) and (max-device-width: 630px) and (max-device-height: 700px) and (min-device-aspect-ratio: 3/4) and (max-device-aspect-ratio: 4/3) {
+  .flip-screen {
+    --pad: 14px; --band: max(10dvh, env(safe-area-inset-bottom));
+    position: relative; grid-column: 1 / -1; grid-row: 1 / -1; min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto auto; outline: none;
+    padding: max(10px, env(safe-area-inset-top)) max(var(--pad), env(safe-area-inset-right)) var(--band) max(var(--pad), env(safe-area-inset-left));
+  }
+  .flip-shelf { display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-height: 68px; }
+  .flip-shelf .glyph { width: 48px; height: 56px; }
+  .flip-shelf .glyph svg { width: 26px; }
+  .flip-shelf .play { width: 60px; height: 60px; }
+  .flip-shelf .play svg { width: 28px; }
+  .flip-back { display: inline-flex; align-items: center; gap: 2px; min-height: 48px; padding: 0 12px 0 4px; background: none; border: 0; font-size: calc(15px * var(--text)); font-weight: 600; }
+  .flip-back svg { width: 22px; height: 22px; }
+  .flip-shelf .play-action { min-height: 48px; }
+  .flip-shelf .play-action .disc { width: 52px; height: 52px; }
+  .flip-shelf .play-action .disc svg { width: 22px; }
+  .flip-shelf .icon-button { width: 48px; height: 48px; }
+  .flip-shelf .icon-button svg { width: 22px; height: 22px; }
+
+  /* Now playing: the sleeve as big as the stage allows while the words beside it keep about a
+     third of the width. The seek bar and transport follow straight after; any height left over
+     goes to the bottom, above the cameras. */
+  .flip-screen[data-view='playing'] { grid-template-rows: auto auto auto; align-content: start; }
+  .flip-stage {
+    --sleeve: min(64vw - 42px, 100dvh - 124px - max(10px, env(safe-area-inset-top)) - var(--band));
+    display: grid; grid-template-columns: var(--sleeve) minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: 'sleeve text' 'sleeve panels'; gap: 0 14px; min-height: 0; padding-top: 4px; touch-action: pan-y;
+  }
+  .flip-sleeve { grid-area: sleeve; width: var(--sleeve); height: var(--sleeve); animation: settle .45s cubic-bezier(.2, .8, .2, 1); }
+  img.flip-sleeve { object-fit: contain; background: none; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .12)) drop-shadow(0 12px 12px rgba(0, 0, 0, .28)); }
+  .flip-sleeve.cover-type span { font-size: calc(19px * var(--display-size)); }
+  .flip-text { grid-area: text; min-width: 0; }
+  /* Lines tall enough for scripts that reach above and below Latin (Devanagari's vowel signs),
+     so clipping the overflow never cuts them. */
+  .flip-title {
+    margin: 0; font: var(--display-weight) calc(clamp(19px, 5.8vw, 28px) * var(--display-size))/1.3 var(--font-display);
+    overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .flip-artist { margin: 4px 0 0; font-size: calc(clamp(14px, 3.9vw, 17px) * var(--text)); line-height: 1.45; color: var(--soft); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .flip-error { margin: 6px 0 0; font-size: calc(12.5px * var(--text)); line-height: 1.4; }
+  .flip-panels { grid-area: panels; align-self: end; display: grid; justify-items: start; }
+  .flip-panels button {
+    display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 10px 0 0;
+    background: none; border: 0; font-size: calc(15px * var(--text)); font-weight: 600;
+  }
+  .flip-panels svg { width: 22px; height: 22px; stroke-width: 1.75; color: var(--soft); }
+  .flip-screen .squiggle { gap: 8px; margin-top: 8px; }
+  .flip-screen .squiggle-rail { height: 34px; }
+  /* The Flip 7 (1048 px tall by 948 wide; the Flip 5 and 6 are close to square): a band a fifth of
+     the height for the cameras. Samsung draws its gesture pill in the band's left end too, so the
+     buttons there sit at its top. */
+  @media (max-aspect-ratio: 100/107) {
+    .flip-screen { --band: max(22dvh, env(safe-area-inset-bottom)); }
+    .flip-shelf { justify-content: center; }
+    .flip-panels, .flip-shelf.flip-back-shelf {
+      position: absolute; left: max(var(--pad), env(safe-area-inset-left)); bottom: 0; height: var(--band); min-height: 0;
+      display: flex; align-items: flex-start; justify-content: flex-start; gap: 4px; padding-top: 6px;
+    }
+    .flip-panels { grid-area: auto; }
+    .flip-back-shelf .play { width: 48px; height: 48px; }
+    .flip-back-shelf .play svg { width: 22px; }
+    .flip-panels button { justify-content: center; width: 48px; padding: 0; }
+    .flip-panels span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  }
+
+  /* Queue and lyrics fill the stage and scroll there, clear of the shelf. */
+  .flip-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+  .flip-panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; padding: 2px 0 6px; border-bottom: 1px solid var(--line); }
+  .flip-panel-head h1 { margin: 0; font: var(--display-weight) calc(22px * var(--display-size))/1.3 var(--font-display); }
+  .flip-panel-head p { margin: 0; font-size: calc(13px * var(--text)); color: var(--soft); white-space: nowrap; }
+  /* The lists fade out above the shelf rather than stopping at a hard edge. */
+  .flip-queue, .flip-lyrics { mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent); }
+  .flip-queue { margin: 0; padding: 0 0 20px; list-style: none; overflow-y: auto; scrollbar-width: none; }
+  .flip-queue button {
+    display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 6px 0;
+    background: none; border: 0; border-bottom: 1px solid var(--line); text-align: left;
+  }
+  .flip-queue-text { flex: 1; display: grid; min-width: 0; }
+  .flip-queue-title, .flip-queue-artist { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; line-height: 1.45; }
+  .flip-queue-title { font-size: calc(15.5px * var(--text)); }
+  .flip-queue-artist { font-size: calc(13px * var(--text)); color: var(--soft); }
+  .flip-queue .figure { flex: none; font-size: calc(12.5px * var(--text)); color: var(--soft); }
+  .flip-queue .now .flip-queue-title { font-weight: 650; }
+  .flip-queue .played .flip-queue-text { opacity: .6; }
+  .flip-lyrics { min-height: 0; overflow-y: auto; scrollbar-width: none; padding-top: 4px; }
+  .flip-lyrics .lyric-lines { font-size: calc(18px * var(--display-size)); line-height: 1.35; }
+  .flip-lyrics .lyric-lines.synced { padding-bottom: 50%; font-size: calc(22px * var(--display-size)); line-height: 1.3; }
+  .flip-lyrics .lyrics-source { margin-top: 12px; }
+  /* Settings live on the main screen. */
+  .flip-lyrics .lyrics-source .link { display: none; }
+
+  /* Nothing playing. */
+  .flip-idle { display: flex; flex-direction: column; min-height: 0; padding-top: 6px; }
+  .flip-line { margin: 4px 0 0; font-size: calc(14px * var(--text)); line-height: 1.45; color: var(--soft); }
+  .flip-line strong { color: var(--ink); font-weight: 600; }
+  .flip-lately {
+    display: grid; grid-auto-flow: column; grid-auto-columns: calc((100% - 30px) / 4); gap: 10px;
+    margin: auto 0 0; padding: 12px 0 2px; list-style: none; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x mandatory;
+  }
+  .flip-lately li { scroll-snap-align: start; }
+  @media (min-height: 480px) {
+    .flip-lately { grid-auto-flow: row; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; }
+  }
+  .flip-lately button { display: block; width: 100%; padding: 0; background: none; border: 0; }
+  .flip-lately .cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .1), 0 8px 12px -10px rgba(0, 0, 0, .5); }
+  .flip-lately .cover-type { padding: 6px; }
+  .flip-lately .cover-type span { font-size: calc(10px * var(--display-size)); }
+
+  /* Signing in scrolls rather than running off the screen. */
+  .connect { align-self: stretch; overflow-y: auto; width: 100%; padding: max(12px, env(safe-area-inset-top)) 16px 16px; }
+  .connect h1 { font-size: calc(34px * var(--display-size)); }
+  .connect form { gap: 12px; margin: 16px 0; }
 }
 
 /* Compact density: tighter pages and lists, including song rows. */
@@ -654,12 +777,12 @@ html[data-density='compact'] { --row-height: 38px; }
 /* Swiping songs (swipe.ts): the sleeve and title follow the finger, then the new song enters
    from the side it was pulled toward. */
 .deck { touch-action: pan-y; }
-.deck .deck-cover, .deck .deck-text {
+:is(.deck .deck-cover, .deck .deck-text, .flip-stage .flip-sleeve, .flip-stage .flip-text) {
   transform: translateX(var(--swipe-x, 0px)); opacity: var(--swipe-fade, 1);
   transition: transform var(--swipe-ms, 0ms) cubic-bezier(.2, .8, .2, 1), opacity var(--swipe-ms, 0ms) ease;
 }
-.deck[data-enter='from-right'] .deck-cover, .deck[data-enter='from-right'] .deck-text { animation: enter-right .28s cubic-bezier(.2, .8, .2, 1) both; }
-.deck[data-enter='from-left'] .deck-cover, .deck[data-enter='from-left'] .deck-text { animation: enter-left .28s cubic-bezier(.2, .8, .2, 1) both; }
+:is(.deck, .flip-stage)[data-enter='from-right'] :is(.deck-cover, .deck-text, .flip-sleeve, .flip-text) { animation: enter-right .28s cubic-bezier(.2, .8, .2, 1) both; }
+:is(.deck, .flip-stage)[data-enter='from-left'] :is(.deck-cover, .deck-text, .flip-sleeve, .flip-text) { animation: enter-left .28s cubic-bezier(.2, .8, .2, 1) both; }
 @keyframes enter-right { from { transform: translateX(28%); opacity: 0; } }
 @keyframes enter-left { from { transform: translateX(-28%); opacity: 0; } }
 
@@ -668,7 +791,7 @@ html[data-density='compact'] { --row-height: 38px; }
   .lyric-lines.synced li.far { filter: none; }
   .grid .playable:hover .cover, .playable:hover .play-over { transform: none; }
   .play:active, .play-action:active .disc { transform: none; }
-  .wave.moving path, .deck-cover, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet { animation: none; }
+  .wave.moving path, .deck-cover, .flip-sleeve, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   .theme-sample { transition: none; }
 }
@@ -677,7 +800,7 @@ html:is([data-motion='reduced'], [data-motion='none']) :is(.room, .play, .disc, 
 html:is([data-motion='reduced'], [data-motion='none']) .lyric-lines.synced li.far { filter: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.grid .playable:hover .cover, .playable:hover .play-over) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.play:active, .play-action:active .disc) { transform: none; }
-html:is([data-motion='reduced'], [data-motion='none']) :is(.wave.moving path, .deck-cover, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet) { animation: none; }
+html:is([data-motion='reduced'], [data-motion='none']) :is(.wave.moving path, .deck-cover, .flip-sleeve, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet) { animation: none; }
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-group(*),
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-old(*),
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-new(*) { animation: none !important; }

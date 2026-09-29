@@ -11,6 +11,8 @@ import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
 import { useSwipeSongs } from './swipe';
+import { CoverScreen } from './CoverScreen';
+import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
 
 onMenuError(message => player.showError(message));
@@ -41,11 +43,12 @@ export function App() {
   useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
   const shell = connected || (mode === 'desktop' && hasQueue);
+  const cover = useCoverScreen();
   return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
     {/* First, so everything clickable after it wins: Electron applies drag regions in page order,
         and a later drag region would swallow the header's buttons where they overlap it. */}
     {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
-    {shell ? <>
+    {shell && cover ? <CoverScreen palette={palette} /> : shell ? <>
       <Bar />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
@@ -146,6 +149,8 @@ const Deck = memo(function Deck() {
   const entry = usePlayer(currentEntry);
   const deck = useRef<HTMLElement>(null);
   useSwipeSongs(deck, entry ?? track?.id);
+  // Folding to the cover screen unmounts the deck; its open sheet's history entry goes with it.
+  useEffect(() => { if (expanded) return () => nav.closeOverlay(); }, [expanded]);
   if (!track) return <aside className="deck" aria-label="Now playing">
     <div className="cover cover-empty" aria-hidden="true" />
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
