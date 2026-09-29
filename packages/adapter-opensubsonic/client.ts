@@ -1,7 +1,7 @@
 import { Effect, Either, Schema } from 'effect';
 import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
-  Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track,
+  Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
 } from '../core/contracts';
 import type { PlayableTrack } from '../player-mpv/protocol';
 import { Metrics } from '../core/metrics';
@@ -78,6 +78,41 @@ const itemsSchema = (artists: number, albums: number, songs: number) => Schema.S
 const StarredSchema = Schema.Struct({ starred2: itemsSchema(5000, 5000, 5000) });
 const SearchSchema = Schema.Struct({ searchResult3: itemsSchema(8, 16, 40) });
 const SongPageSchema = Schema.Struct({ searchResult3: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
+// Navidrome's own API (/api/song), which can sort. Its song is model.MediaFile as JSON.
+const NativeSongSchema = Schema.Struct({
+  id: IdSchema, title: Schema.String, artist: Schema.optional(Schema.String), album: Schema.optional(Schema.String),
+  duration: Schema.optional(DurationSchema), suffix: Schema.optional(Schema.String),
+  sampleRate: Schema.optional(KnownCountSchema), bitDepth: Schema.optional(KnownCountSchema),
+  albumId: Schema.optional(ReferenceSchema), artistId: Schema.optional(ReferenceSchema),
+  hasCoverArt: Schema.optional(Schema.Boolean), imageHash: Schema.optional(ReferenceSchema),
+  trackNumber: Schema.optional(KnownCountSchema), discNumber: Schema.optional(KnownCountSchema), year: Schema.optional(KnownCountSchema),
+  genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.Boolean), starredAt: Schema.optional(Schema.String),
+  playCount: Schema.optional(CountSchema), playDate: Schema.optional(Schema.NullOr(Schema.String)),
+  participants: Schema.optional(Schema.Struct({ artist: ArtistRefsSchema })),
+});
+const NativeSongsSchema = Schema.Array(NativeSongSchema).pipe(Schema.maxItems(500));
+const NativeLoginSchema = Schema.Struct({ token: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(8192)) });
+type NativeSong = Schema.Schema.Type<typeof NativeSongSchema>;
+// Navidrome's sort names (persistence/mediafile_repository.go). recently_added is created_at with
+// the id to break ties, so pages don't overlap.
+const nativeSorts: Record<TrackSort, [sort: string, order: 'asc' | 'desc']> = {
+  newest: ['recently_added', 'desc'], alphabeticalByName: ['title', 'asc'], alphabeticalByArtist: ['artist', 'asc'],
+  frequent: ['play_count', 'desc'], recent: ['play_date', 'desc'], random: ['random', 'asc'],
+};
+// The same song as Subsonic describes it, so it maps to the same Track. Subsonic truncates the
+// duration, and names cover art as model.MediaFile.CoverArtID does: the song's own art, else its
+// disc's, else its album's. This API leaves out the album art's hash, a cache key that
+// getCoverArt doesn't need.
+const nativeHash = (id: string, hash: string | undefined) => hash ? `${id}_${hash}` : id;
+const fromNative = (song: NativeSong): Song => ({
+  id: song.id, title: song.title, artist: song.artist, album: song.album,
+  duration: song.duration === undefined ? undefined : Math.trunc(song.duration), suffix: song.suffix,
+  samplingRate: song.sampleRate, bitDepth: song.bitDepth, albumId: song.albumId, artistId: song.artistId,
+  coverArt: song.hasCoverArt ? nativeHash(`mf-${song.id}`, song.imageHash)
+    : !song.albumId ? undefined : song.discNumber ? nativeHash(`dc-${song.albumId}:${song.discNumber}`, song.imageHash) : `al-${song.albumId}`,
+  track: song.trackNumber, discNumber: song.discNumber, year: song.year, genre: song.genre,
+  starred: song.starred ? song.starredAt ?? 'starred' : undefined, artists: song.participants?.artist,
+});
 const RandomSongsSchema = Schema.Struct({ randomSongs: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Schema.Struct({
   name: Schema.String.pipe(Schema.maxLength(256)), versions: Schema.Array(CountSchema).pipe(Schema.maxItems(100)),
@@ -111,6 +146,10 @@ const utf8 = (body: Uint8Array<ArrayBuffer>) => new TextDecoder('utf-8', { ignor
 // Only locally authored messages can cross the desktop boundary. Server error
 // text and fetch errors may contain credentials or authenticated URLs.
 class ServerError extends Error { constructor(message: string, readonly code?: number) { super(message); } }
+// Navidrome's own API isn't there (another server, or a proxy that passes only /rest), or won't
+// take this sign-in (the server signs people in some other way).
+class NativeMissing extends ServerError {}
+class NativeSignedOut extends ServerError {}
 function protocolError(code: number | undefined): ServerError {
   const messages: Record<number, string> = {
     20: 'This server requires a newer Subsonic API version.',
@@ -171,6 +210,13 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max
   ? Effect.fail(new ServerError('The server returned more tracks than requested.')) : Effect.succeed((songs ?? []).map(song => toTrack(song)));
+// Most and recently played list played tracks only, as Navidrome's own lists do. Their order
+// puts the rest last, so a page ends where they begin, and a short page is the last.
+function played(sort: TrackSort, songs: readonly NativeSong[]) {
+  const keep = sort === 'frequent' ? (song: NativeSong) => (song.playCount ?? 0) > 0 : sort === 'recent' ? (song: NativeSong) => !!song.playDate : null;
+  const end = keep ? songs.findIndex(song => !keep(song)) : -1;
+  return end < 0 ? songs : songs.slice(0, end);
+}
 const playlistEditMessages: Record<number, string> = {
   50: 'This playlist cannot be changed. Only its owner can edit it, and smart or imported playlists are read-only.',
   70: 'This playlist no longer exists. Refresh your playlists.',
@@ -187,9 +233,17 @@ export class SubsonicClient {
   readonly baseUrl: string;
   private auth: { username: string; salt: string; token: string };
   private extensions: Effect.Effect<ReadonlyMap<string, readonly number[]>>;
+  // Navidrome's own API, which sorts tracks: whether it's there (null until asked), the session
+  // token it gave (in memory only, replaced by the fresh one each answer brings), and the
+  // password it signs in with, which Subsonic's token authentication never needed to keep.
+  readonly #password: string;
+  #native: boolean | null = null;
+  #jwt: string | null = null;
+  #signingIn: Effect.Effect<string, Error> | null = null;
   // lrclib overrides the LRCLIB address and fetch for tests; it is only contacted when a lyrics lookup allows it.
   constructor(connection: Connection, private metrics: Metrics, private lrclib: LrclibOptions = {}, private options: ClientOptions = {}) {
     this.baseUrl = normalizeServerUrl(connection.url);
+    this.#password = connection.password;
     const salt = randomSalt();
     this.auth = {
       username: connection.username, salt,
@@ -224,17 +278,20 @@ export class SubsonicClient {
   }
   // accept() inspects headers before the body is read; parse() runs on the capped body.
   private transfer<A, B>(endpoint: string, extra: Params, formPost: boolean, authenticated: boolean, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A) {
+    const url = this.endpointUrl(endpoint);
+    const params = authenticated ? this.params(extra) : new URLSearchParams({ v: '1.16.1', c: 'squiggly', f: 'json' });
+    if (!formPost) url.search = params.toString();
+    return this.send(`server.${endpoint}`, url.href, { method: formPost ? 'POST' : 'GET', ...(formPost ? { body: params } : {}) }, limitMB, response => {
+      if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
+      return accept(response);
+    }, parse);
+  }
+  private send<A, B>(metric: string, url: string, init: RequestInit, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A) {
     const task = Effect.tryPromise({
       try: async signal => {
-        const url = this.endpointUrl(endpoint);
-        const params = authenticated ? this.params(extra) : new URLSearchParams({ v: '1.16.1', c: 'squiggly', f: 'json' });
-        if (!formPost) url.search = params.toString();
-        const response = await (this.options.fetch ?? fetch)(url.href, {
-          method: formPost ? 'POST' : 'GET', ...(formPost ? { body: params } : {}), signal, redirect: 'error',
-        });
+        const response = await (this.options.fetch ?? fetch)(url, { ...init, signal, redirect: 'error' });
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         try {
-          if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
           const accepted = accept(response);
           // Cap response sizes before parsing untrusted server data.
           reader = response.body?.getReader();
@@ -258,7 +315,7 @@ export class SubsonicClient {
       // Never forward fetch errors containing authenticated URLs or server-provided text.
       catch: error => error instanceof ServerError ? error : new ServerError('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.'),
     }).pipe(Effect.timeoutFail({ duration: '15 seconds', onTimeout: () => new ServerError('The server did not respond within 15 seconds. Check your connection and try again.') }));
-    return this.metrics.measure(`server.${endpoint}`, task);
+    return this.metrics.measure(metric, task);
   }
   private exchange<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params, formPost: boolean, authenticated = true) {
     return this.transfer(endpoint, extra, formPost, authenticated, 8, () => undefined, body => {
@@ -341,13 +398,79 @@ export class SubsonicClient {
   search(query: string) {
     return this.request('search3', SearchSchema, { query, artistCount: '8', albumCount: '16', songCount: '40' }).pipe(Effect.map(result => toItems(result.searchResult3)));
   }
-  // OpenSubsonic servers answer an empty search3 query with every song. Navidrome keeps them in
-  // the order it first scanned them (by row), so offsets page through a stable list.
-  songs(offset: number, size: number) {
-    const count = clamp(size, 1, 500);
-    return this.request('search3', SongPageSchema, {
-      query: '""', artistCount: '0', albumCount: '0', songCount: String(count), songOffset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)),
-    }).pipe(Effect.flatMap(result => songList(result.searchResult3.song, count)));
+  // Every track. OpenSubsonic can't sort them: an empty search3 query answers with every song in
+  // one fixed order (Navidrome's is the order it first scanned them). Navidrome's own API sorts,
+  // so it's used where it's there, and search3 where it isn't.
+  tracks(sort: TrackSort, offset: number, size: number, seed = ''): Effect.Effect<TrackPage, Error> {
+    const count = clamp(size, 1, 500), start = clamp(offset, 0, Number.MAX_SAFE_INTEGER);
+    const scan = this.request('search3', SongPageSchema, {
+      query: '""', artistCount: '0', albumCount: '0', songCount: String(count), songOffset: String(start),
+    }).pipe(Effect.flatMap(result => songList(result.searchResult3.song, count)), Effect.map((tracks): TrackPage => ({ tracks, sorted: false })));
+    return this.navidrome().pipe(Effect.flatMap(navidrome => !navidrome ? scan : this.nativeTracks(sort, start, count, seed).pipe(
+      Effect.map((tracks): TrackPage => ({ tracks, sorted: true })),
+      Effect.catchIf(error => error instanceof NativeMissing, () => Effect.suspend(() => { this.#native = false; return scan; })),
+    )));
+  }
+  // Navidrome, as its ping says, until its own API turns out to be missing.
+  private navidrome() {
+    return this.#native !== null ? Effect.succeed(this.#native) : this.request('ping', StatusSchema).pipe(Effect.map(result => {
+      this.#native ??= result.type?.toLowerCase() === 'navidrome';
+      return this.#native;
+    }));
+  }
+  private nativeUrl(path: string) {
+    const url = new URL(this.baseUrl);
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}${path}`;
+    return url;
+  }
+  private nativeTracks(sort: TrackSort, offset: number, size: number, seed: string) {
+    const [order, direction] = nativeSorts[sort];
+    const url = this.nativeUrl('/api/song');
+    url.search = new URLSearchParams({
+      _sort: order, _order: direction, _start: String(offset), _end: String(offset + size), missing: 'false', ...(sort === 'random' && seed ? { seed } : {}),
+    }).toString();
+    const get = (token: string) => this.send('native.song', url.href, { headers: { 'x-nd-authorization': `Bearer ${token}` } }, 8, response => {
+      if (response.status === 401) throw new NativeSignedOut('Navidrome did not accept the sign-in. Try again, or sign in again.');
+      if (response.status === 404) throw new NativeMissing('Navidrome\'s own API is not available.');
+      if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
+      // Every answer brings the session token back with a later expiry.
+      const fresh = response.headers.get('x-nd-authorization');
+      if (fresh) this.#jwt = fresh;
+    }, body => Schema.decodeUnknownSync(NativeSongsSchema)(JSON.parse(utf8(body))));
+    // An expired session (or a server restarted with a new key) signs in again, once.
+    return this.nativeSession().pipe(
+      Effect.flatMap(get),
+      Effect.catchIf(error => error instanceof NativeSignedOut, () => Effect.suspend(() => { this.#jwt = null; return this.nativeSession().pipe(Effect.flatMap(get)); })),
+      Effect.flatMap(songs => songs.length > size ? Effect.fail(new ServerError('The server returned more tracks than requested.'))
+        : Effect.succeed(played(sort, songs).map(song => toTrack(fromNative(song))))),
+    );
+  }
+  // One sign-in at a time; a failed one is tried again by the next request.
+  private nativeSession(): Effect.Effect<string, Error> {
+    return Effect.suspend(() => {
+      if (this.#jwt) return Effect.succeed(this.#jwt);
+      if (!this.#signingIn) {
+        const attempt: Effect.Effect<string, Error> = Effect.runSync(Effect.cached(this.nativeSignIn().pipe(
+          Effect.tap(token => Effect.sync(() => { this.#jwt = token; })),
+          Effect.ensuring(Effect.sync(() => { if (this.#signingIn === attempt) this.#signingIn = null; })),
+        )));
+        this.#signingIn = attempt;
+      }
+      return this.#signingIn;
+    });
+  }
+  private nativeSignIn() {
+    const missing = () => new NativeMissing('Navidrome\'s own API is not available.');
+    return this.send('native.login', this.nativeUrl('/auth/login').href, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: this.auth.username, password: this.#password }),
+    }, 1, response => {
+      // No such route, or a server that signs people in some other way (a proxy's own sign-in).
+      if ([401, 403, 404, 405].includes(response.status)) throw missing();
+      if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
+    }, body => {
+      try { return Schema.decodeUnknownSync(NativeLoginSchema)(JSON.parse(utf8(body))).token; }
+      catch { throw missing(); }
+    });
   }
   star(target: StarTarget, id: string, starred: boolean) {
     const key = { track: 'id', album: 'albumId', artist: 'artistId' }[target];
@@ -499,7 +622,7 @@ const library = {
   genres: entry(LibraryRequestSchemas.genres, client => client.genres()),
   starred: entry(LibraryRequestSchemas.starred, client => client.starred(), value => value.tracks),
   randomSongs: entry(LibraryRequestSchemas.randomSongs, (client, [options]) => client.randomSongs(options), value => value),
-  songs: entry(LibraryRequestSchemas.songs, (client, [offset, size]) => client.songs(offset, size), value => value),
+  tracks: entry(LibraryRequestSchemas.tracks, (client, [sort, offset, size, seed]) => client.tracks(sort, offset, size, seed), value => value.tracks),
   search: entry(LibraryRequestSchemas.search, (client, [query]) => client.search(query), value => value.tracks),
   star: entry(LibraryRequestSchemas.star, (client, [target, id, starred]) => client.star(target, id, starred)),
   createPlaylist: entry(LibraryRequestSchemas.createPlaylist, (client, [name, trackIds]) => client.createPlaylist(name, trackIds)),

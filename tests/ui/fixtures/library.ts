@@ -1,6 +1,7 @@
 import { Effect } from 'effect';
-import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track } from '../../../packages/core/contracts';
-import type { SubsonicClient } from '../../../packages/adapter-opensubsonic/client';
+import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
+import { SubsonicClient } from '../../../packages/adapter-opensubsonic/client';
+import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
 
@@ -15,7 +16,7 @@ const albumNames = [
   'Hollow Pines', 'Winter Exchange', 'Copper Sky', 'Distant Rooms', 'Ember Road', 'Yellow Canal',
   'Open Window', 'Tin Roof Choir', 'Useful Weather', 'Brick Lullaby', 'Zero Hour Garden', 'Late Ferry',
   'Rust Belt Hymns', 'Jade Frequency', 'Cedar Lines', 'Slow Carousel', 'Xylophone Dusk', 'Quartz Evening',
-  // Long enough that Songs loads a second page. No year or genre, so no automatic playlist draws from it.
+  // Long enough that Tracks loads a second page. No year or genre, so no automatic playlist draws from it.
   'Long Player',
 ];
 const trackWords = ['Opening', 'Second Wind', 'Middle Distance', 'Late Call', 'Coda', 'Encore'];
@@ -52,6 +53,11 @@ export const wordLines = wordTimes.map(([start, words]) => {
 });
 
 export const playlistIds = { road: 'pl-road', readonly: 'pl-server' } as const;
+// The account tracks() signs in to over HTTP (see native.ts), and the plays it remembers there.
+export const account = { username: 'tester', password: 'fixture password' };
+export const seededPlays: [id: string, count: number, lastPlayed: string][] = [
+  ['tr-3-2', 7, '2026-09-20T10:00:00Z'], ['tr-5-1', 4, '2026-09-24T10:00:00Z'], ['tr-2-1', 2, '2026-09-22T10:00:00Z'],
+];
 
 interface ServerPlaylist { id: string; name: string; comment: string | null; readonly: boolean; trackIds: string[]; changed: string }
 export interface Call { method: string; args: unknown[]; at: number }
@@ -109,14 +115,27 @@ export class FakeNavidrome {
   private created = 0;
   /** The preview plugin's clock; advancing it past 30 days ends every session. */
   clock = { now: Date.UTC(2026, 8, 25) };
+  /** false: /auth/login and /api/song answer 404, as behind a proxy that passes only /rest. */
+  nativeApi = true;
+  /** Sign-ins to the native API, the session tokens it still accepts, and each /api/song query. */
+  logins = 0;
+  sessions = new Set<string>();
+  nativeQueries: URLSearchParams[] = [];
+  private issued = 0;
+  private http: SubsonicClient | null = null;
 
   constructor(private readonly audioBase: () => string) {}
 
   reset() {
     this.playlists = initialPlaylists(); this.calls = []; this.reports = []; this.starred.clear();
     this.saved = null; this.delays.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
+    this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
+  /** A new native session token, as a sign-in or any answer gives out. */
+  issueToken() { const token = `jwt-${++this.issued}`; this.sessions.add(token); return token; }
+  /** The server forgets every session (a restart with a new key); the next request signs in again. */
+  expireSessions() { this.sessions.clear(); }
   playlist(id: string) { return this.playlists.find(p => p.id === id); }
   callsTo(method: string) { return this.calls.filter(call => call.method === method); }
 
@@ -183,9 +202,9 @@ export class FakeNavidrome {
       .filter(t => (!options.genre || t.genre === options.genre) && (options.fromYear === undefined || (t.year ?? 0) >= options.fromYear)
         && (options.toYear === undefined || (t.year ?? 0) <= options.toYear))
       .slice(0, options.size).map(t => this.track(t.id)))),
-    // search3 with an empty query: every song, in the order the server keeps them.
-    songs: (offset: number, size: number) => this.op('songs', [offset, size], () =>
-      Effect.succeed(catalog.tracks.slice(offset, offset + size).map(t => this.track(t.id)))),
+    // The real connector, over HTTP to native.ts: Navidrome's own API, or search3 without it.
+    tracks: (sort: TrackSort, offset: number, size: number, seed: string) => this.op('tracks', [sort, offset, size, seed], () =>
+      (this.http ??= new SubsonicClient({ url: this.audioBase(), ...account }, new Metrics())).tracks(sort, offset, size, seed)),
     search: (query: string) => this.op('search', [query], () => {
       const q = query.toLowerCase();
       return Effect.succeed({
@@ -236,7 +255,8 @@ export class FakeNavidrome {
       return Effect.void;
     }),
     coverArt: (id: string, _size: number) => {
-      const k = Number(/^al-(\d+)$/.exec(id)?.[1]);
+      // Album art, or its disc's, as the native API names a song's art (dc-<album>:<disc>).
+      const k = Number(/^(?:dc-)?al-(\d+)(?::\d+)?$/.exec(id)?.[1]);
       if (!k) return fail('Cover art is not available.');
       return Effect.succeed({ contentType: 'image/png', bytes: new Uint8Array(coverPng((k * 47) % 360)) });
     },

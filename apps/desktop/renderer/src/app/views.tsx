@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import type { Album, AlbumListType, Artist, Playlist, Result, Track } from '../../../../../packages/core/contracts';
+import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
 import { api, load, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, usePlayer } from './player';
@@ -128,30 +128,34 @@ function useMore(more: () => void, count: number) {
   return sentinel;
 }
 
-// Records ------------------------------------------------------------------------------
-
-const sorts: { type: AlbumListType; label: string }[] = [
+// Records and Tracks sort the same ways. The sort is part of the route, replaced in place, so
+// Back returns to the same order and leaves the list rather than stepping through sorts.
+const sorts: { type: TrackSort; label: string }[] = [
   { type: 'newest', label: 'Newest' }, { type: 'alphabeticalByName', label: 'A to Z' }, { type: 'alphabeticalByArtist', label: 'By artist' },
   { type: 'frequent', label: 'Most played' }, { type: 'recent', label: 'Recently played' }, { type: 'random', label: 'Random' },
 ];
+function Sorts({ list, type }: { list: 'records' | 'tracks'; type: AlbumListType }) {
+  return <div className="choices" role="group" aria-label={`Sort ${list}`}>
+    {sorts.map(sort => <button key={sort.type} type="button" aria-pressed={sort.type === type} onClick={() => {
+      // Choosing Random again is asking for a new draw.
+      if (sort.type === 'random' && type !== 'random') paged.delete(`${list}:random`);
+      nav.go(list === 'records' ? { view: 'records', sort: sort.type } : { view: 'tracks', sort: sort.type }, true);
+    }}>{sort.label}</button>)}
+  </div>;
+}
+
+// Records ------------------------------------------------------------------------------
+
 const PAGE = 60;
 
 export function Records() {
   const route = useRoute();
   const type = route.view === 'records' && route.sort ? route.sort : 'newest';
-  const albums = usePaged<Album>(`albums:${type}`, PAGE, (offset, seed) =>
+  const albums = usePaged<Album>(`records:${type}`, PAGE, (offset, seed) =>
     [`albums:${type}:${offset}:${PAGE}${type === 'random' ? `:${seed}` : ''}`, () => api.albums(type, offset, PAGE)], type === 'random');
   const sentinel = useMore(albums.more, albums.items.length);
   return <>
-    <Head title="Records">
-      <div className="choices" role="group" aria-label="Sort records">
-        {sorts.map(sort => <button key={sort.type} type="button" aria-pressed={sort.type === type} onClick={() => {
-          // Choosing Random again is asking for a new draw.
-          if (sort.type === 'random' && type !== 'random') paged.delete('albums:random');
-          nav.go({ view: 'records', sort: sort.type }, true);
-        }}>{sort.label}</button>)}
-      </div>
-    </Head>
+    <Head title="Records"><Sorts list="records" type={type} /></Head>
     {albums.items.length ? <AlbumGrid albums={albums.items} /> : albums.done
       ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.' : 'No records on this server yet.'}</Status>
       : albums.error ? <Status>{albums.error}</Status> : <p className="status loading">Opening your records</p>}
@@ -369,19 +373,31 @@ export function ArtistPage({ id }: { id: string }) {
   </>}</Pending>;
 }
 
-// Songs --------------------------------------------------------------------------------
-// Every song, in the server's own order. A row plays like any song list: the songs loaded so
-// far become the queue (as much as it holds around the one clicked).
+// Tracks -------------------------------------------------------------------------------
+// Every track, sorted as records are. Only Navidrome's own API sorts tracks: other servers list
+// them in one fixed order, and the sorts are hidden. A row plays like any song list: the tracks
+// loaded so far become the queue (as much as it holds around the one clicked).
 
-const SONGS = 200;
-const songPage: PageRequest<Track> = offset => [`songs:${offset}:${SONGS}`, () => api.songs(offset, SONGS)];
+const TRACKS = 200;
+// Whether the server sorts tracks, once a page has said, so the sorts don't blink on each visit.
+let tracksSorted: boolean | null = null;
+onLibraryReset(() => { tracksSorted = null; });
 
-export function Songs() {
-  const songs = usePaged('songs', SONGS, songPage);
-  const sentinel = useMore(songs.more, songs.items.length);
+export function Tracks() {
+  const route = useRoute();
+  const sort = route.view === 'tracks' && route.sort ? route.sort : 'newest';
+  const tracks = usePaged<Track>(`tracks:${sort}`, TRACKS, (offset, seed) => [
+    `tracks:${sort}:${offset}:${TRACKS}${sort === 'random' ? `:${seed}` : ''}`,
+    () => api.tracks(sort, offset, TRACKS, sort === 'random' ? String(seed) : '').then((result): Result<Track[]> => {
+      if (!result.ok) return result;
+      tracksSorted = result.value.sorted;
+      return { ok: true, value: result.value.tracks };
+    }),
+  ]);
+  const sentinel = useMore(tracks.more, tracks.items.length);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Shuffle draws from the whole library, not just the songs loaded so far.
+  // Shuffle draws from the whole library, not just the tracks loaded so far.
   const shuffle = async () => {
     setProblem(null); setBusy(true);
     const drawn = await api.randomSongs({ size: 500 });
@@ -389,19 +405,22 @@ export function Songs() {
     if (!drawn.ok) { setProblem(drawn.error); return; }
     if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
   };
+  const played = tracksSorted && (sort === 'frequent' || sort === 'recent');
   return <>
-    <Head title="Songs">
+    <Head title="Tracks">
+      {tracksSorted && <Sorts list="tracks" type={sort} />}
       <div className="actions">
-        <button type="button" className="play-action" disabled={!songs.items.length} onClick={() => void player.play(songs.items, 0).then(showNowPlaying)}>
+        <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
           <span className="disc"><Glyph kind="play" /></span>Play
         </button>
-        <button type="button" className="text-button" disabled={busy || !songs.items.length} onClick={() => void shuffle()}>Shuffle</button>
+        <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>
-    {songs.items.length ? <TrackTable tracks={songs.items} showAlbum /> : songs.done ? <Status>No songs on this server yet.</Status>
-      : songs.error ? <Status>{songs.error}</Status> : <p className="status loading">Gathering songs</p>}
-    {songs.error && songs.items.length > 0 && <Status>{songs.error}</Status>}
+    {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
+      ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.' : 'No tracks on this server yet.'}</Status>
+      : tracks.error ? <Status>{tracks.error}</Status> : <p className="status loading">Gathering tracks</p>}
+    {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
     <div ref={sentinel} className="sentinel" />
   </>;
 }

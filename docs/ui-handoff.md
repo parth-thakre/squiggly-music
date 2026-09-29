@@ -7,7 +7,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | File | Role |
 | --- | --- |
 | `App.tsx` | Shell: bar, deck (now playing), page, connect screen |
-| `views.tsx` | Pages: records, album, artists, artist, songs, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics |
+| `views.tsx` | Pages: records, album, artists, artist, tracks, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics |
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself. Android (`mode: 'android'`) keeps the queue as web does and follows the native player's reports |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions do |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows |
@@ -34,7 +34,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `radio.start(seed)`, `radio.stop()` | Radio from a song, album, or artist. The main process owns it and keeps topping up the queue while every window is hidden |
 | `resumeQueue()` | Load the server-saved queue paused at its song and position |
 | `library.*` | `LibraryApi`: browse, search, star, playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics` |
-| `library.songs(offset, size)` | Every song on the server, up to 500 at a time, in the server's own order (`search3` with an empty query). A page shorter than `size` is the last. The Songs page asks for 200 at a time as it scrolls |
+| `library.tracks(sort, offset, size, seed)` | Every track on the server, up to 500 at a time, sorted as Records sorts (Newest, A to Z, By artist, Most played, Recently played, Random; `seed` keeps a random order across pages). A page shorter than `size` is the last. Navidrome's own API does the sorting: the connector signs in to it with the account's password (`POST /auth/login`), keeps the session token in memory, takes the fresh one each answer brings, and signs in again when it's refused. Other servers, or a Navidrome whose own API is out of reach, answer in the server's one order (`search3` with an empty query) with `sorted: false`, and the Tracks page hides its sorts. The page asks for 200 at a time as it scrolls |
 | `library.coverUrl(coverArt, size)` | `squiggly-art://` URL; the main process fetches art, credentials never reach the renderer |
 | `settings()`, `updateSettings(changes)` | Stored preferences; re-read `settings()` after a failed update |
 | `extensions.list()`, `subscribe`, `setEnabled`, `reload`, `remove`, `openDir`, `writeClipboard` | Extensions in `<config>/extensions`. `remove` moves the folder to the trash. The runtime in `extensions/` is the only caller |
@@ -54,7 +54,7 @@ Mutations return `{ ok: true, value }` or `{ ok: false, error }` and every failu
 - **Playlist edits** go through `playlistEditor(id)` in `library.ts`, or `usePlaylist(id)` in components. There is one editor per playlist, shared by its page and every menu. It queues edits and sends them to the server one at a time, then reconciles the local list with the server's read-back. Don't call the playlist mutations in `library.*` directly from views. New playlists go through `createPlaylist()` in `menu.tsx`, which refreshes the playlist list and opens the new one.
 - **Menus and commands** register through `registry.ts`. Ids are namespaced by owner (`builtin:play`). Registering an id that is still live throws `RegistryCollision`; dispose the old registration first. Disposers are idempotent and never remove a newer registration with the same id. `registry.scope(owner)` gives an extension its own add functions and one `dispose()` for everything it added.
 - `tracksOf(target)` in `menu.tsx` returns a `Result`. Show its error; don't assume the tracks loaded.
-- **Navigation state** lives in the route. The Records sort is part of the route, so Back returns to the same order and scroll offset.
+- **Navigation state** lives in the route. The Records and Tracks sorts are part of the route, so Back returns to the same order and scroll offset.
 - **Contrast.** `--accent` is for marks and large type (3:1 against the ground). `--accent-text` is for normal-weight text: it keeps 4.5:1 against both the ground and the selected-row tint. Use it for the current track number. Lyrics stay in ink and soft: the current line is ink and its words fill from soft to ink as they are sung.
 
 ## Browser build
