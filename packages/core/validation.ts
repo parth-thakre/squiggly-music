@@ -48,7 +48,12 @@ export const LibraryRequestSchemas = {
   })),
   tracks: Schema.Tuple(Schema.Literal('newest', 'alphabeticalByName', 'alphabeticalByArtist', 'frequent', 'recent', 'random', 'highest'),
     IntSchema(0, 10_000_000), IntSchema(1, 500), Schema.String.pipe(Schema.maxLength(64))),
-  search: Schema.Tuple(Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(256))),
+  // The options are optional, so a bare query still works. A count of 0 skips that kind.
+  search: Schema.Tuple(Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(256)), Schema.optionalElement(Schema.Struct({
+    artistCount: Schema.optional(IntSchema(0, 200)), artistOffset: Schema.optional(IntSchema(0, 1_000_000)),
+    albumCount: Schema.optional(IntSchema(0, 200)), albumOffset: Schema.optional(IntSchema(0, 1_000_000)),
+    songCount: Schema.optional(IntSchema(0, 200)), songOffset: Schema.optional(IntSchema(0, 1_000_000)),
+  }))),
   star: Schema.Tuple(Schema.Literal('track', 'album', 'artist'), IdSchema, Schema.Boolean),
   createPlaylist: Schema.Tuple(PlaylistNameSchema, TrackIdsSchema),
   addToPlaylist: Schema.Tuple(IdSchema, TrackIdsSchema.pipe(Schema.minItems(1))),

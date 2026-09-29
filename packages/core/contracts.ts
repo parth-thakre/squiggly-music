@@ -57,6 +57,12 @@ export interface Playlist {
 export interface PlaylistDetail { playlist: Playlist; tracks: Track[] }
 export interface Genre { name: string; songCount: number; albumCount: number }
 export interface LibraryItems { artists: Artist[]; albums: Album[]; tracks: Track[] }
+// search3's page for each kind: how many (0 to 200; 0 skips that kind) and from where. Left out,
+// a search finds 8 artists, 16 records, and 40 songs, each from the top.
+export interface SearchOptions { artistCount?: number; artistOffset?: number; albumCount?: number; albumOffset?: number; songCount?: number; songOffset?: number }
+// capped: the server returned as many of that kind as were asked for, so there may be more.
+// Subsonic gives no totals, so how many more is unknown.
+export interface SearchResults extends LibraryItems { capped: { artists: boolean; albums: boolean; tracks: boolean } }
 export type AlbumListType = 'newest' | 'recent' | 'frequent' | 'highest' | 'random' | 'starred' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'byYear';
 // The years a byYear list covers, inclusive. Only byYear takes them.
 export interface AlbumYears { fromYear: number; toYear: number }
@@ -86,7 +92,7 @@ export interface LibraryApi {
   // Every track on the server, a page at a time. Fewer than size: the last page. `seed` keeps a
   // random order the same from page to page. See TrackPage for servers that can't sort.
   tracks(sort: TrackSort, offset: number, size: number, seed: string): Promise<Result<TrackPage>>;
-  search(query: string): Promise<Result<LibraryItems>>;
+  search(query: string, options?: SearchOptions): Promise<Result<SearchResults>>;
   star(target: StarTarget, id: string, starred: boolean): Promise<Result>;
   createPlaylist(name: string, trackIds: string[]): Promise<Result<Playlist>>;
   addToPlaylist(playlistId: string, trackIds: string[]): Promise<Result>;

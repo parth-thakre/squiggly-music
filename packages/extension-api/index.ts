@@ -26,6 +26,7 @@ export type {
   PlaylistDetail, RandomSongOptions, Result, StarTarget, Track,
 } from '../core/contracts';
 export type { MenuTarget, PageContribution, Route, ThemeTokensInput };
+export type { SearchOptions, SearchResults } from '../core/contracts';
 
 // Bumped only for breaking changes. Additions keep the same number.
 export const API_VERSION = 1;

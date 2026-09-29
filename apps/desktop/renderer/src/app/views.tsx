@@ -19,6 +19,9 @@ import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingMarks } from './ratings';
 import { invalidate, peek } from './library';
 import { time } from './ui';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
+import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -100,12 +103,14 @@ onInvalidate(prefix => {
 });
 // Genres can number thousands, so only the few genre lists visited last are kept, the others
 // dropped oldest first. Records and Tracks keep theirs.
+// Searches' tabs are bounded the same way.
 const GENRE_LISTS = 8;
 function touchPaged(list: string) {
-  if (!list.startsWith('genre:')) return;
+  const kind = ['genre:', 'search:'].find(prefix => list.startsWith(prefix));
+  if (!kind) return;
   const p = paged.get(list);
   if (p) { paged.delete(list); paged.set(list, p); }
-  const genres = [...paged.keys()].filter(key => key.startsWith('genre:'));
+  const genres = [...paged.keys()].filter(key => key.startsWith(kind));
   for (const key of genres.slice(0, Math.max(0, genres.length - GENRE_LISTS))) paged.delete(key);
 }
 type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
@@ -666,21 +671,6 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
   </li>)}</ul>;
 }
 
-export function Search({ query }: { query: string }) {
-  const result = useResource(query.trim() ? `search:${query.trim().toLowerCase()}` : null, () => api.search(query.trim()));
-  if (!query.trim()) return <Status>Type an artist, record, or song.</Status>;
-  return <>
-    <Head title={`“${query.trim()}”`} />
-    <Pending result={result} waiting="Searching">{({ artists, albums, tracks }) => !artists.length && !albums.length && !tracks.length
-      ? <Status>Nothing matches “{query.trim()}”. Check the spelling or try fewer words.</Status>
-      : <>
-        {tracks.length > 0 && <section className="shelf-section"><h2>Songs</h2><TrackTable tracks={tracks} showAlbum /></section>}
-        {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
-        {artists.length > 0 && <section className="shelf-section"><h2>Artists</h2><ArtistNames artists={artists} /></section>}
-      </>}</Pending>
-  </>;
-}
-
 export function Queue() {
   const queue = usePlayer(s => s.queue);
   const index = usePlayer(s => s.index);
@@ -1101,5 +1091,122 @@ function Elsewhere() {
           : splitTitle(track.title, track.album).main} by {track.artist}
       </li>)}
     </ul>
+  </section>;
+}
+
+// Search -----------------------------------------------------------------------------------------
+// All shows a few of each kind, as many as search3 gives by default (8 artists, 16 records, 40
+// songs). A kind that came back full may have more, and offers "See all": its own tab, which
+// lists that kind alone, a page at a time as the list nears its end. Subsonic doesn't say how
+// many there are, so neither does the link. The tab is part of the route, replaced in place like
+// a sort, so Back returns to it and leaves the search rather than stepping through tabs.
+type SearchType = 'artists' | 'albums' | 'songs';
+const searchTabs: { type: SearchType | undefined; label: string }[] = [
+  { type: undefined, label: 'All' }, { type: 'artists', label: 'Artists' }, { type: 'albums', label: 'Records' }, { type: 'songs', label: 'Songs' },
+];
+const searchTypeOf = (value: unknown): SearchType | undefined => value === 'artists' || value === 'albums' || value === 'songs' ? value : undefined;
+const showSearch = (query: string, type: SearchType | undefined) => nav.go({ view: 'search', query, ...(type ? { type } : {}) }, true);
+// A tab's page: songs 100 at a time, records as Records pages them. The other kinds are skipped.
+const SEARCH_PAGES: Record<SearchType, number> = { artists: 100, albums: PAGE, songs: 100 };
+const skipped = { artistCount: 0, albumCount: 0, songCount: 0 };
+const searchPage = (type: SearchType, offset: number, size: number): SearchOptions => type === 'artists' ? { ...skipped, artistCount: size, artistOffset: offset }
+  : type === 'albums' ? { ...skipped, albumCount: size, albumOffset: offset } : { ...skipped, songCount: size, songOffset: offset };
+// What Enter in the search field focuses: the first song, record, or artist, in page order.
+const FIRST_RESULT = '.tracks .track, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
+
+export function Search({ query, type }: { query: string; type?: SearchType }) {
+  const text = query.trim();
+  const kind = searchTypeOf(type);
+  const results = useRef<HTMLDivElement>(null);
+  // Enter in the field: focus the first result once it's there. A search that found nothing (or
+  // failed) drops the request, so it can't pull focus out of the field later.
+  useEffect(() => {
+    const element = results.current;
+    if (!element) return;
+    const attempt = () => {
+      if (!focusWaiting(text)) return;
+      const first = element.querySelector<HTMLElement>(FIRST_RESULT);
+      if (first) { dropFocusRequest(); first.focus(); return; }
+      if (element.querySelector('.status:not(.loading)')) dropFocusRequest();
+    };
+    attempt();
+    const stop = onFocusFirstResult(attempt);
+    const observer = new MutationObserver(attempt);
+    observer.observe(element, { childList: true, subtree: true });
+    return () => { stop(); observer.disconnect(); };
+  }, [text, kind]);
+  // Opening or playing something a search found makes it one worth remembering.
+  const used = (event: ReactMouseEvent) => { if ((event.target as Element).closest('button, a')) rememberSearch(text); };
+  if (!text) return <>
+    <Head title="Search" />
+    <Status>Type an artist, record, or song.</Status>
+    <RecentSearches type={kind} />
+  </>;
+  return <>
+    <Head title={`“${text}”`}>
+      <div className="choices" role="group" aria-label="Show">
+        {searchTabs.map(tab => <button key={tab.label} type="button" aria-pressed={tab.type === kind} onClick={() => showSearch(query, tab.type)}>{tab.label}</button>)}
+      </div>
+    </Head>
+    <div ref={results} className="search-results" onClickCapture={used} onContextMenuCapture={used}>
+      {kind === 'songs' ? <SearchPages<Track> key={`songs:${text.toLowerCase()}`} query={text} type="songs" pick={found => found.tracks} none="No songs match">
+        {tracks => <TrackTable tracks={tracks} showAlbum />}</SearchPages>
+        : kind === 'albums' ? <SearchPages<Album> key={`albums:${text.toLowerCase()}`} query={text} type="albums" pick={found => found.albums} none="No records match">
+          {albums => <AlbumGrid albums={albums} />}</SearchPages>
+        : kind === 'artists' ? <SearchPages<Artist> key={`artists:${text.toLowerCase()}`} query={text} type="artists" pick={found => found.artists} none="No artists match">
+          {artists => <ArtistNames artists={artists} />}</SearchPages>
+        : <SearchAll query={text} />}
+    </div>
+  </>;
+}
+
+function SearchAll({ query }: { query: string }) {
+  const result = useResource(`search:${query.toLowerCase()}`, () => api.search(query));
+  return <Pending result={result} waiting="Searching">{({ artists, albums, tracks, capped }) => !artists.length && !albums.length && !tracks.length
+    ? <Status>Nothing matches “{query}”. Check the spelling or try fewer words.</Status>
+    : <>
+      {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks}><TrackTable tracks={tracks} showAlbum /></SearchGroup>}
+      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums}><AlbumGrid albums={albums} /></SearchGroup>}
+      {artists.length > 0 && <SearchGroup title="Artists" query={query} type="artists" more={capped.artists}><ArtistNames artists={artists} /></SearchGroup>}
+    </>}</Pending>;
+}
+function SearchGroup({ title, query, type, more, children }: { title: string; query: string; type: SearchType; more: boolean; children: ReactNode }) {
+  return <section className="shelf-section">
+    <div className="section-head">
+      <h2>{title}</h2>
+      {more && <button type="button" className="link see-all" onClick={() => showSearch(query, type)}>See all<span className="sr-only"> {title.toLowerCase()}</span></button>}
+    </div>
+    {children}
+  </section>;
+}
+// One kind, a page at a time, as Tracks and Records load theirs.
+function SearchPages<T extends { id: string }>({ query, type, pick, none, children }: {
+  query: string; type: SearchType; pick(found: SearchResults): T[]; none: string; children(items: T[]): ReactNode;
+}) {
+  const size = SEARCH_PAGES[type], name = `${type}:${query.toLowerCase()}`;
+  const pages = usePaged<T>(`search:${name}`, size, offset => [`searchPage:${name}:${offset}:${size}`,
+    () => api.search(query, searchPage(type, offset, size)).then((result): Result<T[]> => result.ok ? { ok: true, value: pick(result.value) } : result)]);
+  const sentinel = useMore(pages.more, pages.items.length);
+  return <>
+    {pages.items.length ? children(pages.items) : pages.done ? <Status>{none} “{query}”. Check the spelling, or look under All.</Status>
+      : pages.error ? <Status>{pages.error}</Status> : <p className="status loading">Searching</p>}
+    {pages.error && pages.items.length > 0 && <Status>{pages.error}</Status>}
+    <div ref={sentinel} className="sentinel" />
+  </>;
+}
+
+// Recent searches, under the empty field. Choosing one searches it again, on the tab last shown.
+function RecentSearches({ type }: { type: SearchType | undefined }) {
+  const recent = useRecentSearches();
+  if (!recent.length) return null;
+  return <section className="shelf-section" aria-labelledby="recent-searches">
+    <div className="section-head">
+      <h2 id="recent-searches">Recent searches</h2>
+      <button type="button" className="text-button quiet" onClick={() => { clearSearches(); document.querySelector<HTMLInputElement>('.search')?.focus(); }}>
+        Clear<span className="sr-only"> recent searches</span></button>
+    </div>
+    <ul className="similar recent-searches">{recent.map(query => <li key={query}>
+      <button type="button" className="link" onClick={() => { rememberSearch(query); showSearch(query, type); }}>{query}</button>
+    </li>)}</ul>
   </section>;
 }

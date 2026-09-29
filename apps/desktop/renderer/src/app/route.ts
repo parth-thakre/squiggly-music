@@ -8,7 +8,8 @@ export type Route =
   | { view: 'records'; sort?: AlbumListType; decade?: number } | { view: 'artists' } | { view: 'tracks'; sort?: TrackSort } | { view: 'playlists' } | { view: 'favorites' }
   | { view: 'album'; id: string } | { view: 'artist'; id: string }
   | { view: 'playlist'; id: string } | { view: 'mix'; id: string }
-  | { view: 'search'; query: string } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' }
+  // Search's tab (All when left out) is part of the place too, replaced in place like a sort.
+  | { view: 'search'; query: string; type?: 'artists' | 'albums' | 'songs' } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' }
   // A page an extension added; id is the page's namespaced id.
   | { view: 'extension'; id: string }
   // Every genre, and one genre's songs.
