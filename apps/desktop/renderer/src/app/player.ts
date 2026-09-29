@@ -385,7 +385,11 @@ const webAccount = (status: { connected: boolean; serverName: string | null; pag
   status.connected ? `web\n${status.pageConnection ? 'page' : 'host'}\n${status.serverName ?? ''}` : null;
 function allowed(status: WebSessionStatus) {
   // Signed out while the page was away: the searches go too.
-  if (status.required && !status.signedIn) { clearSearches(); set({ access: 'sign-in', connected: false, pageConnection: false, choosingServer: false }); return; }
+  if (status.required && !status.signedIn) { clearSearches(); signedOut(); return; }
+  // The queue's songs belong to the server they came from. When the host now has another one for
+  // this page (its own connection is gone and the host's configured server stands in, say), they
+  // don't carry over to it.
+  if ((state.connected || state.queue.length > 0) && !sameServer(status)) disconnected();
   searchesFor(webAccount(status));
   const was = state.connected;
   set({
@@ -395,8 +399,15 @@ function allowed(status: WebSessionStatus) {
   if (status.connected && !was) void offerResume();
 }
 const checkAccess = async () => allowed(await webSession.status());
+// The host names a server the same way each time it's asked. Another name, or the page's own
+// connection where the configured server was (or the reverse), is another account.
+const sameServer = (status: WebSessionStatus) => status.connected && status.serverName === state.serverName && status.pageConnection === state.pageConnection;
 function signedOut() {
   if (!web || state.access === 'sign-in') return;
+  // A sign-out from any tab makes the host forget this page's own connection, and an expired
+  // session may be followed by someone else's, so its queue goes now. The host's configured
+  // server is the same account after signing in again, so its queue waits, paused.
+  if (state.pageConnection) disconnected();
   web.active.pause();
   resetLibraryCaches();
   searchesFor(null);
@@ -420,11 +431,14 @@ function disconnected() {
   });
 }
 // Checked when a stream fails, since media elements can't report a lost session or connection.
+// A server that is gone, or another one in its place (the host forgot this page's connection
+// and offers its configured server), stops playback and empties the queue as a disconnect does:
+// the song is never asked for again from an account it didn't come from.
 async function stillSignedIn() {
-  if (state.access !== 'signed-in' && !state.pageConnection) return true;
+  if (state.access !== 'signed-in' && state.access !== 'open') return true;
   const status = await webSession.status();
   if (status.required && !status.signedIn) { signedOut(); return false; }
-  if (state.connected && !status.connected) { disconnected(); void checkAccess(); return false; }
+  if (!sameServer(status)) { disconnected(); allowed(status); return false; }
   return true;
 }
 if (web) {
@@ -623,11 +637,10 @@ export const player = {
   // Browser: opens the connect screen over the host's configured server, or closes it again.
   chooseServer(on: boolean) { if (web) set({ choosingServer: on && state.connected && !state.pageConnection }); },
   async signOut() {
-    // The host forgets this page's own connection with the session, and the queue goes with it.
-    const own = state.pageConnection;
-    // A successful sign-out also arrives through onSignedOut; signedOut() runs once either way.
+    // A successful sign-out also arrives through onSignedOut; signedOut() runs once either way,
+    // and drops this page's own connection with its queue (the host forgets it with the session).
     const result = await webSession.signOut();
-    if (result.ok) { if (own) disconnected(); signedOut(); } else set({ error: result.error });
+    if (result.ok) signedOut(); else set({ error: result.error });
   },
 
   // Queue editing ------------------------------------------------------------------------

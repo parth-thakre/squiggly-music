@@ -160,4 +160,49 @@ test.describe('another server on a host with its own', () => {
     await expect(page.getByLabel('Server address')).toHaveCount(0);
     await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
   });
+
+  test('a stream that finds the page\'s connection forgotten empties the queue instead of playing it from the host\'s server', async ({ app, page, preview }) => {
+    const audio = await audioElements(page);
+    await app.signIn({ home: true });
+    await connectToAnother(app, `http://${preview.navidrome}`);
+    await app.play('Test Pressing', 'Long Run');
+    const streams: string[] = [];
+    page.on('request', request => { if (request.url().includes('/api/stream')) streams.push(request.url()); });
+    // The host forgets the connection behind the page's back (as after a restart, the browser
+    // still has its cookie), and the next song is the first to ask.
+    const kept = (await page.context().cookies()).filter(cookie => cookie.name === 'squiggly-connection');
+    expect(kept).toHaveLength(1);
+    expect((await page.request.post(`${app.url}/api/disconnect`, { data: {}, headers: { origin: app.url } })).status()).toBe(200);
+    await page.context().addCookies(kept);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+
+    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    await expect(app.deck.getByRole('alert')).toHaveCount(0);
+    expect(await audio()).toEqual(silent);
+    expect(streams.length).toBeGreaterThan(0);
+    expect(streams.filter(url => url.includes('format=mp3'))).toEqual([]);
+    await app.openSettings();
+    await expect(app.main.getByRole('button', { name: 'Connect to another server' })).toBeVisible();
+  });
+
+  test('a sign-out from another tab drops the page\'s own connection and its queue at once', async ({ app, page, preview }) => {
+    const audio = await audioElements(page);
+    await app.signIn({ home: true });
+    await connectToAnother(app, `http://${preview.navidrome}`);
+    await app.play('Test Pressing', 'Long Run');
+    // Another tab signs out: the host forgets the session and this browser's connection.
+    expect((await page.request.delete(`${app.url}/api/session`, { headers: { origin: app.url } })).status()).toBe(200);
+    // The next library call finds the session gone.
+    await app.section('Artists').click();
+    await expect(app.signInPassword).toBeVisible();
+    expect(await audio()).toEqual(silent);
+
+    // Whoever signs in next is on the host's own server, with nothing from the connection before.
+    await app.signInPassword.fill(webPassword);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    expect(await audio()).toEqual(silent);
+  });
 });
