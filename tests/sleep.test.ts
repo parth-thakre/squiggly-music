@@ -1,24 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSleepTimer, describeSleep, SONG_END_GRACE_MS, type SleepPlayer } from '../apps/desktop/renderer/src/app/commands/sleepTimer';
+import { createSleepTimer, describeSleep, type SleepPlayer } from '../apps/desktop/renderer/src/app/commands/sleepTimer';
 
 // A stand-in player: its state changes by `report`, which tells subscribers as the store does.
 function fakePlayer(start: Partial<SleepPlayer> = {}) {
-  let state: SleepPlayer = { entry: 'e1', playing: true, position: 0, duration: 200, ...start };
+  let state: SleepPlayer = { entry: 'e1', playId: 'p1', playing: true, position: 0, duration: 200, queued: true, ...start };
   const listeners = new Set<() => void>();
-  let deaf = false;
   const pause = vi.fn(() => { state = { ...state, playing: false }; });
   return {
     pause,
     get listeners() { return listeners.size; },
     report(patch: Partial<SleepPlayer>) { state = { ...state, ...patch }; listeners.forEach(listener => listener()); },
-    // The desktop's window hidden in the tray: no reports reach the page.
-    hide() { deaf = true; },
     timer: createSleepTimer({
       read: () => state,
       subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
       pause,
       now: () => Date.now(),
-      deaf: () => deaf,
     }),
   };
 }
@@ -71,22 +67,41 @@ describe('sleep in minutes', () => {
     p.timer.cancel();
     expect(heard).toHaveBeenCalledTimes(4);
   });
+
+  it('ends without pausing when the queue is emptied', () => {
+    const p = fakePlayer();
+    p.timer.sleepIn(15);
+    p.report({ entry: undefined, playing: false, queued: false });
+    expect(p.timer.get()).toBeNull();
+    expect(p.listeners).toBe(0);
+    vi.advanceTimersByTime(15 * 60_000);
+    expect(p.pause).not.toHaveBeenCalled();
+  });
 });
 
 describe('sleep after this song', () => {
-  it('pauses when the next entry starts', () => {
+  it('pauses when the next song starts', () => {
     const p = fakePlayer();
     expect(p.timer.sleepAfterSong()).toBe(true);
-    expect(p.timer.get()).toEqual({ kind: 'song', entry: 'e1' });
+    expect(p.timer.get()).toEqual({ kind: 'song', playId: 'p1' });
     p.report({ position: 120 });
     expect(p.pause).not.toHaveBeenCalled();
-    p.report({ entry: 'e2', position: 0 });
+    p.report({ entry: 'e2', playId: 'p2', position: 0 });
     expect(p.pause).toHaveBeenCalledTimes(1);
     expect(p.timer.get()).toBeNull();
     // It stops listening once it has fired.
     expect(p.listeners).toBe(0);
-    p.report({ entry: 'e3' });
+    p.report({ entry: 'e3', playId: 'p3' });
     expect(p.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses when the same song starts over: a repeat-one loop, or played again', () => {
+    const p = fakePlayer({ position: 150 });
+    p.timer.sleepAfterSong();
+    p.report({ position: 199.8 });
+    p.report({ playId: 'p2', position: 0.1 });
+    expect(p.pause).toHaveBeenCalledTimes(1);
+    expect(p.timer.get()).toBeNull();
   });
 
   it('does not fire on a seek, back or forward, or on pause and resume', () => {
@@ -98,20 +113,53 @@ describe('sleep after this song', () => {
     p.report({ playing: true, position: 199 });
     vi.advanceTimersByTime(10 * 60_000);
     expect(p.pause).not.toHaveBeenCalled();
-    expect(p.timer.get()).toEqual({ kind: 'song', entry: 'e1' });
+    expect(p.timer.get()).toEqual({ kind: 'song', playId: 'p1' });
   });
 
-  it('pauses when the queue is replaced or cleared', () => {
+  it('a pause a moment before the end is not the end: it stays set and fires on the next song', () => {
     const p = fakePlayer();
     p.timer.sleepAfterSong();
-    p.report({ entry: undefined, playing: false });
+    p.report({ position: 199 });
+    p.report({ playing: false });
+    expect(p.timer.get()).toEqual({ kind: 'song', playId: 'p1' });
+    p.report({ playing: true });
+    p.report({ position: 199.9 });
+    p.report({ entry: 'e2', playId: 'p2', position: 0 });
     expect(p.pause).toHaveBeenCalledTimes(1);
   });
 
-  it('is done without pausing when the last song plays out and playback stops', () => {
+  it('a seek to near the end while paused is not the end either', () => {
+    const p = fakePlayer({ position: 40 });
+    p.timer.sleepAfterSong();
+    p.report({ playing: false });
+    p.report({ position: 199.5 });
+    p.report({ position: 200 });
+    expect(p.timer.get()).toEqual({ kind: 'song', playId: 'p1' });
+    p.report({ playing: true });
+    p.report({ entry: 'e2', playId: 'p2', position: 0 });
+    expect(p.pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses when the queue is replaced, and ends when it is emptied', () => {
     const p = fakePlayer();
     p.timer.sleepAfterSong();
-    p.report({ playing: false, position: 200 });
+    // The audio host reports the new queue before its first song has started.
+    p.report({ entry: undefined, playing: false, position: 0 });
+    expect(p.pause).toHaveBeenCalledTimes(1);
+
+    const q = fakePlayer();
+    q.timer.sleepAfterSong();
+    q.report({ entry: undefined, playing: false, queued: false });
+    expect(q.pause).not.toHaveBeenCalled();
+    expect(q.timer.get()).toBeNull();
+  });
+
+  it('is done without pausing when the last song plays out with repeat off', () => {
+    // The audio host goes idle with no entry and the same playId.
+    const p = fakePlayer();
+    p.timer.sleepAfterSong();
+    p.report({ position: 199.8 });
+    p.report({ entry: undefined, playing: false, position: 0 });
     expect(p.pause).not.toHaveBeenCalled();
     expect(p.timer.get()).toBeNull();
     expect(p.listeners).toBe(0);
@@ -124,13 +172,13 @@ describe('sleep after this song', () => {
     expect(q.pause).not.toHaveBeenCalled();
     expect(q.timer.get()).toBeNull();
     // Played again, the same entry isn't paused by a timer that is done.
-    q.report({ playing: true, position: 1 });
-    q.report({ entry: 'e2' });
+    q.report({ playing: true, playId: 'p2', position: 0 });
+    q.report({ entry: 'e2', playId: 'p3' });
     expect(q.pause).not.toHaveBeenCalled();
   });
 
   it('needs a song to wait for', () => {
-    const p = fakePlayer({ entry: undefined, playing: false });
+    const p = fakePlayer({ entry: undefined, playId: '', playing: false });
     expect(p.timer.sleepAfterSong()).toBe(false);
     expect(p.timer.get()).toBeNull();
   });
@@ -142,8 +190,8 @@ describe('sleep after this song', () => {
     vi.advanceTimersByTime(15 * 60_000);
     expect(p.pause).not.toHaveBeenCalled();
     p.timer.sleepIn(30);
-    expect(p.listeners).toBe(0);
-    p.report({ entry: 'e2' });
+    expect(p.listeners).toBe(1);
+    p.report({ entry: 'e2', playId: 'p2' });
     expect(p.pause).not.toHaveBeenCalled();
   });
 
@@ -152,43 +200,8 @@ describe('sleep after this song', () => {
     p.timer.sleepAfterSong();
     p.timer.cancel();
     expect(p.listeners).toBe(0);
-    p.report({ entry: 'e2' });
+    p.report({ entry: 'e2', playId: 'p2' });
     expect(p.pause).not.toHaveBeenCalled();
-  });
-
-  it('while no reports arrive (a window hidden in the tray), pauses at the song’s projected end', () => {
-    const p = fakePlayer({ position: 150 });
-    p.timer.sleepAfterSong();
-    p.hide();
-    vi.advanceTimersByTime(50_000 + SONG_END_GRACE_MS - 1);
-    expect(p.pause).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
-    expect(p.pause).toHaveBeenCalledTimes(1);
-    expect(p.timer.get()).toBeNull();
-  });
-
-  it('while reports arrive, the projection never pauses on its own, and a seek moves it', () => {
-    const p = fakePlayer({ position: 150 });
-    p.timer.sleepAfterSong();
-    vi.advanceTimersByTime(50_000 + SONG_END_GRACE_MS + 10);
-    expect(p.pause).not.toHaveBeenCalled();
-    // Seeking back while hidden: the projection follows the last report.
-    p.report({ position: 20 });
-    p.hide();
-    vi.advanceTimersByTime(60_000);
-    expect(p.pause).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(180_000 + SONG_END_GRACE_MS);
-    expect(p.pause).toHaveBeenCalledTimes(1);
-  });
-
-  it('a paused song has no projected end', () => {
-    const p = fakePlayer({ position: 150 });
-    p.timer.sleepAfterSong();
-    p.report({ playing: false });
-    p.hide();
-    vi.advanceTimersByTime(10 * 60_000);
-    expect(p.pause).not.toHaveBeenCalled();
-    expect(p.timer.get()).toEqual({ kind: 'song', entry: 'e1' });
   });
 });
 
@@ -200,6 +213,6 @@ describe('the deck’s note', () => {
     expect(describeSleep({ kind: 'minutes', endsAt: now + 11 * 60_000 + 1 }, now)).toBe('Sleeps in 12 min');
     expect(describeSleep({ kind: 'minutes', endsAt: now + 20_000 }, now)).toBe('Sleeps in 1 min');
     expect(describeSleep({ kind: 'minutes', endsAt: now - 1 }, now)).toBe('Sleeps in 1 min');
-    expect(describeSleep({ kind: 'song', entry: 'e1' }, now)).toBe('Sleeps after this song');
+    expect(describeSleep({ kind: 'song', playId: 'p1' }, now)).toBe('Sleeps after this song');
   });
 });

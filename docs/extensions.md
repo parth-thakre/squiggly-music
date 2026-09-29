@@ -49,7 +49,7 @@ Files larger than 256 KB are skipped with a message. Set `SQUIGGLY_CONFIG_DIR` t
   "version": "1.0.0",
   "description": "Pause playback after a while.",
   "squiggly": {
-    "displayName": "Sleep timer",
+    "displayName": "Sleep timer example",
     "renderer": "src/index.ts",
     "apiVersion": 1
   }

@@ -1,6 +1,6 @@
 /// <reference types="electron-vite/node" />
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
-import type { IpcMainInvokeEvent } from 'electron';
+import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -172,9 +172,13 @@ async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8
 
 const alive = (target: BrowserWindow | null): target is BrowserWindow => target !== null && !target.isDestroyed();
 const appWindows = () => [windows.main, windows.mini].filter(alive);
-// Hidden windows catch up when shown (see createWindow) instead of receiving 4 Hz updates.
+// Hidden windows catch up when shown (see createWindow) instead of receiving 4 Hz updates, unless
+// they asked to follow while hidden (the sleep timer waiting for the song to end).
+const followingHidden = new WeakSet<WebContents>();
 function broadcast() {
-  for (const target of appWindows()) if (target.isVisible() && !target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state);
+  for (const target of appWindows()) {
+    if ((target.isVisible() || followingHidden.has(target.webContents)) && !target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state);
+  }
 }
 // Background consumers of each native snapshot: tray, OS media controls, play reports, queue sync.
 function observePlayer() {
@@ -568,6 +572,12 @@ function installHandlers() {
     target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink.right, height: CONTROLS_HEIGHT });
     return { ok: true, value: undefined };
   });
+  ipcMain.handle('squiggly:window:follow-while-hidden', (event, value) => {
+    assertSender(event);
+    if (typeof value !== 'boolean') return { ok: false, error: 'Invalid window setting.' };
+    if (value) followingHidden.add(event.sender); else followingHidden.delete(event.sender);
+    return { ok: true, value: undefined };
+  });
   // Updates (updates.ts): check now, restart into a downloaded update, or open the release page.
   handle('update:check', () => Effect.sync(() => updates.check(true)), 'window');
   handle('update:install', () => Effect.suspend(() => updates.installNow() ? Effect.void : Effect.fail(new Error('No update is ready to install.'))), 'window');
@@ -629,6 +639,8 @@ function createWindow(mini: boolean) {
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   target.webContents.on('will-navigate', event => event.preventDefault());
   target.on('show', () => { if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state); });
+  // A reloaded page starts with no sleep timer.
+  target.webContents.on('did-start-loading', () => followingHidden.delete(target.webContents));
   if (process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void target.loadFile(join(directory, '../renderer/index.html'));
   return target;
