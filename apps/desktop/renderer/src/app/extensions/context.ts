@@ -11,8 +11,11 @@ import { showNotice } from './notices';
 import { addPage, openExtensionPage } from './pages';
 
 // Builds the ExtensionContext a renderer entry receives. Everything registered through it is
-// tracked and undone by dispose(): commands and menu items through the extension's registry
-// scope, pages, themes, and styles through their own disposers.
+// tracked and undone by dispose(): commands, menu items, deck slots, and sections through the
+// extension's registry scope, pages, themes, and styles through their own disposers.
+//
+// The main window and the mini player each run their own copy of every extension, so activate()
+// runs once per window; ctx.window says which.
 
 const views = new WeakMap<AppPlayerState, PlayerState>();
 // The public view of the player store, cached per store state so selectors see stable objects.
@@ -73,6 +76,16 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
 
   let values = storedSettings(info.id);
   const settingsListeners = new Set<(values: Readonly<Record<string, unknown>>) => void>();
+  // The other window saved a setting: both windows share local storage, and each keeps its own copy.
+  if (typeof addEventListener === 'function') {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== settingsKey(info.id)) return;
+      values = storedSettings(info.id);
+      settingsListeners.forEach(listener => listener(values));
+    };
+    addEventListener('storage', onStorage);
+    track(() => removeEventListener('storage', onStorage));
+  }
   const settings: SettingsStore = {
     get: <T,>(key: string, fallback: T) => (Object.hasOwn(values, key) ? values[key] : fallback) as T,
     async set(key, value) {
@@ -90,6 +103,7 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
 
   const ctx: ExtensionContext = {
     id: info.id, version: info.version, apiVersion: API_VERSION,
+    window: bridge?.window?.isMini ? 'mini' : 'main',
     commands: {
       // A failing run is reported where it was started (the palette, a key, a menu).
       register(entry) { alive(); return track(scope.command({ ...entry, category: entry.category ?? info.name })); },
@@ -101,6 +115,7 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
       },
     },
     menus: { register(item) { alive(); return track(scope.menu(menuItem(item))); } },
+    deck: { register(slot) { alive(); return track(scope.deck(slot)); } },
     player: {
       get: () => playerView(getPlayer()),
       subscribe(listener) { return track(onPlayer(() => listener(playerView(getPlayer())))); },
@@ -127,6 +142,7 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
       back: () => nav.back(),
       registerPage(page) { alive(); const added = addPage(info.id, page); return { id: added.id, dispose: track(added.dispose) }; },
       openPage: id => openExtensionPage(id),
+      registerSection(section) { alive(); return track(scope.section(section)); },
     },
     themes: { register(theme) { alive(); return track(registerTheme(theme, info.id)); } },
     styles: {

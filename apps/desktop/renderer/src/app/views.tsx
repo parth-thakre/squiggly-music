@@ -16,6 +16,7 @@ import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
+import { ExtensionSections } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingMarks } from './ratings';
 import { invalidate, peek } from './library';
@@ -521,6 +522,7 @@ export function Playlists() {
         </li>)}
       </ul>
     </section>
+    <ExtensionSections />
   </>;
 }
 

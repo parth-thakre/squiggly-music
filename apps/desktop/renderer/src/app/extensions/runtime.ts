@@ -59,12 +59,13 @@ async function activate(info: ExtensionInfo & { rendererUrl: string }) {
     const extension = (module.default ?? module) as Partial<Extension> | ((ctx: ExtensionContext) => unknown);
     const run = typeof extension === 'function' ? extension : extension.activate?.bind(extension);
     if (typeof run !== 'function') throw new Error('The renderer entry must export default defineExtension({ activate(ctx) { … } }).');
+    // The last version's failures go now: a deck slot can render, and fail, before run() returns.
+    fail(info.id, null);
     activation = createContext(info);
     const current = activation;
     active.set(info.id, { url: info.rendererUrl, activation: current });
     const dispose = await run(current.ctx);
     if (typeof dispose === 'function') current.ctx.onDispose(dispose as Dispose);
-    fail(info.id, null);
   } catch (error) {
     // Undo whatever it registered before failing, so a fixed version can register again.
     if (activation && active.get(info.id)?.activation === activation) deactivate(info.id);
@@ -92,9 +93,10 @@ export async function removeExtension(id: string) {
   return result;
 }
 
-// Starts the runtime in the main window. The mini player window runs no extensions.
+// Starts the runtime. Both windows run it: the mini player loads the same list from the main
+// process, through the same preload, for its deck slots and keys. Its pages go unused.
 export function startExtensions() {
-  if (started || !bridge?.extensions || bridge.window.isMini) return;
+  if (started || !bridge?.extensions) return;
   started = true;
   (globalThis as Record<string, unknown>)[HOST_GLOBAL] = {
     modules: {

@@ -209,3 +209,71 @@ describe('renderer extension context', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('deck slots and sections', () => {
+  it('register through the registry, refuse collisions and bad placements, and go on dispose', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => null, setItem() {} });
+    const { createContext } = await import('../apps/desktop/renderer/src/app/extensions/context');
+    const { registry, RegistryCollision } = await import('../apps/desktop/renderer/src/app/registry');
+    const Slot = () => null;
+    const activate = () => {
+      const activation = createContext({ id: 'decker', name: 'Decker', version: '1.0.0' });
+      activation.ctx.deck.register({ id: 'year', placement: 'quiet-line', component: Slot });
+      activation.ctx.deck.register({ id: 'notes', placement: 'under-title', component: Slot });
+      activation.ctx.navigation.registerSection({ id: 'shelf', title: '  Shelf  ', component: Slot });
+      return activation;
+    };
+    const seen = vi.fn();
+    const unsubscribe = registry.deck.subscribe(seen);
+    const first = activate();
+    expect(first.ctx.window).toBe('main');
+    expect(registry.deck.all().map(slot => [slot.id, slot.placement, slot.owner])).toEqual([['decker:year', 'quiet-line', 'decker'], ['decker:notes', 'under-title', 'decker']]);
+    expect(registry.sections.all()).toMatchObject([{ id: 'decker:shelf', title: 'Shelf', owner: 'decker' }]);
+    expect(seen).toHaveBeenCalledTimes(2);
+    // The same rules as commands: a live id collides, and a slot needs a placement and a component.
+    expect(() => first.ctx.deck.register({ id: 'year', placement: 'quiet-line', component: Slot })).toThrow(RegistryCollision);
+    expect(() => first.ctx.navigation.registerSection({ id: 'shelf', title: 'Again', component: Slot })).toThrow(/section “decker:shelf” is already registered/);
+    expect(() => first.ctx.deck.register({ id: 'side', placement: 'sideways' as never, component: Slot })).toThrow(/needs a placement: under-title, under-controls, quiet-line/);
+    expect(() => first.ctx.deck.register({ id: 'none', placement: 'quiet-line', component: undefined as never })).toThrow(/needs a React component/);
+    expect(() => first.ctx.navigation.registerSection({ id: 'blank', title: ' ', component: Slot })).toThrow(/needs a title/);
+    expect(() => first.ctx.deck.register({ id: 'a:b', placement: 'quiet-line', component: Slot })).toThrow(/not a valid id/);
+    const serial = registry.deck.all()[0]!.serial;
+
+    // A disposer removes only its own slot, once.
+    const extra = first.ctx.deck.register({ id: 'extra', placement: 'under-controls', component: Slot });
+    extra(); extra();
+    expect(registry.deck.all().map(slot => slot.id)).toEqual(['decker:year', 'decker:notes']);
+
+    first.dispose();
+    expect(registry.deck.all()).toEqual([]);
+    expect(registry.sections.all()).toEqual([]);
+    expect(() => first.ctx.deck.register({ id: 'late', placement: 'quiet-line', component: Slot })).toThrow(/unloaded/);
+    expect(() => first.ctx.navigation.registerSection({ id: 'late', title: 'Late', component: Slot })).toThrow(/unloaded/);
+
+    // A reload registers the same ids again, each a fresh registration.
+    const second = activate();
+    expect(registry.deck.all()[0]).toMatchObject({ id: 'decker:year' });
+    expect(registry.deck.all()[0]!.serial).not.toBe(serial);
+    second.dispose();
+    unsubscribe();
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps a throwing slot to itself: it renders nothing and is reported against its extension', async () => {
+    const { ExtensionSlotBoundary } = await import('../apps/desktop/renderer/src/app/extensions/slots');
+    const { onPageError } = await import('../apps/desktop/renderer/src/app/extensions/pages');
+    const reports: [string, string][] = [];
+    onPageError((owner, message) => reports.push([owner, message]));
+    const slot = new ExtensionSlotBoundary({ owner: 'decker', what: 'The deck slot “decker:year”', children: 'fine' });
+    expect(slot.render()).toBe('fine');
+    slot.state = ExtensionSlotBoundary.getDerivedStateFromError(new Error('no year'));
+    slot.componentDidCatch(new Error('no year'), { componentStack: '' });
+    expect(slot.render()).toBeNull();
+    expect(reports).toEqual([['decker', 'The deck slot “decker:year” failed: no year']]);
+    // A section puts a line in its place instead.
+    const section = new ExtensionSlotBoundary({ owner: 'decker', what: 'The section “Shelf”', fallback: error => `stopped: ${error}`, children: 'fine' });
+    section.state = ExtensionSlotBoundary.getDerivedStateFromError('bad');
+    expect(section.render()).toBe('stopped: bad');
+    onPageError(() => {});
+  });
+});

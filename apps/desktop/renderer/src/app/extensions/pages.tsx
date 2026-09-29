@@ -56,6 +56,8 @@ class Boundary extends Component<{ owner: string; title: string; onError(owner: 
 
 let reportPageError: (owner: string, message: string) => void = () => {};
 export const onPageError = (report: typeof reportPageError) => { reportPageError = report; };
+// Deck slots and sections (slots.tsx) report the same way.
+export const reportExtensionError = (owner: string, message: string) => reportPageError(owner, message);
 
 export function ExtensionPage({ id }: { id: string }) {
   const page = useSyncExternalStore(subscribe, () => pages.get(id));

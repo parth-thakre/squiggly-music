@@ -1,3 +1,5 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { compileEntry } from '../../../apps/desktop/main/extensions/compile';
 import { installDesktopBridge } from '../fixtures/desktop';
@@ -10,7 +12,8 @@ const examples = resolve('examples/extensions');
 let sleepTimer = '';
 test.beforeAll(async () => { sleepTimer = (await compileEntry(join(examples, 'sleep-timer/src/index.ts'), join(examples, 'sleep-timer'))).code; });
 
-test.beforeEach(async ({ page }) => {
+test.beforeEach(async ({ page }, testInfo) => {
+  if (testInfo.tags.includes('@slots')) return;
   await page.route('**/__extensions/*.js', route => route.fulfill({
     contentType: 'text/javascript',
     body: route.request().url().endsWith('/broken.js') ? 'export default { activate() { throw new Error("boom"); } };' : sleepTimer,
@@ -60,4 +63,114 @@ test('Settings lists extensions with their errors, and turning one off takes its
   await expect(section.getByRole('status')).toHaveText('Moved Sleep timer example to the trash.');
   await expect(section.getByText('extensions/sleep-timer · sleep-timer')).toBeHidden();
   expect(await page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls)).toContain('remove:sleep-timer');
+});
+
+// Deck slots and Playlists sections, from the deck-note example and a test extension in two
+// versions: Reload all serves the second, as saving an edit would.
+const decker = (version: 1 | 2) => `
+import { defineExtension } from '@squiggly/extension-api';
+export default defineExtension({
+  activate(ctx) {
+    ${version === 1 ? `
+    ctx.deck.register({ id: 'hello', placement: 'under-title', component: ({ track }) => <p>Hello from the deck, {track.title}.</p> });
+    ctx.deck.register({ id: 'broken', placement: 'under-controls', component: () => { throw new Error('slot boom'); } });
+    ctx.navigation.registerSection({ id: 'broken', title: 'Broken shelf', component: () => { throw new Error('section boom'); } });
+    ` : `
+    ctx.deck.register({ id: 'tall', placement: 'under-controls', component: () => <div>{Array.from({ length: 20 }, (_, i) => <p key={i}>Second version, line {i + 1}.</p>)}</div> });
+    `}
+    ctx.navigation.registerSection({ id: 'shelf', title: 'From the shelf', component: () => <p>Three records to hear next.</p> });
+    ctx.navigation.registerPage({ id: 'page', title: 'Shelf page', component: () => <p>The whole shelf.</p> });
+    ctx.commands.register({ id: 'mark', title: 'Mark the song', keys: ['ctrl+alt+m'], run: () => ctx.notify('Marked in the ' + ctx.window + ' window.') });
+  },
+});`;
+const bundles: Record<string, string> = {};
+test.beforeAll(async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'squiggly-slots-'));
+  try {
+    for (const version of [1, 2] as const) {
+      await writeFile(join(dir, `decker-${version}.tsx`), decker(version));
+      bundles[`decker-${version}`] = (await compileEntry(join(dir, `decker-${version}.tsx`), dir)).code;
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+  bundles['deck-note'] = (await compileEntry(join(examples, 'deck-note/src/index.tsx'), join(examples, 'deck-note'))).code;
+});
+const song = {
+  id: 'song-1', title: 'Dawn Chorus', artist: 'The Larks', album: 'Morning', duration: 200, source: 'navidrome',
+  sourceFormat: 'flac', sourceSampleRate: 44100, sourceBitDepth: 16, year: 1977, albumId: 'album-1', artistId: 'artist-1', coverArt: null,
+};
+const withSlots = async (page: import('@playwright/test').Page, mini = false) => {
+  await page.route(/\/__extensions\//, route => {
+    const url = new URL(route.request().url());
+    const name = url.pathname.split('/').pop()!.replace(/\.js$/, '');
+    const body = name === 'decker' ? bundles[url.searchParams.has('v') ? 'decker-2' : 'decker-1'] : bundles[name];
+    return body ? route.fulfill({ contentType: 'text/javascript', body }) : route.fulfill({ status: 404 });
+  });
+  await installDesktopBridge(page, {
+    mini, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 200 },
+    extensions: [{ id: 'deck-note', name: 'Deck note', url: '/__extensions/deck-note.js' }, { id: 'decker', name: 'Decker', url: '/__extensions/decker.js' }],
+  });
+};
+
+test.describe('deck slots and sections', { tag: '@slots' }, () => {
+  test('slots show in the deck within their bounds, a throwing one shows nothing, and a reload replaces them', async ({ page }) => {
+    await withSlots(page);
+    await page.goto('/');
+    const deck = page.getByRole('complementary', { name: 'Now playing' });
+    // deck-note's quiet line: the song carries a year.
+    await expect(deck.locator('.deck-slot.quiet-line')).toHaveText('From 1977.');
+    await expect(deck.locator('.deck-text').getByText('Hello from the deck, Dawn Chorus.')).toBeVisible();
+    await expect(deck.locator('[data-slot="decker:broken"]')).toBeEmpty();
+    // The rest of the deck carries on.
+    await expect(deck.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    const settings = page.locator('.extensions-settings');
+    await expect(settings.getByRole('alert').filter({ hasText: 'The deck slot “decker:broken” failed: slot boom' })).toBeVisible();
+
+    await settings.getByRole('button', { name: 'Reload all' }).click();
+    await expect(settings.getByRole('status')).toHaveText('Reloaded every extension.');
+    await expect(deck.getByText('Hello from the deck, Dawn Chorus.')).toHaveCount(0);
+    await expect(deck.locator('[data-slot="decker:broken"]')).toHaveCount(0);
+    const tall = deck.locator('[data-slot="decker:tall"]');
+    await expect(tall).toContainText('Second version, line 1.');
+    // Twenty lines are cut to the box; the quiet line stays one line.
+    expect((await tall.boundingBox())!.height).toBeLessThan(100);
+    expect((await deck.locator('.deck-slot.quiet-line').boundingBox())!.height).toBeLessThan(26);
+    await expect(deck.locator('.deck-slot.quiet-line')).toHaveText('From 1977.');
+    // The fixed version starts clean.
+    await expect(settings.getByRole('alert').filter({ hasText: 'slot boom' })).toHaveCount(0);
+  });
+
+  test('sections and extension pages are listed on the Playlists page', async ({ page }) => {
+    await withSlots(page);
+    await page.goto('/');
+    await page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name: 'Playlists', exact: true }).click();
+    const main = page.locator('main.page');
+    const shelf = main.getByRole('region', { name: 'From the shelf' });
+    await expect(shelf.getByText('Three records to hear next.')).toBeVisible();
+    await expect(main.getByRole('region', { name: 'Broken shelf' }).getByRole('alert')).toHaveText('This section stopped working: section boom');
+    const pages = main.getByRole('region', { name: 'Extensions' });
+    await pages.getByRole('button', { name: /^Shelf page/ }).click();
+    await expect(main.getByText('The whole shelf.')).toBeVisible();
+
+    // Turned off, its section and page go.
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.locator('.extensions-settings').getByRole('checkbox', { name: /^Decker/ }).uncheck();
+    await page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name: 'Playlists', exact: true }).click();
+    await expect(main.getByRole('heading', { name: 'Automatic' })).toBeVisible();
+    await expect(main.getByRole('region', { name: 'From the shelf' })).toHaveCount(0);
+    await expect(main.getByRole('region', { name: 'Extensions' })).toHaveCount(0);
+  });
+
+  test('the mini player runs extensions: their quiet lines show, and their keys work', async ({ page }) => {
+    await withSlots(page, true);
+    await page.goto('/');
+    const mini = page.locator('.mini');
+    await expect(mini.getByText('Dawn Chorus')).toBeVisible();
+    await expect(mini.locator('.deck-slot.quiet-line')).toHaveText('From 1977.');
+    // The other placements need the full deck.
+    await expect(mini.getByText('Hello from the deck, Dawn Chorus.')).toHaveCount(0);
+    await page.keyboard.press('Control+Alt+m');
+    await expect(page.getByText('Marked in the mini window.')).toBeVisible();
+  });
 });

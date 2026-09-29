@@ -1,4 +1,4 @@
-/* Settings › Extensions, extension pages, and extension notices. */
+/* Settings › Extensions, extension pages, notices, deck slots, and Playlists sections. */
 .extension-list { list-style: none; margin: 14px 0 0; padding: 0; }
 .extension { padding: 6px 0 12px; border-bottom: 1px solid var(--line); }
 .extension.off strong { color: var(--soft); }
@@ -21,3 +21,25 @@
 }
 .extension-notice.error { border-left: 3px solid var(--accent); }
 .extension-notice .link { margin-left: 10px; font-size: calc(13px * var(--text)); color: var(--soft); }
+
+/* Deck slots (slots.tsx). Each is a bounded box: the quiet line is one line, cut with an
+   ellipsis; the others are a few lines tall. What doesn't fit is hidden, never scrolled. */
+.deck-slot { flex: none; min-width: 0; overflow: hidden; color: var(--soft); font-size: calc(13px * var(--text)); line-height: 1.45; }
+.deck-slot:empty { display: none; }
+.deck-slot :where(p, h1, h2, h3, h4, ul, ol, dl, figure) { margin: 0; }
+.deck-slot.under-title { margin-top: 6px; max-height: 4.35em; }
+.deck-slot.under-controls { margin-top: 10px; max-height: 5.8em; }
+.deck-slot.quiet-line, .deck-slot.quiet-line > * { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; }
+.deck-slot.quiet-line { margin-top: 4px; max-height: 1.55em; font-size: calc(12.5px * var(--text)); line-height: 1.55; }
+.mini .deck-slot.quiet-line { margin-top: 1px; }
+.mini .extension-notices { right: 8px; bottom: 8px; left: 8px; max-width: none; }
+.mini .extension-notice { padding: 6px 10px; font-size: calc(12.5px * var(--text)); }
+/* The phone's strip has room for the song alone; the open sheet shows the slots, and drops the
+   quiet line where it drops the signal path. */
+@media (max-width: 760px) {
+  .deck:not(.open) .deck-slot { display: none; }
+}
+@media (max-width: 760px) and (vertical-viewport-segments: 2), (max-width: 760px) and (max-height: 520px) {
+  .deck.open .deck-slot.quiet-line { display: none; }
+}
+.extension-pages .row-text { padding: 4px 0; }
