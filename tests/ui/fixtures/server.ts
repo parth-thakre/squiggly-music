@@ -74,8 +74,9 @@ function fakeConnector(fake: FakeNavidrome) {
 // The browser build (out/web) served by Vite's real preview server with the real
 // navidrome-preview plugin, backed by the fake account. One per Playwright worker.
 // Configured, the host has the fake account from the start and a password for the page, as when
-// started with SQUIGGLY_PREVIEW_NAVIDROME_* and SQUIGGLY_WEB_PASSWORD. Unconfigured, it has
-// neither, and the page connects to the fake's address itself.
+// started with SQUIGGLY_PREVIEW_NAVIDROME_* and SQUIGGLY_WEB_PASSWORD; a page may still connect
+// to the fake's address as another server. Unconfigured, it has neither, and the page connects
+// to the fake's address itself.
 export async function startPreview({ configured = true }: { configured?: boolean } = {}) {
   if (!existsSync(resolve(outDir, 'index.html'))) throw new Error('out/web is missing. Run `npx vite build` (or `npm run test:ui`) first.');
   // The fake needs the server's address, and the server the fake.
@@ -89,7 +90,7 @@ export async function startPreview({ configured = true }: { configured?: boolean
     configFile: false, root: resolve(root, 'apps/desktop/renderer'), logLevel: 'warn',
     build: { outDir },
     plugins: [configured
-      ? navidromePreview({ env: { SQUIGGLY_WEB_PASSWORD: webPassword }, client: fake.subsonic, now: () => fake.clock.now, stationAddress })
+      ? navidromePreview({ env: { SQUIGGLY_WEB_PASSWORD: webPassword }, client: fake.subsonic, connector: fakeConnector(fake), now: () => fake.clock.now, stationAddress })
       : navidromePreview({ env: {}, client: null, connector: fakeConnector(fake), now: () => fake.clock.now, stationAddress })],
     preview: { host: '127.0.0.1', port: 0, strictPort: false, open: false },
   });

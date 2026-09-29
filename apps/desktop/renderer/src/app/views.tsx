@@ -856,7 +856,8 @@ function SignOut() {
 }
 // The desktop's main process, the Android bridge, or (in the browser) the host forgets the
 // server and stops playback, and the app returns to the connect screen. In the browser only a
-// server the page connected to itself can be dropped; the host's configured one stays.
+// server the page connected to itself can be dropped; the host's configured one stays, and the
+// page can open the connect screen over it instead.
 function Disconnect() {
   const serverName = usePlayer(s => s.serverName);
   const connected = usePlayer(s => s.connected);
@@ -864,7 +865,13 @@ function Disconnect() {
   const pageConnection = usePlayer(s => s.pageConnection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!connected || (web && !pageConnection)) return null;
+  if (!connected) return null;
+  // The host's configured server isn't the page's to drop, but the page can use another instead.
+  if (web && !pageConnection) return <div className="setting-action">
+    <p><strong>Connect to another server</strong>
+      <span>This page uses the host's own server, {serverName ?? 'your server'}. You can connect it to another Navidrome server instead. That stops playback and empties the queue; the host keeps its own server for other browsers, and this page goes back to it when you disconnect.</span></p>
+    <button type="button" className="text-button" onClick={() => player.chooseServer(true)}>Connect to another server</button>
+  </div>;
   return <div className="setting-action">
     <p><strong>Disconnect or switch server</strong>
       <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. {web

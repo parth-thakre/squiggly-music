@@ -17,6 +17,17 @@ async function audioElements(page: Page) {
 }
 const silent = [{ paused: true, src: null }, { paused: true, src: null }];
 
+// On the host started with its own server: Settings opens the connect screen over it.
+async function connectToAnother(app: App, address: string) {
+  await app.openSettings();
+  await app.main.getByRole('button', { name: 'Connect to another server' }).click();
+  await app.page.getByLabel('Server address').fill(address);
+  await app.page.getByLabel('Username').fill(account.username);
+  await app.page.getByLabel('Password').fill(account.password);
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+}
+
 test.describe('sign-in', () => {
   test('a wrong password is refused with a message and the field is cleared', async ({ app, page }) => {
     await page.goto('/');
@@ -123,5 +134,30 @@ test.describe('connect', () => {
     if (await artists.isVisible()) await artists.click({ timeout: 1500 }).catch(() => undefined);
     await expect(page.getByLabel('Server address')).toBeVisible();
     await expect(app.deck).toHaveCount(0);
+  });
+});
+
+test.describe('another server on a host with its own', () => {
+  test('Settings connects the page to another server, and disconnecting goes back to the host\'s', async ({ app, page, preview }) => {
+    await app.signIn({ home: true });
+    await app.openSettings();
+    // The host's own server isn't the page's to drop.
+    await expect(app.main.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    await app.main.getByRole('button', { name: 'Connect to another server' }).click();
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    await expect(page.getByText('The host keeps its own server for other browsers, and this page goes back to it when you disconnect.')).toBeVisible();
+    // Going back leaves the page on the host's server.
+    await page.getByRole('button', { name: /^Back to / }).click();
+    await expect(app.heading).toHaveText('Settings');
+
+    await connectToAnother(app, `http://${preview.navidrome}`);
+    await expect(app.heading).toHaveText('Settings');
+    await expect(app.main.getByText(`Connected to Navidrome (http://${preview.navidrome}).`)).toBeVisible();
+    await app.main.getByRole('button', { name: 'Disconnect', exact: true }).click();
+    // Back on the host's own server, not the connect screen.
+    await expect(app.main.getByRole('button', { name: 'Connect to another server' })).toBeVisible();
+    await expect(page.getByLabel('Server address')).toHaveCount(0);
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
   });
 });

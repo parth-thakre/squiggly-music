@@ -44,6 +44,8 @@ export function App() {
   const connected = usePlayer(s => s.connected);
   const access = usePlayer(s => s.access);
   const hasQueue = usePlayer(s => s.queue.length > 0);
+  // The browser's connect screen, opened from Settings over the host's configured server.
+  const choosing = usePlayer(s => s.choosingServer);
   // The room takes the colour of the record that is playing, unless the theme fixes its colours.
   const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
   useCommandKeys();
@@ -53,7 +55,7 @@ export function App() {
   // Without a title bar, the window's own buttons take the room's ink.
   useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
-  const shell = connected || (mode === 'desktop' && hasQueue);
+  const shell = (connected && !choosing) || (mode === 'desktop' && hasQueue);
   const cover = useCoverScreen();
   return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
     {/* First, so everything clickable after it wins: Electron applies drag regions in page order,
@@ -378,6 +380,9 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
   const [error, setError] = useState<string | null>(null);
   const android = window.squigglyAndroid?.session;
   const web = usePlayer(s => s.mode === 'web');
+  // Opened over the host's configured server: it stays the host's, and the page can go back to it.
+  const choosing = usePlayer(s => s.choosingServer);
+  const serverName = usePlayer(s => s.serverName);
   const connect = async (connection: { url: string; username: string; password: string }) => {
     setBusy(true); setError(null);
     const result = await (window.squiggly ? window.squiggly.connect(connection) : android ? android.connect(connection) : player.connect(connection));
@@ -408,7 +413,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
   return <Frame className="connect">
     <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
     <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
-      {web ? 'The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.'
+      {web ? `The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.${choosing ? ` Connecting stops playback and empties the queue. The host keeps ${serverName ?? 'its own server'} for other browsers, and this page goes back to it when you disconnect.` : ''}`
         : canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
     {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
@@ -422,6 +427,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
     </form>
+    {choosing && <button type="button" className="text-button" disabled={busy} onClick={() => player.chooseServer(false)}>Back to {serverName ?? 'the host\'s server'}</button>}
     {!embedded && window.squiggly && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
     {/* Navidrome's own public demo, with Creative Commons music, for trying Squiggly without a server. */}
     <p className="connect-demo">No server yet? <button type="button" className="link" disabled={busy}
