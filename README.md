@@ -19,6 +19,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).
 - Start a radio station from any song, record, or artist.
 - Add the playing song to your favorites with the star by the controls, or with F. G then C goes to its record, and G then . to its artist.
+- Set a sleep timer from Ctrl+K: it pauses in 15, 30, or 60 minutes, or after this song.
 - Build automatic playlists from your library by genre, by decade, and from what's new.
 - Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.
 - Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.

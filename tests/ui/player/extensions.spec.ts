@@ -27,14 +27,14 @@ test('an extension adds commands to the palette, and they run', async ({ page })
   await page.keyboard.press('Control+k');
   const palette = page.getByRole('dialog', { name: 'Commands' });
   await palette.getByRole('combobox').fill('sleep');
-  const start = palette.getByRole('option', { name: /^Start the sleep timer/ });
+  const start = palette.getByRole('option', { name: /^Start the example sleep timer/ });
   await expect(start).toContainText('Sleep timer');
   await start.click();
   await expect(page.getByText('Pausing in 30 minutes.')).toBeVisible();
   // Its `when` now lets the cancel command show.
   await page.keyboard.press('Control+k');
-  await palette.getByRole('combobox').fill('cancel the sleep');
-  await expect(palette.getByRole('option', { name: /^Cancel the sleep timer/ })).toBeVisible();
+  await palette.getByRole('combobox').fill('cancel the example');
+  await expect(palette.getByRole('option', { name: /^Cancel the example sleep timer/ })).toBeVisible();
 });
 
 test('Settings lists extensions with their errors, and turning one off takes its commands away', async ({ page }) => {

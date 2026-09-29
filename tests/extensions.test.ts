@@ -150,7 +150,7 @@ describe('extension manager', () => {
     manager.subscribe(list => seen.push(list));
     const first = manager.list()[0]!.rendererUrl;
     const source = await readFile(join(dir, 'src/index.ts'), 'utf8');
-    await writeFile(join(dir, 'src/index.ts'), source.replace('Start the sleep timer', 'Start sleeping'));
+    await writeFile(join(dir, 'src/index.ts'), source.replace('Start the example sleep timer', 'Start sleeping'));
     await until(() => manager.list()[0]!.rendererUrl !== first);
     expect(manager.rendererModule(manager.list()[0]!.rendererUrl!)).toContain('Start sleeping');
     // A syntax error shows as the extension's error and withdraws the old module.

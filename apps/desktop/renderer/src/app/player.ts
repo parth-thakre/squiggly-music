@@ -91,6 +91,8 @@ const set = (patch: Partial<PlayerState>) => {
 };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const getPlayer = () => state;
+// For code outside components that follows the player, such as the sleep timer.
+export const subscribePlayer = subscribe;
 export function usePlayer<T>(select: (s: PlayerState) => T): T {
   return useSyncExternalStore(subscribe, () => select(state));
 }
@@ -596,11 +598,12 @@ export const player = {
     }
     void desktop!.command({ type: state.playing ? 'pause' : 'play' }).then(report);
   },
-  // Pauses and never resumes, for requests that mean pause, such as the media session's.
+  // Pauses whatever is playing or starting to play, for requests that mean pause: the media
+  // session's, and the sleep timer's. Unlike toggle, it never starts anything, and it doesn't
+  // trust the page's copy of the state (a hidden desktop window gets no snapshots).
   pause() {
-    if (android) { android.player.pause(); return; }
+    if (android) { if (state.index >= 0) android.player.pause(); return; }
     if (web) {
-      if (web.active.paused) return;
       web.active.pause();
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       return;

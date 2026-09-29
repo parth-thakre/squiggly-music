@@ -49,7 +49,7 @@ test.describe('phone', () => {
     await expect(app.heading).toHaveText('Test Pressing');
   });
 
-  test('the now-playing sheet has the song’s star', async ({ app, page }) => {
+  test('the now-playing sheet has the song’s star and the sleep timer’s note', async ({ app, page }) => {
     await app.play('Test Pressing', 'Long Run');
     const star = app.deck.getByRole('button', { name: 'Favorite', exact: true });
     // The strip keeps to the transport; the sheet has the star.
@@ -59,5 +59,12 @@ test.describe('phone', () => {
     await expect(star).toHaveAttribute('aria-pressed', 'true');
     await page.goBack();
     await expect(app.row('Long Run').locator('button.star')).toHaveAttribute('aria-pressed', 'true');
+
+    await commands(page).tap();
+    const palette = page.getByRole('dialog', { name: 'Commands' });
+    await palette.getByRole('option', { name: /^Sleep in 30 minutes/ }).tap();
+    await expect(palette).toBeHidden();
+    await app.openSheetIfNeeded(star);
+    await expect(app.deck.getByText('Sleeps in 30 min')).toBeVisible();
   });
 });
