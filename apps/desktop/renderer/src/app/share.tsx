@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type Ke
 import type { Share } from '../../../../../packages/core/contracts';
 import { copyText } from './exports';
 import { api, invalidate, useResource } from './library';
+import { nav } from './route';
 import { plural } from './ui';
 import './share.css';
 
@@ -16,15 +17,28 @@ const listeners = new Set<() => void>();
 const emit = () => listeners.forEach(listener => listener());
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 
+// On phones the dialog is a sheet with its own history entry, so the back gesture closes it
+// rather than changing the page behind it (as with the menu and the palette).
+let inHistory = false;
+const isPhone = () => matchMedia('(max-width: 760px)').matches;
+
 export function openShare(next: ShareRequest) {
   const focus = document.activeElement;
   invoker = focus instanceof HTMLElement && focus !== document.body && !focus.closest('.menu-layer') ? focus : null;
   request = next; emit();
+  if (!inHistory && isPhone() && !nav.overlayOpen) {
+    inHistory = true;
+    nav.openOverlay(() => {}, () => { inHistory = false; finishClose(); });
+  }
 }
-function closeShare() {
+function finishClose() {
+  if (!request) return;
   request = null; emit();
   if (invoker?.isConnected) invoker.focus({ preventScroll: true });
   invoker = null;
+}
+function closeShare() {
+  if (inHistory) nav.closeOverlay(); else finishClose();
 }
 
 const DAY = 86_400_000;

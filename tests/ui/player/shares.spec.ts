@@ -105,3 +105,42 @@ test.describe('shares', () => {
     await expect(app.main.getByRole('heading', { name: 'Shares' })).toHaveCount(0);
   });
 });
+
+// On a phone the dialog is a bottom sheet, and Back closes it as it closes the menu. Android's
+// MainActivity steps back with this script whenever the page has history behind it.
+const STEP_BACK = '(function(){var s=history.state;if(s&&typeof s.depth===\'number\'&&s.depth>0){history.back();return true}return false})()';
+
+test.describe('shares on a phone', () => {
+  test.use({ viewport: { width: 412, height: 860 } });
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+
+  test('Back closes the share sheet and leaves the page behind it where it was', async ({ app, page }) => {
+    await app.openAlbum('Quiet Harbor');
+    const dialog = page.getByRole('dialog', { name: 'Share “Quiet Harbor”' });
+    const share = async () => {
+      await app.main.getByRole('button', { name: 'More', exact: true }).click();
+      await app.menu.getByRole('menuitem', { name: 'Share…' }).click();
+      await expect(dialog).toBeVisible();
+      await expect(dialog).toHaveClass(/\bsheet\b/);
+    };
+
+    await share();
+    await page.goBack();
+    await expect(dialog).toBeHidden();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+
+    // Android's Back gesture.
+    await share();
+    expect(await page.evaluate(STEP_BACK)).toBe(true);
+    await expect(dialog).toBeHidden();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+
+    // Cancel uses up the sheet's history entry, so the next Back leaves the record.
+    await share();
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+    await page.goBack();
+    await expect(app.heading).toHaveText('Records');
+  });
+});
