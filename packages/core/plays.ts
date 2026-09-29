@@ -22,6 +22,9 @@ export class PlayReports {
   #queue: QueuedPlay[];
   #account: string | null;
   #flushing: Promise<void> | null = null;
+  // Bumped by bind (another account) and clear. A send that began before either is stale: its
+  // play belongs to the account it was sent for, so it is never queued for the one bound now.
+  #generation = 0;
   private readonly now: () => number;
   constructor(private readonly d: {
     send(trackId: string, event: 'started' | 'finished', at?: number): Promise<SendOutcome>;
@@ -40,45 +43,61 @@ export class PlayReports {
   get size() { return this.#queue.length; }
 
   async report(trackId: string, event: 'started' | 'finished'): Promise<void> {
+    const generation = this.#generation;
     if (event === 'started') {
       if (this.d.away()) return;
-      if (await this.d.send(trackId, 'started') === 'unreachable') this.d.failed();
+      const outcome = await this.d.send(trackId, 'started');
+      if (outcome === 'unreachable' && generation === this.#generation) this.d.failed();
       return;
     }
     const play = { trackId, at: this.now() };
     if (this.d.away()) { this.push(play); return; }
     const outcome = await this.d.send(trackId, 'finished', play.at);
+    if (generation !== this.#generation) return;
     if (outcome === 'unreachable') { this.push(play); this.d.failed(); }
     else if (outcome === 'sent' && this.#queue.length) void this.flush();
   }
 
   // Oldest first, one at a time. A refused play (a song deleted from the server) is dropped; no
-  // answer stops the flush until the next one.
+  // answer stops the flush until the next one. A flush for an account no longer bound stops.
   flush(): Promise<void> {
     if (this.#flushing) return this.#flushing;
     if (this.d.away() || !this.#queue.length) return Promise.resolve();
-    this.#flushing = (async () => {
+    const generation = this.#generation;
+    let running: Promise<void> | undefined;
+    let settled = false;
+    running = (async () => {
       try {
-        while (this.#queue.length && !this.d.away()) {
+        while (this.#queue.length && !this.d.away() && generation === this.#generation) {
           const play = this.#queue[0];
           const outcome = await this.d.send(play.trackId, 'finished', play.at);
+          if (generation !== this.#generation) return;
           if (outcome === 'unreachable') { this.d.failed(); return; }
           if (this.#queue[0] === play) this.#queue = this.#queue.slice(1);
           this.store();
         }
-      } finally { this.#flushing = null; }
+      } finally {
+        settled = true;
+        if (running && this.#flushing === running) this.#flushing = null;
+      }
     })();
-    return this.#flushing;
+    if (!settled) this.#flushing = running;
+    return running;
   }
 
   // Plays belong to one account: another one starts with none.
   bind(account: string) {
     if (this.#account === account) return;
+    this.#generation++;
+    this.#flushing = null;
     this.#account = account;
     this.#queue = [];
     this.store();
   }
+  // Disconnect, or play reporting turned off: nothing waits, and nothing already sent comes back.
   clear() {
+    this.#generation++;
+    this.#flushing = null;
     if (!this.#queue.length) return;
     this.#queue = [];
     this.store();

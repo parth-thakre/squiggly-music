@@ -87,4 +87,65 @@ describe('play reports while the server is away', () => {
     expect(saved.at(-1)).toEqual({ account: 'other', plays: [] });
     expect(counts.at(-1)).toBe(0);
   });
+
+});
+
+// A send the test answers when it chooses, so an account can change while one is on its way.
+function held(stored: QueuedPlays = { account: 'A', plays: [] }) {
+  let account = stored.account ?? '';
+  const sent: string[] = [];
+  const answers: ((outcome: SendOutcome) => void)[] = [];
+  const saved: QueuedPlays[] = [];
+  const failed = vi.fn();
+  const subject = new PlayReports({
+    send: id => { sent.push(`${account}:${id}`); return new Promise<SendOutcome>(resolve => answers.push(resolve)); },
+    away: () => false, failed, load: () => stored,
+    save: value => saved.push({ account: value.account, plays: [...value.plays] }), changed: () => {}, now: () => 1,
+  });
+  const answer = async (outcome: SendOutcome) => { await vi.waitFor(() => expect(answers.length).toBeGreaterThan(0)); answers.shift()!(outcome); };
+  return { subject, sent, saved, failed, answer, signIn: (key: string) => { account = key; subject.bind(key); } };
+}
+
+describe('play reports when the account changes during a send', () => {
+  it('never queues one account\'s play for the next', async () => {
+    const t = held();
+    const report = t.subject.report('a-song', 'finished');
+    t.subject.clear();
+    t.signIn('B');
+    await t.answer('unreachable');
+    await report;
+    expect(t.subject.size).toBe(0);
+    expect(t.saved.at(-1)).toEqual({ account: 'B', plays: [] });
+    expect(t.failed).not.toHaveBeenCalled();
+    await t.subject.flush();
+    expect(t.sent).toEqual(['A:a-song']);
+  });
+  it('keeps nothing from a send that was on its way when the queue was cleared', async () => {
+    const t = held();
+    const report = t.subject.report('a-song', 'finished');
+    t.subject.clear();
+    await t.answer('unreachable');
+    await report;
+    expect(t.subject.size).toBe(0);
+    expect(t.saved).toEqual([]);
+  });
+  it('stops a flush for the account that was bound when it began', async () => {
+    const t = held({ account: 'A', plays: [{ trackId: 'one', at: 1 }, { trackId: 'two', at: 2 }] });
+    const flushing = t.subject.flush();
+    t.signIn('B');
+    await t.answer('sent');
+    await flushing;
+    expect(t.sent).toEqual(['A:one']);
+    expect(t.saved.at(-1)).toEqual({ account: 'B', plays: [] });
+    // B's own plays flush on their own, not behind A's.
+    t.signIn('B');
+    const report = t.subject.report('b-song', 'finished');
+    await t.answer('unreachable');
+    await report;
+    const next = t.subject.flush();
+    await t.answer('sent');
+    await next;
+    expect(t.sent).toEqual(['A:one', 'B:b-song', 'B:b-song']);
+    expect(t.subject.size).toBe(0);
+  });
 });
