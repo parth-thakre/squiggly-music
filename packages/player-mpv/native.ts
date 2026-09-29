@@ -107,21 +107,26 @@ export class NativePlayer {
   command(...args: string[]) {
     if (this.commandNative(this.handle, [...args, null]) < 0) throw new Error(`Audio engine rejected ${args[0]}.`);
   }
-  drainEvents(): { error: string | null; shutdown: boolean } {
+  // starts: entries mpv began loading (start-file). seeks: seeks mpv carried out, the host's own
+  // and loop-file's, which goes back to the start of a repeating song by seeking.
+  drainEvents(): { error: string | null; shutdown: boolean; starts: number; seeks: number } {
     let error: string | null = null;
+    let starts = 0, seeks = 0;
     // Limit work per tick even if a backend floods its event queue.
     for (let i = 0; i < 100; i++) {
       const pointer = this.waitEvent(this.handle, 0);
       if (!pointer) break;
       const event = koffi.decode(pointer, MpvEvent) as { event_id: number; data: unknown };
       if (event.event_id === 0) break;
-      if (event.event_id === 1) return { error, shutdown: true };
+      if (event.event_id === 1) return { error, shutdown: true, starts, seeks };
+      if (event.event_id === 6) starts++;
+      if (event.event_id === 20) seeks++;
       if (event.event_id === 7 && event.data) {
         const end = koffi.decode(event.data, EndFile) as { reason: number; error: number };
         if (end.reason === 4) error = `Playback failed in libmpv (code ${end.error}). Check the file, server connection, and output device.`;
       }
     }
-    return { error, shutdown: false };
+    return { error, shutdown: false, starts, seeks };
   }
   devices(): AudioDevice[] {
     const count = Math.min(this.number('audio-device-list/count') ?? 0, 128);

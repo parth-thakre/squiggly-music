@@ -181,6 +181,11 @@ export interface PlayerSnapshot {
   // One id per queue entry, parallel to `queue`, unique within the queue and stable across
   // moves. Two copies of the same song have different entry ids.
   entryIds: string[];
+  // Which play of the current entry this is: a string that changes whenever a song starts from the
+  // top (another entry, the same one loaded again, a repeat-one loop, a jump to the entry playing)
+  // and never on a seek or a pause. '' before anything has played. Anything that counts plays
+  // (play reports) keys on it; the browser and Android keep one in the page (PlayerState.playId).
+  playId: string;
   // Radio is owned by the main process so it keeps going while the main window is hidden.
   radio: { label: string } | null;
   devices: AudioDevice[];
@@ -331,7 +336,7 @@ export const emptyAudio = (): AudioPath => ({
 });
 export const emptyPlayer = (): PlayerSnapshot => ({
   engine: 'starting', error: null, playing: false, position: 0, duration: 0,
-  volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio: emptyAudio(),
+  volume: 100, currentIndex: -1, queue: [], entryIds: [], playId: '', radio: null, devices: [], audio: emptyAudio(),
   repeat: 'off', shuffle: false,
 });
 export const emptyDiagnostics = (): Diagnostics => ({
@@ -354,7 +359,8 @@ export interface AndroidSession {
 export interface AndroidPlayback {
   // The queue entry loaded, or null with nothing loaded.
   entryId: string | null;
-  // Changes whenever an entry starts from its beginning, which makes it a new play.
+  // Changes whenever an entry starts from its beginning, which makes it a new play. The page
+  // shows it as PlayerState.playId, a string like PlayerSnapshot.playId.
   playId: number;
   playing: boolean; buffering: boolean; ended: boolean; position: number; duration: number;
   // The original couldn't be decoded, so the server's 320 kbps MP3 is playing instead.
