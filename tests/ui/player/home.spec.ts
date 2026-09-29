@@ -24,8 +24,8 @@ test.describe('home', () => {
     await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Newest', 'Your mixes']);
     await expect(app.main.getByText('Played lately')).toHaveCount(0);
     await expect(app.main.getByText('Playing elsewhere')).toHaveCount(0);
-    // The mixes show their names rather than drawing songs, and the decades aren't looked for.
-    expect(fake.callsTo('randomSongs')).toEqual([]);
+    // A tile draws its songs once in view, as on Playlists, but the decades aren't looked for.
+    expect(fake.callsTo('randomSongs').filter(call => (call.args[0] as { fromYear?: number }).fromYear)).toEqual([]);
     expect(fake.callsTo('nowPlaying')).toHaveLength(1);
   });
 

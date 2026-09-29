@@ -153,7 +153,7 @@ img:is(.deck-cover, .head-cover) {
 /* Covers */
 .cover { display: block; object-fit: cover; background: var(--line); }
 .cover-type { display: flex; align-items: flex-end; padding: 10%; background: var(--ink); color: var(--ground); }
-.cover-type span { font: var(--display-weight) calc(20px * var(--display-size))/1.05 var(--font-display); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.cover-type span { font: var(--display-weight) calc(20px * var(--display-size))/1.05 var(--font-display); overflow-wrap: break-word; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .head-cover.cover-type span, .deck-cover.cover-type span { font-size: calc(30px * var(--display-size)); }
 /* Until its songs are drawn, an automatic playlist is an outline rather than a printed sleeve. */
 .mix-tile.cover-type { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }

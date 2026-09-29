@@ -1064,8 +1064,8 @@ export function GenrePage({ name }: { name: string }) {
 // Where the app opens. Each shelf loads on its own, so a slow answer holds up only the shelves
 // that need it: Your mixes waits for Most played's list, which says whether there is history. A
 // shelf stays hidden while it loads and when it has nothing to show. A shelf holds twelve at
-// most, and the automatic playlists show their names instead of drawing songs, so opening Home
-// asks the server for a few short lists and nothing more.
+// most, and a mix's tile draws its songs only once it scrolls into view, from the same cached
+// draw the Playlists and Mixes pages use, so opening Home asks the server for little.
 const SHELF = 12;
 export function Home() {
   return <>
@@ -1140,7 +1140,7 @@ function HomeMixes() {
           else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
         }} />
         <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
-          <MixTile mix={mix} tracks={null} travels={mix.id === morph.id} />
+          <MixTile mix={mix} travels={mix.id === morph.id} />
           <span className="grid-name"><span>{mix.name}</span></span>
           <span className="grid-sub">{mix.description}</span>
         </button>
