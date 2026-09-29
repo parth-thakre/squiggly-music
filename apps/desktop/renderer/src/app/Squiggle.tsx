@@ -59,6 +59,7 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
       }
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
       context.clearRect(0, 0, width, height);
+      // The range input's 4px thumb travels between these same points (app.css).
       const mid = height / 2, left = 2, right = width - 2;
       // At least one small wave is always drawn, so the first seconds squiggle too. That places
       // the thumb a little ahead of the true position for the opening moments only; the clock

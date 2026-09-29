@@ -71,6 +71,19 @@ test.describe('playback', () => {
     expect(toSeconds((await valueText(app)).split(' of ')[0])).toBeGreaterThan(dropped);
   });
 
+  test('a click seeks to the spot drawn under it, near either end', async ({ app }) => {
+    await app.play('Test Pressing', 'Long Run');
+    await app.pause();
+    const box = (await app.seek.boundingBox())!;
+    const length = Number(await app.seek.getAttribute('max'));
+    for (const fraction of [.15, .85]) {
+      await (await pressSeek(app, fraction)).up();
+      // The canvas draws the song from 2px in at each end (Squiggle.tsx).
+      const drawn = (box.width * fraction - 2) / (box.width - 4) * length;
+      expect(Math.abs(Number(await app.seek.inputValue()) - drawn), `seeking at ${fraction * 100}%`).toBeLessThan(.2);
+    }
+  });
+
   test('a seek while playing lands and playback continues from there', async ({ app }) => {
     await app.play('Test Pressing', 'Long Run');
     const mouse = await pressSeek(app, .6);
