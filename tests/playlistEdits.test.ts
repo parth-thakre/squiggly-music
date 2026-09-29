@@ -24,7 +24,7 @@ function server(ids: string[]) {
       if (refuse.has(`remove ${indexes}`)) return fail;
       songs = songs.filter((_, i) => !indexes.includes(i)); log.push(`remove ${indexes}`); return ok;
     }),
-    reorderPlaylist: (_: string, order: string[]) => gate(`reorder ${order}`, () => { songs = order.map(track); log.push(`reorder ${order}`); return ok; }),
+    reorderPlaylist: (_: string, order: string[]) => gate(`reorder ${order}`, () => { if (refuse.has('reorder')) return fail; songs = order.map(track); log.push(`reorder ${order}`); return ok; }),
     updatePlaylist: (_: string, changes: { name?: string }) => gate(`rename ${changes.name}`, () => { if (refuse.has('rename')) return fail; name = changes.name ?? name; return ok; }),
     deletePlaylist: () => gate('delete', () => ok),
   };
@@ -150,6 +150,27 @@ describe('playlist editing', () => {
     expect(await end).toEqual({ ok: true, value: undefined });
     expect(fake.songs()).toEqual(['T', 'A', 'X', 'Y', 'B', 'C', 'Z']);
     expect(shown(editor)).toEqual(['T', 'A', 'X', 'Y', 'B', 'C', 'Z']);
+  });
+
+  it('keeps songs appended but not put in place, so an edit queued for them still finds them', async () => {
+    const { fake, editor } = await opened(['A', 'B']);
+    fake.refuse.add('reorder');
+    const added = editor.add([track('X')], 0);
+    expect(shown(editor)).toEqual(['X', 'A', 'B']);
+    // Removed again while the drop is saving.
+    const removed = editor.removeAt([0], [track('X')]);
+    await fake.step();
+    expect(fake.waiting()).toEqual(['reorder X,A,B']);
+    await fake.step();
+    expect(await added).toEqual({ ok: false, error: 'The songs were added at the end. Refused' });
+    // X is on the server, at the end, and still under the removal waiting for it.
+    expect(fake.songs()).toEqual(['A', 'B', 'X']);
+    expect(shown(editor)).toEqual(['A', 'B']);
+    expect(fake.waiting()).toEqual(['remove 2']);
+    await fake.step();
+    expect(await removed).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['A', 'B']);
+    expect(shown(editor)).toEqual(['A', 'B']);
   });
 
   it('refuses index edits against a list that changed under the click', async () => {

@@ -217,8 +217,10 @@ export class PlaylistEditor {
       return read;
     }
     let request: Promise<Result> | null;
+    // What a refused edit still changed on the server: songs appended, then not put in place.
+    let landed = null as PlaylistEdit | null;
     switch (edit.kind) {
-      case 'add': request = this.addTo(base, edit); break;
+      case 'add': request = this.addTo(base, edit, () => { landed = { kind: 'add', entries: edit.entries }; }); break;
       case 'rename': request = this.source.updatePlaylist(this.id, { name: edit.name }); break;
       case 'delete': request = this.source.deletePlaylist(this.id); break;
       case 'remove': {
@@ -242,9 +244,10 @@ export class PlaylistEditor {
     const result = await request;
     invalidate(`playlist:${this.id}`); invalidate('playlists');
     if (edit.kind === 'delete') { if (result.ok) this.deleted = true; return result; }
-    // Read back what the server now holds. Until then (or if that fails) trust the edit's own effect.
+    // Read back what the server now holds. Until then (or if that fails) trust the edit's own
+    // effect. Songs that landed keep their keys, so edits queued for them still find them.
     if (base) {
-      const expected = result.ok ? applyEdit(base, edit) : base;
+      const expected = result.ok ? applyEdit(base, edit) : landed ? applyEdit(base, landed) : base;
       const read = await this.read(expected.entries);
       if (!read.ok) this.confirmed = expected;
       if (result.ok && !read.ok) return { ok: false, error: `Saved, but the playlist could not be read back. ${read.error}` };
@@ -253,9 +256,11 @@ export class PlaylistEditor {
   }
   // The server only appends, so songs placed inside the list are appended, then the whole list
   // is written in the new order, built from the server's confirmed list as a move is.
-  private async addTo(base: Confirmed | null, edit: Extract<PlaylistEdit, { kind: 'add' }>): Promise<Result> {
+  // `appended` is told when the songs are on the server, at the end, whatever happens next.
+  private async addTo(base: Confirmed | null, edit: Extract<PlaylistEdit, { kind: 'add' }>, appended: () => void): Promise<Result> {
     const added = await this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id));
     if (!added.ok || edit.after === undefined || !base) return added;
+    appended();
     const placed = await this.source.reorderPlaylist(this.id, applyEdit(base, edit).entries.map(e => e.track.id));
     return placed.ok ? placed : { ok: false, error: `The songs were added at the end. ${placed.error}` };
   }
