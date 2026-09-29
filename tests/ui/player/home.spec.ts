@@ -84,6 +84,24 @@ test.describe('home', () => {
     await expect(app.deck.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   });
 
+  test('a record played while a mix is on its way stays playing', async ({ app, fake, page }) => {
+    await app.signIn({ home: true });
+    fake.delay('randomSongs', 1500);
+    const everything = shelf(app, 'Your mixes').locator('li').filter({ hasText: 'Everything, shuffled' });
+    await everything.hover();
+    await everything.getByRole('button', { name: 'Play Everything, shuffled' }).click();
+    const quiet = sleeves(app, 'Newest').filter({ hasText: 'Quiet Harbor' });
+    await quiet.hover();
+    await quiet.getByRole('button', { name: 'Play Quiet Harbor' }).click();
+    await app.expectPlaying('Opening 2');
+    await expect(app.heading).toHaveText('Queue');
+    // The mix's songs arrive after the record started; they don't replace it.
+    await expect.poll(() => fake.callsTo('randomSongs').length).toBe(1);
+    await page.waitForTimeout(2000);
+    await expect(app.heading).toHaveText('Queue');
+    await app.expectPlaying('Opening 2');
+  });
+
   test('the saved queue is offered with its song and position, and goes once resumed', async ({ app, fake }) => {
     fake.saved = { tracks: ['tr-1-4', 'tr-1-1', 'tr-1-5'].map(id => ({ ...trackOf(id) })), currentIndex: 1, positionSeconds: 17, changed: null, changedBy: 'phone' };
     await app.signIn({ home: true });

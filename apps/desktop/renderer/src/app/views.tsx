@@ -1069,7 +1069,10 @@ function HomeMixes() {
     <ul className="grid">
       {mixes.map(mix => <li key={mix.id} className="playable">
         <PlayOver label={mix.name} play={async () => {
+          const asked = playRequests();
           const drawn = await mixTracks(mix);
+          // Something else started playing while the songs were on their way; that stays.
+          if (playRequests() !== asked) return;
           if (!drawn.ok) player.showError(drawn.error);
           else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
         }} />
