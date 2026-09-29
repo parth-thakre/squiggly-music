@@ -13,6 +13,8 @@
     portable: /-windows-x64-portable\.exe$/i,
     rpm: /\.x86_64\.rpm$/i,
     apk: /-android\.apk$/i,
+    macArm: /-macos-arm64\.zip$/i,
+    macIntel: /-macos-x64\.zip$/i,
     sums: /^SHA256SUMS$/
   };
 
@@ -20,14 +22,17 @@
     var ua = navigator.userAgent || "";
     var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
     if (/Android/i.test(p + ua)) return "android";
+    // iPads in desktop mode say they are Macs, but have a touch screen.
+    if (/iPhone|iPad|iPod/i.test(p + ua)) return "other";
+    if (/Mac/i.test(p) || /Macintosh/i.test(ua)) return (navigator.maxTouchPoints || 0) > 1 ? "other" : "mac";
     if (/win/i.test(p) || /Windows/i.test(ua)) return "windows";
     if (/Linux/i.test(p + ua)) return "linux";
     return "other";
   }
 
   // The visitor's system gets the one filled button, and its files lead the list. The other
-  // systems follow as a quiet "Also for" line. Anything without a build (a Mac, an iPhone) gets
-  // Windows, the page's own first choice.
+  // systems follow as a quiet "Also for" line. Anything without a build (an iPhone, an iPad)
+  // gets Windows, the page's own first choice.
   var os = platform();
   doc.querySelectorAll("[data-cta]").forEach(function (cta) {
     var mine = cta.querySelector('[data-os="' + os + '"]') || cta.querySelector(".btn");
@@ -69,8 +74,24 @@
     });
   }
 
+  // A Mac's button offers the Apple silicon zip. Chromium browsers can say the CPU is Intel;
+  // Safari and Firefox can't, so they keep Apple silicon.
+  function macIntel() {
+    var data = navigator.userAgentData;
+    if (os !== "mac" || !data || typeof data.getHighEntropyValues !== "function") return Promise.resolve();
+    return data.getHighEntropyValues(["architecture"]).then(function (values) {
+      if (values.architecture !== "x86") return;
+      doc.querySelectorAll('.btn[data-os="mac"]').forEach(function (btn) { btn.setAttribute("data-asset", "macIntel"); });
+      doc.querySelectorAll(".files").forEach(function (list) {
+        var intel = list.querySelector('[data-os="mac"] [data-asset="macIntel"]');
+        if (intel) list.insertBefore(intel.closest("div"), list.firstChild);
+      });
+    }).catch(function () { /* keep Apple silicon */ });
+  }
+
   if (typeof fetch === "function") {
-    fetch(API, { headers: { Accept: "application/vnd.github+json" } })
+    macIntel()
+      .then(function () { return fetch(API, { headers: { Accept: "application/vnd.github+json" } }); })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (release) { if (release) fill(release); })
       .catch(function () { /* the links already point at the release page */ });
