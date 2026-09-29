@@ -144,6 +144,29 @@ describe('keeping songs on the desktop', () => {
     expect(t.store.has('a')).toBe(false);
     expect((await readdir(t.dir)).filter(name => name.startsWith('s-'))).toEqual([]);
   });
+  it('counts two downloads at once against the same room, so together they can\'t pass the limit', async () => {
+    // No size from the server and no content-length: admission can't see the bytes coming, and
+    // both headers arrive before either body sends anything.
+    let opened = 0;
+    let both!: () => void;
+    const bothOpen = new Promise<void>(resolve => { both = resolve; });
+    const t = await setup({ limitBytes: () => 1000, respond: () => {
+      if (++opened === 2) both();
+      return new Response(new ReadableStream<Uint8Array>({
+        async pull(controller) { await bothOpen; controller.enqueue(new Uint8Array(700)); controller.close(); },
+      }), { headers: { 'content-type': 'audio/flac' } });
+    } });
+    t.learn(song('a', { coverArt: null }), song('b', { coverArt: null }));
+    expect(await t.manager.keep(t.request('album', 'al-1', ['a'], null))).toEqual({ ok: true, value: undefined });
+    expect(await t.manager.keep(t.request('album', 'al-2', ['b'], null))).toEqual({ ok: true, value: undefined });
+    await t.manager.idle();
+    expect(t.store.usedBytes).toBeLessThanOrEqual(1000);
+    expect(t.store.songCount).toBe(1);
+    const stopped = t.manager.state(null).jobs.filter(j => j.state === 'stopped');
+    expect(stopped).toHaveLength(1);
+    expect(stopped[0].error).toMatch(/limit after 0 of 1 songs/);
+    expect((await readdir(t.dir)).filter(name => name.startsWith('s-')).length).toBe(1);
+  });
   it('cancels: the song on its way is dropped with its part, finished songs stay', async () => {
     const t = await setup({ gated: true, concurrency: 1 });
     t.learn(song('a'), song('b'), song('c'));

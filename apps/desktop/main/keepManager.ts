@@ -327,9 +327,19 @@ export class KeepManager {
     try { response = await this.d.open(track.id, controller.signal); } finally { clearTimeout(headers); }
     const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
     if (!response.ok || !response.body || refusedTypes(type)) { await response.body?.cancel().catch(() => {}); throw new Error('The server sent an error instead of the song.'); }
-    const budget = this.d.limitBytes() - store.usedBytes - [...this.inFlightBytes].filter(([id]) => id !== track.id).reduce((sum, [, bytes]) => sum + bytes, 0);
+    // Every download counts against one room: what is kept, plus what each running download has
+    // received or said it will send. Checked on every chunk, so two at once can't both take the
+    // room that was left when their headers came.
     const declared = Number(response.headers.get('content-length') ?? NaN);
-    if (Number.isFinite(declared) && declared > budget) { await response.body.cancel().catch(() => {}); throw new LimitReached(); }
+    const promised = Number.isFinite(declared) ? declared : 0;
+    // A download that would pass the limit gives its room back at once, so the other one goes on.
+    const reserve = (bytes: number) => {
+      this.inFlightBytes.set(track.id, bytes);
+      if (store.usedBytes + this.inFlight() <= this.d.limitBytes()) return true;
+      this.inFlightBytes.delete(track.id);
+      return false;
+    };
+    if (!reserve(promised)) { await response.body.cancel().catch(() => {}); throw new LimitReached(); }
     const file = keptFileName('s', track.id, suffixFor(track.sourceFormat, type));
     const final = store.resolveFile(file);
     if (!final) throw new Error('Unexpected file name.');
@@ -342,9 +352,8 @@ export class KeepManager {
     const counter = new Transform({
       transform: (chunk: Buffer, _encoding, done) => {
         count += chunk.byteLength;
-        this.inFlightBytes.set(track.id, count);
         kick();
-        done(count > budget ? new LimitReached() : null, chunk);
+        done(reserve(Math.max(count, promised)) ? null : new LimitReached(), chunk);
       },
     });
     kick();
@@ -355,10 +364,18 @@ export class KeepManager {
     const handle = await open(part, 'r+');
     try { await handle.sync(); } finally { await handle.close(); }
     await rename(part, final);
+    // The song's bytes move from running to kept in one step.
+    this.inFlightBytes.delete(track.id);
     if (!store.referenced(track.id)) { await rm(final, { force: true }).catch(() => undefined); return count; }
     store.addSong(track, file, count);
     this.d.changed('revision');
     return count;
+  }
+
+  private inFlight() {
+    let sum = 0;
+    for (const bytes of this.inFlightBytes.values()) sum += bytes;
+    return sum;
   }
 
   private async coverTask(job: Job, coverArt: string): Promise<void> {
@@ -368,7 +385,7 @@ export class KeepManager {
       const cover = await this.d.cover(coverArt);
       const ext = cover && coverExt(cover.contentType);
       if (!cover || !ext || !isCoverType(cover.contentType) || !this.jobs.includes(job) || job.state === 'stopped') return;
-      if (store.usedBytes + cover.bytes.byteLength > this.d.limitBytes()) return;
+      if (store.usedBytes + this.inFlight() + cover.bytes.byteLength > this.d.limitBytes()) return;
       const file = keptFileName('c', coverArt, ext);
       const final = store.resolveFile(file);
       if (!final) return;
