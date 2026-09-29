@@ -67,6 +67,8 @@ describe('isolated audio host', () => {
     expect(replies.get(1)).toBeNull();
     expect(snapshots.at(-1)?.audio.decoderRate).toBe(48000);
     expect(snapshots.at(-1)?.audio.outputBackend).toBe('null');
+    // The audio host never asks the sound server; the main process fills the sink in.
+    expect(snapshots.at(-1)?.audio.sink).toBeNull();
     expect(snapshots.at(-1)?.audio.replayGain).toBe('no');
     expect(JSON.stringify(snapshots)).not.toContain(fixtureDirectory);
     send({ id: 2, action: { type: 'pause' } });

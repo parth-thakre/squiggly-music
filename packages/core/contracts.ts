@@ -217,6 +217,20 @@ export interface RadioApi {
   stop(): Promise<Result>;
 }
 export interface AudioDevice { name: string; description: string }
+export type AudioServer = 'pipewire' | 'pulseaudio';
+// What the sound server reports about the sink mpv plays into: the rate, sample format, and
+// channel count it has opened that sink with. The main process asks it on Linux (main/sinks.ts).
+// It is the server's report, not what a DAC receives. `name` is the sink's description.
+// `resampling` is true only when the server's sink rate and mpv's output rate are both known and
+// differ, false when both are known and equal, and null when either is unknown.
+export interface AudioSink {
+  server: AudioServer;
+  name: string;
+  rate: number | null;
+  format: string | null;
+  channels: number | null;
+  resampling: boolean | null;
+}
 export interface AudioPath {
   codec: string | null;
   decoderRate: number | null;
@@ -234,6 +248,8 @@ export interface AudioPath {
   bufferSeconds: number | null;
   streamBytesPerSecond: number | null;
   buffering: boolean;
+  // Linux only, filled in by the main process; null when the server wasn't asked or didn't answer.
+  sink: AudioSink | null;
 }
 export interface PlayerSnapshot {
   engine: 'starting' | 'ready' | 'unavailable' | 'crashed';
@@ -421,7 +437,7 @@ export const emptyAudio = (): AudioPath => ({
   codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null,
   outputRate: null, outputFormat: null, outputChannels: null, outputBackend: null,
   requestedDevice: 'auto', replayGain: null, exclusiveRequested: null, filters: null, bufferSeconds: null,
-  streamBytesPerSecond: null, buffering: false,
+  streamBytesPerSecond: null, buffering: false, sink: null,
 });
 export const emptyPlayer = (): PlayerSnapshot => ({
   engine: 'starting', error: null, playing: false, position: 0, duration: 0,
