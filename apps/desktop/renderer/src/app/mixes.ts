@@ -39,13 +39,14 @@ export function buildMixes(genres: Genre[], decades: number[], history: boolean)
 }
 
 // A decade qualifies when the server can find at least a handful of songs from it.
-export async function libraryDecades(): Promise<number[]> {
+// A lookup that fails is a failure, not a decade without songs: it isn't kept, and the next
+// visit asks again.
+export async function libraryDecades(): Promise<Result<number[]>> {
   const candidates = Array.from({ length: 9 }, (_, i) => 1940 + i * 10);
-  const found = await Promise.all(candidates.map(async decade => {
-    const result = await api.randomSongs({ size: 8, fromYear: decade, toYear: decade + 9 });
-    return result.ok && result.value.length >= 8 ? decade : null;
-  }));
-  return found.filter((d): d is number => d !== null).reverse();
+  const results = await Promise.all(candidates.map(decade => api.randomSongs({ size: 8, fromYear: decade, toYear: decade + 9 })));
+  const failed = results.find(result => !result.ok);
+  if (failed && !failed.ok) return failed;
+  return { ok: true, value: candidates.filter((_, i) => { const result = results[i]; return result.ok && result.value.length >= 8; }).reverse() };
 }
 
 // Mixes stay put for the session until the listener asks for a new draw. Only the most

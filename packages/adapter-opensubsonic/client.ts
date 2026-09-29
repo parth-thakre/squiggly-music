@@ -250,17 +250,23 @@ const playlistEditMessages: Record<number, string> = {
   70: 'This playlist no longer exists. Refresh your playlists.',
 };
 // Last.fm's biographies arrive as HTML ending in a "Read more on Last.fm" link. The page shows
-// text only: the link goes, then every tag, then the entities are decoded and the spacing tidied.
+// text only: the link goes, then every tag, then the entities are decoded, then any tag the
+// entities spelled out, and the spacing tidied.
 const entities: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
+// A tag runs from "<" and a letter, "/", "!" or "?" to the next ">", or to the end when it never
+// closes, as a browser reads it. Every attempt either matches or fails at its second character,
+// so the text is read once however many "<" it holds (the server allows 100,000 characters).
+const tags = /<[a-z!?/][^>]*(?:>|$)/gi;
 export function plainText(html: string): string | null {
   const text = html
-    .replace(/<a\b[^>]*>\s*Read more on Last\.fm\s*<\/a>\.?/gi, ' ')
-    .replace(/<[^>]*>/g, ' ')
+    .replace(/<a\b[^<>]*>\s*Read more on Last\.fm\s*<\/a>\.?/gi, ' ')
+    .replace(tags, ' ')
     .replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (entity, name: string) => {
       if (name[0] !== '#') return entities[name.toLowerCase()] ?? entity;
       const code = name[1] === 'x' || name[1] === 'X' ? parseInt(name.slice(2), 16) : Number(name.slice(1));
       return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
     })
+    .replace(tags, ' ')
     .replace(/\s+/g, ' ').trim();
   return text || null;
 }

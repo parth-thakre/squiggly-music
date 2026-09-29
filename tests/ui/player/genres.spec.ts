@@ -37,6 +37,36 @@ test.describe('genres', () => {
     await expect(app.heading).toHaveText('Genres');
   });
 
+  test('a genre longer than a page loads the rest as its list nears the end', async ({ app, fake }) => {
+    fake.large = true;
+    await app.section('Genres').click();
+    const genres = app.main.locator('ul.genres > li');
+    await expect(genres).toHaveCount(4);
+    expect(await genres.first().innerText()).toBe('Live\n210 songs, 1 record');
+    await genres.getByRole('button', { name: /^Live/ }).click();
+    await expect(app.heading).toHaveText('Live');
+    await expect(app.row('Night One 1')).toBeVisible();
+    expect(fake.callsTo('songsByGenre').map(call => call.args)).toEqual([['Live', 0, 200]]);
+    await app.main.evaluate(main => main.scrollTo(0, main.scrollHeight));
+    await expect.poll(() => fake.callsTo('songsByGenre').map(call => call.args)).toEqual([['Live', 0, 200], ['Live', 200, 200]]);
+    await app.main.evaluate(main => main.scrollTo(0, main.scrollHeight));
+    await expect(app.row('Night Two 100')).toBeVisible();
+  });
+
+  test('a Shuffle that answers after another song started leaves that song playing', async ({ app, fake, page }) => {
+    await app.section('Genres').click();
+    await app.main.locator('ul.genres').getByRole('button', { name: /^Rock/ }).click();
+    await expect(app.heading).toHaveText('Rock');
+    fake.delay('randomSongs', 800);
+    await app.main.getByRole('button', { name: 'Shuffle', exact: true }).click();
+    await app.rowButton(app.row('Opening 5')).click();
+    await app.expectPlaying('Opening 5');
+    await page.waitForTimeout(1200);
+    expect(fake.callsTo('randomSongs')).toHaveLength(1);
+    await expect(app.heading).toHaveText('Rock');
+    await app.expectPlaying('Opening 5');
+  });
+
   test('G then G goes to genres', async ({ app, page }) => {
     await app.main.focus();
     await page.keyboard.press('g');
@@ -88,5 +118,31 @@ test.describe('genres', () => {
     await toggle.click();
     await expect(decades).toHaveCount(0);
     await expect(records.first()).toContainText('Test Pressing');
+  });
+
+  test('a failed decade lookup says so, and opening Decade again asks again', async ({ app, fake }) => {
+    const toggle = app.main.getByRole('button', { name: 'Decade', exact: true });
+    const decades = app.main.getByRole('group', { name: 'Decade' });
+    fake.failNext('randomSongs', 'The server is busy.');
+    await toggle.click();
+    await expect(decades).toContainText('The server is busy.');
+    await expect(decades.getByRole('button')).toHaveCount(0);
+    await toggle.click();
+    await expect(decades).toHaveCount(0);
+    await toggle.click();
+    await expect(decades.getByRole('button')).toHaveText(['All', '2020s', '2010s', '2000s', '1990s']);
+    expect(fake.callsTo('randomSongs')).toHaveLength(18);
+  });
+
+  test('six tabs, Back, and the search field fit a narrow desktop window', async ({ app, page }) => {
+    await app.openAlbum('Quiet Harbor');
+    const bar = page.locator('header.bar');
+    await expect(bar.getByRole('button', { name: 'Back', exact: true })).toBeVisible();
+    for (const width of [761, 800, 850, 900]) {
+      await page.setViewportSize({ width, height: 700 });
+      const search = (await page.getByRole('searchbox', { name: 'Search your library' }).boundingBox())!;
+      expect(search.x + search.width, `at ${width}px`).toBeLessThanOrEqual(width);
+      expect(await bar.evaluate(element => element.scrollWidth - element.clientWidth), `at ${width}px`).toBe(0);
+    }
   });
 });

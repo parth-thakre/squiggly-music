@@ -3,7 +3,7 @@ import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort }
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
-import { current, player, usePlayer } from './player';
+import { current, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
@@ -96,13 +96,23 @@ onInvalidate(prefix => {
   for (const [list, p] of paged) if (p.keys.some(key => key.startsWith(prefix))) { paged.delete(list); any = true; }
   if (any) dropped.forEach(listener => listener());
 });
+// Genres can number thousands, so only the few genre lists visited last are kept, the others
+// dropped oldest first. Records and Tracks keep theirs.
+const GENRE_LISTS = 8;
+function touchPaged(list: string) {
+  if (!list.startsWith('genre:')) return;
+  const p = paged.get(list);
+  if (p) { paged.delete(list); paged.set(list, p); }
+  const genres = [...paged.keys()].filter(key => key.startsWith('genre:'));
+  for (const key of genres.slice(0, Math.max(0, genres.length - GENRE_LISTS))) paged.delete(key);
+}
 type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
 function usePaged<T extends { id: string }>(list: string, size: number, request: PageRequest<T>, once = false) {
   const session = useLibraryEpoch();
   const [, redraw] = useState(0);
   const more = useCallback(() => {
     let p = paged.get(list) as Paged<T> | undefined;
-    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random(), keys: [] }; paged.set(list, p); }
+    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random(), keys: [] }; paged.set(list, p); touchPaged(list); }
     if (p.busy || p.done) return;
     const page = p;
     page.busy = true; page.error = null;
@@ -122,7 +132,7 @@ function usePaged<T extends { id: string }>(list: string, size: number, request:
     });
     redraw(v => v + 1);
   }, [list]);
-  useEffect(() => { const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
+  useEffect(() => { touchPaged(list); const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
   useEffect(() => { const listener = () => { if (!paged.has(list)) more(); }; dropped.add(listener); return () => { dropped.delete(listener); }; }, [more]);
   const p = paged.get(list) as Paged<T> | undefined;
   return { items: p?.items ?? none as T[], done: p?.done ?? false, error: p?.error ?? null, more };
@@ -427,8 +437,11 @@ export function Tracks() {
   // Shuffle draws from the whole library, not just the tracks loaded so far.
   const shuffle = async () => {
     setProblem(null); setBusy(true);
+    const asked = playRequests();
     const drawn = await api.randomSongs({ size: 500 });
     setBusy(false);
+    // Something else started playing while the songs were on their way; that stays.
+    if (playRequests() !== asked) return;
     if (!drawn.ok) { setProblem(drawn.error); return; }
     if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
   };
@@ -455,7 +468,6 @@ export function Tracks() {
 
 // Playlists ----------------------------------------------------------------------------
 
-const decadesResult = () => libraryDecades().then((value): Result<number[]> => ({ ok: true, value }));
 function playlistNote(playlist: Playlist) {
   if (playlist.comment?.startsWith('Auto-imported')) return 'Kept in sync with a playlist file on the server.';
   if (playlist.readonly) return 'Managed by the server.';
@@ -465,7 +477,7 @@ function playlistNote(playlist: Playlist) {
 export function Playlists() {
   const playlists = useResource('playlists', () => api.playlists());
   const genres = useResource('genres', () => api.genres());
-  const decades = useResource('decades', decadesResult);
+  const decades = useResource('decades', libraryDecades);
   const history = useResource('albums:frequent:0:1', () => api.albums('frequent', 0, 1));
   const mixes = useMemo(() => buildMixes(genres?.ok ? genres.value : [], decades?.ok ? decades.value : [], !!(history?.ok && history.value.length)),
     [genres, decades, history]);
@@ -878,7 +890,7 @@ const decadeOf = (value: unknown) => typeof value === 'number' && Number.isInteg
 function Decades({ sort, decade }: { sort: AlbumListType | undefined; decade: number | null }) {
   const [open, setOpen] = useState(decade !== null);
   const shown = open || decade !== null;
-  const found = useResource(shown ? 'decades' : null, decadesResult);
+  const found = useResource(shown ? 'decades' : null, libraryDecades);
   const known = found?.ok ? found.value : [];
   const decades = decade !== null && !known.includes(decade) ? [...known, decade].sort((a, b) => b - a) : known;
   const choose = (chosen: number | null) => nav.go({ view: 'records', ...(sort ? { sort } : {}), ...(chosen !== null ? { decade: chosen } : {}) }, true);
@@ -904,17 +916,45 @@ export function Genres() {
   const result = useResource('genres', () => api.genres());
   return <>
     <Head title="Genres" />
-    <Pending result={result} waiting="Gathering genres">{genres => genres.length ? <ul className="rows genres">
-      {[...genres].sort(bySongs).map(genre => <li key={genre.name}>
-        <button type="button" onClick={() => nav.go({ view: 'genre', name: genre.name })}>
-          <span className="row-text">
-            <span className="row-name">{genre.name}</span>
-            <span className="row-sub">{plural(genre.songCount, 'song')}, {plural(genre.albumCount, 'record')}</span>
-          </span>
-        </button>
-      </li>)}
-    </ul> : <Status>No genres yet. Genres come from the tags in your files.</Status>}</Pending>
+    <Pending result={result} waiting="Gathering genres">{genres => genres.length ? <GenreList genres={genres} />
+      : <Status>No genres yet. Genres come from the tags in your files.</Status>}</Pending>
   </>;
+}
+// A library can hold thousands of genres (every tag its files use), so only the rows near the
+// viewport are rendered, as on Artists. The grid's own columns and its first row's height give
+// the rows their size; until they're measured, the first few genres stand in.
+function GenreList({ genres }: { genres: Genre[] }) {
+  const sorted = useMemo(() => [...genres].sort(bySongs), [genres]);
+  const list = useRef<HTMLUListElement>(null);
+  const [shape, setShape] = useState<{ columns: number; row: number } | null>(null);
+  useLayoutEffect(() => {
+    const element = list.current;
+    if (!element) return;
+    const measure = () => {
+      const item = element.firstElementChild;
+      if (!item) return;
+      const style = getComputedStyle(element);
+      const next = { columns: Math.max(1, style.gridTemplateColumns.split(' ').length), row: item.getBoundingClientRect().height + (parseFloat(style.rowGap) || 0) };
+      setShape(s => s && s.columns === next.columns && s.row === next.row ? s : next);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const offsets = useMemo(() => shape ? Array.from({ length: Math.ceil(sorted.length / shape.columns) + 1 }, (_, i) => i * shape.row) : [0], [sorted.length, shape]);
+  const [first, last] = useVisibleRows(list, offsets);
+  const shown = shape ? sorted.slice(first * shape.columns, last * shape.columns) : sorted.slice(0, 24);
+  return <ul ref={list} className="rows genres" style={shape ? { paddingTop: offsets[first], paddingBottom: offsets[offsets.length - 1] - offsets[last] } : undefined}>
+    {shown.map(genre => <li key={genre.name}>
+      <button type="button" onClick={() => nav.go({ view: 'genre', name: genre.name })}>
+        <span className="row-text">
+          <span className="row-name">{genre.name}</span>
+          <span className="row-sub">{plural(genre.songCount, 'song')}, {plural(genre.albumCount, 'record')}</span>
+        </span>
+      </button>
+    </li>)}
+  </ul>;
 }
 
 // One genre's songs, 200 at a time as the list nears its end, like Tracks.
@@ -929,8 +969,11 @@ export function GenrePage({ name }: { name: string }) {
   // Shuffle draws from the whole genre, not just the songs loaded so far.
   const shuffle = async () => {
     setProblem(null); setBusy(true);
+    const asked = playRequests();
     const drawn = await api.randomSongs({ size: 500, genre: name });
     setBusy(false);
+    // Something else started playing while the songs were on their way; that stays.
+    if (playRequests() !== asked) return;
     if (!drawn.ok) { setProblem(drawn.error); return; }
     if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
   };

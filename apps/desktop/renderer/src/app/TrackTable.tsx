@@ -172,7 +172,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
             onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>
         </li>;
         return group ? [<li key={`group-${index}`} className="group-head"
-          style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}><h2>{group.label}</h2></li>, row] : row;
+          style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
+          <h2 title={group.label} aria-label={group.label}>{group.label}</h2></li>, row] : row;
       })}
     </ol>
     {onMove && <p className="sr-only" aria-live="polite">{announcement}</p>}

@@ -828,11 +828,21 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
 .similar .link { font-size: calc(15.5px * var(--text)); }
 /* A heading between songs: a record's discs. It takes one row's height, as windowing expects. */
 .tracks li.group-head { align-items: flex-end; padding-bottom: 6px; }
-.group-head h2 { margin: 0; font: var(--display-weight) calc(19px * var(--display-size))/1.2 var(--font-display); }
+/* One line, however long the disc's title: the row's height is fixed, so a second line would
+   rise into the song above. The whole title is in the heading's tooltip. */
+.group-head h2 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--display-weight) calc(19px * var(--display-size))/1.2 var(--font-display); }
 /* Decade, at the end of the Records sorts: it opens a row of decades under them. */
 .choices .decade-toggle.on { color: var(--ink); font-weight: 600; }
 .decades { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 20px; }
 .decades .status-inline { color: var(--soft); }
+/* Six tabs on a narrow desktop window, with Back showing: the header's gaps close up and the
+   search field gives way further, so the field stays inside the window. */
+@media (min-width: 761px) and (max-width: 900px) {
+  .bar, html[data-density='compact'] .bar { gap: 14px; }
+  .sections { gap: 12px; }
+  .wordmark { margin-right: 0; }
+  .search { min-width: 90px; }
+}
 /* Six tabs on a narrow phone: the labels shrink a little further to stay on one line. */
 @media (max-width: 480px) {
   .sections button { padding: 0 clamp(1px, 1vw, 6px); font-size: min(calc(15px * var(--text)), 3.6vw); }

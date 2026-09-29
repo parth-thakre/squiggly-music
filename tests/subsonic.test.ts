@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Schema } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, normalizeServerUrl, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 
@@ -515,12 +515,30 @@ describe('artist information, genres, years and discs', () => {
       similarArtist: [{ id: 'ar2', name: ' Portishead ' }, { id: '', name: 'Not in the library' }, { name: 'No id either' }, { id: 'ar2', name: 'Portishead' }, { id: 'ar1', name: 'Radiohead' }],
     } });
     expect(await Effect.runPromise(client().artistInfo('ar1'))).toEqual({
-      biography: 'Radiohead are an English rock band & more. <script> 🎸', musicBrainzId: 'a74b1b7f-71a5-4011-9441-d0b5e4122711',
+      biography: 'Radiohead are an English rock band & more. 🎸', musicBrainzId: 'a74b1b7f-71a5-4011-9441-d0b5e4122711',
       lastFmUrl: 'https://www.last.fm/music/Radiohead', images: { small: 'https://img.example/s.jpg', medium: null, large: null },
       similar: [{ id: 'ar2', name: 'Portishead' }],
     });
     const [request] = sentParams(mock);
     expect([request.endpoint, request.params.get('id'), request.params.get('count')]).toEqual(['getArtistInfo2.view', 'ar1', '20']);
+  });
+  it('reads a biography once however many "<" it holds, and leaves no tag in it', () => {
+    // A tag stripper that looks ahead to the next ">" from every "<" takes seconds on these.
+    for (const html of ['<'.repeat(100_000), '<a '.repeat(33_000), '<a'.repeat(50_000), '&lt;a'.repeat(20_000)]) {
+      const started = performance.now();
+      plainText(html);
+      expect(performance.now() - started).toBeLessThan(100);
+    }
+    const tag = /<[a-z!?/]/i;
+    for (const [html, text] of [
+      ['<b<i>nested</i></b> and <<b>>doubled', 'nested and < >doubled'],
+      ['Formed <script>alert(1)</script> in 1985 <a href="https://x" and never closed', 'Formed alert(1) in 1985'],
+      ['&lt;b&gt;escaped&lt;/b&gt; &#60;script&#62;twice&#x3c;/script&#x3e; &amp;lt;i&amp;gt;', 'escaped twice &lt;i&gt;'],
+      ['a &lt; b, and <3', 'a < b, and <3'],
+    ]) {
+      expect(plainText(html)).toBe(text);
+      expect(plainText(html)).not.toMatch(tag);
+    }
   });
   it('leaves everything unknown when the server knows nothing about an artist', async () => {
     servePayload({ artistInfo2: {} });
