@@ -105,24 +105,31 @@ function pipewireFacts(node: PwNode): SinkFacts | null {
 const namedDevice = (device: string) => /^(?:pipewire|pulse)\/(.+)$/.exec(device)?.[1] ?? null;
 const usesDefault = (device: string) => device === 'auto' || device === 'pipewire' || device === 'pulse';
 
-// Finds the sink by following mpv's own stream (the host's process id, on the node or on its
-// client) to the sink it is linked to. Without a stream, a pipewire or pulse output falls back to
-// the device mpv asked for, then to the default sink; either may be a guess, since the session
-// manager can move a stream elsewhere. A stream linked to no sink, or to several, is unknown.
-export function pipewireSink(dump: PwDump, query: SinkQuery): SinkFacts | null {
-  if (!probeable(query.backend)) return null;
-  const streams = query.pid === undefined ? [] : [...dump.nodes.values()].filter(node => {
+// mpv's own streams in the graph: the host's process id, on the node or on its client.
+export function mpvStreams(dump: PwDump, pid: number | undefined): PwNode[] {
+  if (pid === undefined) return [];
+  return [...dump.nodes.values()].filter(node => {
     const props = node.info.props;
     if (props['media.class'] !== 'Stream/Output/Audio') return false;
     const client = props['client.id'];
-    return props['application.process.id'] === query.pid || (client !== undefined && dump.clientPids.get(client) === query.pid);
+    return props['application.process.id'] === pid || (client !== undefined && dump.clientPids.get(client) === pid);
   });
+}
+
+// Finds the sink by following mpv's own stream to the sink it is linked to. Without a stream, a
+// pipewire output falls back to the device mpv asked for, then to the default sink; either may be
+// a guess, since the session manager can move a stream elsewhere. Other outputs may not be talking
+// to this PipeWire at all, so without a stream they are unknown here. A stream linked to no sink,
+// or to several, is unknown.
+export function pipewireSink(dump: PwDump, query: SinkQuery): SinkFacts | null {
+  if (!probeable(query.backend)) return null;
+  const streams = mpvStreams(dump, query.pid);
   if (streams.length) {
     const sinks = new Set<number>();
     for (const stream of streams) for (const target of dump.links.get(stream.id) ?? []) if (isSink(dump.nodes.get(target))) sinks.add(target);
     return sinks.size === 1 ? pipewireFacts(dump.nodes.get([...sinks][0])!) : null;
   }
-  if (!NAMED.has(query.backend)) return null;
+  if (query.backend !== 'pipewire') return null;
   const name = namedDevice(query.device) ?? (usesDefault(query.device) ? dump.defaultSink : null);
   const sink = name === null ? undefined : [...dump.nodes.values()].find(node => isSink(node) && node.info.props['node.name'] === name);
   return sink ? pipewireFacts(sink) : null;
@@ -157,13 +164,15 @@ export async function pulseSink(sinks: readonly PactlSink[], inputs: readonly Pa
 }
 
 // Asks the sound server once. Linux only, and only for an mpv output that can reach one; nothing is
-// spawned otherwise. A dump from pw-dump settles it, even when it finds no sink; pactl is asked only
-// when pw-dump is missing or doesn't answer. Never throws.
+// spawned otherwise. For ao=pipewire a dump from pw-dump settles it, even when it finds no sink.
+// Other outputs may talk to another server (PulseAudio beside a PipeWire kept for screen sharing,
+// or PULSE_SERVER set elsewhere), so the dump settles them only when mpv's stream is in it. Then,
+// or when pw-dump is missing or doesn't answer, pactl is asked. Never throws.
 export async function readSink(query: SinkQuery, run: Run = execText, platform: string = process.platform): Promise<SinkFacts | null> {
   if (platform !== 'linux' || !probeable(query.backend)) return null;
   try {
     const dump = parsePwDump(await run('pw-dump', ['-N']));
-    if (dump) return pipewireSink(dump, query);
+    if (dump && (query.backend === 'pipewire' || mpvStreams(dump, query.pid).length)) return pipewireSink(dump, query);
     const [sinksText, inputsText] = await Promise.all([run('pactl', ['-f', 'json', 'list', 'sinks']), run('pactl', ['-f', 'json', 'list', 'sink-inputs'])]);
     const sinks = parsePactlSinks(sinksText);
     if (!sinks?.length) return null;

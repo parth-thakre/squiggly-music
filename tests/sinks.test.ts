@@ -6,7 +6,7 @@ import {
   type Run, type SinkFacts, type SinkQuery,
 } from '../apps/desktop/main/sinks';
 import {
-  BLUETOOTH, client, defaults, HOST_PID, link, mpvStream, pactlInfo, pactlInputs, pactlSinks, pwDump, SECRET, SINK, SINK_DESCRIPTION, sinkNode, text,
+  BLUETOOTH, client, defaults, driverNodes, HOST_PID, link, mpvStream, pactlInfo, pactlInputs, pactlSinks, pwDump, SECRET, SINK, SINK_DESCRIPTION, sinkNode, text,
 } from './sinkFixtures';
 
 const dac: SinkFacts = { server: 'pipewire', name: SINK_DESCRIPTION, rate: 48000, format: 's32le', channels: 2 };
@@ -48,7 +48,10 @@ describe('the PipeWire sink', () => {
   it('without a stream, uses the device mpv was given, then the default sink', () => {
     const none = dump({ without: 'stream' });
     expect(pipewireSink(none, query({ device: `pipewire/${BLUETOOTH}` }))?.name).toBe('Headphones');
-    expect(pipewireSink(none, query({ backend: 'pulse', device: `pulse/${BLUETOOTH}` }))?.name).toBe('Headphones');
+    expect(pipewireSink(none, query({ device: `pulse/${BLUETOOTH}` }))?.name).toBe('Headphones');
+    // ao=pulse may be talking to another server, so this graph's device and default say nothing about it.
+    expect(pipewireSink(none, query({ backend: 'pulse', device: `pulse/${BLUETOOTH}` }))).toBeNull();
+    expect(pipewireSink(none, query({ backend: 'pulse' }))).toBeNull();
     expect(pipewireSink(none, query({ device: 'pipewire/alsa_output.gone' }))).toBeNull();
     // The default is default.audio.sink, never default.configured.audio.sink (a sink that isn't there).
     expect(pipewireSink(none, query({ device: 'auto' }))).toEqual(dac);
@@ -165,6 +168,36 @@ describe('asking the sound server', () => {
     const notFound = shell({ pwDump: text(pwDump({ without: 'stream' })), sinks: text(pactlSinks()) });
     expect(await readSink(query({ device: 'pipewire/alsa_output.gone' }), notFound.run, 'linux')).toBeNull();
     expect(notFound.calls).toEqual(['pw-dump -N']);
+  });
+
+  it('asks pactl for ao=pulse when mpv\'s stream isn\'t in PipeWire\'s graph', async () => {
+    const builtIn = { server: 'pulseaudio', name: 'Built-in Audio Analog Stereo', rate: 44100, format: 's16le', channels: 2 };
+    const pulse = { sinks: text(pactlSinks()), inputs: text(pactlInputs(1)), info: text(pactlInfo()) };
+    // PulseAudio plays, and a PipeWire with only its driver nodes runs beside it for screen sharing.
+    const drivers = shell({ ...pulse, pwDump: text([...driverNodes()]) });
+    expect(await readSink(query({ backend: 'pulse' }), drivers.run, 'linux')).toEqual(builtIn);
+    expect(drivers.calls).toEqual(['pw-dump -N', 'pactl -f json list sinks', 'pactl -f json list sink-inputs']);
+    // A PipeWire with sinks and a default of its own that mpv isn't talking to (PULSE_SERVER elsewhere).
+    const separate = shell({ ...pulse, pwDump: text(pwDump({ without: 'stream' })) });
+    expect(await readSink(query({ backend: 'pulse' }), separate.run, 'linux')).toEqual(builtIn);
+    // Neither server has mpv's stream and pactl isn't there: unknown, not PipeWire's default.
+    const noPactl = shell({ pwDump: text(pwDump({ without: 'stream' })) });
+    expect(await readSink(query({ backend: 'pulse' }), noPactl.run, 'linux')).toBeNull();
+    // ALSA through PulseAudio's plugin is found by its sink-input the same way.
+    const alsa = shell({ ...pulse, pwDump: text([...driverNodes()]) });
+    expect(await readSink(query({ backend: 'alsa', device: 'auto' }), alsa.run, 'linux')).toEqual(builtIn);
+  });
+
+  it('takes PipeWire\'s answer for ao=pulse when mpv\'s stream is in its graph', async () => {
+    const graph = text(pwDump({ without: 'stream', extra: [client(185, 999), mpvStream(130, { clientId: 185, pid: HOST_PID }), link(170, 130, 160)] }));
+    const { run, calls } = shell({ pwDump: graph, sinks: text(pactlSinks()), inputs: text(pactlInputs(1)) });
+    expect((await readSink(query({ backend: 'pulse' }), run, 'linux'))?.name).toBe('Headphones');
+    expect(calls).toEqual(['pw-dump -N']);
+    // Present but not linked yet: unknown, and asked again later, not looked up elsewhere.
+    const unlinked = text(pwDump({ without: 'stream', extra: [client(185, 999), mpvStream(130, { clientId: 185, pid: HOST_PID })] }));
+    const early = shell({ pwDump: unlinked, sinks: text(pactlSinks()), inputs: text(pactlInputs(1)) });
+    expect(await readSink(query({ backend: 'pulse' }), early.run, 'linux')).toBeNull();
+    expect(early.calls).toEqual(['pw-dump -N']);
   });
 
   it('falls back to pactl when pw-dump answers with something that isn\'t a dump', async () => {
