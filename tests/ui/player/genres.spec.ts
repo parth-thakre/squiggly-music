@@ -37,8 +37,11 @@ test.describe('genres', () => {
     await expect(app.heading).toHaveText('Genres');
   });
 
-  test('a genre longer than a page loads the rest as its list nears the end', async ({ app, fake }) => {
+  test('a genre longer than a page loads the rest as its list nears the end', async ({ app, fake, page }) => {
     fake.large = true;
+    // Home read the genres (for its mixes) before the library grew; a reload forgets them.
+    await page.reload();
+    await expect(app.heading).toHaveText('Records');
     await app.section('Genres').click();
     const genres = app.main.locator('ul.genres > li');
     await expect(genres).toHaveCount(4);

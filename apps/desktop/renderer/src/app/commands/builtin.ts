@@ -77,6 +77,7 @@ const places: [id: string, title: string, route: Route, key: string][] = [
   ['lyrics', 'Go to lyrics', { view: 'lyrics' }, 'g l'],
   ['settings', 'Go to settings', { view: 'settings' }, 'g s'],
   ['genres', 'Go to genres', { view: 'genres' }, 'g g'],
+  ['home', 'Go to home', { view: 'home' }, 'g h'],
 ];
 for (const [id, title, route, key] of places) add({ id: `go-${id}`, title, category: 'Go to', keys: id === 'settings' ? [key, 'ctrl+,'] : [key], run: () => nav.go(route) });
 add({ id: 'back', title: 'Back', category: 'Go to', keys: ['alt+left'], run: () => nav.back() });

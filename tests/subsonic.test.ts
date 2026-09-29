@@ -588,3 +588,39 @@ describe('artist information, genres, years and discs', () => {
     for (const value of [['', 0, 200], ['Rock', -1, 200], ['Rock', 0, 0], ['Rock', 0, 501], ['x'.repeat(257), 0, 200]]) expect(decode(LibraryRequestSchemas.songsByGenre, value)).toBe(false);
   });
 });
+
+describe('playing elsewhere', () => {
+  it('lists other accounts\' songs and leaves this account\'s own players out', async () => {
+    const mock = servePayload({ nowPlaying: { entry: [
+      { id: 's1', title: 'Blue in Green', artist: 'Miles Davis', album: 'Kind of Blue', albumId: 'al1', coverArt: 'al1', username: 'sam', minutesAgo: 0, playerId: 1, playerName: 'Feishin' },
+      // This account, in any case, on any player.
+      { id: 's2', title: 'So What', artist: 'Miles Davis', username: 'Listener', minutesAgo: 2, playerId: 2 },
+      { id: 's2', title: 'So What', artist: 'Miles Davis', username: 'listener', minutesAgo: 1, playerId: 3 },
+      // The same song on two of someone's players is one entry.
+      { id: 's3', title: 'Naima', username: 'robin', playerId: 4 },
+      { id: 's3', title: 'Naima', username: 'robin', playerId: 5 },
+      // Nobody's: left out rather than shown under an empty name.
+      { id: 's4', title: 'Nobody', username: ' ' },
+      { id: 's5', title: 'Unnamed' },
+    ] } });
+    const entries = await Effect.runPromise(client().nowPlaying());
+    expect(entries.map(entry => [entry.username, entry.track.id, entry.track.title, entry.track.artist])).toEqual([
+      ['sam', 's1', 'Blue in Green', 'Miles Davis'], ['robin', 's3', 'Naima', 'Unknown artist'],
+    ]);
+    expect(entries[0].track).toMatchObject({ album: 'Kind of Blue', albumId: 'al1', coverArt: 'al1', source: 'navidrome' });
+    expect(mock.mock.calls.map(([url]) => new URL(url).pathname.split('/').pop())).toContain('getNowPlaying.view');
+  });
+  it('is empty when nobody is listening, and fails on a malformed answer', async () => {
+    servePayload({ nowPlaying: {} });
+    expect(await Effect.runPromise(client().nowPlaying())).toEqual([]);
+    servePayload({});
+    expect(await Effect.runPromise(client().nowPlaying())).toEqual([]);
+    servePayload({ nowPlaying: { entry: [{ title: 'No id', username: 'sam' }] } });
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(client().nowPlaying())))).toBe(true);
+  });
+  it('takes no arguments', () => {
+    const decode = (value: unknown) => Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.nowPlaying)(value));
+    expect(decode([])).toBe(true);
+    expect(decode(['sam'])).toBe(false);
+  });
+});

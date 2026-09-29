@@ -109,11 +109,11 @@ The types in `@squiggly/extension-api` come from the app's own modules, so they 
 
 ### `ctx.library`
 
-The app's library API: `albums`, `album`, `artists`, `artist`, `playlists`, `playlist`, `genres`, `starred`, `randomSongs`, `tracks` (every track, sorted, a page at a time), `search`, `star`, `rate` (one to five stars, 0 clears), playlist editing, `similarSongs`, `topSongs`, `lyrics`, and `coverUrl(coverArt, size)` for an image URL. Calls return `{ ok: true, value }` or `{ ok: false, error }` and never throw. They use the app's server session. Server credentials are not part of the API, because nothing in it needs them.
+The app's library API: `albums`, `album`, `artists`, `artist`, `playlists`, `playlist`, `genres`, `starred`, `randomSongs`, `tracks` (every track, sorted, a page at a time), `search`, `star`, `rate` (one to five stars, 0 clears), playlist editing, `similarSongs`, `topSongs`, `lyrics`, `nowPlaying` (what other accounts on the server are playing), and `coverUrl(coverArt, size)` for an image URL. Calls return `{ ok: true, value }` or `{ ok: false, error }` and never throw. They use the app's server session. Server credentials are not part of the API, because nothing in it needs them.
 
 ### `ctx.navigation`
 
-- `go(route)` goes to a place: `{ view: 'records' }`, `{ view: 'album', id }`, `{ view: 'search', query }`, `{ view: 'queue' }`, `{ view: 'settings' }`, and so on.
+- `go(route)` goes to a place: `{ view: 'home' }`, `{ view: 'records' }`, `{ view: 'album', id }`, `{ view: 'search', query }`, `{ view: 'queue' }`, `{ view: 'settings' }`, and so on.
 - `back()`.
 - `registerPage({ id, title, component })` adds a page and returns `{ id, dispose }`. The page is a React component rendered with the app's React, at the route `{ view: 'extension', id }`. A page that throws while rendering shows a message in its place, and the error appears in Settings › Extensions.
 - `openPage(id)` goes to a registered page by its full id.

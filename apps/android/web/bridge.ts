@@ -112,6 +112,7 @@ const library: LibraryApi = {
   coverUrl: (coverArt, size) => `/api/cover?id=${encodeURIComponent(coverArt)}&size=${Math.round(size)}`,
   artistInfo: artistId => call('artistInfo', [artistId]),
   songsByGenre: (genre, offset, size) => call('songsByGenre', [genre, offset, size]),
+  nowPlaying: () => call('nowPlaying', []),
 };
 
 // Player -----------------------------------------------------------------------------------

@@ -3,6 +3,7 @@ import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
   AlbumYears, ArtistInfo, DiscTitle,
+  NowPlayingEntry,
 } from '../core/contracts';
 import type { PlayableTrack } from '../player-mpv/protocol';
 import { Metrics } from '../core/metrics';
@@ -142,6 +143,10 @@ const ArtistInfoSchema = Schema.Struct({ artistInfo2: Schema.Struct({
   smallImageUrl: TextFieldSchema, mediumImageUrl: TextFieldSchema, largeImageUrl: TextFieldSchema,
   similarArtist: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.optional(ReferenceSchema), name: Schema.String.pipe(Schema.maxLength(1024)) })).pipe(Schema.maxItems(200))),
 }) });
+// getNowPlaying: each player on the server with the song it last started, and whose it is.
+const NowPlayingSchema = Schema.Struct({ nowPlaying: Schema.optional(Schema.Struct({ entry: Schema.optional(Schema.Array(Schema.Struct({
+  ...SongSchema.fields, username: Schema.optional(Schema.String.pipe(Schema.maxLength(256))),
+})).pipe(Schema.maxItems(500))) })) });
 const LegacyLyricsSchema = Schema.Struct({ lyrics: Schema.optional(Schema.Struct({ value: Schema.optional(Schema.String.pipe(Schema.maxLength(200_000))) })) });
 // Saved queues. Positions are milliseconds. Legacy servers name the current song; indexBasedQueue gives its index.
 const QueueFields = {
@@ -674,6 +679,20 @@ export class SubsonicClient {
     return this.request('getSongsByGenre', SongsByGenreSchema, { genre, count: String(count), offset: String(clamp(offset, 0, Number.MAX_SAFE_INTEGER)) })
       .pipe(Effect.flatMap(result => songList(result.songsByGenre.song, count)));
   }
+  // What other accounts are playing. The server lists every account's players, this one's too;
+  // those are left out, and so is a song someone has on two players at once.
+  nowPlaying() {
+    const self = this.auth.username.toLowerCase();
+    return this.request('getNowPlaying', NowPlayingSchema).pipe(Effect.map(({ nowPlaying }): NowPlayingEntry[] => {
+      const seen = new Set<string>();
+      return (nowPlaying?.entry ?? []).flatMap(entry => {
+        const username = entry.username?.trim();
+        if (!username || username.toLowerCase() === self || seen.has(`${username}\n${entry.id}`)) return [];
+        seen.add(`${username}\n${entry.id}`);
+        return [{ username, track: toTrack(entry) }];
+      });
+    }));
+  }
 }
 
 // The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
@@ -727,6 +746,7 @@ const library = {
   rate: entry(LibraryRequestSchemas.rate, (client, [, id, rating]) => client.setRating(id, rating)),
   artistInfo: entry(LibraryRequestSchemas.artistInfo, (client, [artistId]) => client.artistInfo(artistId)),
   songsByGenre: entry(LibraryRequestSchemas.songsByGenre, (client, [genre, offset, size]) => client.songsByGenre(genre, offset, size), value => value),
+  nowPlaying: entry(LibraryRequestSchemas.nowPlaying, client => client.nowPlaying()),
 } satisfies { [K in LibraryMethod]: LibraryEntry<any, LibraryValue<K>> };
 export const libraryMethods = Object.keys(library) as LibraryMethod[];
 export const isLibraryMethod = (method: string): method is LibraryMethod => Object.hasOwn(library, method);

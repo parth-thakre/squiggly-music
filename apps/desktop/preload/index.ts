@@ -34,6 +34,7 @@ const library: LibraryApi = {
   coverUrl: (coverArt, size) => `squiggly-art://cover/${encodeURIComponent(String(coverArt))}?size=${Math.min(1200, Math.max(32, Math.round(Number(size)) || 300))}`,
   artistInfo: artistId => call('artistInfo', artistId),
   songsByGenre: (genre, offset, size) => call('songsByGenre', genre, offset, size),
+  nowPlaying: () => call('nowPlaying'),
 };
 // Push channels from the main process, as subscribe functions.
 function listen<T>(channel: string, listener: (value: T) => void) {
