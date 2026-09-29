@@ -93,6 +93,9 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
 interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number; keys: string[] }
 const paged = new Map<string, Paged<{ id: string }>>();
 const dropped = new Set<() => void>();
+// A page can land after the list that asked for it was left and shown again (a search tab
+// switched away from and back), so every list showing it redraws, not only the one that asked.
+const landed = new Set<(list: string) => void>();
 onLibraryReset(() => paged.clear());
 // A list with a page the library has since invalidated is read again from the top: at once if
 // it's on screen, otherwise when it's next shown. A new rating drops Top rated this way.
@@ -135,12 +138,13 @@ function usePaged<T extends { id: string }>(list: string, size: number, request:
         page.items = [...page.items, ...result.value.filter(item => !seen.has(item.id))];
         if (result.value.length < size || once) page.done = true;
       }
-      redraw(v => v + 1);
+      landed.forEach(listener => listener(list));
     });
     redraw(v => v + 1);
   }, [list]);
   useEffect(() => { touchPaged(list); const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
   useEffect(() => { const listener = () => { if (!paged.has(list)) more(); }; dropped.add(listener); return () => { dropped.delete(listener); }; }, [more]);
+  useEffect(() => { const listener = (changed: string) => { if (changed === list) redraw(v => v + 1); }; landed.add(listener); return () => { landed.delete(listener); }; }, [list]);
   const p = paged.get(list) as Paged<T> | undefined;
   return { items: p?.items ?? none as T[], done: p?.done ?? false, error: p?.error ?? null, more };
 }

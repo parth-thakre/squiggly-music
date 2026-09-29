@@ -122,6 +122,23 @@ test.describe('search', () => {
     await expect(app.heading).toHaveText('Artists');
   });
 
+  test('a tab left and shown again before its songs arrive shows them', async ({ app, fake }) => {
+    await field(app).fill('opening');
+    await expect(app.heading).toHaveText('“opening”');
+    await expect(app.tracks()).not.toHaveCount(0);
+    fake.delay('search', 1_500);
+    await tab(app, 'Songs').click();
+    await expect(app.main.locator('.status.loading')).toHaveText('Searching');
+    await tab(app, 'All').click();
+    await expect(tab(app, 'All')).toHaveAttribute('aria-pressed', 'true');
+    await tab(app, 'Songs').click();
+    await expect(app.main.locator('.status.loading')).toHaveText('Searching');
+    await expect(app.tracks()).toHaveCount(29);
+    await expect(app.main.locator('.status.loading')).toHaveCount(0);
+    // The page was asked for once, not again on the way back.
+    expect(fake.callsTo('search').filter(call => call.args.length > 1)).toHaveLength(1);
+  });
+
   test('searches you used are kept, newest first, and can be cleared', async ({ app, page }) => {
     await field(app).fill('harbor');
     await field(app).press('Enter');
