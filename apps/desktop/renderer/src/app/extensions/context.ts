@@ -44,7 +44,7 @@ async function command(type: 'play' | 'pause') {
   if (!result.ok) throw new Error(result.error);
 }
 
-// Settings live in this window's local storage, one key per extension.
+// Settings live in local storage, which both windows share, one key per extension.
 const SETTINGS_LIMIT = 256 * 1024;
 export const settingsKey = (id: string) => `squiggly.extension.${id}`;
 function storedSettings(id: string): Record<string, unknown> {
@@ -52,6 +52,12 @@ function storedSettings(id: string): Record<string, unknown> {
     const value: unknown = JSON.parse(localStorage.getItem(settingsKey(id)) ?? '{}');
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   } catch { return {}; }
+}
+// Both windows write the same key, so a change is made to what is stored now, not to this
+// window's copy, and one window at a time: a lock per extension, shared by every window.
+function exclusive<T>(id: string, change: () => T): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  return locks ? locks.request(settingsKey(id), change) : Promise.resolve().then(change);
 }
 
 export interface Activation {
@@ -88,13 +94,13 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
   }
   const settings: SettingsStore = {
     get: <T,>(key: string, fallback: T) => (Object.hasOwn(values, key) ? values[key] : fallback) as T,
-    async set(key, value) {
-      const text = JSON.stringify({ ...values, [key]: value });
+    set: (key, value) => exclusive(info.id, () => {
+      const text = JSON.stringify({ ...storedSettings(info.id), [key]: value });
       if (text.length > SETTINGS_LIMIT) throw new Error('Settings are limited to 256 KB per extension.');
       localStorage.setItem(settingsKey(info.id), text);
       values = JSON.parse(text) as Record<string, unknown>;
       settingsListeners.forEach(listener => listener(values));
-    },
+    }),
     all: () => values,
     subscribe(listener) { settingsListeners.add(listener); return track(() => settingsListeners.delete(listener)); },
   };

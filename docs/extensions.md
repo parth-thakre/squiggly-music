@@ -167,7 +167,7 @@ Every field is optional, except that fixed colours need both `ground` and `ink`;
 
 ### Everything else
 
-- `ctx.settings`: `get(key, fallback)`, `set(key, value)`, `all()`, `subscribe(listener)`. Kept in the window's local storage, at most 256 KB per extension, and removed with the extension.
+- `ctx.settings`: `get(key, fallback)`, `set(key, value)`, `all()`, `subscribe(listener)`. Kept in local storage, which the main window and the mini player share, at most 256 KB per extension, and removed with the extension. Each `set` changes what is stored at that moment, one window at a time, so two windows setting different keys keep both.
 - `ctx.notify(message, { level: 'info' | 'error' })` shows a short message in the corner of the window. Errors stay until dismissed.
 - `ctx.styles.add(css)` adds a `<style>` element. A `.css` file imported by the entry comes in as text for this.
 - `ctx.clipboard.writeText(text)`.

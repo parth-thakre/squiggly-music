@@ -83,13 +83,37 @@ export default defineExtension({
     ctx.commands.register({ id: 'mark', title: 'Mark the song', keys: ['ctrl+alt+m'], run: () => ctx.notify('Marked in the ' + ctx.window + ' window.') });
   },
 });`;
+// Three quiet lines, one of them long, for the mini player's small window.
+const lines = `
+import { defineExtension } from '@squiggly/extension-api';
+export default defineExtension({
+  activate(ctx) {
+    ctx.deck.register({ id: 'one', placement: 'quiet-line', component: () => <span>First quiet line.</span> });
+    ctx.deck.register({ id: 'two', placement: 'quiet-line', component: () => <span>Second quiet line, which goes on well past the edge of the window.</span> });
+    ctx.deck.register({ id: 'three', placement: 'quiet-line', component: () => <span>Third.</span> });
+  },
+});`;
+// Runs in both windows: its slot throws in the mini player only, and its settings are handed to
+// the test.
+const twin = `
+import { defineExtension } from '@squiggly/extension-api';
+export default defineExtension({
+  activate(ctx) {
+    (globalThis as { extensionSettings?: unknown }).extensionSettings = ctx.settings;
+    ctx.deck.register({ id: 'window', placement: 'quiet-line', component: () => {
+      if (ctx.window === 'mini') throw new Error('mini boom');
+      return <span>Fine in the main window.</span>;
+    } });
+  },
+});`;
 const bundles: Record<string, string> = {};
 test.beforeAll(async () => {
   const dir = await mkdtemp(join(tmpdir(), 'squiggly-slots-'));
   try {
-    for (const version of [1, 2] as const) {
-      await writeFile(join(dir, `decker-${version}.tsx`), decker(version));
-      bundles[`decker-${version}`] = (await compileEntry(join(dir, `decker-${version}.tsx`), dir)).code;
+    const sources: Record<string, string> = { 'decker-1': decker(1), 'decker-2': decker(2), lines, twin };
+    for (const [name, source] of Object.entries(sources)) {
+      await writeFile(join(dir, `${name}.tsx`), source);
+      bundles[name] = (await compileEntry(join(dir, `${name}.tsx`), dir)).code;
     }
   } finally { await rm(dir, { recursive: true, force: true }); }
   bundles['deck-note'] = (await compileEntry(join(examples, 'deck-note/src/index.tsx'), join(examples, 'deck-note'))).code;
@@ -98,7 +122,8 @@ const song = {
   id: 'song-1', title: 'Dawn Chorus', artist: 'The Larks', album: 'Morning', duration: 200, source: 'navidrome',
   sourceFormat: 'flac', sourceSampleRate: 44100, sourceBitDepth: 16, year: 1977, albumId: 'album-1', artistId: 'artist-1', coverArt: null,
 };
-const withSlots = async (page: import('@playwright/test').Page, mini = false) => {
+const names: Record<string, string> = { 'deck-note': 'Deck note', decker: 'Decker', lines: 'Lines', twin: 'Twin' };
+const withSlots = async (page: import('@playwright/test').Page, mini = false, ids = ['deck-note', 'decker']) => {
   await page.route(/\/__extensions\//, route => {
     const url = new URL(route.request().url());
     const name = url.pathname.split('/').pop()!.replace(/\.js$/, '');
@@ -107,7 +132,7 @@ const withSlots = async (page: import('@playwright/test').Page, mini = false) =>
   });
   await installDesktopBridge(page, {
     mini, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 200 },
-    extensions: [{ id: 'deck-note', name: 'Deck note', url: '/__extensions/deck-note.js' }, { id: 'decker', name: 'Decker', url: '/__extensions/decker.js' }],
+    extensions: ids.map(id => ({ id, name: names[id]!, url: `/__extensions/${id}.js` })),
   });
 };
 
@@ -172,5 +197,26 @@ test.describe('deck slots and sections', { tag: '@slots' }, () => {
     await expect(mini.getByText('Hello from the deck, Dawn Chorus.')).toHaveCount(0);
     await page.keyboard.press('Control+Alt+m');
     await expect(page.getByText('Marked in the mini window.')).toBeVisible();
+  });
+
+  test('settings saved in both windows at the same moment keep both changes', async ({ page }) => {
+    type Store = { set(key: string, value: unknown): Promise<void>; all(): Record<string, unknown> };
+    const miniPage = await page.context().newPage();
+    for (const [target, mini] of [[page, false], [miniPage, true]] as const) {
+      await withSlots(target, mini, ['twin']);
+      await target.goto('/');
+      await target.waitForFunction(() => 'extensionSettings' in globalThis);
+    }
+    const settingsOf = (target: import('@playwright/test').Page) => target.evaluate(() => (globalThis as unknown as { extensionSettings: Store }).extensionSettings.all());
+    for (let round = 0; round < 5; round++) {
+      await Promise.all([
+        page.evaluate(n => (globalThis as unknown as { extensionSettings: Store }).extensionSettings.set(`minutes-${n}`, n), round),
+        miniPage.evaluate(n => (globalThis as unknown as { extensionSettings: Store }).extensionSettings.set(`enabled-${n}`, true), round),
+      ]);
+    }
+    const expected = Object.fromEntries(Array.from({ length: 5 }, (_, n) => [[`minutes-${n}`, n], [`enabled-${n}`, true]]).flat());
+    expect(JSON.parse(await page.evaluate(() => localStorage.getItem('squiggly.extension.twin')!))).toEqual(expected);
+    await expect.poll(() => settingsOf(page)).toEqual(expected);
+    await expect.poll(() => settingsOf(miniPage)).toEqual(expected);
   });
 });
