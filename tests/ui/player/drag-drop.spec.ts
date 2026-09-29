@@ -4,7 +4,8 @@ import { escape, expect, playlistIds, test, trackOf, type App } from '../fixture
 
 // Drag and drop (drag.ts), dispatched as the browser does it: dragstart on the source, then
 // dragenter, dragover, and drop on the target, all carrying one DataTransfer. It waits on window
-// between steps, so a drag can start on one page and land on another as the test navigates.
+// between steps, so a drag held over a section, the Queue button, or a playlist can open that
+// page (useSpringOpen) and land there. The specs that use the mouse press it once and let go once.
 type Dragging = Window & { dragData?: DataTransfer };
 async function dragStart(source: Locator) {
   await source.evaluate(element => {
@@ -25,6 +26,31 @@ async function drop(target: Locator) {
     element.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }));
     document.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
   });
+}
+// A drag with the mouse, held down from `source` through each of `via` (waiting on each until
+// `until` passes, as a hand waits for a page to open) and let go over the last.
+async function mouseDrag(page: Page, source: Locator, via: { over: Locator; until?: () => Promise<void> }[]) {
+  // A target below the fold is scrolled to first, as a hand scrolls while holding the drag, and
+  // the pointer goes there once it is what's under that point (a page's transition has ended).
+  const centre = async (target: Locator) => {
+    await target.scrollIntoViewIfNeeded();
+    const box = (await target.boundingBox())!;
+    const point = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+    await expect.poll(() => target.evaluate((element, { x, y }) => element.contains(document.elementFromPoint(x, y)), point)).toBe(true);
+    return point;
+  };
+  const start = await centre(source);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(start.x + 12, start.y + 12, { steps: 4 });
+  for (const { over, until } of via) {
+    const point = await centre(over);
+    await page.mouse.move(point.x, point.y, { steps: 8 });
+    // A browser repeats dragover while the pointer rests; Playwright sends one per move.
+    await page.mouse.move(point.x + 1, point.y);
+    if (until) await until();
+  }
+  await page.mouse.up();
 }
 // Files from the computer, as the system hands them to a drop.
 async function dropFiles(page: Page, names: string[], shiftKey = false) {
@@ -65,7 +91,8 @@ test.describe('drag and drop', () => {
     // Onto a row: before it, with the reorder line showing where.
     await app.section('Records').click();
     await dragStart(sleeve(app, 'Amber Field'));
-    await queueButton(app).click();
+    // Held over the Queue button, the drag opens the queue.
+    await dragOver(queueButton(app));
     await expect(app.heading).toHaveText('Queue');
     const target = app.row('Short Stop');
     await dragOver(target);
@@ -102,7 +129,7 @@ test.describe('drag and drop', () => {
     await app.rowButton(app.row('Opening 2')).click({ modifiers: ['ControlOrMeta'] });
     await app.rowButton(app.row('Coda 2')).click({ modifiers: ['ControlOrMeta'] });
     await dragStart(app.row('Coda 2'));
-    await app.section('Playlists').click();
+    await dragOver(app.section('Playlists'));
     await expect(app.heading).toHaveText('Playlists');
     const road = playlistRow(app, 'Road Mix');
     await dragOver(road);
@@ -117,7 +144,11 @@ test.describe('drag and drop', () => {
   test('a sleeve dropped into an open playlist lands where it was dropped', async ({ app, fake }) => {
     await app.section('Records').click();
     await dragStart(sleeve(app, 'Amber Field'));
-    await app.openPlaylist('Road Mix');
+    await dragOver(app.section('Playlists'));
+    await expect(app.heading).toHaveText('Playlists');
+    // Held over a playlist, the drag opens it.
+    await dragOver(playlistRow(app, 'Road Mix'));
+    await expect(app.heading).toHaveText('Road Mix');
     const target = app.tracks().nth(1);
     await dragOver(target);
     await expect(target).toHaveClass(/\bdrop-before\b/);
@@ -132,7 +163,8 @@ test.describe('drag and drop', () => {
   test('a playlist the server manages refuses a drop and says why', async ({ app, fake }) => {
     await app.section('Records').click();
     await dragStart(sleeve(app, 'Amber Field'));
-    await app.section('Playlists').click();
+    await dragOver(app.section('Playlists'));
+    await expect(app.heading).toHaveText('Playlists');
     const picks = playlistRow(app, 'Server Picks');
     await dragOver(picks);
     await expect(picks).not.toHaveClass(/\bdrop-over\b/);
@@ -141,6 +173,38 @@ test.describe('drag and drop', () => {
     await expect(notice(app)).toHaveCount(1);
     expect(fake.callsTo('addToPlaylist')).toEqual([]);
     expect(fake.playlist(playlistIds.readonly)?.trackIds).toEqual(['tr-4-1', 'tr-4-2', 'tr-5-1']);
+  });
+
+  test('with the mouse held down, a sleeve reaches a playlist on another page and lands where it is let go', async ({ app, fake, page }) => {
+    await app.section('Records').click();
+    const expected = ['tr-2-1', 'tr-3-1', 'tr-3-2', 'tr-3-3', 'tr-2-2', 'tr-3-1', 'tr-2-1', 'tr-3-2'];
+    await mouseDrag(page, sleeve(app, 'Amber Field'), [
+      { over: app.section('Playlists'), until: () => expect(app.heading).toHaveText('Playlists') },
+      { over: playlistRow(app, 'Road Mix'), until: () => expect(app.heading).toHaveText('Road Mix') },
+      { over: app.tracks().nth(1), until: () => expect(app.tracks().nth(1)).toHaveClass(/\bdrop-before\b/) },
+    ]);
+    await expect.poll(() => fake.playlist(playlistIds.road)?.trackIds).toEqual(expected);
+    await expect.poll(() => app.titles()).toEqual(expected.map(id => trackOf(id).title));
+    await expect(notice(app)).toContainText('Added 3 songs to Road Mix.');
+  });
+
+  test('with the mouse held down, songs reach a playlist row and a sleeve reaches a queued song', async ({ app, fake, page }) => {
+    await app.openAlbum('Quiet Harbor');
+    await mouseDrag(page, app.row('Coda 2'), [
+      { over: app.section('Playlists'), until: () => expect(app.heading).toHaveText('Playlists') },
+      { over: playlistRow(app, 'Road Mix'), until: () => expect(playlistRow(app, 'Road Mix')).toHaveClass(/\bdrop-over\b/) },
+    ]);
+    await expect(notice(app)).toContainText('Added 1 song to Road Mix.');
+    await expect.poll(() => fake.playlist(playlistIds.road)?.trackIds).toEqual(['tr-2-1', 'tr-2-2', 'tr-3-1', 'tr-2-1', 'tr-3-2', 'tr-2-5']);
+    await expect(app.heading).toHaveText('Playlists');
+
+    await app.play('Test Pressing', 'Long Run');
+    await app.section('Records').click();
+    await mouseDrag(page, sleeve(app, 'Amber Field'), [
+      { over: queueButton(app), until: () => expect(app.heading).toHaveText('Queue') },
+      { over: app.row('Short Stop'), until: () => expect(app.row('Short Stop')).toHaveClass(/\bdrop-before\b/) },
+    ]);
+    await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', ...amber, 'Short Stop', 'Thirty Two', 'Tail Light']);
   });
 
   test('the browser build ignores files dropped from the computer', async ({ app, page }) => {

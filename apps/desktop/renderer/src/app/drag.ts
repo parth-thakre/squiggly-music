@@ -12,6 +12,8 @@ import { plural, splitTitle } from './ui';
 // Playlists page, an open playlist's songs). The payload names the target the way menus do
 // (`tracksOf` in menu.tsx), with the title as plain text for drops outside the app. Touch keeps
 // its long-press menus. Files from the computer drop onto the desktop app's window (useFileDrops).
+// A drag held over a way to another page (a section, the Queue button, a playlist) opens it after
+// a moment (useSpringOpen), so a target on another page can be reached without letting go.
 
 export const DRAG_TYPE = 'application/x-squiggly';
 // Marks a drag that starts in an editable list (the queue, a playlist), where it reorders songs.
@@ -35,7 +37,12 @@ const nameOf = (target: MenuTarget) => target.kind === 'tracks'
 // The drag this window started: its songs need no second trip to the server, and songs (which
 // have no lookup by id) can only be dropped in the window they came from.
 let active: { payload: DragPayload; target: MenuTarget } | null = null;
-if (typeof window !== 'undefined') addEventListener('dragend', () => { active = null; }, true);
+if (typeof window !== 'undefined') {
+  addEventListener('dragend', () => { active = null; }, true);
+  // A source that left the page mid-drag (the page changed under it) gets its dragend, and the
+  // window never hears it. The drop is the end too, once its handlers have read the drag.
+  addEventListener('drop', () => { setTimeout(() => { active = null; }); }, true);
+}
 
 // Call from a dragstart handler. `reorder`: the list the drag starts in rearranges its songs.
 export function startDrag(event: ReactDragEvent, target: MenuTarget, { reorder = false } = {}) {
@@ -158,6 +165,30 @@ export function useDropTarget(onDrop: (payload: DragPayload, event: ReactDragEve
     },
   };
   return { over, handlers };
+}
+
+// A way to another page that opens while a drag is held over it, as a folder springs open.
+// `open` runs once the drag has stayed this long; leaving, dropping, or ending the drag first
+// cancels it. `enabled`: whether this drag (or this place) should open anything.
+const SPRING_MS = 800;
+export function useSpringOpen(open: () => void, enabled: () => boolean = () => true) {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const latest = useRef(open);
+  latest.current = open;
+  const cancel = () => { if (timer.current !== null) clearTimeout(timer.current); timer.current = null; };
+  useEffect(() => {
+    addEventListener('dragend', cancel, true); addEventListener('drop', cancel, true);
+    return () => { cancel(); removeEventListener('dragend', cancel, true); removeEventListener('drop', cancel, true); };
+  }, []);
+  return {
+    onDragEnter: (event: ReactDragEvent) => {
+      if (timer.current !== null || !carriesItems(event.dataTransfer, true) || !enabled()) return;
+      timer.current = setTimeout(() => { timer.current = null; latest.current(); }, SPRING_MS);
+    },
+    onDragLeave: (event: ReactDragEvent) => {
+      if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) cancel();
+    },
+  };
 }
 
 // Files from the computer, dropped anywhere on the desktop app's window: they play, or join the

@@ -8,7 +8,7 @@ import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
 import { Credits } from './credits';
-import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseDrop, startDrag, useDropTarget } from './drag';
+import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseDrop, startDrag, useDropTarget, useSpringOpen } from './drag';
 import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
@@ -525,18 +525,20 @@ export function Playlists() {
 }
 
 // A playlist on the Playlists page. It drags (its songs), and records, artists, songs, and other
-// playlists drop onto it to be added. One the server manages refuses, saying why.
+// playlists drop onto it to be added at the end; held over it, a drag opens it, to be dropped
+// between its songs. One the server manages refuses, saying why.
 function PlaylistRow({ playlist }: { playlist: Playlist }) {
   const note = playlistNote(playlist);
-  const { over, handlers } = useDropTarget(payload => void dropOnPlaylist(playlist, payload, note), {
-    enabled: !playlist.readonly,
-    // Not onto itself.
-    accepts: () => { const drag = activeDrag(); return !(drag?.payload.kind === 'playlist' && drag.payload.ids.includes(playlist.id)); },
-  });
+  // Not onto itself.
+  const notItself = () => { const drag = activeDrag(); return !(drag?.payload.kind === 'playlist' && drag.payload.ids.includes(playlist.id)); };
+  const { over, handlers } = useDropTarget(payload => void dropOnPlaylist(playlist, payload, note), { enabled: !playlist.readonly, accepts: notItself });
+  const spring = useSpringOpen(() => nav.go({ view: 'playlist', id: playlist.id }), () => !playlist.readonly && notItself());
   // The server's own playlists refuse: no outline, a pointer that says no, and the reason.
   const refuse = (event: DragEvent<HTMLElement>) => { if (playlist.readonly && carriesItems(event.dataTransfer)) refuseDrop(playlist, note); };
   return <li className={`playable${over ? ' drop-over' : ''}`} {...handlers}
-    onDragEnter={event => { handlers.onDragEnter(event); refuse(event); }} onDrop={event => { handlers.onDrop(event); refuse(event); }}>
+    onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); refuse(event); }}
+    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}
+    onDrop={event => { handlers.onDrop(event); refuse(event); }}>
     <PlayOver label={splitTitle(playlist.name).main} play={() => playTarget({ kind: 'playlist', playlist })} />
     <button type="button" onClick={event => { travel(playlist.id, event.currentTarget); nav.go({ view: 'playlist', id: playlist.id }); }}
       onContextMenu={event => openMenu(event, { kind: 'playlist', playlist })}
