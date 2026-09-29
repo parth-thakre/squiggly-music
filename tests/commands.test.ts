@@ -152,6 +152,36 @@ describe('resolving bindings', () => {
   });
 });
 
+describe('the playing song’s keys', () => {
+  // Now playing's defaults in commands/builtin.ts, beside the other built-in keys.
+  const nowPlaying = [
+    { id: 'builtin:favorite-current', title: 'Add or remove the playing song from favorites', keys: ['f'] },
+    { id: 'builtin:go-current-album', title: 'Go to the playing record', keys: ['g c'] },
+    { id: 'builtin:go-current-artist', title: 'Go to the playing artist', keys: ['g .'] },
+  ];
+  const builtins = [...commands, ...['g t', 'g p', 'g f', 'g q', 'g l', 'g s', '/'].map((key, i) => ({ id: `builtin:other-${i}`, title: `Other ${i}`, keys: [key] })), ...nowPlaying];
+  it('take free keys, so nothing else loses its own', () => {
+    const keymap = resolveKeymap(builtins, null);
+    expect(keymap.errors).toEqual([]);
+    expect(keymap.conflicts).toEqual([]);
+    expect(keymap.table.get('f')).toEqual(['builtin:favorite-current']);
+    expect(keymap.table.get('g c')).toEqual(['builtin:go-current-album']);
+    expect(keymap.table.get('g .')).toEqual(['builtin:go-current-artist']);
+    expect(formatChordId('g .')).toEqual(['G', '.']);
+  });
+  it('run from the page, and F types an f in a text field', () => {
+    const keymap = resolveKeymap(builtins, null);
+    expect(match(keymap, [], press({ key: 'f', code: 'KeyF' })!, always).run).toBe('builtin:favorite-current');
+    const first = match(keymap, [], press({ key: 'g', code: 'KeyG' })!, always);
+    expect(match(keymap, first.pending, press({ key: '.', code: 'Period' })!, always).run).toBe('builtin:go-current-artist');
+    expect(match(keymap, first.pending, press({ key: 'c', code: 'KeyC' })!, always).run).toBe('builtin:go-current-album');
+    expect(allowedIn('text', stroke('f'))).toBe(false);
+    expect(allowedIn('button', stroke('f'))).toBe(true);
+    // Nothing playing: F falls through to the page.
+    expect(match(keymap, [], 'f', id => id !== 'builtin:favorite-current').consumed).toBe(false);
+  });
+});
+
 describe('matching presses', () => {
   const keymap = resolveKeymap(commands, [{ key: 'ctrl+k g', command: 'builtin:go-artists' }]);
   it('runs single keys and waits on the first step of a chord', () => {

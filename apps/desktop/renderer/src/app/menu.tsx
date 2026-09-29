@@ -407,3 +407,18 @@ builtin.menu({
     return lines.map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
   },
 });
+
+// Song details on their own, for the command that shows the playing song's details. The menu
+// opens by the deck's title (a sheet on phones) with only the details in it.
+export async function openSongDetails(track: Track) {
+  const target: MenuTarget = { kind: 'tracks', tracks: [track] };
+  const info = registry.menu.for(target).find(item => item.id === 'builtin:info');
+  if (!info?.submenu) return;
+  const problems: string[] = [];
+  let rows: Row[] = [];
+  try { rows = rowsFor(await info.submenu(target), target, problems); } catch (error) { problems.push(failed(labelOf(info, target), error)); }
+  // Opened and narrowed in one step, so the full menu never shows.
+  const anchor = document.querySelector('.deck-title')?.getBoundingClientRect();
+  openMenu({ clientX: anchor?.left ?? innerWidth / 2, clientY: anchor?.bottom ?? innerHeight / 3, preventDefault() {} }, target);
+  if (open?.target === target) setOpen({ ...open, levels: [{ title: titleOf(target), rows }], error: problems[0] ?? null });
+}

@@ -1,4 +1,4 @@
-import { expect, test } from '../fixtures/test';
+import { expect, special, test } from '../fixtures/test';
 
 // The command palette, key bindings, and themes, as a keyboard user meets them.
 test.describe('commands', () => {
@@ -154,4 +154,67 @@ test.describe('commands', () => {
     await expect(page.locator('html')).toHaveAttribute('data-motion', 'none');
     await expect(app.main.getByRole('radio', { name: /^Plain/ })).toBeChecked();
   });
+});
+
+// The song on the deck, from the keyboard and the palette, and the deck's own star.
+test.describe('the playing song', () => {
+  test('F adds it to favorites, G then C and G then . go to its record and artist, and its details open', async ({ app, page, fake }) => {
+    await app.signIn();
+    await app.play('Test Pressing', 'Long Run');
+    const star = app.deck.getByRole('button', { name: 'Favorite', exact: true });
+    await expect(star).toHaveAttribute('aria-pressed', 'false');
+    await app.main.focus();
+    await page.keyboard.press('f');
+    await expect(star).toHaveAttribute('aria-pressed', 'true');
+    // The list shows the same star, and the server has it.
+    await expect(app.row('Long Run').getByRole('button', { name: 'Remove Long Run from favorites' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => fake.starred.has(special.longRun)).toBe(true);
+
+    // In the search field, F is a letter.
+    const search = page.getByRole('searchbox', { name: 'Search your library' });
+    await search.focus();
+    await page.keyboard.type('f');
+    await expect(search).toHaveValue('f');
+    await expect(star).toHaveAttribute('aria-pressed', 'true');
+
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('.');
+    const artist = await app.deck.locator('.deck-sub .link').first().textContent();
+    await expect(app.heading).toHaveText(artist!);
+    await page.keyboard.press('g');
+    await page.keyboard.press('c');
+    await expect(app.heading).toHaveText('Test Pressing');
+
+    await page.keyboard.press('Control+k');
+    await page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox').fill('details');
+    await page.keyboard.press('Enter');
+    await expect(app.menu).toBeVisible();
+    await expect(app.menu).toContainText('Requested from Navidrome as the original file.');
+    await expect(app.menu.getByRole('menuitem')).toHaveCount(0);
+    await page.keyboard.press('Escape');
+    await expect(app.menu).toBeHidden();
+
+    // Pressed again, F takes it back out.
+    await app.main.focus();
+    await page.keyboard.press('f');
+    await expect(star).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => fake.starred.has(special.longRun)).toBe(false);
+  });
+
+  test('the deck’s star and the list’s agree', async ({ app, fake }) => {
+    await app.signIn();
+    await app.play('Test Pressing', 'Long Run');
+    const star = app.deck.getByRole('button', { name: 'Favorite', exact: true });
+    await star.click();
+    await expect(star).toHaveAttribute('aria-pressed', 'true');
+    await expect(star).toHaveAttribute('title', 'Remove from favorites');
+    const rowStar = app.row('Long Run').locator('button.star');
+    await expect(rowStar).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => fake.starred.has(special.longRun)).toBe(true);
+    await rowStar.click();
+    await expect(star).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => fake.starred.has(special.longRun)).toBe(false);
+  });
+
 });
