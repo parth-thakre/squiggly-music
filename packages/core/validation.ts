@@ -17,6 +17,9 @@ export const CommandSchema = Schema.Union(
   }),
   Schema.Struct({ type: Schema.Literal('volume'), percent: Schema.Number.pipe(Schema.finite(), Schema.between(0, 100)) }),
   Schema.Struct({ type: Schema.Literal('device'), id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024)) }),
+  // Queue modes (PlayerSnapshot.repeat and .shuffle). Shuffle on reorders the songs after the current one.
+  Schema.Struct({ type: Schema.Literal('repeat'), mode: Schema.Literal('off', 'all', 'one') }),
+  Schema.Struct({ type: Schema.Literal('shuffle'), on: Schema.Boolean }),
 );
 export const ConnectionSchema = Schema.Struct({
   url: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(2048)),

@@ -1,4 +1,6 @@
+import { Repeat, Repeat1, Shuffle } from 'lucide-react';
 import { useLayoutEffect, type CSSProperties } from 'react';
+import { nextRepeat } from '../../../../../packages/core/playOrder';
 import type { Track } from '../../../../../packages/core/contracts';
 import type { Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
@@ -35,6 +37,20 @@ export function TransportButtons({ playing }: { playing: boolean }) {
     <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={player.toggle}><Glyph kind={playing ? 'pause' : 'play'} /></button>
     <button type="button" className="glyph" aria-label="Next" onClick={player.next}><Glyph kind="next" /></button>
   </>;
+}
+
+// Shuffle and repeat, as icon toggles like the deck's others. Repeat goes off, all, one: pressed
+// for both of the last two, with its own icon for one.
+const repeatName = { off: 'Repeat', all: 'Repeat all', one: 'Repeat one' } as const;
+export function PlayModes() {
+  const repeat = usePlayer(s => s.repeat);
+  const shuffle = usePlayer(s => s.shuffle);
+  return <span className="play-modes">
+    <button type="button" className="icon-button" aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle} onClick={() => player.shuffle(!shuffle)}><Shuffle aria-hidden="true" /></button>
+    <button type="button" className="icon-button" aria-label={repeatName[repeat]} title={repeatName[repeat]} aria-pressed={repeat !== 'off'} onClick={() => player.repeat(nextRepeat(repeat))}>
+      {repeat === 'one' ? <Repeat1 aria-hidden="true" /> : <Repeat aria-hidden="true" />}
+    </button>
+  </span>;
 }
 
 // The seek squiggle. The only part of the deck or mini player that follows position snapshots.

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { applyQueue, planQueue } from '../apps/android/web/queue';
+import { shuffleOrder } from '../packages/core/playOrder';
 
 const ids = (count: number, prefix = 'e') => Array.from({ length: count }, (_, i) => `${prefix}${i}`);
 const apply = (before: string[], after: string[]) => applyQueue(before, planQueue(before, after), id => id);
@@ -54,6 +55,19 @@ describe('mirroring the queue to the native player', () => {
       }
       after = after.flatMap((id, i) => next() > .85 ? [`new${round}-${i}`, id] : [id]);
       if (next() > .7) after.push(`tail${round}`);
+      expect(apply(before, after), `round ${round}`).toEqual(after);
+    }
+  });
+  it('sends a shuffle as moves only, so the song playing and those before it never leave', () => {
+    const next = random(9);
+    for (let round = 0; round < 200; round++) {
+      const before = ids(Math.floor(next() * 40) + 2);
+      const current = Math.floor(next() * before.length);
+      // As the page shuffles (player.shuffle): by the shared order, the current entry in place.
+      const after = shuffleOrder(before.length, current, next).map(i => before[i]);
+      const ops = planQueue(before, after);
+      expect(ops.every(op => op.type === 'move'), `round ${round}`).toBe(true);
+      expect(ops.every(op => op.type === 'move' && op.from > current && op.to > current), `round ${round}`).toBe(true);
       expect(apply(before, after), `round ${round}`).toEqual(after);
     }
   });

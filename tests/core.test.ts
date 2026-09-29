@@ -51,7 +51,7 @@ describe('honest initial state', () => {
     expect(emptyAudio().streamBytesPerSecond).toBeNull();
     expect(emptyAudio().replayGain).toBeNull();
     expect(emptyPlayer().queue).toEqual([]);
-    expect(emptyPlayer()).toMatchObject({ entryIds: [], radio: null });
+    expect(emptyPlayer()).toMatchObject({ entryIds: [], playId: '', radio: null });
     expect(emptyPlayer().playing).toBe(false);
   });
 });

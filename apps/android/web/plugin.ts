@@ -47,6 +47,8 @@ export interface SquigglyPlugin {
   seek(options: { id: string; position: number }): Promise<void>;
   volume(options: { volume: number }): Promise<void>;
   restore(): Promise<{ items: { id: string; track: string }[]; playback: NativePlayback }>;
+  // ExoPlayer's repeat mode. The page shuffles its queue itself.
+  repeat(options: { mode: 'off' | 'all' | 'one' }): Promise<void>;
   posture(): Promise<Posture>;
   // The window's own background (#rrggbb), which shows around the page on older WebViews, and
   // light (dark: true) or dark system bar icons.

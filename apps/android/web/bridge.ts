@@ -216,6 +216,8 @@ export const androidBridge: AndroidBridge = {
     volume(percent) { void Squiggly.volume({ volume: percent / 100 }); },
     subscribe(listener) { playbackListeners.add(listener); return () => { playbackListeners.delete(listener); }; },
     onReset(listener) { resetListeners.add(listener); return () => { resetListeners.delete(listener); }; },
+    // Page to native only: a mode changed outside the page (a MediaController) isn't observed.
+    repeat(mode) { void Squiggly.repeat({ mode }); },
   },
 };
 

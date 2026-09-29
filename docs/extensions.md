@@ -99,7 +99,7 @@ The types in `@squiggly/extension-api` come from the app's own modules, so they 
 
 | Member | What it does |
 | --- | --- |
-| `get()` | The current state: `engine`, `connected`, `queue`, `entryIds`, `index`, `playing`, `position`, `duration`, `volume`, `radio`, `error`. |
+| `get()` | The current state: `engine`, `connected`, `queue`, `entryIds`, `index`, `playing`, `position`, `duration`, `volume`, `radio`, `error`, `repeat` (`off`, `all`, or `one`), `shuffle`. |
 | `subscribe(listener)` | Called on every update, a few times a second while playing. |
 | `select(selector, listener)` | Called when the selected value changes. Prefer it to `subscribe`. |
 | `use(selector)` | A React hook for pages. |

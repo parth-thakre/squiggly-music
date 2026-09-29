@@ -1,3 +1,4 @@
+import { shuffleOrder } from '../core/playOrder';
 import type { PlayableTrack, QueueEdit } from './protocol';
 
 // Same bound as QUEUE_LIMIT in core/validation.ts, kept here so the host bundle avoids Effect schemas.
@@ -58,5 +59,33 @@ export function editQueue<T extends PlayableTrack>(native: PlaylistEngine, queue
   }
   if (live && native.number('playlist-count') !== queue.length) {
     throw new Error('The audio engine queue changed unexpectedly. Replace the queue to continue.');
+  }
+}
+
+// Shuffle mode turning on: the entries after the current one (all of them, with nothing current)
+// are put in random order, one playlist-move at a time, so mpv's playlist and the host's copy stay
+// the same list throughout. The current entry and those before it keep their places.
+export function shuffleQueue<T extends PlayableTrack & { entry: string }>(native: PlaylistEngine, queue: T[], live: boolean, random: () => number = Math.random) {
+  const position = () => live ? native.number('playlist-pos') ?? -1 : -1;
+  let current = position();
+  let playing = queue[current]?.entry;
+  let wanted = shuffleOrder(queue.length, current, random).map(index => queue[index]);
+  for (let index = Math.max(0, current + 1); ; index++) {
+    // mpv can move on to the next song while the moves run: the one just after the old song at
+    // that moment, perhaps moved since. The old song's plan would bury it among the rest (or put
+    // it last, skipping them), so it goes back straight after the old song, and what follows it
+    // is planned again. Checked by entry id before every move.
+    const now = position();
+    if (queue[now]?.entry !== playing) {
+      // Stopped, or somewhere unexpected: the queue stays as far as it got.
+      if (now <= current) return;
+      if (now > current + 1) editQueue(native, queue, live, { type: 'queue-move', from: now, to: current + 1 });
+      current++; playing = queue[current].entry;
+      wanted = shuffleOrder(queue.length, current, random).map(i => queue[i]);
+      index = current + 1;
+    }
+    if (index >= wanted.length) return;
+    const from = queue.indexOf(wanted[index], index);
+    if (from !== index) editQueue(native, queue, live, { type: 'queue-move', from, to: index });
   }
 }

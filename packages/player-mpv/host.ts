@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
-import { emptyAudio, emptyPlayer } from '../core/contracts';
+import { emptyAudio, emptyPlayer, type RepeatMode } from '../core/contracts';
+import { shuffleOrder } from '../core/playOrder';
 import { NativePlayer } from './native';
 import { clearPlayerSession } from './session';
-import { editQueue, QUEUE_LIMIT } from './queue';
+import { editQueue, QUEUE_LIMIT, shuffleQueue } from './queue';
 import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 
 // A standalone Node process keeps Chromium and its native libraries out of this
@@ -24,6 +25,29 @@ function publishQueue() {
   player.entryIds = playableQueue.map(item => item.entry);
 }
 let reloadPlaylistAfterStop = false;
+// PlayerSnapshot.playId: it changes whenever an entry starts from the top (another entry, the same
+// entry loaded again under repeat all with one song, a repeat-one loop, a jump to the entry playing)
+// and never on a seek. mpv's loop-file goes back to the start by seeking, so a loop shows only as
+// a seek the host didn't ask for, landing near 0.
+let plays = 0;
+let playEntry: string | undefined;
+// The entry last noticed hasn't reported its start-file yet; when it does, that's the same play.
+let startPending = false;
+// Polls left in which a seek is the host's own (its seek command, a restored position, a jump).
+let hostSeek = 0;
+const newPlay = () => { player.playId = `${entryPrefix}.p${(++plays).toString(36)}`; };
+function followPlay({ starts, seeks }: { starts: number; seeks: number }) {
+  const entry = playableQueue[player.currentIndex]?.entry;
+  if (entry !== playEntry) {
+    playEntry = entry; startPending = false;
+    if (!entry) return;
+    newPlay();
+    if (starts) starts--; else startPending = true;
+  } else if (!entry) return;
+  if (starts && startPending) { starts--; startPending = false; }
+  if (starts) newPlay();
+  else if (seeks && !hostSeek && player.repeat === 'one' && player.position < 2) newPlay();
+}
 // The exclusive-output option last accepted by mpv. Requested, not verified.
 let exclusive = false;
 // A restored queue seeks once its entry is loaded and seekable. Changing the track or position cancels it.
@@ -64,6 +88,8 @@ const port = {
   on: (_event: 'message', callback: (event: { data: HostRequest }) => void) => process.on('message', data => callback({ data: data as HostRequest })),
 };
 function resetTrack() {
+  // Whatever plays next starts a new play, even the same entry.
+  playEntry = undefined; startPending = false;
   player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0,
     audio: { ...emptyAudio(), requestedDevice: player.audio.requestedDevice,
       replayGain: player.audio.replayGain, filters: player.audio.filters, exclusiveRequested: player.audio.exclusiveRequested },
@@ -88,13 +114,31 @@ function applyExclusive(on: boolean) {
     throw new Error(on ? exclusiveError : 'The audio output could not leave exclusive mode. Restart the audio engine.');
   }
 }
+// Repeat is mpv's own looping, so the queue wraps (loop-playlist) or a song starts again
+// (loop-file) without waiting on a snapshot. playlist-next and playlist-prev still move between
+// entries under loop-file, so Next skips a repeating song. Neither option touches the signal.
+function applyRepeat(mode: RepeatMode) {
+  if (!native) return;
+  const previous = player.repeat;
+  try {
+    native.set('loop-file', mode === 'one' ? 'inf' : 'no');
+    native.set('loop-playlist', mode === 'all' ? 'inf' : 'no');
+    player.repeat = mode;
+  } catch {
+    try {
+      native.set('loop-file', previous === 'one' ? 'inf' : 'no');
+      native.set('loop-playlist', previous === 'all' ? 'inf' : 'no');
+    } catch { /* The error below is the one to act on. */ }
+    throw new Error('The audio engine could not change the repeat mode.');
+  }
+}
 function restoreSeek() {
   const seek = pendingSeek;
   if (!native || !seek) return;
   // About ten seconds of polls; slow servers may not have opened the stream yet.
   if (++seek.polls > 40) { pendingSeek = null; player.error = 'Could not restore the saved position. The song starts from the beginning.'; return; }
   if (player.queue[player.currentIndex]?.id !== seek.id || native.property('seekable') !== 'yes') return;
-  try { native.command('seek', String(seek.seconds), 'absolute+exact'); pendingSeek = null; }
+  try { native.command('seek', String(seek.seconds), 'absolute+exact'); pendingSeek = null; hostSeek = 4; }
   catch { /* Not seekable yet. Retry on the next poll. */ }
 }
 
@@ -137,6 +181,12 @@ try {
   if (process.env.SQUIGGLY_AUDIO_EXCLUSIVE === '1') {
     try { applyExclusive(true); } catch (error) { exclusive = false; player.error = error instanceof Error ? error.message : exclusiveError; }
   }
+  // The saved queue modes (main/index.ts keeps them). The queue starts empty, so nothing to shuffle yet.
+  const repeat = process.env.SQUIGGLY_REPEAT;
+  if (repeat === 'all' || repeat === 'one') {
+    try { applyRepeat(repeat); } catch (error) { player.error = error instanceof Error ? error.message : null; }
+  }
+  player.shuffle = process.env.SQUIGGLY_SHUFFLE === '1';
 } catch (error) {
   player.engine = 'unavailable';
   player.error = error instanceof Error ? error.message : 'Audio engine unavailable.';
@@ -161,7 +211,10 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         if (action.paused) native.set('pause', 'yes');
         // Retain locations only inside the isolated host so old mpv versions can
         // rebuild the native playlist after their argument-less stop command.
-        playableQueue = action.tracks.map(toEntry);
+        // With shuffle on, a new list plays from the chosen song with the rest in random order, as
+        // in the browser and on Android. Radio and a restored queue keep their order (ordered).
+        const order = player.shuffle && !action.ordered ? shuffleOrder(action.tracks.length, start) : null;
+        playableQueue = (order ? order.map(index => action.tracks[index]) : action.tracks).map(toEntry);
         loadPlayableQueue();
         // The first loadfile only queues a load; moving now starts at the chosen entry instead.
         if (start > 0) native.set('playlist-pos', String(start));
@@ -203,7 +256,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
           || (action.entryId !== undefined && playableQueue[action.queueIndex]?.entry !== action.entryId)) {
           throw new Error('The track changed before the seek completed. Try again.');
         }
-        native.command('seek', String(action.seconds), 'absolute+exact'); break;
+        native.command('seek', String(action.seconds), 'absolute+exact'); hostSeek = 4; break;
       }
       case 'volume': native.set('volume', String(action.percent)); break;
       case 'device': native.set('audio-device', action.id); break;
@@ -213,8 +266,27 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         // By entry, not song id: in [A, B, A] the second A is a different entry from the first.
         if (playableQueue[action.index]?.entry !== action.entryId) throw new Error('The queue changed before that song could play. Try again.');
         if (reloadPlaylistAfterStop) loadPlayableQueue();
+        // The entry playing starts over, a new play. (Newer mpv ignores playlist-pos set to its
+        // current value; older mpv reloads the file.)
+        else if (native.number('playlist-pos') === action.index) {
+          native.command('seek', '0', 'absolute+exact'); hostSeek = 4; newPlay();
+          native.set('pause', 'no'); break;
+        }
         native.set('playlist-pos', String(action.index)); native.set('pause', 'no'); break;
       }
+      case 'repeat': applyRepeat(action.mode); break;
+      case 'shuffle':
+        // Turning shuffle on reorders what's left once. Turning it off leaves the queue as it is:
+        // the order from before isn't kept, since edits made while shuffled (adds, moves, removes)
+        // would leave no clear order to go back to. The same holds in the browser and on Android.
+        if (action.on && !player.shuffle) {
+          try { shuffleQueue(native, playableQueue, !reloadPlaylistAfterStop); }
+          finally {
+            publishQueue();
+            player.currentIndex = reloadPlaylistAfterStop ? -1 : native.number('playlist-pos') ?? -1;
+          }
+        }
+        player.shuffle = action.on; break;
       case 'restart': throw new Error('Restart must be handled by the desktop process.');
     }
     port.postMessage({ type: 'reply', id, error: null });
@@ -242,6 +314,8 @@ timer = setInterval(() => {
       currentIndex: native.number('playlist-pos') ?? -1,
       audio: native.audio(),
     };
+    followPlay(events);
+    if (hostSeek) hostSeek--;
     restoreSeek();
     if (++deviceTicks % 20 === 0) player.devices = native.devices();
     publish();

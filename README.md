@@ -16,6 +16,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Browse records, artists, tracks, playlists, and favorites on your server, or play files from your computer.
 - Rate songs, records, and artists from one to five stars, and list the records and tracks you rate highest.
 - Edit the queue and your playlists. The queue follows you between devices through the server.
+- Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).
 - Start a radio station from any song, record, or artist.
 - Build automatic playlists from your library by genre, by decade, and from what's new.
 - Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.

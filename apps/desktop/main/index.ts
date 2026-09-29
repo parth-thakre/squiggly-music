@@ -16,6 +16,7 @@ import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
+import { defaultPlayModes, PlayModesSchema } from '../../../packages/core/desktopValidation';
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
@@ -100,6 +101,9 @@ const knownTracks = new Map<string, Track>();
 let settings = new JsonStore('', SettingsFileSchema, defaultSettings());
 let windowState = new JsonStore('', WindowStateSchema, {});
 let account = new Account('', safeStorage);
+// Repeat and shuffle, as last chosen. The audio host owns them while it runs (they're in its
+// snapshots); this copy survives restarts and starts the next host with them.
+let playModes = new JsonStore('', PlayModesSchema, defaultPlayModes());
 const updates = new Updates(() => state.update, next => { state.update = next; broadcast(); }, () => settings.value.checkForUpdates);
 const plays = new PlayTracker();
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
@@ -120,7 +124,7 @@ function rememberTracks(tracks: readonly Track[]) {
 // Radio keeps going while every window is hidden: top-ups follow host snapshots, not the renderer.
 const radio = new Radio<SubsonicClient>({
   client: () => server, player: () => state.player, known: id => knownTracks.get(id), remember: rememberTracks,
-  replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => client.playable(track)) }),
+  replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => client.playable(track)), ordered: true }),
   follow: (client, tracks) => send({ type: 'queue-clear' }).pipe(Effect.zipRight(send({ type: 'queue-add', tracks: tracks.map(track => client.playable(track)), where: 'end' }))),
   append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => client.playable(track)), where: 'end' }),
   // Already one request at a time, so it never takes a sync permit from the final queue save.
@@ -247,6 +251,7 @@ async function launchPlayer() {
       ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
+      SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
     },
     execArgv: [], windowsHide: true,
     stdio: ['ignore', 'ignore', process.env.SQUIGGLY_SMOKE_TEST === '1' ? 'pipe' : 'ignore', 'ipc'],
@@ -321,6 +326,23 @@ function transport(action: HostRequest['action']) {
   void Effect.runPromise(Effect.either(metrics.measure('shell.command', semaphores.audio.withPermits(1)(send(action)))))
     .then(() => { shellPending--; broadcast(); });
 }
+// Repeat and shuffle, from a window, MPRIS, or radio starting. The host applies the mode, then it
+// is saved for the next launch. Radio keeps topping up the queue, which doesn't sit well with
+// repeating it, so the two exclude each other: turning repeat on (all or one) stops radio, and
+// starting radio turns repeat off (see radio:start).
+function setPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuffle' }>) {
+  return Effect.gen(function* () {
+    yield* send(command);
+    if (command.type === 'repeat' && command.mode !== 'off') endRadio();
+    const next = command.type === 'repeat' ? { ...playModes.value, repeat: command.mode } : { ...playModes.value, shuffle: command.on };
+    // A mode that couldn't be saved still holds until the app closes.
+    yield* Effect.promise(() => playModes.save(next).catch(() => undefined));
+  });
+}
+// MPRIS's LoopStatus and Shuffle, on the audio lane like the window's commands.
+function shellPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuffle' }>) {
+  void Effect.runPromise(Effect.either(metrics.measure('shell.play-mode', semaphores.audio.withPermits(1)(setPlayMode(command))))).then(broadcast);
+}
 // Loads the server-saved queue at its song and position, paused or playing.
 function resumeSaved(paused: boolean) {
   return Effect.gen(function* () {
@@ -334,7 +356,7 @@ function resumeSaved(paused: boolean) {
     const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
     const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
     endRadio();
-    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused });
+    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused, ordered: true });
     queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
   });
 }
@@ -423,6 +445,7 @@ function installHandlers() {
     if (command.type === 'restart') { yield* Effect.tryPromise(() => launchPlayer()); return; }
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
     if (command.type === 'play' && canResume()) { yield* resumeSaved(false); return; }
+    if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
     yield* send(command);
   }));
   handle('open-files', () => Effect.gen(function* () {
@@ -501,7 +524,10 @@ function installHandlers() {
   }));
   handle('radio:start', value => Effect.gen(function* () {
     const seed = yield* Schema.decodeUnknown(RadioSeedSchema)(value).pipe(Effect.mapError(() => new Error('Invalid radio request.')));
-    yield* radio.start(seed);
+    const began = yield* radio.start(seed);
+    // Radio and repeat exclude each other (setPlayMode): a station turns repeat off. A start that
+    // other playback overtook began no station, so repeat stays as it is.
+    if (began && state.player.repeat !== 'off') yield* semaphores.audio.withPermits(1)(setPlayMode({ type: 'repeat', mode: 'off' }));
   }), 'library');
   handle('radio:stop', () => Effect.sync(endRadio), 'library');
   // Loads the server-saved queue paused at its song and position. Playback starts only on play.
@@ -802,6 +828,7 @@ function startMediaControls() {
     void startMpris({
       command: type => type === 'play' ? shellPlay() : transport({ type }), seek: seekTo, volume: percent => transport({ type: 'volume', percent }),
       raise: showMain, quit: () => app.quit(),
+      repeat: mode => shellPlayMode({ type: 'repeat', mode }), shuffle: on => shellPlayMode({ type: 'shuffle', on }),
     }, () => { media = null; metrics.record('shell.mpris-unavailable', 0, true); }).then(session => { media = session; updateMedia(); });
   }
   applyMediaKeys();
@@ -817,6 +844,8 @@ app.whenReady().then(async () => {
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
   account = new Account(join(userData, 'account.json'), safeStorage);
   await Promise.all([settings.load(), windowState.load(), account.load()]);
+  playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
+  await playModes.load();
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   installHandlers(); loop.enable();
   const windowContents = () => appWindows().map(target => target.webContents);

@@ -7,6 +7,7 @@ import { getThemes, onThemesChange, selectTheme } from '../theme';
 import { splitTitle } from '../ui';
 import { openConfigFolder } from '../config';
 import { setRating } from '../ratings';
+import { following, nextRepeat } from '../../../../../../packages/core/playOrder';
 import { onCommandError } from './keymap';
 import { togglePalette } from './palette-state';
 
@@ -35,7 +36,7 @@ const seekBy = (seconds: number) => {
   player.seek(Math.max(0, Math.min(length > 0 ? length - .5 : Infinity, state.position + seconds)));
 };
 add({ id: 'toggle', title: 'Play or pause', category: 'Playback', keys: ['space'], when: playing, run: () => player.toggle() });
-add({ id: 'next', title: 'Next song', category: 'Playback', keys: ['ctrl+right'], when: () => getPlayer().index + 1 < getPlayer().queue.length, run: () => player.next() });
+add({ id: 'next', title: 'Next song', category: 'Playback', keys: ['ctrl+right'], when: () => following(getPlayer().index, getPlayer().queue.length, getPlayer().repeat, 'skip') >= 0, run: () => player.next() });
 add({ id: 'previous', title: 'Previous song', category: 'Playback', keys: ['ctrl+left'], when: playing, run: () => player.previous() });
 add({ id: 'seek-forward', title: 'Skip ahead 10 seconds', category: 'Playback', keys: ['shift+right'], repeat: true, when: playing, run: () => seekBy(10) });
 add({ id: 'seek-back', title: 'Go back 10 seconds', category: 'Playback', keys: ['shift+left'], repeat: true, when: playing, run: () => seekBy(-10) });
@@ -60,6 +61,10 @@ add({
   when: playingOnServer,
   run: async () => { await setRating('track', [current(getPlayer())!.id], 0); },
 });
+
+// Playback modes: queue behaviour, so they work with nothing playing too.
+add({ id: 'repeat', title: 'Cycle repeat', category: 'Playback', keys: ['r'], run: () => player.repeat(nextRepeat(getPlayer().repeat)) });
+add({ id: 'shuffle', title: 'Shuffle on or off', category: 'Playback', keys: ['s'], run: () => player.shuffle(!getPlayer().shuffle) });
 
 // Go to
 const places: [id: string, title: string, route: Route, key: string][] = [
