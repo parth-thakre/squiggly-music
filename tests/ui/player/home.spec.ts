@@ -3,7 +3,7 @@ import { expect, test, trackOf, type App } from '../fixtures/test';
 
 // Home: where the app opens. Shelves of records played lately, the newest, and the most played,
 // the automatic playlists, the saved queue, and what other accounts are playing. Each shelf loads
-// by itself and is hidden when it has nothing to show.
+// by itself, except that Your mixes waits for Most played, and is hidden when it has nothing to show.
 const shelf = (app: App, name: string) => app.main.getByRole('region', { name, exact: true });
 const sleeves = (app: App, name: string) => shelf(app, name).locator('ul.grid > li');
 const seeAll = (app: App, name: string) => shelf(app, name).getByRole('button', { name: /^See all/ });
@@ -154,6 +154,20 @@ test.describe('home', () => {
     await expect(shelf(app, 'Your mixes')).toBeVisible();
     await expect(shelf(app, 'Played lately')).toHaveCount(0);
     await expect(sleeves(app, 'Played lately')).toHaveCount(1, { timeout: 5000 });
+  });
+
+  test('Your mixes waits for Most played, which says whether there is history', async ({ app, fake }) => {
+    fake.frequent = ['al-3'];
+    // Most played asks third; the mixes share its answer, so they arrive with it.
+    fake.delay('albums', 0, 0, 2500);
+    await app.signIn({ home: true });
+    await expect(sleeves(app, 'Newest')).toHaveCount(12);
+    await expect.poll(() => fake.callsTo('genres').length).toBe(1);
+    await expect(shelf(app, 'Your mixes')).toHaveCount(0);
+    await expect(shelf(app, 'Most played')).toHaveCount(0);
+    await expect(sleeves(app, 'Most played')).toHaveCount(1, { timeout: 5000 });
+    await expect(shelf(app, 'Your mixes').locator('.grid-name')).toContainText(['On repeat', 'Lately']);
+    expect(fake.callsTo('albums').filter(call => call.args[0] === 'frequent')).toHaveLength(1);
   });
 
   test('a shelf that fails says why', async ({ app, fake }) => {

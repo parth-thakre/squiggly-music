@@ -999,8 +999,9 @@ export function GenrePage({ name }: { name: string }) {
 }
 
 // Home ---------------------------------------------------------------------------------------------
-// Where the app opens. Each shelf loads on its own, so a slow answer holds up only its shelf, and
-// a shelf stays hidden while it loads and when it has nothing to show. A shelf holds twelve at
+// Where the app opens. Each shelf loads on its own, so a slow answer holds up only the shelves
+// that need it: Your mixes waits for Most played's list, which says whether there is history. A
+// shelf stays hidden while it loads and when it has nothing to show. A shelf holds twelve at
 // most, and the automatic playlists show their names instead of drawing songs, so opening Home
 // asks the server for a few short lists and nothing more.
 const SHELF = 12;
