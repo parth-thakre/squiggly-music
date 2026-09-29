@@ -8,6 +8,7 @@ gh release download {{TAG}} -R {{REPO}}
 
 - **Windows 10/11 (x64):** run `Squiggly-Music-{{VERSION}}-windows-x64-setup.exe`. To run without installing, use `Squiggly-Music-{{VERSION}}-windows-x64-portable.exe`. The builds are not code-signed yet, so SmartScreen may warn: choose **More info**, then **Run anyway**.
 - **Fedora (x86_64):** `sudo dnf install ./squiggly-music-{{VERSION}}.x86_64.rpm`. dnf also installs `mpv-libs`, the libmpv runtime the player needs.
+- **Android 7 or later:** open `Squiggly-Music-{{VERSION}}-android.apk` on the phone and allow your file manager to install apps when Android asks.
 
 ## Verify
 

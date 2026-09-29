@@ -31,7 +31,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 
 The recording and screenshots use [Navidrome's demo server](https://demo.navidrome.org), whose music its artists released under Creative Commons and other free licences. Lyrics shown come from LRCLIB.
 
-It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% it tells you that's attenuation.
+It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% the line under the song says so.
 
 ## Install
 
@@ -44,6 +44,8 @@ sha256sum --ignore-missing -c SHA256SUMS
 On Windows, run the setup program or the portable exe. They aren't signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.
 
 On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
+
+On Android 7 or later, open `Squiggly-Music-<version>-android.apk` on the phone and allow your file manager to install apps when Android asks.
 
 Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe and the RPM can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
 
@@ -74,7 +76,7 @@ This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the serve
 
 ## Android
 
-The Android app connects to your Navidrome server itself and plays with the screen off, with controls in the notification and on the lock screen. It's made for the Galaxy Z Flip 7 (the main screen, the cover screen, and Flex Mode). You build the APK yourself for now; it needs a JDK 21 and the Android SDK, which [docs/android.md](docs/android.md) sets up without root:
+The Android app connects to your Navidrome server itself and plays with the screen off, with controls in the notification and on the lock screen. It's made for the Galaxy Z Flip (the main screen, Flex Mode, and a view of its own on the Flip 5, 6, and 7 cover screens). Each release includes the APK. To build it yourself, you need a JDK 21 and the Android SDK, which [docs/android.md](docs/android.md) sets up without root:
 
 ```bash
 npm run android:keystore   # once: the key that signs your release APK

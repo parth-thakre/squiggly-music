@@ -92,8 +92,10 @@ git commit -am "release: v$(node -p "require('./package.json').version")"
 npm ci && npm run check && npm run test:ui
 npm run libmpv:build                     # or keep .local/libmpv-windows; package:win verifies it
 npm run package:win && npm run package:linux
+npm run android:build                    # needs the Android toolchain and release key (docs/android.md)
 node scripts/smoke-runtime.mjs dist/win-unpacked   # under Wine: wine dist/win-unpacked/resources/runtime/node.exe ...
 mkdir release && cp dist/*.exe dist/*.exe.blockmap dist/latest.yml dist/*.rpm dist/latest-linux.yml release/
+cp dist/android/squiggly-$(node -p "require('./package.json').version")-release.apk "release/Squiggly-Music-$(node -p "require('./package.json').version")-android.apk"
 cp .local/libmpv-windows/libmpv-windows-x64-source.tar "release/Squiggly-Music-$(node -p "require('./package.json').version")-libmpv-windows-x64-source.tar"
 node scripts/release-checksums.mjs release
 git push && gh release create "v$(node -p "require('./package.json').version")" release/* --target main --title "Squiggly Music $(node -p "require('./package.json').version")" --notes-file <notes>
