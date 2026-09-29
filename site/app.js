@@ -74,23 +74,49 @@
     });
   }
 
-  // A Mac's button offers the Apple silicon zip. Chromium browsers can say the CPU is Intel;
-  // Safari and Firefox can't, so they keep Apple silicon.
-  function macIntel() {
+  // Each Mac zip runs on one CPU, so a Mac's button only points at a zip once the CPU is known.
+  // Chromium browsers can say whether it's Apple silicon or Intel. Safari and Firefox can't (every
+  // Mac's user agent says Intel), and a browser may refuse or leave the answer empty; then the
+  // button becomes two, one for each CPU. Elsewhere "Also for macOS" keeps the release page.
+  function macChip() {
     var data = navigator.userAgentData;
-    if (os !== "mac" || !data || typeof data.getHighEntropyValues !== "function") return Promise.resolve();
-    return data.getHighEntropyValues(["architecture"]).then(function (values) {
-      if (values.architecture !== "x86") return;
-      doc.querySelectorAll('.btn[data-os="mac"]').forEach(function (btn) { btn.setAttribute("data-asset", "macIntel"); });
-      doc.querySelectorAll(".files").forEach(function (list) {
-        var intel = list.querySelector('[data-os="mac"] [data-asset="macIntel"]');
-        if (intel) list.insertBefore(intel.closest("div"), list.firstChild);
-      });
-    }).catch(function () { /* keep Apple silicon */ });
+    if (!data || typeof data.getHighEntropyValues !== "function") return Promise.resolve("");
+    return Promise.resolve()
+      .then(function () { return data.getHighEntropyValues(["architecture"]); })
+      .then(function (values) {
+        var arch = values && values.architecture;
+        return arch === "arm" ? "macArm" : arch === "x86" ? "macIntel" : "";
+      }, function () { return ""; });
   }
 
+  function macButtons(chip) {
+    doc.querySelectorAll('.btn.primary[data-os="mac"]').forEach(function (btn) {
+      if (chip) { btn.setAttribute("data-asset", chip); return; }
+      var pair = doc.createElement("span");
+      pair.className = "pair";
+      var intel = btn.cloneNode(false);
+      btn.setAttribute("data-asset", "macArm");
+      btn.textContent = "Download for Apple silicon";
+      intel.setAttribute("data-asset", "macIntel");
+      intel.textContent = "Download for Intel";
+      var hint = doc.createElement("span");
+      hint.className = "hint";
+      hint.textContent = "About This Mac lists a Chip on Apple silicon and a Processor on Intel.";
+      btn.parentNode.insertBefore(pair, btn);
+      pair.appendChild(btn);
+      pair.appendChild(intel);
+      pair.parentNode.insertBefore(hint, pair.nextSibling);
+    });
+    if (chip !== "macIntel") return;
+    doc.querySelectorAll(".files").forEach(function (list) {
+      var row = list.querySelector('[data-os="mac"] [data-asset="macIntel"]');
+      if (row) list.insertBefore(row.closest("div"), list.firstChild);
+    });
+  }
+
+  var ready = os === "mac" ? macChip().then(macButtons) : Promise.resolve();
   if (typeof fetch === "function") {
-    macIntel()
+    ready
       .then(function () { return fetch(API, { headers: { Accept: "application/vnd.github+json" } }); })
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (release) { if (release) fill(release); })
