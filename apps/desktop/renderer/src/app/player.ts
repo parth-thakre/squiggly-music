@@ -497,8 +497,9 @@ export const optimisticVolume = volumeCommands;
 export type RadioStart = { kind: 'song'; track: Track; label: string } | { kind: 'album' | 'artist'; id: string; label: string };
 
 export const player = {
-  async play(tracks: Track[], start: number, radio: PlayerState['radio'] = null) {
-    if (!tracks.length) return;
+  // Resolves true once the queue was replaced, false when it wasn't (the error is shown).
+  async play(tracks: Track[], start: number, radio: PlayerState['radio'] = null): Promise<boolean> {
+    if (!tracks.length) return false;
     requests++;
     let chosen = queueWindow(tracks, start);
     // With shuffle on, a list plays from the chosen song with the rest in random order. Radio
@@ -509,8 +510,8 @@ export const player = {
       chosen = { items: order.map(i => chosen.items[i]), start: chosen.start };
     }
     set({ error: null, resumable: null });
-    if (local) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return; }
-    report(await desktop!.playTracks(chosen.items.map(track => track.id), chosen.start));
+    if (local) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return true; }
+    return report(await desktop!.playTracks(chosen.items.map(track => track.id), chosen.start)).ok;
   },
   // Plays the seed, then songs like it, and keeps adding more as the queue runs low.
   // Artist and record radio start from one of their songs: asking the server for songs like
@@ -551,12 +552,17 @@ export const player = {
   },
 
   // Queue editing ------------------------------------------------------------------------
-  // A number inserts before the song at that index (a drop onto the queue).
-  async add(tracks: Track[], where: 'next' | 'end' | number) {
-    if (!tracks.length) return;
-    if (state.index < 0) { await player.play(tracks, 0); if (tracks.length > QUEUE_LIMIT) set({ error: queueFull(tracks.length - QUEUE_LIMIT) }); return; }
+  // A number inserts before the song at that index (a drop onto the queue). Resolves to how
+  // many songs joined the queue: fewer when it filled up, 0 when none could (the error is shown).
+  async add(tracks: Track[], where: 'next' | 'end' | number): Promise<number> {
+    if (!tracks.length) return 0;
+    if (state.index < 0) {
+      if (!await player.play(tracks, 0)) return 0;
+      if (tracks.length > QUEUE_LIMIT) set({ error: queueFull(tracks.length - QUEUE_LIMIT) });
+      return Math.min(tracks.length, QUEUE_LIMIT);
+    }
     const adding = tracks.slice(0, Math.max(0, QUEUE_LIMIT - state.queue.length));
-    if (!adding.length) { set({ error: queueFull(0) }); return; }
+    if (!adding.length) { set({ error: queueFull(0) }); return 0; }
     const left = tracks.length - adding.length;
     if (local) {
       const at = where === 'next' ? state.index + 1 : where === 'end' ? state.queue.length : Math.max(0, Math.min(where, state.queue.length));
@@ -564,9 +570,11 @@ export const player = {
       queue.splice(at, 0, ...adding); entryIds.splice(at, 0, ...mint(adding.length));
       // Songs put before the playing one push it down; it keeps playing.
       const index = at <= state.index ? state.index + adding.length : state.index;
-      set({ queue, entryIds, index, error: left ? queueFull(left) : state.error }); saveSoon(); return;
+      set({ queue, entryIds, index, error: left ? queueFull(left) : state.error }); saveSoon(); return adding.length;
     }
-    if (report(await desktop!.queue.add(adding.map(t => t.id), where)).ok && left) set({ error: queueFull(left) });
+    if (!report(await desktop!.queue.add(adding.map(t => t.id), where)).ok) return 0;
+    if (left) set({ error: queueFull(left) });
+    return adding.length;
   },
   async move(from: number, to: number) {
     if (from === to || from < 0 || to < 0 || from >= state.queue.length || to >= state.queue.length) return;

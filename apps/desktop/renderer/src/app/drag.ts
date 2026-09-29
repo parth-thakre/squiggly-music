@@ -112,7 +112,7 @@ export function refuseDrop(playlist: Playlist, note: string | null) {
 
 // "Add to queue", or before the song at `at` when dropped onto a row of the queue. The song
 // dropped on is remembered by its entry, so edits made while the songs load don't move the spot;
-// if that song has left the queue, they go where it was.
+// if that song has left the queue, they go where it was. Only songs that joined are announced.
 export async function dropOnQueue(payload: DragPayload, at?: number) {
   const before = at === undefined ? undefined : getPlayer().entryIds[at];
   const songs = await songsOf(payload);
@@ -121,8 +121,8 @@ export async function dropOnQueue(payload: DragPayload, at?: number) {
   const found = before === undefined ? -1 : now.entryIds.indexOf(before);
   const where = at === undefined ? 'end' : found >= 0 ? found : Math.min(at, now.queue.length);
   const idle = now.index < 0;
-  await player.add(songs.tracks, where);
-  if (!idle) showNotice('', `Added ${plural(songs.tracks.length, 'song')} to the queue.`);
+  const added = await player.add(songs.tracks, where);
+  if (!idle && added) showNotice('', `Added ${plural(added, 'song')} to the queue.`);
 }
 
 // Songs into a playlist, through its editor (edits queue there and reconcile with the server,

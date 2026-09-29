@@ -1,6 +1,7 @@
 import type { Locator, Page } from '@playwright/test';
 import { installDesktopBridge } from '../fixtures/desktop';
-import { escape, expect, playlistIds, test, trackOf, type App } from '../fixtures/test';
+import type { FakeNavidrome } from '../fixtures/library';
+import { allTracks, escape, expect, playlistIds, test, trackOf, type App } from '../fixtures/test';
 
 // Drag and drop (drag.ts), dispatched as the browser does it: dragstart on the source, then
 // dragenter, dragover, and drop on the target, all carrying one DataTransfer. It waits on window
@@ -73,6 +74,14 @@ const notice = (app: App) => app.page.locator('.extension-notice');
 const amber = ['Opening 3', 'Second Wind 3', 'Middle Distance 3'];
 // A record Home doesn't load ahead, so its songs come from the server when it is dropped.
 const hollow = ['Opening 13', 'Second Wind 13', 'Middle Distance 13', 'Late Call 13'];
+// Plays a playlist of `count` songs from its first, so the queue holds that many.
+async function playBig(app: App, fake: FakeNavidrome, count: number) {
+  const ids = allTracks.map(track => track.id);
+  fake.playlists.push({ id: 'pl-big', name: 'Big Mix', comment: null, readonly: false, trackIds: Array.from({ length: count }, (_, i) => ids[i % ids.length]), changed: '2026-09-01T00:00:00Z' });
+  await app.openPlaylist('Big Mix');
+  await app.rowButton(app.tracks().first()).click();
+  await app.expectPlaying(trackOf(ids[0]).title);
+}
 const record = ['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light'];
 
 test.describe('drag and drop', () => {
@@ -243,6 +252,32 @@ test.describe('drag and drop', () => {
     const expected = ['tr-2-2', 'tr-2-1', 'tr-13-1', 'tr-13-2', 'tr-13-3', 'tr-13-4', 'tr-3-1', 'tr-2-1', 'tr-3-2'];
     await expect.poll(() => fake.playlist(playlistIds.road)?.trackIds).toEqual(expected);
     await expect.poll(() => app.titles()).toEqual(expected.map(id => trackOf(id).title));
+  });
+
+  test('a drop on a full queue adds nothing and says only that the queue is full', async ({ app, fake }) => {
+    await playBig(app, fake, 1000);
+    await app.section('Records').click();
+    await dragStart(sleeve(app, 'Amber Field'));
+    await dragOver(queueButton(app));
+    await drop(queueButton(app));
+    await expect(app.deck.getByRole('alert')).toContainText('The queue holds up to 1,000 songs. Remove some to add more.');
+    // Nothing joined, so nothing is announced, then or a moment later.
+    await app.page.waitForTimeout(500);
+    await expect(notice(app)).toHaveCount(0);
+    await app.openQueue();
+    await expect(app.main.locator('.byline')).toContainText('999 songs up next');
+  });
+
+  test('a drop on a nearly full queue announces only the songs that joined', async ({ app, fake }) => {
+    await playBig(app, fake, 998);
+    await app.section('Records').click();
+    await dragStart(sleeve(app, 'Amber Field'));
+    await dragOver(queueButton(app));
+    await drop(queueButton(app));
+    await expect(app.deck.getByRole('alert')).toContainText('The queue holds up to 1,000 songs, so 1 song wasn\'t added.');
+    await expect(notice(app)).toHaveText(/^Added 2 songs to the queue\./);
+    await app.openQueue();
+    await expect(app.main.locator('.byline')).toContainText('999 songs up next');
   });
 
   test('the browser build ignores files dropped from the computer', async ({ app, page }) => {
