@@ -47,7 +47,8 @@ describe('isolated audio host', () => {
     expect(snapshots.at(-1)?.playing).toBe(false);
   });
 
-  it('tells AppImage users which package to install when libmpv is missing', async () => {
+  // The AppImage message is Linux's; elsewhere the host reports the generic one, which the next case covers.
+  it.skipIf(process.platform !== 'linux')('tells AppImage users which package to install when libmpv is missing', async () => {
     const { snapshots } = start('/nonexistent/squiggly/libmpv.so', { APPIMAGE: '/tmp/Squiggly-Music.AppImage' });
     await expect.poll(() => snapshots.at(-1)?.engine).toBe('unavailable');
     expect(snapshots.at(-1)?.error).toContain('This AppImage doesn\'t include it');
