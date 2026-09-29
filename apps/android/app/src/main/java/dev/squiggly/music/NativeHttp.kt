@@ -3,8 +3,11 @@ package dev.squiggly.music
 import com.getcapacitor.JSObject
 import com.getcapacitor.PluginCall
 import java.io.ByteArrayOutputStream
+import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.InterruptedIOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
@@ -85,6 +88,76 @@ object NativeHttp {
         return out.toByteArray()
     }
 
+    /**
+     * Keep on this device (Kept.kt): the original file into [target], a `.part` file the caller
+     * renames once this returns. request() can't carry audio: it returns the body as a UTF-8 String
+     * and caps it at 32 MiB. The rules are request()'s own: no redirects, the same User-Agent, 15 s
+     * to connect and 30 s between reads. Only a 200 with audio is taken (Subsonic errors arrive as
+     * JSON or XML with a 200), never more than [budget] bytes, and exactly as many as the server
+     * said it would send. The file is synced before this returns. Failures say whether the server
+     * gave no answer ([KeptUnreachable]) or answered and refused ([KeptRefused]), in words written
+     * here, never with the address, which carries credentials.
+     */
+    fun download(address: String, target: File, budget: Long, cancelled: () -> Boolean, onBytes: (Long) -> Unit): Long {
+        val url = try { URL(address) } catch (error: Exception) { throw KeptRefused("That song's address isn't valid.") }
+        if (url.protocol != "https" && url.protocol != "http") throw KeptRefused("That song's address isn't valid.")
+        var connection: HttpURLConnection? = null
+        try {
+            connection = (url.openConnection() as HttpURLConnection).apply {
+                instanceFollowRedirects = false
+                connectTimeout = 15000
+                readTimeout = 30000
+                useCaches = false
+                setRequestProperty("User-Agent", userAgent)
+            }
+            val status = try { connection.responseCode } catch (error: IOException) {
+                if (cancelled()) throw InterruptedIOException("Stopped.")
+                throw KeptUnreachable("The server didn't answer.")
+            }
+            if (status in 502..504) throw KeptUnreachable("The server didn't answer.")
+            if (status != 200) throw KeptRefused("The server refused the song.")
+            val type = connection.contentType?.substringBefore(';')?.trim()?.lowercase() ?: ""
+            if (type.startsWith("text/") || type == "application/json" || type == "application/xml") throw KeptRefused("The server sent an error instead of the song.")
+            val declared = connection.getHeaderField("Content-Length")?.toLongOrNull()
+            if (declared != null && declared > budget) throw KeptLimit()
+            var count = 0L
+            FileOutputStream(target).use { out ->
+                connection.inputStream.use { stream ->
+                    val buffer = ByteArray(64 * 1024)
+                    while (true) {
+                        if (cancelled()) throw InterruptedIOException("Stopped.")
+                        val read = try { stream.read(buffer) } catch (error: IOException) {
+                            if (cancelled()) throw InterruptedIOException("Stopped.")
+                            throw KeptRefused("The song arrived incomplete.")
+                        }
+                        if (read < 0) break
+                        count += read
+                        if (count > budget) throw KeptLimit()
+                        try { out.write(buffer, 0, read) } catch (error: IOException) { throw diskError(error) }
+                        onBytes(count)
+                    }
+                }
+                if (declared != null && declared != count) throw KeptRefused("The song arrived incomplete.")
+                try { out.flush(); out.fd.sync() } catch (error: IOException) { throw diskError(error) }
+            }
+            return count
+        } finally {
+            connection?.disconnect()
+        }
+    }
+
+    private fun diskError(error: IOException): IOException =
+        if (error.message?.contains("ENOSPC") == true || error.message?.contains("No space left") == true) KeptDiskFull() else error
+
     private val token = Regex("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
     val userAgent = "Squiggly/${BuildConfig.VERSION_NAME} (Android)"
 }
+
+/** No answer: the connection failed or timed out, or a gateway said the server is down (502 to 504). */
+class KeptUnreachable(message: String) : IOException(message)
+/** An answer that refused the song. */
+class KeptRefused(message: String) : IOException(message)
+/** The song would pass the room left for kept songs. */
+class KeptLimit : IOException("Past the limit.")
+/** The phone's storage filled up. */
+class KeptDiskFull : IOException("No space left.")

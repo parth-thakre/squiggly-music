@@ -64,6 +64,8 @@ object CoverProxy {
 
     /** The cover's type and bytes, from the cache or the server. Blocks; call off the main thread. */
     fun load(id: String, requested: Int): Pair<String, ByteArray>? {
+        // A kept cover first: it works with the server away, and saves asking.
+        Kept.coverFor(id)?.let { return it }
         val server = base ?: return null
         val size = requested.coerceIn(32, 1200)
         val file = directory?.let { File(it, digest("$account\n$id\n$size")) }

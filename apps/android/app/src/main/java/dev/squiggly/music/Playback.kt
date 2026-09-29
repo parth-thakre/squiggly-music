@@ -2,6 +2,7 @@ package dev.squiggly.music
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.AudioAttributes
@@ -32,7 +33,8 @@ import org.json.JSONObject
  */
 object Playback {
     // live: an internet radio station, a stream with no end, no fallback, and no repeat one.
-    private class Entry(val url: String, val fallbackUrl: String, val track: String, val live: Boolean)
+    // local: the item plays the song's kept file (Kept.kt) rather than its stream.
+    private class Entry(val trackId: String, val url: String, val fallbackUrl: String, val track: String, val live: Boolean, var local: Boolean)
 
     lateinit var player: ExoPlayer
         private set
@@ -44,6 +46,8 @@ object Playback {
     private val entries = HashMap<String, Entry>()
     // Entries playing the server's MP3 because the original couldn't be decoded.
     private val fallbacks = HashSet<String>()
+    // Entries whose kept file couldn't be read, now streaming instead. Once per entry.
+    private val localFailed = HashSet<String>()
     private var lastSeq = 0
     private var playId = 0
     private var current: String? = null
@@ -115,14 +119,14 @@ object Playback {
                 when (op.getString("type")) {
                     "replace" -> {
                         player.playWhenReady = false
-                        entries.clear(); fallbacks.clear(); error = null
+                        entries.clear(); fallbacks.clear(); localFailed.clear(); error = null
                         player.setMediaItems(items(op.getJSONArray("items")), true)
                         if (player.mediaItemCount == 0) player.stop()
                     }
                     "remove" -> {
                         val from = op.getInt("from").coerceIn(0, player.mediaItemCount)
                         val to = (from + op.getInt("count")).coerceIn(from, player.mediaItemCount)
-                        for (index in from until to) player.getMediaItemAt(index).mediaId.let { entries.remove(it); fallbacks.remove(it) }
+                        for (index in from until to) player.getMediaItemAt(index).mediaId.let { entries.remove(it); fallbacks.remove(it); localFailed.remove(it) }
                         player.removeMediaItems(from, to)
                     }
                     "insert" -> player.addMediaItems(op.getInt("at").coerceIn(0, player.mediaItemCount), items(op.getJSONArray("items")))
@@ -242,6 +246,8 @@ object Playback {
             .put("fallback", player.currentMediaItem?.mediaId?.let { it in fallbacks } == true)
             .put("error", error ?: JSONObject.NULL)
             .put("stationTitle", stationTitle ?: JSONObject.NULL)
+            // A kept file, and the player really has the file open, not the stream.
+            .put("local", player.currentMediaItem?.let { item -> entries[item.mediaId]?.local == true && item.localConfiguration?.uri?.scheme == "file" } == true)
     }
 
     // Reports coalesce: one per turn of the main loop, however many player events arrived.
@@ -270,8 +276,21 @@ object Playback {
         val id = item?.mediaId
         val entry = id?.let { entries[it] }
         val format = failure.errorCode / 1000 == 3 || failure.errorCode / 1000 == 4
+        // A kept file that can't be read (gone, or unreadable): stream the song instead, once.
+        if (item != null && id != null && entry != null && entry.local && failure.errorCode / 1000 == 2 && id !in localFailed) {
+            localFailed += id
+            entry.local = false
+            val index = player.currentMediaItemIndex
+            val position = player.currentPosition
+            player.replaceMediaItem(index, item.buildUpon().setUri(entry.url).build())
+            player.seekTo(index, position)
+            player.prepare()
+            Kept.check(entry.trackId)
+            return report()
+        }
         if (item != null && id != null && entry != null && !entry.live && format && id !in fallbacks) {
             fallbacks += id
+            entry.local = false
             val index = player.currentMediaItemIndex
             val position = player.currentPosition
             player.replaceMediaItem(index, item.buildUpon().setUri(entry.fallbackUrl).build())
@@ -288,13 +307,17 @@ object Playback {
     private fun items(list: JSONArray): List<MediaItem> = (0 until list.length()).map { i ->
         val item = list.getJSONObject(i)
         val id = item.getString("id")
-        val entry = Entry(item.getString("url"), item.getString("fallbackUrl"), item.getString("track"), item.optBoolean("live", false))
+        val live = item.optBoolean("live", false)
+        val trackId = item.optString("trackId", "")
+        // A kept song plays from its file, online or not; the stream stays as the fallback.
+        val file = if (live || trackId.isEmpty()) null else Kept.fileFor(trackId)
+        val entry = Entry(trackId, item.getString("url"), item.getString("fallbackUrl"), item.getString("track"), live, file != null)
         entries[id] = entry
         val coverArt = item.optNullableString("coverArt")
         val duration = if (item.isNull("duration")) null else item.optDouble("duration")
         MediaItem.Builder()
             .setMediaId(id)
-            .setUri(entry.url)
+            .setUri(file?.let { Uri.fromFile(it) } ?: Uri.parse(entry.url))
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(item.optString("title"))

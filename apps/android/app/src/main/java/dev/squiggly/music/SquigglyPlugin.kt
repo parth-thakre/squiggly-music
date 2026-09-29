@@ -41,6 +41,7 @@ class SquigglyPlugin : Plugin() {
     }
 
     override fun load() {
+        Kept.init(context)
         Playback.init(context)
         CoverProxy.init(context)
         // Covers for the page come from the proxy; everything else is Capacitor's as usual. This
@@ -50,14 +51,22 @@ class SquigglyPlugin : Plugin() {
                 CoverProxy.intercept(request) ?: super.shouldInterceptRequest(view, request)
         })
         Playback.listener = { state -> notifyListeners("playback", state) }
+        Kept.listener = { progress -> notifyListeners("kept", progress) }
         Playback.ensureService(context)
         windows = WindowInfoTrackerCallbackAdapter(WindowInfoTracker.getOrCreate(activity)).also {
             it.addWindowLayoutInfoListener(activity, ContextCompat.getMainExecutor(context), layout)
         }
     }
 
+    // What was kept while downloading is written when the app goes to the background.
+    override fun handleOnPause() {
+        super.handleOnPause()
+        Kept.flush()
+    }
+
     override fun handleOnDestroy() {
         Playback.listener = null
+        Kept.listener = null
         windows?.removeWindowLayoutInfoListener(layout)
         windows = null
     }
@@ -100,6 +109,45 @@ class SquigglyPlugin : Plugin() {
     fun setServer(call: PluginCall) {
         CoverProxy.setServer(call.getString("coverBase"), call.getString("key"))
         call.resolve()
+    }
+
+    // Keep on this device (Kept.kt). The index lives on its own thread; calls resolve from there.
+
+    @PluginMethod
+    fun keptState(call: PluginCall) = Kept.state { call.resolve(it) }
+
+    @PluginMethod
+    fun keptPresent(call: PluginCall) = Kept.presentIds { call.resolve(it) }
+
+    @PluginMethod
+    fun keptContainer(call: PluginCall) {
+        val kind = call.getString("kind") ?: return call.reject("Not kept.")
+        val id = call.getString("id") ?: return call.reject("Not kept.")
+        Kept.container(kind, id) { found -> if (found == null) call.reject("Not kept.") else call.resolve(found) }
+    }
+
+    @PluginMethod
+    fun keptKeep(call: PluginCall) = Kept.keep(call.data) { call.resolve(it) }
+
+    @PluginMethod
+    fun keptCancel(call: PluginCall) = Kept.cancel(call.getString("kind") ?: "", call.getString("id") ?: "") { call.resolve(it) }
+
+    @PluginMethod
+    fun keptForget(call: PluginCall) = Kept.forget(call.getString("kind") ?: "", call.getString("id") ?: "") { call.resolve(it) }
+
+    @PluginMethod
+    fun keptForgetAll(call: PluginCall) = Kept.forgetAll { call.resolve(it) }
+
+    @PluginMethod
+    fun keptResume(call: PluginCall) {
+        Kept.resume()
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun keptBind(call: PluginCall) {
+        val key = call.getString("key") ?: return call.reject("No account.")
+        Kept.bind(key) { call.resolve() }
     }
 
     // Player -----------------------------------------------------------------------------------
