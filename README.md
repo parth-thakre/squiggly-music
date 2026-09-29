@@ -9,7 +9,7 @@ Squiggly plays your own music from Navidrome. It asks the server for the origina
 
 It's early software. It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too.
 
-![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
+![Squiggly in use: playing a record turns the window its colours and opens the queue, a search finds a song, and Ctrl+K opens its lyrics, filling in word by word](docs/screenshots/demo.gif)
 
 ## What it does
 
@@ -23,9 +23,13 @@ It's early software. It runs on Windows and Fedora, and on Android phones, and a
 - Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
 
-![Synced lyrics filling in word by word, in Hindi and English](docs/screenshots/desktop-lyrics.webp)
+![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
+
+![Synced lyrics filling in word by word](docs/screenshots/desktop-lyrics.webp)
 
 ![The browser version on a phone: the library with the playing song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet](docs/screenshots/phone.webp)
+
+The recording and screenshots use [Navidrome's demo server](https://demo.navidrome.org), whose music its artists released under Creative Commons and other free licences. Lyrics shown come from LRCLIB.
 
 It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% it tells you that's attenuation.
 
