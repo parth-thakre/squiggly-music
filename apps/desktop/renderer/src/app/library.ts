@@ -78,7 +78,9 @@ export function useResource<T>(key: string | null, loader: () => Promise<Result<
 
 export interface Entry { key: string; track: Track }
 export type PlaylistEdit =
-  | { kind: 'add'; entries: Entry[] }
+  // Without `after`, the songs go at the end. With it (a drop into the list), they follow that
+  // entry (null for the top), or land at `to` when that entry is gone.
+  | { kind: 'add'; entries: Entry[]; after?: string | null; to?: number }
   | { kind: 'remove'; keys: string[] }
   // `after` is the entry the song should follow (null for the top); `to` is the fallback
   // position when that entry is gone.
@@ -100,7 +102,12 @@ const entryOf = (track: Track): Entry => ({ key: `e${++keys}`, track });
 
 export function applyEdit(state: Confirmed, edit: PlaylistEdit | { kind: 'sync' }): Confirmed {
   switch (edit.kind) {
-    case 'add': return { ...state, entries: [...state.entries, ...edit.entries] };
+    case 'add': {
+      if (edit.after === undefined) return { ...state, entries: [...state.entries, ...edit.entries] };
+      const anchor = edit.after === null ? -1 : state.entries.findIndex(e => e.key === edit.after);
+      const at = edit.after === null ? 0 : anchor >= 0 ? anchor + 1 : Math.min(edit.to ?? state.entries.length, state.entries.length);
+      return { ...state, entries: [...state.entries.slice(0, at), ...edit.entries, ...state.entries.slice(at)] };
+    }
     case 'remove': { const drop = new Set(edit.keys); return { ...state, entries: state.entries.filter(e => !drop.has(e.key)) }; }
     case 'move': {
       const moving = state.entries.find(e => e.key === edit.key);
@@ -140,7 +147,14 @@ export class PlaylistEditor {
 
   // Read the playlist from the server, in turn with any edits already queued.
   sync() { if (!this.tasks.some(task => task.edit.kind === 'sync')) void this.enqueue({ kind: 'sync' }); }
-  add(tracks: Track[]) { return this.enqueue({ kind: 'add', entries: tracks.map(entryOf) }); }
+  // `at` places the songs before the song at that index of the list as shown; without it, or
+  // past the end, they go at the end.
+  add(tracks: Track[], at?: number) {
+    const entries = this.view.entries;
+    if (at === undefined || at >= entries.length) return this.enqueue({ kind: 'add', entries: tracks.map(entryOf) });
+    const to = Math.max(0, at);
+    return this.enqueue({ kind: 'add', entries: tracks.map(entryOf), after: to === 0 ? null : entries[to - 1].key, to });
+  }
   rename(name: string) { return this.enqueue({ kind: 'rename', name }); }
   delete() { return this.enqueue({ kind: 'delete' }); }
   // Indexes refer to the list as shown (this.snapshot.tracks). `expect` guards against a list
@@ -204,7 +218,7 @@ export class PlaylistEditor {
     }
     let request: Promise<Result> | null;
     switch (edit.kind) {
-      case 'add': request = this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id)); break;
+      case 'add': request = this.addTo(base, edit); break;
       case 'rename': request = this.source.updatePlaylist(this.id, { name: edit.name }); break;
       case 'delete': request = this.source.deletePlaylist(this.id); break;
       case 'remove': {
@@ -236,6 +250,14 @@ export class PlaylistEditor {
       if (result.ok && !read.ok) return { ok: false, error: `Saved, but the playlist could not be read back. ${read.error}` };
     }
     return result;
+  }
+  // The server only appends, so songs placed inside the list are appended, then the whole list
+  // is written in the new order, built from the server's confirmed list as a move is.
+  private async addTo(base: Confirmed | null, edit: Extract<PlaylistEdit, { kind: 'add' }>): Promise<Result> {
+    const added = await this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id));
+    if (!added.ok || edit.after === undefined || !base) return added;
+    const placed = await this.source.reorderPlaylist(this.id, applyEdit(base, edit).entries.map(e => e.track.id));
+    return placed.ok ? placed : { ok: false, error: `The songs were added at the end. ${placed.error}` };
   }
   private compute(): PlaylistView {
     let state = this.confirmed;

@@ -16,7 +16,7 @@ import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
-import { defaultPlayModes, PlayModesSchema } from '../../../packages/core/desktopValidation';
+import { defaultPlayModes, OpenPathsSchema, PlayModesSchema } from '../../../packages/core/desktopValidation';
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
@@ -28,7 +28,7 @@ import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
 import { Account } from './account';
 import { initialUpdateState, Updates } from './updates';
-import { isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
+import { AUDIO_EXTENSIONS, checkAudioPaths, isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
@@ -455,7 +455,7 @@ function installHandlers() {
   handle('open-files', () => Effect.gen(function* () {
     const result = yield* Effect.promise(() => dialog.showOpenDialog(dialogParent(), {
       title: 'Add music', properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Audio', extensions: ['flac', 'wav', 'aiff', 'aif', 'alac', 'm4a', 'mp3', 'ogg', 'opus', 'aac', 'dsf', 'dff'] }],
+      filters: [{ name: 'Audio', extensions: [...AUDIO_EXTENSIONS] }],
     }));
     if (result.canceled) return;
     if (result.filePaths.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`Choose up to ${QUEUE_LIMIT.toLocaleString('en-US')} files at a time.`));
@@ -464,6 +464,20 @@ function installHandlers() {
     const tracks: PlayableTrack[] = result.filePaths.map((path, i) => ({ location: path, track: read[i] }));
     endRadio();
     yield* send({ type: 'queue', tracks });
+  }), 'dialog');
+  // Files dropped on the window. The renderer sends only paths (the preload's filePath); they are
+  // checked here as Open files limits its dialog: audio extensions, regular files, up to a full
+  // queue. Folders aren't walked. `queue` adds them to the end when something is loaded.
+  handle('open-paths', value => Effect.gen(function* () {
+    if (Array.isArray(value) && Array.isArray(value[0]) && value[0].length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`Drop up to ${QUEUE_LIMIT.toLocaleString('en-US')} files at a time.`));
+    const [paths, mode] = yield* Schema.decodeUnknown(OpenPathsSchema)(value).pipe(Effect.mapError(() => new Error('Those files could not be opened.')));
+    const { files, skipped } = yield* Effect.promise(() => checkAudioPaths(paths));
+    if (!files.length) return yield* Effect.fail(new Error('Nothing dropped could be played. Drop audio files, such as FLAC, WAV, or MP3; folders aren’t opened.'));
+    const read = yield* Effect.promise(() => readLocalTracks(files));
+    const tracks: PlayableTrack[] = files.map((path, i) => ({ location: path, track: read[i] }));
+    if (mode === 'queue' && state.player.queue.length) yield* send({ type: 'queue-add', tracks, where: 'end' });
+    else { endRadio(); yield* send({ type: 'queue', tracks }); }
+    return { opened: files.length, skipped };
   }), 'dialog');
   handle('connect', (value, generation) => Effect.gen(function* () {
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));

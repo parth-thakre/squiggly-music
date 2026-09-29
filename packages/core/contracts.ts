@@ -168,7 +168,8 @@ export interface Settings {
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
 }
 export interface QueueApi {
-  add(trackIds: string[], where: 'next' | 'end'): Promise<Result>;
+  // A number inserts before the entry at that index.
+  add(trackIds: string[], where: 'next' | 'end' | number): Promise<Result>;
   move(from: number, to: number): Promise<Result>;
   remove(indexes: number[]): Promise<Result>;
   // Removes everything except the current song.
@@ -338,6 +339,12 @@ export interface DesktopBridge {
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
   command(command: PlayerCommand): Promise<Result>;
   openFiles(): Promise<Result>;
+  // Files dropped on the window: the path of a dropped File (Electron's webUtils; '' when it has
+  // none), then those paths opened as openFiles opens its choice. The main process keeps only
+  // regular files with an audio extension; folders are left out and counted in `skipped`.
+  // 'play' replaces the queue; 'queue' adds to the end when something is loaded.
+  filePath(file: File): string;
+  openPaths(paths: string[], mode: 'play' | 'queue'): Promise<Result<{ opened: number; skipped: number }>>;
   connect(connection: Connection): Promise<Result>;
   // Replaces the queue with library tracks the main process has already seen, then plays from startIndex.
   playTracks(trackIds: string[], startIndex: number): Promise<Result>;

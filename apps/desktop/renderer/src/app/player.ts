@@ -551,17 +551,20 @@ export const player = {
   },
 
   // Queue editing ------------------------------------------------------------------------
-  async add(tracks: Track[], where: 'next' | 'end') {
+  // A number inserts before the song at that index (a drop onto the queue).
+  async add(tracks: Track[], where: 'next' | 'end' | number) {
     if (!tracks.length) return;
     if (state.index < 0) { await player.play(tracks, 0); if (tracks.length > QUEUE_LIMIT) set({ error: queueFull(tracks.length - QUEUE_LIMIT) }); return; }
     const adding = tracks.slice(0, Math.max(0, QUEUE_LIMIT - state.queue.length));
     if (!adding.length) { set({ error: queueFull(0) }); return; }
     const left = tracks.length - adding.length;
     if (local) {
-      const at = where === 'next' ? state.index + 1 : state.queue.length;
+      const at = where === 'next' ? state.index + 1 : where === 'end' ? state.queue.length : Math.max(0, Math.min(where, state.queue.length));
       const queue = [...state.queue], entryIds = [...state.entryIds];
       queue.splice(at, 0, ...adding); entryIds.splice(at, 0, ...mint(adding.length));
-      set({ queue, entryIds, error: left ? queueFull(left) : state.error }); saveSoon(); return;
+      // Songs put before the playing one push it down; it keeps playing.
+      const index = at <= state.index ? state.index + adding.length : state.index;
+      set({ queue, entryIds, index, error: left ? queueFull(left) : state.error }); saveSoon(); return;
     }
     if (report(await desktop!.queue.add(adding.map(t => t.id), where)).ok && left) set({ error: queueFull(left) });
   },

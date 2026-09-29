@@ -76,6 +76,9 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         openDir: async () => ({ ok: true, value: undefined }),
         writeClipboard: async (text: string) => { calls.push(`clipboard:${text}`); return { ok: true, value: undefined }; },
       },
+      // Files dropped on the window: the path stands in for Electron's webUtils, and the call is recorded.
+      filePath: (file: File) => `/drop/${file.name}`,
+      openPaths: async (paths: string[], mode: string) => { calls.push(`open-paths:${JSON.stringify(paths)}:${mode}`); return { ok: true, value: { opened: paths.length, skipped: 0 } }; },
       connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
       disconnect: async () => {
         calls.push('disconnect');

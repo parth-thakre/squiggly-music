@@ -461,6 +461,19 @@ describe('queue editing', () => {
     expect(native.set.mock.calls.filter(([name]) => name === 'playlist-pos')).toEqual([['playlist-pos', '1']]);
   });
 
+  it('inserts before an entry for a drop onto the queue, and the playing song keeps playing', async () => {
+    const { run, reply, order, snapshot, consistent } = await editableHost();
+    expect(reply(run({ type: 'queue-add', tracks: [playable('x'), playable('y')], where: 3 }))).toMatchObject(ok);
+    expect(order()).toEqual(['a', 'b', 'c', 'x', 'y', 'd']);
+    expect(snapshot().currentIndex).toBe(1);
+    consistent();
+    // Before the playing song: it moves down and stays current.
+    run({ type: 'queue-add', tracks: [playable('z')], where: 0 });
+    expect(order()).toEqual(['z', 'a', 'b', 'c', 'x', 'y', 'd']);
+    expect(snapshot().currentIndex).toBe(2);
+    consistent();
+  });
+
   it('adds "next" to the front when nothing is current', async () => {
     const { run, order, consistent } = await editableHost(['a', 'b'], 0);
     run({ type: 'stop' });

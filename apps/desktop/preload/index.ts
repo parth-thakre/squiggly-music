@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
@@ -78,6 +78,9 @@ const bridge: DesktopBridge = {
   },
   command: command => ipcRenderer.invoke('squiggly:command', command),
   openFiles: () => ipcRenderer.invoke('squiggly:open-files'),
+  // A dropped File's path on disk ('' for one that isn't a file on disk). Only paths cross to the main process.
+  filePath: file => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
+  openPaths: (paths, mode) => ipcRenderer.invoke('squiggly:open-paths', [paths, mode]),
   connect: connection => ipcRenderer.invoke('squiggly:connect', connection),
   playTracks: (trackIds, startIndex) => ipcRenderer.invoke('squiggly:play-tracks', [trackIds, startIndex]),
   resumeQueue: () => ipcRenderer.invoke('squiggly:resume-queue'),
