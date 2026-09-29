@@ -122,6 +122,28 @@ test.describe('search', () => {
     await expect(app.heading).toHaveText('Artists');
   });
 
+  test('Enter moves to the first song of a long list scrolled down', async ({ app, fake }) => {
+    fake.large = true;
+    await field(app).fill('night');
+    await expect(app.heading).toHaveText('“night”');
+    await app.main.getByRole('button', { name: 'See all songs' }).click();
+    await expect(tab(app, 'Songs')).toHaveAttribute('aria-pressed', 'true');
+    // All 210 songs, past where song lists render only the rows near the viewport.
+    for (let offset = 100; offset <= 200; offset += 100) {
+      await app.main.evaluate(main => main.scrollTo(0, main.scrollHeight));
+      await expect.poll(() => fake.callsTo('search').length).toBe(offset / 100 + 2);
+    }
+    await app.main.evaluate(main => main.scrollTo(0, main.scrollHeight));
+    await expect(app.row('Night Two 100')).toBeVisible();
+    await expect(app.tracks().first()).not.toHaveAttribute('data-index', '0');
+
+    await field(app).focus();
+    await field(app).press('Enter');
+    const first = app.main.locator('ol.tracks > li[data-index="0"]');
+    await expect(app.rowButton(first)).toBeFocused();
+    await expect(first).toBeInViewport();
+  });
+
   test('a tab left and shown again before its songs arrive shows them', async ({ app, fake }) => {
     await field(app).fill('opening');
     await expect(app.heading).toHaveText('“opening”');

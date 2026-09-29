@@ -1117,6 +1117,13 @@ const searchPage = (type: SearchType, offset: number, size: number): SearchOptio
   : type === 'albums' ? { ...skipped, albumCount: size, albumOffset: offset } : { ...skipped, songCount: size, songOffset: offset };
 // What Enter in the search field focuses: the first song, record, or artist, in page order.
 const FIRST_RESULT = '.tracks .track, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
+// Long lists render only the rows near the viewport, so the first one on the page may not be the
+// list's first: a song row knows its index, and a record grid pads the rows above the window.
+const listStart = (result: HTMLElement) => {
+  const item = result.closest('li'), list = item?.parentElement;
+  if (!item || !list) return false;
+  return item.dataset.index !== undefined ? item.dataset.index === '0' : !parseFloat(list.style.paddingTop || '0');
+};
 
 export function Search({ query, type }: { query: string; type?: SearchType }) {
   const text = query.trim();
@@ -1130,7 +1137,9 @@ export function Search({ query, type }: { query: string; type?: SearchType }) {
     const attempt = () => {
       if (!focusWaiting(text)) return;
       const first = element.querySelector<HTMLElement>(FIRST_RESULT);
-      if (first) { dropFocusRequest(); first.focus(); return; }
+      if (first && listStart(first)) { dropFocusRequest(); first.focus(); return; }
+      // A long list scrolled down: back to the top, and focus once the first rows are drawn.
+      if (first) { nav.scroller?.scrollTo(0, 0); return; }
       if (element.querySelector('.status:not(.loading)')) dropFocusRequest();
     };
     attempt();
