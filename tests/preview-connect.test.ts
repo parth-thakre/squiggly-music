@@ -17,7 +17,9 @@ const md5 = (text: string) => createHash('md5').update(text).digest('hex');
 // token login, and stream sends fixed bytes. Every request's path is kept.
 async function subsonic() {
   const paths: string[] = [];
-  const server = createServer((request, response) => {
+  // Set to hold ping answers until it settles.
+  const held = { ping: null as Promise<void> | null };
+  const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://subsonic');
     paths.push(url.pathname);
     const params = url.searchParams;
@@ -28,7 +30,7 @@ async function subsonic() {
     const signedIn = params.get('u') === login.username && params.get('t') === md5(login.password + params.get('s'));
     if (url.pathname === '/rest/getOpenSubsonicExtensions.view') return reply({ openSubsonicExtensions: [] });
     if (!signedIn) return reply({ status: 'failed', error: { code: 40 } });
-    if (url.pathname === '/rest/ping.view') return reply({});
+    if (url.pathname === '/rest/ping.view') { if (held.ping) await held.ping; return reply({}); }
     if (url.pathname === '/rest/getPlaylists.view') return reply({ playlists: { playlist: [{ id: 'pl-own', name: 'Own list', owner: login.username }] } });
     if (url.pathname === '/rest/stream.view') { response.writeHead(200, { 'content-type': 'audio/flac' }); return void response.end(audio); }
     reply({ status: 'failed', error: { code: 0 } });
@@ -37,7 +39,7 @@ async function subsonic() {
   await once(server, 'listening');
   const { port } = server.address() as { port: number };
   cleanup.push(() => { server.closeAllConnections(); return new Promise<void>(resolve => server.close(() => resolve())); });
-  return { url: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}`, paths };
+  return { url: `http://127.0.0.1:${port}`, host: `127.0.0.1:${port}`, paths, held };
 }
 
 // `client` stands in for the environment's connector; without it one is built from `env`, as the host does.
@@ -200,6 +202,25 @@ describe('connecting from the page', () => {
     expect(out.headers.get('set-cookie')).toContain('squiggly-connection=; Path=/; Max-Age=0');
     const again = (await preview.signIn()).cookie;
     expect(await playlists(`${again}; ${connected.cookie}`)).toEqual(disconnected);
+  });
+
+  it('keeps no connection for a session signed out while the server was being checked', async () => {
+    const { server, preview, connect, playlists } = await setup({ password: webPassword });
+    const signedIn = (await preview.signIn()).cookie;
+    let answer!: () => void;
+    server.held.ping = new Promise(resolve => { answer = resolve; });
+    const pending = connect({ url: server.url, ...login }, signedIn);
+    while (!server.paths.includes('/rest/ping.view')) await new Promise(resolve => setTimeout(resolve, 5));
+    // Another tab signs out while the ping is out; the browser has no connection cookie yet.
+    expect((await preview.fetch('/api/session', { method: 'DELETE', headers: { cookie: signedIn, origin: preview.url } })).status).toBe(200);
+    answer();
+    const late = await pending;
+    expect(late.response.status).toBe(401);
+    expect(late.body).toEqual({ ok: false, error: 'Sign in to use this library.' });
+    expect(late.setCookie).toBe('');
+    // Whoever signs in next finds no connection, whatever the late answer carried.
+    const again = (await preview.signIn()).cookie;
+    expect(await playlists(late.cookie ? `${again}; ${late.cookie}` : again)).toEqual(disconnected);
   });
 
   it('works alongside a server from the environment, and the page\'s own connection wins', async () => {

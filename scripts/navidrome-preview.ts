@@ -204,6 +204,11 @@ function createAuth(password: string, now: () => number) {
     refresh(request: IncomingMessage, response: ServerResponse, token: string) {
       response.setHeader('set-cookie', cookie(request, token, sessionLifetime / 1000));
     },
+    // Whether a session found earlier still stands (not signed out or expired since).
+    live(token: string) {
+      const expires = sessions.get(digest(token).toString('hex'));
+      return expires !== undefined && expires > now();
+    },
     retryAfter(request: IncomingMessage) {
       const record = failures.get(clientAddress(request));
       return record && record.until > now() ? Math.ceil((record.until - now()) / 1000) : 0;
@@ -299,7 +304,10 @@ function createConnections(now: () => number) {
 type Connections = ReturnType<typeof createConnections>;
 
 // The page's server login: resolved and checked as the desktop does it, then kept here.
-async function handleConnect(connections: Connections, connector: (connection: Connection) => SubsonicClient, request: IncomingMessage, response: ServerResponse) {
+// `live` says whether the page session that asked still stands: a sign-out that lands while the
+// server is being checked can't clear a connection that doesn't exist yet, so the connection is
+// kept only if the session outlived the wait.
+async function handleConnect(connections: Connections, connector: (connection: Connection) => SubsonicClient, live: () => boolean, request: IncomingMessage, response: ServerResponse) {
   if (request.method !== 'POST') return json(response, 405, { ok: false, error: 'Use POST.' });
   if (!jsonRequest(request) || !sameOrigin(request)) return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });
   let body: unknown;
@@ -316,6 +324,7 @@ async function handleConnect(connections: Connections, connector: (connection: C
   })));
   // The connector's messages are its own, never the server's text or an address with credentials.
   if (Either.isLeft(attempt)) return json(response, 502, { ok: false, error: attempt.left.message || 'Could not connect.' });
+  if (!live()) return json(response, 401, { ok: false, error: signInRequired });
   const { client, info } = attempt.right;
   const host = hostName(client);
   const serverName = host ? `${info.name} (${host})` : info.name;
@@ -541,8 +550,9 @@ export function navidromePreview({ env = process.env, client = createClient(env)
         // Without a password the library is for this computer only, so a proxy may not relay it.
         if (!auth && proxied(request)) return json(response, 503, { ok: false, error: `Set SQUIGGLY_WEB_PASSWORD (${minimumPasswordLength} or more characters) to serve this library through a proxy.` });
         if (pathname === '/session') return await handleSession(auth, connections, serverFor, configured || null, request, response);
-        if (auth && !auth.session(request)) return json(response, 401, { ok: false, error: signInRequired });
-        if (pathname === '/connect') return await handleConnect(connections, connector, request, response);
+        const token = auth?.session(request) ?? null;
+        if (auth && !token) return json(response, 401, { ok: false, error: signInRequired });
+        if (pathname === '/connect') return await handleConnect(connections, connector, () => !auth || !!token && auth.live(token), request, response);
         if (pathname === '/disconnect') {
           if (request.method !== 'POST') return json(response, 405, { ok: false, error: 'Use POST.' });
           if (!jsonRequest(request) || !sameOrigin(request)) return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });
