@@ -29,7 +29,8 @@ import { Radio } from './radio';
 import { startMpris, type MediaSession } from './mpris';
 import { Account } from './account';
 import { initialUpdateState, Updates } from './updates';
-import { AUDIO_EXTENSIONS, checkAudioPaths, isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
+import { AUDIO_EXTENSIONS, checkAudioPaths, isLocalCover, readLocalCover } from './localFiles';
+import { openLocalFiles, withLocalPaths } from './localPaths';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
@@ -115,15 +116,6 @@ const queueSync = new QueueSync((saved, generation) => {
   if (!client || !settings.value.syncQueue) return Promise.resolve();
   return Effect.runPromise(metrics.measure('sync.save-queue', semaphores.sync.withPermits(1)(client.saveQueue(saved.trackIds, saved.currentIndex, saved.positionSeconds))));
 });
-// Where each opened local file is, by its track id, for playlist files (saveM3u). The renderer
-// never sees these paths. Bounded like knownTracks.
-const localPaths = new Map<string, string>();
-function rememberLocalPaths(tracks: readonly PlayableTrack[]) {
-  for (const { track, location } of tracks) {
-    localPaths.delete(track.id); localPaths.set(track.id, location);
-    if (localPaths.size > 2 * QUEUE_LIMIT) localPaths.delete(localPaths.keys().next().value!);
-  }
-}
 function rememberTracks(tracks: readonly Track[]) {
   for (const track of tracks) {
     knownTracks.delete(track.id); knownTracks.set(track.id, track);
@@ -469,10 +461,8 @@ function installHandlers() {
     }));
     if (result.canceled) return;
     if (result.filePaths.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`Choose up to ${QUEUE_LIMIT.toLocaleString('en-US')} files at a time.`));
-    // Titles, artists, and covers from the files' own tags (localFiles.ts).
-    const read = yield* Effect.promise(() => readLocalTracks(result.filePaths));
-    const tracks: PlayableTrack[] = result.filePaths.map((path, i) => ({ location: path, track: read[i] }));
-    rememberLocalPaths(tracks);
+    // Titles, artists, and covers from the files' own tags; their paths kept for saveM3u (localPaths.ts).
+    const tracks = yield* Effect.promise(() => openLocalFiles(result.filePaths));
     endRadio();
     yield* send({ type: 'queue', tracks });
   }), 'dialog');
@@ -485,8 +475,7 @@ function installHandlers() {
     const [paths, mode] = yield* Schema.decodeUnknown(OpenPathsSchema)(value).pipe(Effect.mapError(() => new Error('Those files could not be opened.')));
     const { files, skipped } = yield* Effect.promise(() => checkAudioPaths(paths));
     if (!files.length) return yield* Effect.fail(new Error('Nothing dropped could be played. Drop audio files, such as FLAC, WAV, or MP3; folders aren’t opened.'));
-    const read = yield* Effect.promise(() => readLocalTracks(files));
-    const tracks: PlayableTrack[] = files.map((path, i) => ({ location: path, track: read[i] }));
+    const tracks = yield* Effect.promise(() => openLocalFiles(files));
     if (mode === 'queue' && state.player.queue.length) yield* send({ type: 'queue-add', tracks, where: 'end' });
     else { endRadio(); yield* send({ type: 'queue', tracks }); }
     return { opened: files.length, skipped };
@@ -637,7 +626,7 @@ function installHandlers() {
       title: 'Export as M3U', defaultPath: m3uFileName(name), filters: [{ name: 'M3U playlist', extensions: ['m3u8', 'm3u'] }],
     }));
     if (result.canceled || !result.filePath) return;
-    const text = buildM3u(entries.map(entry => entry.local ? { ...entry, path: localPaths.get(entry.id) ?? null } : entry), name);
+    const text = buildM3u(withLocalPaths(entries), name);
     yield* Effect.tryPromise({ try: () => writeFile(result.filePath!, text, 'utf8'), catch: () => new Error('Could not save the playlist file. Check that the folder is writable.') });
   }), 'dialog');
 }
