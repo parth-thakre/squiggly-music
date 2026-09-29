@@ -411,10 +411,13 @@ describe('OpenSubsonic', () => {
     expect(decode(LibraryRequestSchemas.randomSongs, [{ size: 5, genre: 'Jazz', fromYear: 1990, toYear: 2000 }])).toBe(true);
     expect(decode(LibraryRequestSchemas.randomSongs, [{ size: 0 }])).toBe(false);
     expect(decode(LibraryRequestSchemas.tracks, ['random', 40_000, 500, '0.25'])).toBe(true);
-    for (const value of [['newest', -1, 200, ''], ['newest', 0, 0, ''], ['newest', 0, 501, ''], ['newest', 0.5, 200, ''], ['highest', 0, 200, ''], ['newest', 0, 200], ['random', 0, 200, 'x'.repeat(65)]]) {
+    for (const value of [['newest', -1, 200, ''], ['newest', 0, 0, ''], ['newest', 0, 501, ''], ['newest', 0.5, 200, ''], ['starred', 0, 200, ''], ['newest', 0, 200], ['random', 0, 200, 'x'.repeat(65)]]) {
       expect(decode(LibraryRequestSchemas.tracks, value)).toBe(false);
     }
     expect(decode(LibraryRequestSchemas.createPlaylist, ['name', Array.from({ length: 1001 }, () => 's')])).toBe(false);
+    expect(decode(LibraryRequestSchemas.tracks, ['highest', 0, 200, ''])).toBe(true);
+    for (const value of [['track', 's', 0], ['album', 'a', 5], ['artist', 'ar', 3]]) expect(decode(LibraryRequestSchemas.rate, value)).toBe(true);
+    for (const value of [['song', 's', 3], ['track', 's', 6], ['track', 's', 1.5], ['track', '', 3], ['track', 's', '3']]) expect(decode(LibraryRequestSchemas.rate, value)).toBe(false);
     expect(Schema.decodeUnknownSync(LibraryRequestSchemas.search)(['  q  '])).toEqual(['q']);
     expect(decode(PlayTracksSchema, [['a', 'a'], 1])).toBe(true);
     for (const value of [[[], 0], [['a'], -1], [['a'], 0.5], [Array.from({ length: 1001 }, () => 'a'), 0], [[''], 0], ['a', 0], [['a']]]) expect(decode(PlayTracksSchema, value)).toBe(false);

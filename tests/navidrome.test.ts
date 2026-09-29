@@ -417,3 +417,58 @@ it('serves the new library methods to the browser preview over POST /api/<method
     await Promise.all([preview.close(), fixture.close()]);
   }
 });
+
+it('reads the account\'s ratings, sets and clears them with setRating, and checks rate requests', async () => {
+  const password = 'fixture-password';
+  const requests: { endpoint: string; params: URLSearchParams }[] = [];
+  const server = await listen((request, response) => {
+    const url = new URL(request.url!, 'http://localhost');
+    const params = url.searchParams;
+    const reply = (payload: object) => {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ 'subsonic-response': { status: 'ok', version: '1.16.1', type: 'navidrome', openSubsonic: true, ...payload } }));
+    };
+    const endpoint = url.pathname.replace(/^\/rest\/(\w+)\.view$/, '$1');
+    if (endpoint === 'getOpenSubsonicExtensions') return reply({ openSubsonicExtensions: [] });
+    if (params.get('u') !== 'listener' || params.get('t') !== createHash('md5').update(password + params.get('s')).digest('hex')) return reply({ status: 'failed', error: { code: 40 } });
+    requests.push({ endpoint, params });
+    switch (endpoint) {
+      // Navidrome sends 0 for unrated; anything outside 1 to 5 is not a rating.
+      case 'getAlbum': return reply({ album: { ...albumEntry, userRating: 4, song: [song('s1', { userRating: 5 }), song('s2', { userRating: 0 }), song('s3', { userRating: 2.5 }), song('s4')] } });
+      case 'getArtist': return reply({ artist: { ...artistEntry, userRating: 3, album: [{ ...albumEntry, userRating: 0 }] } });
+      case 'getArtists': return reply({ artists: { index: [{ name: 'A', artist: [{ ...artistEntry, userRating: 1 }, { id: 'ar2', name: 'Band', userRating: 9 }] }] } });
+      case 'getAlbumList2': return reply({ albumList2: { album: params.get('type') === 'highest' ? [{ ...albumEntry, userRating: 5 }] : [] } });
+      case 'setRating': return params.get('id') === 'gone' ? reply({ status: 'failed', error: { code: 70, message: 'secret' } }) : reply({});
+      default: response.writeHead(404).end();
+    }
+  });
+  try {
+    const client = new SubsonicClient({ url: server.url, username: 'listener', password }, new Metrics());
+    const run = <A>(task: Effect.Effect<A, Error>) => Effect.runPromise(task);
+    const detail = await run(client.album('a1'));
+    expect(detail.album.userRating).toBe(4);
+    expect(detail.tracks.map(track => track.userRating)).toEqual([5, undefined, undefined, undefined]);
+    expect(detail.tracks[1]).not.toHaveProperty('userRating');
+    const artist = await run(client.artist('ar1'));
+    expect(artist.artist.userRating).toBe(3);
+    expect(artist.albums[0]).not.toHaveProperty('userRating');
+    expect((await run(client.artists())).map(item => item.userRating)).toEqual([1, undefined]);
+    expect(await run(client.albumList('highest', 0, 10))).toMatchObject([{ id: 'a1', userRating: 5 }]);
+
+    await run(client.setRating('s1', 4));
+    await run(client.setRating('a1', 0));
+    await expect(run(client.setRating('gone', 3))).rejects.toThrow('This album or track is no longer available. Refresh the library.');
+    // The shared dispatcher: any kind, the id, and a whole rating from 0 to 5.
+    await run(libraryCall(client, 'rate', ['artist', 'ar1', 5]));
+    const sent = requests.filter(request => request.endpoint === 'setRating').map(({ params }) => [params.get('id'), params.get('rating')]);
+    expect(sent).toEqual([['s1', '4'], ['a1', '0'], ['gone', '3'], ['ar1', '5']]);
+    expect(requests.find(request => request.endpoint === 'getAlbumList2')?.params.get('type')).toBe('highest');
+    const before = requests.length;
+    for (const args of [['song', 's1', 3], ['track', 's1', 6], ['track', 's1', -1], ['track', 's1', 2.5], ['track', '', 3], ['track', 's1']]) {
+      await expect(run(libraryCall(client, 'rate', args))).rejects.toThrow('Invalid library request.');
+    }
+    expect(requests.length).toBe(before);
+  } finally {
+    await server.close();
+  }
+});

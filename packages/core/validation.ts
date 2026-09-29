@@ -41,7 +41,7 @@ export const LibraryRequestSchemas = {
     size: IntSchema(1, 500), genre: Schema.optional(TextSchema),
     fromYear: Schema.optional(IntSchema(0, 9999)), toYear: Schema.optional(IntSchema(0, 9999)),
   })),
-  tracks: Schema.Tuple(Schema.Literal('newest', 'alphabeticalByName', 'alphabeticalByArtist', 'frequent', 'recent', 'random'),
+  tracks: Schema.Tuple(Schema.Literal('newest', 'alphabeticalByName', 'alphabeticalByArtist', 'frequent', 'recent', 'random', 'highest'),
     IntSchema(0, 10_000_000), IntSchema(1, 500), Schema.String.pipe(Schema.maxLength(64))),
   search: Schema.Tuple(Schema.Trim.pipe(Schema.minLength(1), Schema.maxLength(256))),
   star: Schema.Tuple(Schema.Literal('track', 'album', 'artist'), IdSchema, Schema.Boolean),
@@ -64,6 +64,8 @@ export const LibraryRequestSchemas = {
   // An empty queue clears the saved one; otherwise currentIndex must point into it.
   saveQueue: Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema, Schema.Number.pipe(Schema.finite(), Schema.between(0, 604_800)))
     .pipe(Schema.filter(([trackIds, currentIndex]) => currentIndex < Math.max(1, trackIds.length))),
+  // 0 clears the rating.
+  rate: Schema.Tuple(Schema.Literal('track', 'album', 'artist'), IdSchema, Schema.Literal(0, 1, 2, 3, 4, 5)),
 };
 // Track IDs must already be known to the main process; startIndex is checked against their count.
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);

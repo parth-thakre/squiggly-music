@@ -75,5 +75,6 @@ export const previewLibrary: LibraryApi = {
   reportPlay: (trackId, event) => call('reportPlay', [trackId, event]),
   savedQueue: () => call('savedQueue', []),
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', [trackIds, currentIndex, positionSeconds]),
+  rate: (target, id, rating) => call('rate', [target, id, rating]),
   coverUrl: (coverArt, size) => `/api/cover?id=${encodeURIComponent(coverArt)}&size=${Math.round(size)}`,
 };

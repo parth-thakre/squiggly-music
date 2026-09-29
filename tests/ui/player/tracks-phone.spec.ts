@@ -27,7 +27,7 @@ test.describe('phone', () => {
     await expect(app.heading).toHaveText('Tracks');
     await expect(app.section('Tracks')).toHaveAttribute('aria-current', 'page');
     const sorts = app.main.getByRole('group', { name: 'Sort tracks' });
-    await expect(sorts.getByRole('button')).toHaveText(['Newest', 'A to Z', 'By artist', 'Most played', 'Recently played', 'Random']);
+    await expect(sorts.getByRole('button')).toHaveText(['Newest', 'A to Z', 'By artist', 'Most played', 'Recently played', 'Random', 'Top rated']);
     await sorts.getByRole('button', { name: 'Most played' }).tap();
     await expect(app.tracks()).toHaveCount(3);
     await app.rowButton(app.row('Opening 5')).tap();

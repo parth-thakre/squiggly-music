@@ -5,6 +5,7 @@ import { api, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, player, type PlayerState } from './player';
 import { showNowPlaying } from './nowPlaying';
 import { nav } from './route';
+import { ratingOf, ratingText, setRating } from './ratings';
 import { labelOf, registry, type MenuItem, type MenuTarget } from './registry';
 import { kHz, length, plural, shuffled, splitTitle } from './ui';
 
@@ -320,6 +321,23 @@ builtin.menu({
     if (!result.ok) report(result.error);
   },
 });
+// Ratings live on the server, so songs from this computer can't have one. Every selected song
+// is rated alike. setRating shows its own failures.
+const ratedItems = (t: MenuTarget): { kind: 'track' | 'album' | 'artist'; items: { id: string; userRating?: number }[] } | null =>
+  t.kind === 'tracks' ? t.tracks.length && t.tracks.every(track => track.source === 'navidrome') ? { kind: 'track', items: t.tracks } : null
+    : t.kind === 'album' ? { kind: 'album', items: [t.album] } : t.kind === 'artist' ? { kind: 'artist', items: [t.artist] } : null;
+builtin.menu({
+  id: 'rate', section: 3, label: 'Rate', when: t => !!ratedItems(t),
+  submenu: t => {
+    const { kind, items } = ratedItems(t)!;
+    const ids = items.map(item => item.id);
+    const stars = ([1, 2, 3, 4, 5] as const).map((n): MenuItem => ({
+      id: `rate-${n}`, section: 0, label: n === 1 ? '1 star' : `${n} stars`, run: async () => { await setRating(kind, ids, n); },
+    }));
+    const rated = items.some(item => ratingOf(item.id, item.userRating) > 0);
+    return rated ? [...stars, { id: 'rate-clear', section: 1, label: 'Clear rating', run: async () => { await setRating(kind, ids, 0); } }] : stars;
+  },
+});
 
 // Moving a song without dragging, for keyboards, screen readers, and touch. The list that
 // owns the song supplies `reorder`; these items only appear when it does.
@@ -381,6 +399,7 @@ builtin.menu({
       [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(', ') || 'Format not reported',
       [track.duration && length(track.duration), track.year, track.genre].filter(Boolean).join(', '),
       `${track.artist}, ${splitTitle(track.album).main}`,
+      track.source === 'navidrome' && ratingText(ratingOf(track.id, track.userRating)),
       track.source !== 'navidrome' ? 'A file on this computer.'
         : deliveryOf(track) === 'mp3-fallback' ? 'This browser couldn’t decode the original, so it is playing a 320 kbps MP3 from Navidrome instead.'
         : 'Requested from Navidrome as the original file.',

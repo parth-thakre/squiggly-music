@@ -145,3 +145,69 @@ test.describe('credits with several artists', () => {
     await expect(app.heading).toHaveText('Cinder Lane');
   });
 });
+
+test.describe('ratings', () => {
+  test.beforeEach(async ({ app }) => { await app.signIn(); });
+  test('a song rated from its menu shows the rating in Song details, and the rating clears', async ({ app, page, fake }) => {
+    await app.openAlbum('Test Pressing');
+    const row = app.row('Tail Light');
+    await app.openMenuOn(row);
+    await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
+    await expect(app.menu).toHaveAccessibleName('Rate');
+    await expect(app.menu.getByRole('menuitem', { name: '1 star', exact: true })).toBeVisible();
+    // Nothing to clear yet.
+    await expect(app.menu.getByRole('menuitem', { name: 'Clear rating' })).toHaveCount(0);
+    await app.menu.getByRole('menuitem', { name: '4 stars', exact: true }).click();
+    await expect(app.menu).toBeHidden();
+    await expect.poll(() => fake.ratings.get('tr-1-5')).toBe(4);
+    expect(fake.callsTo('rate').map(call => call.args)).toEqual([['tr-1-5', 4]]);
+
+    await app.openMenuOn(row);
+    await app.menu.getByRole('menuitem', { name: 'Song details' }).click();
+    await expect(app.menu.getByText('Rated 4 of 5', { exact: true })).toBeVisible();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await expect(app.menu).toBeHidden();
+
+    await app.chooseFromMenu(row, 'Rate', 'Clear rating');
+    await expect.poll(() => fake.ratings.has('tr-1-5')).toBe(false);
+    await app.openMenuOn(row);
+    await app.menu.getByRole('menuitem', { name: 'Song details' }).click();
+    await expect(app.menu.getByText('Not rated', { exact: true })).toBeVisible();
+  });
+
+  test('a record rated from its page shows marks by its name and leads Top rated', async ({ app, fake }) => {
+    await app.openAlbum('Quiet Harbor');
+    await app.main.getByRole('button', { name: 'More', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: '3 stars', exact: true }).click();
+    await expect(app.main.getByRole('img', { name: 'Rated 3 of 5' })).toBeVisible();
+    await expect.poll(() => fake.ratings.get('al-2')).toBe(3);
+
+    await app.section('Records').click();
+    await app.main.getByRole('group', { name: 'Sort records' }).getByRole('button', { name: 'Top rated' }).click();
+    const records = app.main.getByRole('list').first().getByRole('listitem');
+    await expect(records).toHaveCount(1);
+    await expect(records.first()).toContainText('Quiet Harbor');
+
+    // Cleared on its page, the record has left Top rated when you come Back.
+    await records.first().getByRole('button', { name: /^Quiet Harbor/ }).click();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+    await app.main.getByRole('button', { name: 'More', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Clear rating' }).click();
+    await expect.poll(() => fake.ratings.has('al-2')).toBe(false);
+    await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
+    await expect(records).toHaveCount(0);
+  });
+
+  test('a record cleared from its menu leaves Top rated while the list is showing', async ({ app, fake }) => {
+    fake.ratings.set('al-2', 3);
+    await app.section('Records').click();
+    await app.main.getByRole('group', { name: 'Sort records' }).getByRole('button', { name: 'Top rated' }).click();
+    const record = app.main.getByRole('list').first().getByRole('button', { name: /^Quiet Harbor/ });
+    await expect(record).toBeVisible();
+    await app.chooseFromMenu(record, 'Rate', 'Clear rating');
+    await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
+  });
+});

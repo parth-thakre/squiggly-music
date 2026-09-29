@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
-import { api, load, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
+import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -15,6 +15,7 @@ import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave }
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
+import { RatingMarks } from './ratings';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -83,20 +84,30 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
 // Records and Songs load a page at a time as the list nears its end. The pages loaded outlive
 // the page itself, so coming Back renders the same entries at once and the scroll offset has
 // somewhere to land. `request` names a page for the library cache and fetches it.
-interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number }
+interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number; keys: string[] }
 const paged = new Map<string, Paged<{ id: string }>>();
+const dropped = new Set<() => void>();
 onLibraryReset(() => paged.clear());
+// A list with a page the library has since invalidated is read again from the top: at once if
+// it's on screen, otherwise when it's next shown. A new rating drops Top rated this way.
+onInvalidate(prefix => {
+  let any = false;
+  for (const [list, p] of paged) if (p.keys.some(key => key.startsWith(prefix))) { paged.delete(list); any = true; }
+  if (any) dropped.forEach(listener => listener());
+});
 type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
 function usePaged<T extends { id: string }>(list: string, size: number, request: PageRequest<T>, once = false) {
   const session = useLibraryEpoch();
   const [, redraw] = useState(0);
   const more = useCallback(() => {
     let p = paged.get(list) as Paged<T> | undefined;
-    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random() }; paged.set(list, p); }
+    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random(), keys: [] }; paged.set(list, p); }
     if (p.busy || p.done) return;
     const page = p;
     page.busy = true; page.error = null;
-    void load(...request(page.count, page.seed)).then(result => {
+    const [key, loader] = request(page.count, page.seed);
+    page.keys.push(key);
+    void load(key, loader).then(result => {
       page.busy = false;
       if (paged.get(list) !== page) return;
       if (!result.ok) page.error = result.error;
@@ -111,6 +122,7 @@ function usePaged<T extends { id: string }>(list: string, size: number, request:
     redraw(v => v + 1);
   }, [list]);
   useEffect(() => { const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
+  useEffect(() => { const listener = () => { if (!paged.has(list)) more(); }; dropped.add(listener); return () => { dropped.delete(listener); }; }, [more]);
   const p = paged.get(list) as Paged<T> | undefined;
   return { items: p?.items ?? none as T[], done: p?.done ?? false, error: p?.error ?? null, more };
 }
@@ -133,12 +145,15 @@ function useMore(more: () => void, count: number) {
 const sorts: { type: TrackSort; label: string }[] = [
   { type: 'newest', label: 'Newest' }, { type: 'alphabeticalByName', label: 'A to Z' }, { type: 'alphabeticalByArtist', label: 'By artist' },
   { type: 'frequent', label: 'Most played' }, { type: 'recent', label: 'Recently played' }, { type: 'random', label: 'Random' },
+  { type: 'highest', label: 'Top rated' },
 ];
 function Sorts({ list, type }: { list: 'records' | 'tracks'; type: AlbumListType }) {
   return <div className="choices" role="group" aria-label={`Sort ${list}`}>
     {sorts.map(sort => <button key={sort.type} type="button" aria-pressed={sort.type === type} onClick={() => {
       // Choosing Random again is asking for a new draw.
       if (sort.type === 'random' && type !== 'random') paged.delete(`${list}:random`);
+      // Ratings change as you listen, so Top rated is read again each time it's chosen.
+      if (sort.type === 'highest' && type !== 'highest') paged.delete(`${list}:highest`);
       nav.go(list === 'records' ? { view: 'records', sort: sort.type } : { view: 'tracks', sort: sort.type }, true);
     }}>{sort.label}</button>)}
   </div>;
@@ -157,7 +172,8 @@ export function Records() {
   return <>
     <Head title="Records"><Sorts list="records" type={type} /></Head>
     {albums.items.length ? <AlbumGrid albums={albums.items} /> : albums.done
-      ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.' : 'No records on this server yet.'}</Status>
+      ? <Status>{type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.'
+        : type === 'highest' ? 'Nothing rated yet. Records you rate will collect here, best first.' : 'No records on this server yet.'}</Status>
       : albums.error ? <Status>{albums.error}</Status> : <p className="status loading">Opening your records</p>}
     {albums.error && albums.items.length > 0 && <Status>{albums.error}</Status>}
     <div ref={sentinel} className="sentinel" />
@@ -230,7 +246,7 @@ export function AlbumPage({ id }: { id: string }) {
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
       <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
-        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span></p>
+        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingMarks id={album.id} rating={album.userRating} /></p>
         <Actions tracks={tracks}>
           <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
@@ -356,7 +372,7 @@ export function ArtistPage({ id }: { id: string }) {
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
     <Head title={artist.name}>
-      <p className="byline"><span>{plural(albums.length, 'record')}</span></p>
+      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingMarks id={artist.id} rating={artist.userRating} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play
@@ -418,7 +434,8 @@ export function Tracks() {
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>
     {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
-      ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.' : 'No tracks on this server yet.'}</Status>
+      ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.'
+        : tracksSorted && sort === 'highest' ? 'Nothing rated yet. Songs you rate will collect here, best first.' : 'No tracks on this server yet.'}</Status>
       : tracks.error ? <Status>{tracks.error}</Status> : <p className="status loading">Gathering tracks</p>}
     {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
     <div ref={sentinel} className="sentinel" />
