@@ -12,6 +12,7 @@
     setup: /-windows-x64-setup\.exe$/i,
     portable: /-windows-x64-portable\.exe$/i,
     rpm: /\.x86_64\.rpm$/i,
+    apk: /-android\.apk$/i,
     sums: /^SHA256SUMS$/
   };
 
