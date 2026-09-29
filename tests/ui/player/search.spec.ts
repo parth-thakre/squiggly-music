@@ -144,6 +144,29 @@ test.describe('search', () => {
     await expect(first).toBeInViewport();
   });
 
+  test('Enter waits for a slow search and then moves to its first result', async ({ app, fake }) => {
+    // Slower than a few seconds, still within the server's 15.
+    fake.delay('search', 5_500);
+    await field(app).fill('harbor');
+    await field(app).press('Enter');
+    await expect(app.heading).toHaveText('“harbor”');
+    await expect(app.main.locator('.status.loading')).toHaveText('Searching');
+    await expect(records(app).first()).toContainText('Quiet Harbor', { timeout: 10_000 });
+    await expect(records(app).locator('button:not(.play-over)').first()).toBeFocused();
+  });
+
+  test('Enter leaves focus where it went if you move on before the results arrive', async ({ app, fake, page }) => {
+    fake.delay('search', 1_500);
+    await field(app).fill('harbor');
+    await field(app).press('Enter');
+    await expect(app.heading).toHaveText('“harbor”');
+    const songs = tab(app, 'Songs');
+    await songs.focus();
+    await expect(records(app).first()).toContainText('Quiet Harbor');
+    await page.waitForTimeout(200);
+    await expect(songs).toBeFocused();
+  });
+
   test('a tab left and shown again before its songs arrive shows them', async ({ app, fake }) => {
     await field(app).fill('opening');
     await expect(app.heading).toHaveText('“opening”');

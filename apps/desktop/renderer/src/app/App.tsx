@@ -86,6 +86,8 @@ const Bar = memo(function Bar() {
     if (route === own.current) return;
     clearTimeout(timer.current);
     setQuery(route.view === 'search' ? route.query : '');
+    // Enter's wait for a first result ends when the search is left.
+    if (route.view !== 'search') dropFocusRequest();
   }, [route]);
   useEffect(() => () => clearTimeout(timer.current), []);
   // On the search page a new query replaces the place and keeps its tab.

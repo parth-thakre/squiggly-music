@@ -37,11 +37,15 @@ export const clearSearches = () => write([]);
 export const useRecentSearches = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, recentSearches);
 
 // Enter in the search field asks for the first result of that query. The results may still be
-// on their way, so the request waits (a few seconds at most) for the search page to take it.
-// Typing again, or Escape, drops it.
-let asked: { query: string; at: number } | null = null;
+// on their way (a slow server can take up to 15 seconds), so the request waits for the search
+// page to take it, for as long as focus stays where it was when Enter was pressed. Typing
+// again, Escape, leaving the search, or moving focus elsewhere drops it.
+let asked: { query: string; from: Element | null } | null = null;
 const focusListeners = new Set<() => void>();
-export function focusFirstResult(query: string) { asked = { query: query.trim().toLowerCase(), at: performance.now() }; focusListeners.forEach(listener => listener()); }
+export function focusFirstResult(query: string) { asked = { query: query.trim().toLowerCase(), from: document.activeElement }; focusListeners.forEach(listener => listener()); }
 export const onFocusFirstResult = (listener: () => void) => { focusListeners.add(listener); return () => { focusListeners.delete(listener); }; };
-export const focusWaiting = (query: string) => !!asked && asked.query === query.trim().toLowerCase() && performance.now() - asked.at < 5000;
+export function focusWaiting(query: string) {
+  if (asked && document.activeElement !== asked.from) asked = null;
+  return !!asked && asked.query === query.trim().toLowerCase();
+}
 export const dropFocusRequest = () => { asked = null; };
