@@ -68,7 +68,7 @@ npm run android:build      # debug and release APKs
 - `squiggly-<version>-release.apk`: signed with your release key. Without a key it's `-release-unsigned.apk` and won't install.
 - `SHA256SUMS`
 
-`android:debug` and `android:release` build one of them. The version is `package.json`'s: `versionName` 0.1.0, `versionCode` 100 (major × 10000 + minor × 100 + patch).
+`android:debug` and `android:release` build one of them. The version is `package.json`'s. `apps/android/app/build.gradle` reads it at build time and uses it as the `versionName`, and makes the `versionCode` from it: major × 10000 + minor × 100 + patch, so 1.2.3 is 10203. `scripts/android.mjs` names the APKs with it too.
 
 ### The release key
 
@@ -79,14 +79,15 @@ npm run android:build      # debug and release APKs
 
 Both are readable by you alone and live outside the repository. Never commit them. Back them up together: Android installs an update only if it's signed with the same key, so losing the key means uninstalling to install a new build. To sign with a different key, point `SQUIGGLY_ANDROID_SIGNING` at another properties file in the same format.
 
-Check a signature with `$ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs dist/android/squiggly-0.1.0-release.apk`. The build runs this check itself.
+Check a signature with `$ANDROID_HOME/build-tools/36.0.0/apksigner verify --print-certs dist/android/squiggly-<version>-release.apk`. The build runs this check itself.
 
 ## Installing
 
 Copy the release APK to the phone and open it, allowing your file manager to install apps when Android asks. Or, with USB debugging on:
 
 ```bash
-~/.local/share/squiggly-android/sdk/platform-tools/adb install -r dist/android/squiggly-0.1.0-release.apk
+v=$(node -p "require('./package.json').version")
+~/.local/share/squiggly-android/sdk/platform-tools/adb install -r dist/android/squiggly-$v-release.apk
 ```
 
 The debug and release builds share an app id, but not a key, so uninstall one before installing the other.
@@ -103,7 +104,7 @@ export JAVA_HOME=$A/jdk ANDROID_HOME=$A/sdk ANDROID_AVD_HOME=$A/android-user/avd
 $A/sdk/cmdline-tools/latest/bin/sdkmanager emulator 'system-images;android-36;google_apis;x86_64'
 echo no | $A/sdk/cmdline-tools/latest/bin/avdmanager create avd -n squiggly-flip -k 'system-images;android-36;google_apis;x86_64' -d '6.7in Foldable'
 $A/sdk/emulator/emulator -avd squiggly-flip -no-window -no-audio -no-boot-anim -gpu swangle_indirect -port 5580 &
-adb -s emulator-5580 install -r dist/android/squiggly-0.1.0-debug.apk
+adb -s emulator-5580 install -r dist/android/squiggly-$(node -p "require('./package.json').version")-debug.apk
 adb -s emulator-5580 shell am start -n dev.squiggly.music/.MainActivity
 ```
 
