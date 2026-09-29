@@ -78,3 +78,43 @@ it('opens at Home on a fresh start, keeps a reloaded place, and Back returns Hom
   expect(reloaded.current).toEqual({ view: 'records' });
   reloaded.back(); expect(reloaded.current).toEqual({ view: 'home' });
 });
+
+it('moves the history at once, so Back during a move counts from the new place, and two quick Backs land right', async () => {
+  // Motion on: moves render inside a view transition whose callback the browser runs later.
+  entries.splice(0, entries.length, null); at = 0; handlers.length = 0;
+  const pending: (() => Promise<void>)[] = [];
+  Object.assign(globalThis, {
+    matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+    document: { hidden: false, querySelector: () => null, startViewTransition(update: () => Promise<void>) {
+      pending.push(update);
+      return { ready: Promise.resolve(), finished: Promise.resolve() };
+    } },
+  });
+  const flush = async () => { const run = pending.splice(0); for (const update of run) await update(); };
+  vi.resetModules();
+  const { nav } = await import('../apps/desktop/renderer/src/app/route');
+  const start = nav.current;
+  // A move is in the history before its transition has drawn it.
+  nav.go({ view: 'artists' });
+  expect(nav.current).toEqual({ view: 'artists' });
+  expect(pending.length).toBe(1);
+  // Back before the draw: from Artists, not from the place before it.
+  nav.back();
+  expect(nav.current).toEqual(start);
+  await flush();
+  expect(nav.current).toEqual(start);
+  expect(entries.length).toBe(2); // the start and Artists: nothing pushed on top of the wrong entry
+  // Artists, a record, Artists again: two quick Backs must show the record, then the first Artists.
+  nav.go({ view: 'artists' }); await flush();
+  nav.go({ view: 'album', id: 'x' }); await flush();
+  nav.go({ view: 'artists' }); await flush();
+  nav.back(); nav.back();
+  expect(nav.current).toEqual({ view: 'artists' });
+  await flush();
+  expect(nav.current).toEqual({ view: 'artists' });
+  expect(at).toBe(1);
+  (history as unknown as { forward(): void }).forward();
+  expect(nav.current).toEqual({ view: 'album', id: 'x' });
+  await flush();
+  expect(nav.current).toEqual({ view: 'album', id: 'x' });
+});
