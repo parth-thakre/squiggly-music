@@ -19,19 +19,33 @@
   function platform() {
     var ua = navigator.userAgent || "";
     var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || "";
+    if (/Android/i.test(p + ua)) return "android";
     if (/win/i.test(p) || /Windows/i.test(ua)) return "windows";
-    if (/Linux/i.test(p + ua) && !/Android/i.test(ua)) return "linux";
+    if (/Linux/i.test(p + ua)) return "linux";
     return "other";
   }
 
-  // The visitor's platform goes first and gets the filled button.
-  if (platform() === "linux") {
-    doc.querySelectorAll("[data-cta]").forEach(function (cta) {
-      var linux = cta.querySelector('[data-os="linux"]'), windows = cta.querySelector('[data-os="windows"]');
-      if (!linux || !windows) return;
-      cta.insertBefore(linux, cta.firstChild);
-      linux.classList.add("primary");
-      windows.classList.remove("primary");
+  // The visitor's system gets the one filled button, and its files lead the list. The other
+  // systems follow as a quiet "Also for" line. Anything without a build (a Mac, an iPhone) gets
+  // Windows, the page's own first choice.
+  var os = platform();
+  doc.querySelectorAll("[data-cta]").forEach(function (cta) {
+    var mine = cta.querySelector('[data-os="' + os + '"]') || cta.querySelector(".btn");
+    var also = doc.createElement("span");
+    also.className = "also";
+    also.textContent = "Also for";
+    cta.querySelectorAll(".btn").forEach(function (btn) {
+      btn.classList.toggle("primary", btn === mine);
+      if (btn !== mine) { btn.textContent = btn.getAttribute("data-name"); also.appendChild(btn); }
+    });
+    cta.insertBefore(mine, cta.firstChild);
+    cta.appendChild(also);
+    cta.classList.add("picked");
+  });
+  if (os !== "other") {
+    doc.querySelectorAll(".files").forEach(function (list) {
+      var rows = list.querySelectorAll('[data-os="' + os + '"]');
+      for (var i = rows.length - 1; i >= 0; i--) list.insertBefore(rows[i], list.firstChild);
     });
   }
 

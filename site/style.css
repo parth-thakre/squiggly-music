@@ -264,6 +264,39 @@ kbd {
   color: var(--ground);
 }
 
+/* With script, one filled button for the visitor's system and the rest as a quiet line. */
+.cta.picked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.75rem;
+}
+
+.also {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.9rem;
+  font-size: 0.9375rem;
+  color: var(--soft);
+}
+
+.also .btn {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-variation-settings: "wght" 520;
+  text-decoration: underline;
+  text-decoration-color: var(--line-2);
+  text-underline-offset: 0.16em;
+}
+
+.also .btn:hover {
+  background: none;
+  color: var(--ink);
+  text-decoration-color: currentColor;
+}
+
 .small {
   margin-top: 0.9rem;
   font-size: 0.9375rem;
@@ -553,6 +586,12 @@ kbd {
   .cta .btn {
     flex: 1 1 100%;
     justify-content: center;
+  }
+  .cta.picked {
+    align-items: stretch;
+  }
+  .also .btn {
+    flex: 0 0 auto;
   }
   .files div {
     flex-direction: column;
