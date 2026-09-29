@@ -7,7 +7,7 @@
 
 Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-It's early software. It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too.
+It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too.
 
 ![Squiggly in use: playing a record turns the window its colours and opens the queue, a search finds a song, and Ctrl+K opens its lyrics, filling in word by word](docs/screenshots/demo.gif)
 
