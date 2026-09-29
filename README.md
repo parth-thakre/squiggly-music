@@ -27,7 +27,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Build automatic playlists from your library by genre, by decade, and from what's new, all on one Mixes page (G then M).
 - Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.
 - Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
-- Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.
+- Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more. On Linux it reports what PipeWire or PulseAudio says it runs the sink at, and whether that means it resamples what mpv sends.
 - Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 - Search the library from the bar. All shows a few artists, records, and songs, and See all lists the rest of one kind. Enter goes to the first result, Escape goes back, and the searches you used wait under the empty field.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
