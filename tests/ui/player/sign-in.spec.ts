@@ -1,6 +1,21 @@
+import type { Page } from '@playwright/test';
 import { account, App, expect, test, webPassword } from '../fixtures/test';
 
 const day = 24 * 60 * 60 * 1000;
+
+// The browser player's two audio elements never join the document, so the page keeps every one
+// it makes where the test can read them. Call before the page loads.
+async function audioElements(page: Page) {
+  await page.addInitScript(() => {
+    const made: HTMLAudioElement[] = [];
+    Object.assign(window, { squigglyTestAudio: made });
+    const Native = window.Audio;
+    window.Audio = class extends Native { constructor(src?: string) { super(src); made.push(this); } };
+  });
+  return () => page.evaluate(() => (window as unknown as { squigglyTestAudio: HTMLAudioElement[] }).squigglyTestAudio
+    .map(audio => ({ paused: audio.paused, src: audio.getAttribute('src') })));
+}
+const silent = [{ paused: true, src: null }, { paused: true, src: null }];
 
 test.describe('sign-in', () => {
   test('a wrong password is refused with a message and the field is cleared', async ({ app, page }) => {
@@ -52,6 +67,7 @@ test.describe('connect', () => {
   test('a host with no server of its own asks for one, and Disconnect in Settings goes back to asking', async ({ page, unconfigured }) => {
     unconfigured.fake.reset();
     const app = new App(page, unconfigured.url);
+    const audio = await audioElements(page);
     await page.goto(unconfigured.url);
     // The same connect screen as the desktop and Android, saying what the host keeps.
     await expect(page.getByRole('heading', { name: 'Squiggly', level: 1 })).toBeVisible();
@@ -70,6 +86,9 @@ test.describe('connect', () => {
 
     await expect(app.heading).toHaveText('Home');
     await app.play('Test Pressing', 'Long Run');
+    const playing = await audio();
+    expect(playing).toHaveLength(2);
+    expect(playing).toContainEqual({ paused: false, src: expect.stringMatching(/^\/api\/stream\?id=/) });
     // The connection is the page's to drop, from the deck and from Settings.
     await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
     await expect(app.deck.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
@@ -79,7 +98,7 @@ test.describe('connect', () => {
 
     await expect(page.getByLabel('Server address')).toBeVisible();
     await expect(app.deck).toHaveCount(0);
-    expect(await page.evaluate(() => [...document.querySelectorAll('audio')].every(audio => audio.paused))).toBe(true);
+    expect(await audio()).toEqual(silent);
     // The host forgot it too.
     await page.reload();
     await expect(page.getByLabel('Server address')).toBeVisible();
