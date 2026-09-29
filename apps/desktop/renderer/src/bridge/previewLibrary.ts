@@ -1,5 +1,5 @@
 import type { Connection, LibraryApi, Reachability, Result } from '../../../../../packages/core/contracts';
-import { OUT_OF_REACH, Reach, type ProbeOutcome } from '../../../../../packages/core/reach';
+import { OUT_OF_REACH, PROBE_TIMEOUT, Reach, type ProbeOutcome } from '../../../../../packages/core/reach';
 
 // Browser build only: the host runs the real OpenSubsonic connector, with the login this page
 // gave it (connect) or one from its environment. See scripts/navidrome-preview.ts for the /api
@@ -46,10 +46,16 @@ const post = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'cont
 // is the sign-in flow's business, not this. Built from a fetch so tests can give their own.
 export function createWebLibrary(fetcher: Fetch, options: { timers?: ConstructorParameters<typeof Reach>[0]['timers']; now?: () => number } = {}) {
   const listeners = new Set<(state: Reachability) => void>();
+  const timers = options.timers ?? { set: (fn: () => void, ms: number) => setTimeout(fn, ms), clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
+  // The confirming probe, 8 seconds at most from the request to the end of its body. A host or
+  // connection that stops answering is no answer; the request is let go.
   const probe = async (): Promise<ProbeOutcome> => {
-    const { status, result } = await requestWith<unknown>(fetcher, '/api/albums', post(['newest', 0, 1]));
-    if (status === 0) return { kind: 'unreachable' };
-    return !result.ok && result.unreachable ? { kind: 'unreachable' } : { kind: 'answered' };
+    const controller = new AbortController();
+    let timer: unknown = null;
+    const late = new Promise<ProbeOutcome>(resolve => { timer = timers.set(() => { controller.abort(); resolve({ kind: 'unreachable' }); }, PROBE_TIMEOUT); });
+    const asked = requestWith<unknown>(fetcher, '/api/albums', { ...post(['newest', 0, 1]), signal: controller.signal }).then(({ status, result }): ProbeOutcome =>
+      status === 0 || (!result.ok && result.unreachable) ? { kind: 'unreachable' } : { kind: 'answered' });
+    try { return await Promise.race([asked, late]); } finally { timers.clear(timer); }
   };
   const reach = new Reach({ probe, changed: state => listeners.forEach(listener => listener(state)), ...options });
   async function call<T>(method: string, args: unknown[]): Promise<Result<T>> {

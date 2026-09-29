@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KeptDetail, KeptState } from '../packages/core/contracts';
 import { formatBytes, keepStatus, keptOnly, limitMessage, MB } from '../packages/core/kept';
-import { OUT_OF_REACH, PROBE_EVERY } from '../packages/core/reach';
+import { OUT_OF_REACH, PROBE_EVERY, PROBE_TIMEOUT } from '../packages/core/reach';
 import { pageFor } from '../apps/desktop/renderer/src/app/offline';
 import { createWebLibrary } from '../apps/desktop/renderer/src/bridge/previewLibrary';
 
@@ -96,6 +96,39 @@ describe('the browser build\'s library calls', () => {
     await slow.call('artists', []);
     await vi.waitFor(() => expect(slow.calls).toEqual(['/api/artists', '/api/albums']));
     expect(slow.webReach.get().away).toBe(false);
+  });
+  it('gives up on a probe after 8 seconds, as no answer, and asks again later', async () => {
+    vi.useFakeTimers();
+    let hang = true;
+    const signals: AbortSignal[] = [];
+    const calls: string[] = [];
+    const fetcher = vi.fn((path: RequestInfo | URL, init?: RequestInit) => {
+      calls.push(String(path));
+      if (String(path) === '/api/albums' && hang) { signals.push(init!.signal!); return new Promise<Response>(() => {}); }
+      const body = String(path) === '/api/albums' ? { ok: true, value: [] } : { ok: false, error: 'x', unreachable: true };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+    });
+    const web = createWebLibrary(fetcher as typeof fetch);
+    await web.call('artists', []);
+    expect(web.webReach.get()).toMatchObject({ away: false, checking: true });
+    await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT - 1);
+    expect(web.webReach.get()).toMatchObject({ away: false, checking: true });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(web.webReach.get()).toMatchObject({ away: true, checking: false });
+    expect(signals[0].aborted).toBe(true);
+    // The next probe, on the timer, is answered.
+    hang = false;
+    await vi.advanceTimersByTimeAsync(PROBE_EVERY);
+    expect(web.webReach.get()).toMatchObject({ away: false, checking: false });
+    expect(calls).toEqual(['/api/artists', '/api/albums', '/api/albums']);
+    // Headers, then a body that never ends: the same 8 seconds.
+    hang = false;
+    fetcher.mockImplementationOnce(() => Promise.resolve(new Response(JSON.stringify({ ok: false, error: 'x', unreachable: true }), { status: 200 })))
+      .mockImplementationOnce(() => Promise.resolve(new Response(new ReadableStream({ pull: () => new Promise<void>(() => {}) }), { status: 200 })));
+    await web.call('artists', []);
+    expect(web.webReach.get()).toMatchObject({ away: false, checking: true });
+    await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT);
+    expect(web.webReach.get()).toMatchObject({ away: true, checking: false });
   });
   it('lets a retry through while away', async () => {
     let up = false;
