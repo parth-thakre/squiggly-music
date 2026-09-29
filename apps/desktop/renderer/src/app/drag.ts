@@ -110,24 +110,32 @@ export function refuseDrop(playlist: Playlist, note: string | null) {
   showNotice('', `Songs can’t be added to ${playlist.name}. ${note ?? 'Managed by the server.'}`);
 }
 
-// "Add to queue", or before the song at `at` when dropped onto a row of the queue.
+// "Add to queue", or before the song at `at` when dropped onto a row of the queue. The song
+// dropped on is remembered by its entry, so edits made while the songs load don't move the spot;
+// if that song has left the queue, they go where it was.
 export async function dropOnQueue(payload: DragPayload, at?: number) {
+  const before = at === undefined ? undefined : getPlayer().entryIds[at];
   const songs = await songsOf(payload);
   if (!songs) return;
-  const idle = getPlayer().index < 0;
-  await player.add(songs.tracks, at ?? 'end');
+  const now = getPlayer();
+  const found = before === undefined ? -1 : now.entryIds.indexOf(before);
+  const where = at === undefined ? 'end' : found >= 0 ? found : Math.min(at, now.queue.length);
+  const idle = now.index < 0;
+  await player.add(songs.tracks, where);
   if (!idle) showNotice('', `Added ${plural(songs.tracks.length, 'song')} to the queue.`);
 }
 
 // Songs into a playlist, through its editor (edits queue there and reconcile with the server,
-// as the menu's Add to playlist does). `at` places them before that row of the list as shown.
+// as the menu's Add to playlist does). `at` places them before that row of the list as shown,
+// kept as the song they follow (PlaylistEditor.place) while the songs load.
 // Playlists the server manages refuse, saying why.
 export async function dropOnPlaylist(playlist: Playlist, payload: DragPayload, refusal: string | null, at?: number) {
   if (playlist.readonly) { refuseDrop(playlist, refusal); return; }
   if (payload.kind === 'playlist' && payload.ids.includes(playlist.id)) return;
+  const place = playlistEditor(playlist.id).place(at);
   const songs = await songsOf(payload);
   if (!songs) return;
-  const result = await playlistEditor(playlist.id).add(songs.tracks, at);
+  const result = await playlistEditor(playlist.id).add(songs.tracks, place);
   if (!result.ok) { player.showError(result.error); return; }
   showNotice('', `Added ${plural(songs.tracks.length, 'song')} to ${playlist.name}.`);
 }

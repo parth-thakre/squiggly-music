@@ -71,6 +71,8 @@ const playlistRow = (app: App, name: string) => app.main.locator('ul.rows > li')
 const queueButton = (app: App) => app.deck.getByRole('button', { name: 'Queue', exact: true });
 const notice = (app: App) => app.page.locator('.extension-notice');
 const amber = ['Opening 3', 'Second Wind 3', 'Middle Distance 3'];
+// A record Home doesn't load ahead, so its songs come from the server when it is dropped.
+const hollow = ['Opening 13', 'Second Wind 13', 'Middle Distance 13', 'Late Call 13'];
 const record = ['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light'];
 
 test.describe('drag and drop', () => {
@@ -205,6 +207,42 @@ test.describe('drag and drop', () => {
       { over: app.row('Short Stop'), until: () => expect(app.row('Short Stop')).toHaveClass(/\bdrop-before\b/) },
     ]);
     await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', ...amber, 'Short Stop', 'Thirty Two', 'Tail Light']);
+  });
+
+  test('a drop onto a queued song goes before that song, even if the queue changed while the record loaded', async ({ app, fake, page }) => {
+    await app.play('Test Pressing', 'Long Run');
+    await app.section('Records').click();
+    await dragStart(sleeve(app, 'Hollow Pines'));
+    await dragOver(queueButton(app));
+    await expect(app.heading).toHaveText('Queue');
+    fake.delay('album', 1500);
+    await dragOver(app.row('Short Stop'));
+    await drop(app.row('Short Stop'));
+    // While the record loads, Lyric Line moves down past Short Stop.
+    await app.rowButton(app.row('Lyric Line')).focus();
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect.poll(() => app.titles()).toEqual(['Long Run', 'Short Stop', 'Lyric Line', 'Thirty Two', 'Tail Light']);
+    await expect.poll(() => app.titles()).toEqual(['Long Run', ...hollow, 'Short Stop', 'Lyric Line', 'Thirty Two', 'Tail Light']);
+    expect(fake.callsTo('album').filter(call => call.args[0] === 'al-13')).toHaveLength(1);
+  });
+
+  test('a drop into a playlist goes where it was dropped, even if the list changed while the record loaded', async ({ app, fake, page }) => {
+    await app.section('Records').click();
+    await dragStart(sleeve(app, 'Hollow Pines'));
+    await dragOver(app.section('Playlists'));
+    await expect(app.heading).toHaveText('Playlists');
+    await dragOver(playlistRow(app, 'Road Mix'));
+    await expect(app.heading).toHaveText('Road Mix');
+    fake.delay('album', 1500);
+    await dragOver(app.tracks().nth(1));
+    await drop(app.tracks().nth(1));
+    // Dropped after the first song; while the record loads, that song moves down one.
+    await app.rowButton(app.tracks().nth(0)).focus();
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect.poll(() => app.titles()).toEqual(['tr-2-2', 'tr-2-1', 'tr-3-1', 'tr-2-1', 'tr-3-2'].map(id => trackOf(id).title));
+    const expected = ['tr-2-2', 'tr-2-1', 'tr-13-1', 'tr-13-2', 'tr-13-3', 'tr-13-4', 'tr-3-1', 'tr-2-1', 'tr-3-2'];
+    await expect.poll(() => fake.playlist(playlistIds.road)?.trackIds).toEqual(expected);
+    await expect.poll(() => app.titles()).toEqual(expected.map(id => trackOf(id).title));
   });
 
   test('the browser build ignores files dropped from the computer', async ({ app, page }) => {

@@ -88,6 +88,9 @@ export type PlaylistEdit =
   | { kind: 'rename'; name: string }
   | { kind: 'delete' };
 interface Confirmed { playlist: Playlist; entries: Entry[] }
+// Where dropped songs go: after an entry (null for the top), or at `to` when that entry is gone.
+// null: at the end.
+export type Place = { after: string | null; to: number } | null;
 export interface PlaylistView {
   playlist: Playlist | null; tracks: Track[]; entries: Entry[];
   // Loading until the first read from the server; its error if that failed.
@@ -147,13 +150,19 @@ export class PlaylistEditor {
 
   // Read the playlist from the server, in turn with any edits already queued.
   sync() { if (!this.tasks.some(task => task.edit.kind === 'sync')) void this.enqueue({ kind: 'sync' }); }
-  // `at` places the songs before the song at that index of the list as shown; without it, or
-  // past the end, they go at the end.
-  add(tracks: Track[], at?: number) {
+  // The place before the song at `at` of the list as shown, held as the entry it follows, so
+  // edits made before the songs arrive (a drop waiting on the server) don't move it. Without
+  // `at`, or past the end, the end.
+  place(at?: number): Place {
     const entries = this.view.entries;
-    if (at === undefined || at >= entries.length) return this.enqueue({ kind: 'add', entries: tracks.map(entryOf) });
+    if (at === undefined || at >= entries.length) return null;
     const to = Math.max(0, at);
-    return this.enqueue({ kind: 'add', entries: tracks.map(entryOf), after: to === 0 ? null : entries[to - 1].key, to });
+    return { after: to === 0 ? null : entries[to - 1].key, to };
+  }
+  // `at`: an index of the list as shown (see place), or a place taken earlier.
+  add(tracks: Track[], at?: number | Place) {
+    const place = at === undefined || typeof at === 'number' ? this.place(at) : at;
+    return this.enqueue(place ? { kind: 'add', entries: tracks.map(entryOf), ...place } : { kind: 'add', entries: tracks.map(entryOf) });
   }
   rename(name: string) { return this.enqueue({ kind: 'rename', name }); }
   delete() { return this.enqueue({ kind: 'delete' }); }

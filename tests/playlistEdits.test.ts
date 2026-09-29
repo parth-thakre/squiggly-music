@@ -152,6 +152,32 @@ describe('playlist editing', () => {
     expect(shown(editor)).toEqual(['T', 'A', 'X', 'Y', 'B', 'C', 'Z']);
   });
 
+  it('keeps a dropped place as the song it follows, so edits made while the songs load don’t move it', async () => {
+    const { fake, editor } = await opened(['A', 'B', 'C']);
+    // Dropped before B while its songs load; meanwhile Y is dropped at the top.
+    const place = editor.place(1);
+    const top = editor.add([track('Y')], 0);
+    await fake.step(); await fake.step();
+    expect(await top).toEqual({ ok: true, value: undefined });
+    expect(shown(editor)).toEqual(['Y', 'A', 'B', 'C']);
+    const done = editor.add([track('X')], place);
+    expect(shown(editor)).toEqual(['Y', 'A', 'X', 'B', 'C']);
+    await fake.step(); await fake.step();
+    expect(await done).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['Y', 'A', 'X', 'B', 'C']);
+    // When the song it follows is gone by then, the songs go where the drop was.
+    const gone = editor.place(3);
+    const removed = editor.removeAt([2], [track('X')]);
+    await fake.step();
+    expect(await removed).toEqual({ ok: true, value: undefined });
+    const late = editor.add([track('Z')], gone);
+    await fake.step(); await fake.step();
+    expect(await late).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['Y', 'A', 'B', 'Z', 'C']);
+    expect(editor.place()).toBeNull();
+    expect(editor.place(99)).toBeNull();
+  });
+
   it('keeps songs appended but not put in place, so an edit queued for them still finds them', async () => {
     const { fake, editor } = await opened(['A', 'B']);
     fake.refuse.add('reorder');
