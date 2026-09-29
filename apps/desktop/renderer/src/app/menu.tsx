@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
+import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
 import { api, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, player, type PlayerState } from './player';
@@ -297,7 +298,7 @@ const creditedArtists = (t: MenuTarget) => (t.kind === 'album' ? t.album.artists
 builtin.menu({
   id: 'go-artist', section: 2, label: 'Go to artist',
   when: t => creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
-  run: t => nav.go({ view: 'artist', id: t.kind === 'album' ? t.album.artistId! : one(t)!.artistId! }),
+  run: t => nav.go({ view: 'artist', id: firstArtistId(t.kind === 'album' ? t.album : one(t)!)! }),
 });
 builtin.menu({
   id: 'go-artists', section: 2, label: 'Go to artist',
@@ -407,3 +408,18 @@ builtin.menu({
     return lines.map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
   },
 });
+
+// Song details on their own, for the command that shows the playing song's details. The menu
+// opens by the deck's title (a sheet on phones) with only the details in it.
+export async function openSongDetails(track: Track) {
+  const target: MenuTarget = { kind: 'tracks', tracks: [track] };
+  const info = registry.menu.for(target).find(item => item.id === 'builtin:info');
+  if (!info?.submenu) return;
+  const problems: string[] = [];
+  let rows: Row[] = [];
+  try { rows = rowsFor(await info.submenu(target), target, problems); } catch (error) { problems.push(failed(labelOf(info, target), error)); }
+  // Opened and narrowed in one step, so the full menu never shows.
+  const anchor = document.querySelector('.deck-title')?.getBoundingClientRect();
+  openMenu({ clientX: anchor?.left ?? innerWidth / 2, clientY: anchor?.bottom ?? innerHeight / 3, preventDefault() {} }, target);
+  if (open?.target === target) setOpen({ ...open, levels: [{ title: titleOf(target), rows }], error: problems[0] ?? null });
+}

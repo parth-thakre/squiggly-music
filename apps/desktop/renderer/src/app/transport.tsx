@@ -1,10 +1,11 @@
-import { Repeat, Repeat1, Shuffle } from 'lucide-react';
+import { Repeat, Repeat1, Shuffle, Star } from 'lucide-react';
 import { useLayoutEffect, type CSSProperties } from 'react';
 import { nextRepeat } from '../../../../../packages/core/playOrder';
 import type { Track } from '../../../../../packages/core/contracts';
 import type { Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
 import { Squiggle } from './Squiggle';
+import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { applyTheme, themePalette, useActiveTheme } from './theme';
 import { Glyph, usePalette } from './ui';
 
@@ -61,4 +62,19 @@ export function Position({ track, palette }: { track: Track; palette: Palette })
   const entry = usePlayer(currentEntry);
   return <Squiggle label={`Position in ${track.title}`} identity={entry ?? track.id} position={position} duration={duration || (track.duration ?? 0)} playing={playing}
     color={palette.accent} rest={alpha(palette.ink, .22)} onSeek={player.seek} />;
+}
+
+// The playing song's star, beside the deck's Lyrics, Queue, and Mini player toggles. It shares
+// the optimistic favorites store with every list, so they agree. Songs from this computer have none.
+export function FavoriteToggle({ track }: { track: Track }) {
+  useFavoritesVersion();
+  const connected = usePlayer(s => s.connected);
+  if (track.source !== 'navidrome' || !connected) return null;
+  const on = isStarred(track.id, track.starred);
+  const toggle = async () => {
+    const result = await setStarred('track', [track.id], !on);
+    if (!result.ok) player.showError(result.error);
+  };
+  return <button type="button" className="icon-button favorite" aria-label="Favorite" title={on ? 'Remove from favorites' : 'Add to favorites'}
+    aria-pressed={on} onClick={() => void toggle()}><Star aria-hidden="true" fill={on ? 'currentColor' : 'none'} /></button>;
 }

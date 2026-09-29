@@ -7,7 +7,7 @@ import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
-import { PlayModes } from './transport';
+import { FavoriteToggle, PlayModes } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
@@ -200,6 +200,7 @@ const Deck = memo(function Deck() {
         <button type="button" className="icon-button" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /></button>
         <button type="button" className="icon-button" aria-label="Queue" title="Queue" aria-pressed={route.view === 'queue'} onClick={() => route.view === 'queue' ? nav.back() : nav.go({ view: 'queue' })}><ListMusic aria-hidden="true" /></button>
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
+        <FavoriteToggle track={track} />
         <PlayModes />
       </div>
       <SignalPath track={track} />

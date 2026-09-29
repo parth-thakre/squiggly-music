@@ -335,7 +335,7 @@ function positionState() {
 }
 if (web && 'mediaSession' in navigator) {
   const handlers: [MediaSessionAction, MediaSessionActionHandler][] = [
-    ['play', () => player.toggle()], ['pause', () => player.toggle()],
+    ['play', () => player.toggle()], ['pause', () => player.pause()],
     ['previoustrack', () => player.previous()], ['nexttrack', () => player.next()],
     ['seekto', details => { if (details.seekTime !== undefined) player.seek(details.seekTime); }],
     ['seekbackward', () => player.seek(Math.max(0, state.position - 10))], ['seekforward', () => player.seek(state.position + 10)],
@@ -595,6 +595,17 @@ export const player = {
       return;
     }
     void desktop!.command({ type: state.playing ? 'pause' : 'play' }).then(report);
+  },
+  // Pauses and never resumes, for requests that mean pause, such as the media session's.
+  pause() {
+    if (android) { android.player.pause(); return; }
+    if (web) {
+      if (web.active.paused) return;
+      web.active.pause();
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+      return;
+    }
+    void desktop!.command({ type: 'pause' }).then(report);
   },
   // Plays the queue entry at this index. Pass the entry id the click saw: if the queue changed
   // underneath, the entry is refused rather than playing whatever now sits at that index.
