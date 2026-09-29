@@ -17,6 +17,7 @@ import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
 import { GenrePage, Genres } from './views';
+import { Home } from './views';
 
 onMenuError(message => player.showError(message));
 
@@ -26,7 +27,7 @@ const sections: { view: 'records' | 'artists' | 'tracks' | 'playlists' | 'favori
   { view: 'genres', label: 'Genres' },
 ];
 // Places that need the server. Without one, they offer to connect instead.
-const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre']);
+const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre', 'home']);
 const PaletteContext = createContext(neutral);
 const sectionOf = (route: Route) => route.view === 'album' ? 'records' : route.view === 'artist' ? 'artists'
   : route.view === 'playlist' || route.view === 'mix' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
@@ -89,7 +90,9 @@ const Bar = memo(function Bar() {
   const active = sectionOf(route);
   return <header className="bar">
     <div className="bar-top">
-    <span className="wordmark"><Mark />Squiggly</span>
+    {/* The wordmark goes home, as a site's logo does. */}
+    <button type="button" className="wordmark" aria-label="Squiggly home" aria-current={route.view === 'home' ? 'page' : undefined}
+      onClick={() => nav.go({ view: 'home' })}><Mark />Squiggly</button>
     {canGoBack && <button type="button" className="text-button back" onClick={() => nav.back()}>Back</button>}
     <input className="search" type="search" placeholder="Find anything" aria-label="Search your library" value={query}
       onChange={event => {
@@ -135,6 +138,7 @@ const View = memo(function View() {
     case 'extension': return <ExtensionPage key={route.id} id={route.id} />;
     case 'genres': return <Genres />;
     case 'genre': return <GenrePage key={route.name} name={route.name} />;
+    case 'home': return <Home />;
   }
 });
 

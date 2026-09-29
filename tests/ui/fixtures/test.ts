@@ -38,11 +38,15 @@ export class App {
   rowButton(row: Locator) { return row.locator('button.track'); }
   section(name: 'Records' | 'Artists' | 'Tracks' | 'Playlists' | 'Favorites' | 'Genres') { return this.page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: true }); }
 
-  /** Signs in the way a browser does: the session cookie lands in this page's context. */
-  async signIn() {
+  /** Signs in the way a browser does: the session cookie lands in this page's context. The app
+   *  opens at Home; most specs start from Records, one place further on, unless `home` is set. */
+  async signIn({ home = false }: { home?: boolean } = {}) {
     const response = await this.page.request.post('/api/session', { data: { password: webPassword }, headers: { origin: this.url } });
     expect(response.status()).toBe(200);
     await this.page.goto('/');
+    await expect(this.heading).toHaveText('Home');
+    if (home) return;
+    await this.section('Records').click();
     await expect(this.heading).toHaveText('Records');
   }
   async openAlbum(name: string) {

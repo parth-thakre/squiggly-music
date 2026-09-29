@@ -172,7 +172,7 @@ test.describe('cover screen', () => {
     await expect(screen(page)).toHaveAccessibleName('Queue');
     await page.setViewportSize({ width: 412, height: 860 });
     await app.expectPlaying('Long Run');
-    await expect(app.heading).toHaveText('Records');
+    await expect(app.heading).toHaveText('Home');
     await expect.poll(() => page.evaluate(() => (history.state as { overlay?: boolean }).overlay ?? false)).toBe(false);
     // Folding again returns to the cover view.
     await page.setViewportSize(info.project.use.viewport!);

@@ -114,7 +114,12 @@ export interface LibraryApi {
   artistInfo(artistId: string): Promise<Result<ArtistInfo>>;
   // One genre's songs, a page at a time. Fewer than size: the last page.
   songsByGenre(genre: string, offset: number, size: number): Promise<Result<Track[]>>;
+  // What other accounts on the server are playing now (getNowPlaying). This account's own
+  // players are left out. Empty when nobody else is listening.
+  nowPlaying(): Promise<Result<NowPlayingEntry[]>>;
 }
+// One of someone else's players, as the server last heard from it.
+export interface NowPlayingEntry { username: string; track: Track }
 export interface ArtistInfo {
   // Plain text: the server's HTML with its tags and its "Read more on Last.fm" link taken out.
   biography: string | null;

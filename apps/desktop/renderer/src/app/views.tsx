@@ -17,6 +17,8 @@ import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingMarks } from './ratings';
+import { invalidate, peek } from './library';
+import { time } from './ui';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -994,4 +996,106 @@ export function GenrePage({ name }: { name: string }) {
     {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
     <div ref={sentinel} className="sentinel" />
   </>;
+}
+
+// Home ---------------------------------------------------------------------------------------------
+// Where the app opens. Each shelf loads on its own, so a slow answer holds up only its shelf, and
+// a shelf stays hidden while it loads and when it has nothing to show. A shelf holds twelve at
+// most, and the automatic playlists show their names instead of drawing songs, so opening Home
+// asks the server for a few short lists and nothing more.
+const SHELF = 12;
+export function Home() {
+  return <>
+    <Head title="Home" />
+    <PickUp />
+    <RecordShelf type="recent" title="Played lately" />
+    {/* Records carry no date added, so this is the newest twelve rather than a week's worth. */}
+    <RecordShelf type="newest" title="Newest" />
+    <RecordShelf type="frequent" title="Most played" />
+    <HomeMixes />
+    <Elsewhere />
+  </>;
+}
+
+function SeeAll({ what, go }: { what: string; go(): void }) {
+  return <button type="button" className="text-button" onClick={go}>See all<span className="sr-only"> {what}</span></button>;
+}
+
+// The queue saved on the server, the one the deck offers too. Gone once it plays, or once
+// anything else does.
+function PickUp() {
+  const saved = usePlayer(s => s.queue.length ? null : s.resumable);
+  const track = saved?.tracks[saved.currentIndex];
+  if (!saved || !track) return null;
+  return <section className="shelf-section" aria-labelledby="home-resume">
+    <h2 id="home-resume">Pick up where you left off</h2>
+    <div className="pick-up">
+      <Cover id={track.coverArt} name={track.album} size={160} />
+      <p className="row-text">
+        <span className="row-name">{splitTitle(track.title, track.album).main}</span>
+        <span className="row-sub">{track.artist}, at {time(saved.positionSeconds)}{saved.changedBy ? `, from ${saved.changedBy}` : ''}</span>
+      </p>
+      <button type="button" className="play-action" onClick={() => void player.resume()}><span className="disc"><Glyph kind="play" /></span>Resume</button>
+    </div>
+  </section>;
+}
+
+// A row of sleeves from one of the Records sorts. See all opens Records in that sort.
+function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; title: string }) {
+  const result = useResource(`albums:${type}:0:${SHELF}`, () => api.albums(type, 0, SHELF));
+  if (!result || (result.ok && !result.value.length)) return null;
+  const id = `home-${type}`;
+  return <section className="shelf-section home-shelf" aria-labelledby={id}>
+    <div className="section-head">
+      <h2 id={id}>{title}</h2>
+      {result.ok && <SeeAll what={title.toLowerCase()} go={() => nav.go(type === 'newest' ? { view: 'records' } : { view: 'records', sort: type })} />}
+    </div>
+    {result.ok ? <AlbumGrid albums={result.value} /> : <Status>{result.error}</Status>}
+  </section>;
+}
+
+// The automatic playlists, as the Playlists page lists them. The decades appear once something
+// has found them (Records' Decade, or the Playlists page): looking for them takes nine requests.
+function HomeMixes() {
+  const genres = useResource('genres', () => api.genres());
+  // The same list as Most played, so it costs nothing more.
+  const history = useResource(`albums:frequent:0:${SHELF}`, () => api.albums('frequent', 0, SHELF));
+  // Wait for both, so the row doesn't reshuffle as they arrive.
+  if (!genres || !history) return null;
+  const decades = peek<number[]>('decades');
+  const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0).slice(0, SHELF);
+  return <section className="shelf-section home-shelf" aria-labelledby="home-mixes">
+    <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="playlists" go={() => nav.go({ view: 'playlists' })} /></div>
+    <ul className="grid">
+      {mixes.map(mix => <li key={mix.id} className="playable">
+        <PlayOver label={mix.name} play={async () => {
+          const drawn = await mixTracks(mix);
+          if (!drawn.ok) player.showError(drawn.error);
+          else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+        }} />
+        <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
+          <MixTile mix={mix} tracks={null} travels={mix.id === morph.id} />
+          <span className="grid-name"><span>{mix.name}</span></span>
+          <span className="grid-sub">{mix.description}</span>
+        </button>
+      </li>)}
+    </ul>
+  </section>;
+}
+
+// Other accounts on this server and what they're playing. Read afresh on each visit.
+function Elsewhere() {
+  const result = useResource('nowPlaying', () => api.nowPlaying());
+  useEffect(() => () => invalidate('nowPlaying'), []);
+  if (!result?.ok || !result.value.length) return null;
+  return <section className="shelf-section" aria-labelledby="home-elsewhere">
+    <h2 id="home-elsewhere">Playing elsewhere</h2>
+    <ul className="elsewhere">
+      {result.value.slice(0, SHELF).map(({ username, track }) => <li key={`${username}/${track.id}`}>
+        <span className="elsewhere-user">{username}</span>{' · '}
+        {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.title, track.album).main}</button>
+          : splitTitle(track.title, track.album).main} by {track.artist}
+      </li>)}
+    </ul>
+  </section>;
 }

@@ -847,3 +847,21 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
 @media (max-width: 480px) {
   .sections button { padding: 0 clamp(1px, 1vw, 6px); font-size: min(calc(15px * var(--text)), 3.6vw); }
 }
+
+/* Home. The wordmark is its link. Each shelf is one row of sleeves that scrolls sideways; the
+   padding leaves room for a sleeve lifting on hover. */
+button.wordmark { padding: 0; background: none; border: 0; color: inherit; }
+.page .home-shelf .grid {
+  grid-auto-flow: column; grid-template-columns: none; grid-auto-columns: 148px;
+  overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; margin-top: -6px; padding: 6px 0 10px;
+}
+.page .home-shelf .grid li { scroll-snap-align: start; }
+.pick-up { display: flex; align-items: center; gap: 18px; }
+.pick-up .cover { flex: none; width: 88px; height: 88px; }
+.pick-up .row-text { flex: 0 1 auto; margin: 0; }
+.elsewhere { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.elsewhere-user { font-weight: 600; }
+@media (max-width: 760px) {
+  .page .home-shelf .grid { grid-auto-columns: 40%; gap: 16px; }
+  .pick-up { flex-wrap: wrap; }
+}
