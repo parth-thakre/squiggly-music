@@ -7,6 +7,10 @@
 //
 //   node scripts/smoke-runtime.mjs dist/win-unpacked          # Windows: bundled libmpv-2.dll
 //   node scripts/smoke-runtime.mjs "/opt/Squiggly Music"      # installed RPM: system libmpv
+//   node scripts/smoke-runtime.mjs dist/mac-arm64             # macOS: Homebrew's libmpv
+//
+// A macOS bundle can't run anywhere else. On another host the script only checks that its
+// native files are Mach-O binaries for the bundle's CPU, and exits.
 //
 // Options:
 //   --expect-system-libmpv  fail if the package bundles libmpv (the Linux RPM must not)
@@ -18,7 +22,7 @@
 // On Linux, the Windows package can be tested under Wine with the bundled node.exe:
 //   wine dist/win-unpacked/resources/runtime/node.exe scripts/smoke-runtime.mjs dist/win-unpacked
 import { fork, execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -29,7 +33,12 @@ if (!appDir) throw new Error('Usage: node scripts/smoke-runtime.mjs <unpacked or
 const decode = !args.includes('--no-decode');
 const windows = process.platform === 'win32';
 
-const resources = join(resolve(appDir), 'resources');
+// A macOS build is a folder holding <name>.app (dist/mac-arm64), or the .app itself. Its resources
+// are in Contents/Resources.
+const root = resolve(appDir);
+const bundle = existsSync(join(root, 'Contents', 'Resources')) ? root
+  : existsSync(root) ? readdirSync(root).filter(name => name.endsWith('.app')).map(name => join(root, name))[0] : undefined;
+const resources = bundle ? join(bundle, 'Contents', 'Resources') : join(root, 'resources');
 const runtime = join(resources, 'runtime');
 const node = join(runtime, windows ? 'node.exe' : 'node');
 // Packages built with asar unpack the host next to app.asar. Older packages used resources/app.
@@ -40,11 +49,40 @@ for (const path of [node, host]) if (!existsSync(path)) throw new Error(`Missing
 if (windows && !existsSync(bundledLibmpv)) throw new Error(`Missing ${bundledLibmpv}`);
 if (args.includes('--expect-system-libmpv') && existsSync(bundledLibmpv)) throw new Error('The package bundles libmpv but should use the system library.');
 
+// The CPU a Mach-O binary is built for, from its header.
+const cpuOf = file => {
+  const header = Buffer.alloc(8); const fd = openSync(file, 'r');
+  try { readSync(fd, header, 0, 8, 0); } finally { closeSync(fd); }
+  if (header.readUInt32LE(0) !== 0xfeedfacf) throw new Error(`${file} is not a 64-bit Mach-O binary.`);
+  return { 0x0100000c: 'arm64', 0x01000007: 'x64' }[header.readUInt32LE(4)] ?? `cputype ${header.readUInt32LE(4)}`;
+};
+// A macOS bundle holds one CPU's binaries, which may not be this Mac's (an x64 bundle under Rosetta).
+const bundleArch = bundle ? cpuOf(join(bundle, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework')) : undefined;
+
+if (bundle && process.platform !== 'darwin') {
+  // Nothing here can run a macOS binary, so check what can be checked: every native file is a Mach-O
+  // for the bundle's own CPU, and only that CPU's Koffi and esbuild are in it.
+  const arch = bundleArch;
+  const unpacked = join(resources, 'app.asar.unpacked', 'node_modules');
+  const natives = [node, join(unpacked, '@koromix', `koffi-darwin-${arch}`, `darwin_${arch}`, 'koffi.node'), join(unpacked, '@esbuild', `darwin-${arch}`, 'bin', 'esbuild')];
+  for (const file of natives) {
+    if (!existsSync(file)) throw new Error(`Missing ${file}`);
+    if (cpuOf(file) !== arch) throw new Error(`${file} is ${cpuOf(file)}, but the bundle is ${arch}.`);
+  }
+  for (const dir of [join(unpacked, '@koromix'), join(unpacked, '@esbuild')]) {
+    const extra = readdirSync(dir).filter(name => !name.endsWith(`darwin-${arch}`));
+    if (extra.length) throw new Error(`${dir} holds ${extra.join(', ')}, which ${arch} does not use.`);
+  }
+  if (readdirSync(runtime).some(file => /^libmpv/i.test(file))) throw new Error('The package bundles libmpv but should use the Homebrew library.');
+  console.log(`macOS ${arch} bundle: the audio host runtime, Koffi, and esbuild are all ${arch} Mach-O binaries. This host cannot run them, so nothing was started.`);
+  process.exit(0);
+}
+
 const nodeVersion = execFileSync(node, ['--version']).toString().trim();
 console.log(`Bundled runtime: ${node} (${nodeVersion})`);
 
 // The extension loader runs this binary (apps/desktop/main/extensions/electron.ts).
-const esbuildDir = join(resources, 'app.asar.unpacked', 'node_modules', '@esbuild', `${process.platform}-${process.arch}`);
+const esbuildDir = join(resources, 'app.asar.unpacked', 'node_modules', '@esbuild', `${process.platform}-${bundleArch ?? process.arch}`);
 const esbuild = join(esbuildDir, windows ? 'esbuild.exe' : join('bin', 'esbuild'));
 if (!existsSync(esbuild)) throw new Error(`Missing ${esbuild}`);
 const esbuildVersion = execFileSync(esbuild, ['--version']).toString().trim();
