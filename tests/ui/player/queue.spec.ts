@@ -65,6 +65,23 @@ test.describe('queue', () => {
     await expect(app.main.getByText('1 song up next')).toBeVisible();
   });
 
+  test('radio from the playing song keeps it playing, with the station after it', async ({ app }) => {
+    await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(2);
+    const before = await app.seconds();
+    await app.chooseFromMenu(app.row('Long Run'), 'Start radio');
+    await expect(app.deck.getByText(/Radio from Long Run/)).toBeVisible();
+    await app.expectPlaying('Long Run');
+    expect(await app.seconds()).toBeGreaterThanOrEqual(before);
+    await app.openQueue();
+    await expect(app.tracks().nth(0)).toHaveClass(/\bnow\b/);
+    const titles = await app.titles();
+    expect(titles[0]).toBe('Long Run');
+    expect(titles.length).toBeGreaterThan(1);
+    // The rest of the record made way for the station.
+    expect(titles.slice(1)).not.toContain('Lyric Line');
+    expect(await app.seconds()).toBeGreaterThanOrEqual(before);
+  });
+
   test('a selection survives position updates while a song plays', async ({ app }) => {
     await app.openQueue();
     await app.rowButton(app.row('Thirty Two')).click({ modifiers: ['ControlOrMeta'] });

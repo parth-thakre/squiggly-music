@@ -437,6 +437,13 @@ async function startStation(seed: RadioStart) {
   if (!result.ok) { set({ error: result.error }); return; }
   const tracks = [start, ...result.value.filter(t => t.id !== start!.id)];
   if (tracks.length < 2) { set({ error: 'Your server found nothing similar to play. Radio needs artist information on the server.' }); return; }
+  // Radio from the song that's playing carries on from it rather than starting it over.
+  const playing = current(state), entry = currentEntry(state);
+  if (playing?.id === start.id && entry && !(web?.active.ended || native?.ended)) {
+    station++;
+    set({ queue: [playing, ...tracks.slice(1)], entryIds: [entry, ...mint(tracks.length - 1)], index: 0, radio: { label: seed.label }, error: null, resumable: null });
+    saveSoon(); return;
+  }
   await player.play(tracks, 0, { label: seed.label });
 }
 
