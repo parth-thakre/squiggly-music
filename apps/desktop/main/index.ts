@@ -18,6 +18,7 @@ import {
 } from '../../../packages/core/desktopValidation';
 import { defaultPlayModes, OpenPathsSchema, PlayModesSchema } from '../../../packages/core/desktopValidation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
+import { stationIdOf } from '../../../packages/core/stations';
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
@@ -138,7 +139,7 @@ const endRadio = () => radio.end();
 // What the audio host loads for a library track. A station's stream address comes from the
 // server's station list (the connector keeps it) and, like a song's, never reaches a window.
 const playableOf = (client: SubsonicClient, track: Track) => track.source === 'station'
-  ? client.stationLocation(track.id).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
+  ? client.stationLocation(stationIdOf(track)).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
   : Effect.succeed(client.playable(track));
 
 // Must precede app ready. Covers are fetched here so server credentials never reach the renderer.

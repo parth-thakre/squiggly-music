@@ -5,7 +5,7 @@ import type {
   AlbumYears, ArtistInfo, DiscTitle, RadioStation, SearchOptions, SearchResults, Share,
   NowPlayingEntry,
 } from '../core/contracts';
-import { stationTrack } from '../core/stations';
+import { STATION_ID_MAX, stationTrack } from '../core/stations';
 import type { PlayableTrack } from '../player-mpv/protocol';
 import { Metrics } from '../core/metrics';
 import { IdSchema, LibraryRequestSchemas } from '../core/validation';
@@ -786,13 +786,14 @@ export class SubsonicClient {
   }
   deleteShare(id: string) { return this.request('deleteShare', StatusSchema, { id }).pipe(Effect.mapError(shareError), Effect.asVoid); }
   // The server's internet radio stations, in its order. A station whose stream isn't an http(s)
-  // address is left out; a home page that isn't one is unknown.
+  // address is left out, as is one whose id is too long to queue (stationTrack); a home page
+  // that isn't one is unknown.
   radioStations(): Effect.Effect<StationSource[], Error> {
     return this.request('getInternetRadioStations', RadioStationsSchema).pipe(Effect.map(result => {
       const stations = new Map<string, StationSource>();
       for (const station of result.internetRadioStations.internetRadioStation ?? []) {
         const streamUrl = webAddress(station.streamUrl);
-        if (!streamUrl || stations.has(station.id)) continue;
+        if (!streamUrl || station.id.length > STATION_ID_MAX || stations.has(station.id)) continue;
         stations.set(station.id, {
           id: station.id, name: station.name?.trim() || 'Untitled station', streamUrl,
           homePageUrl: webAddress(station.homePageUrl ?? station.homepageUrl),

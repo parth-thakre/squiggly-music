@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { SubsonicClient, libraryCall, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
+import { stationIdOf } from '../packages/core/stations';
 
 afterEach(() => vi.unstubAllGlobals());
 const connection = { url: 'https://music.example.com/navidrome/', username: 'listener', password: 'do-not-export' };
@@ -682,10 +683,27 @@ describe('internet radio stations', () => {
     expect(value).toEqual([{ id: 'st1', name: 'Jazz FM', homePageUrl: 'https://jazz.example/' }, { id: 'st2', name: 'Untitled station', homePageUrl: null }]);
     expect(JSON.stringify(value)).not.toContain('stream.example');
     expect(tracks).toEqual([
-      { id: 'st1', title: 'Jazz FM', artist: '', album: '', duration: null, source: 'station', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null, albumId: null, artistId: null, coverArt: null },
-      expect.objectContaining({ id: 'st2', title: 'Untitled station', source: 'station' }),
+      { id: 'station:st1', title: 'Jazz FM', artist: '', album: '', duration: null, source: 'station', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null, albumId: null, artistId: null, coverArt: null },
+      expect.objectContaining({ id: 'station:st2', title: 'Untitled station', source: 'station' }),
     ]);
     expect(Either.isLeft(await Effect.runPromise(Effect.either(libraryCall(client(), 'radioStations', ['extra']))))).toBe(true);
+  });
+  it('gives a station a track id no song can have, even where the server numbers both from 1', async () => {
+    // Airsonic numbers songs and stations apart; the desktop knows every track by its id alone.
+    servePayload(albumPayload({ id: '1', title: 'Song one' }));
+    const song = (await Effect.runPromise(libraryCall(client(), 'album', ['a']))).tracks[0];
+    servePayload({ internetRadioStations: { internetRadioStation: [
+      { id: '1', name: 'Station one', streamUrl: 'https://stream.example/one' },
+      { id: 'x'.repeat(249), name: 'Too long to queue', streamUrl: 'https://stream.example/long' },
+      { id: 'x'.repeat(248), name: 'Just fits', streamUrl: 'https://stream.example/fits' },
+    ] } });
+    const { value, tracks } = await Effect.runPromise(libraryCall(client(), 'radioStations', []));
+    expect(song.id).toBe('1');
+    expect((value as { name: string }[]).map(station => station.name)).toEqual(['Station one', 'Just fits']);
+    expect(tracks.map(track => track.id)).not.toContain(song.id);
+    // The server's own id comes back for the stream, and the track ids pass the play request's checks.
+    expect(tracks.map(stationIdOf)).toEqual(['1', 'x'.repeat(248)]);
+    expect(Either.isRight(Schema.decodeUnknownEither(PlayTracksSchema)([tracks.map(track => track.id), 0]))).toBe(true);
   });
   it('finds a station stream in the last list, asks again for one it hasn\'t seen, and fails plainly for a missing one', async () => {
     const mock = servePayload(stations);

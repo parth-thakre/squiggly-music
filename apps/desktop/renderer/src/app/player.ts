@@ -4,7 +4,7 @@ import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
 import { following, preceding, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
 import { finishThreshold } from '../../../../../packages/core/plays';
-import { isStation, repeatFor } from '../../../../../packages/core/stations';
+import { isStation, repeatFor, stationIdOf } from '../../../../../packages/core/stations';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
 import { VolumeCommandCoalescer } from '../volumeCommands';
 import { api, resetLibraryCaches } from './library';
@@ -186,7 +186,7 @@ if (desktop) {
 // so the change between songs is short. Streams come through the host's /api/stream,
 // which keeps the Navidrome credentials off the device. A station comes through /api/station,
 // which keeps its stream address on the host too.
-const stream = (track: Track, mp3 = false) => isStation(track) ? `/api/station?id=${encodeURIComponent(track.id)}`
+const stream = (track: Track, mp3 = false) => isStation(track) ? `/api/station?id=${encodeURIComponent(stationIdOf(track))}`
   : `/api/stream?id=${encodeURIComponent(track.id)}${mp3 ? '&format=mp3' : ''}`;
 const web = local && !android ? { active: new Audio(), standby: new Audio() } : null;
 // Every real load is a new playback instance. Play reports belong to the instance, so

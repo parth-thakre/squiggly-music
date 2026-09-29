@@ -11,7 +11,8 @@ export interface Track {
   album: string;
   duration: number | null;
   // 'station': an internet radio station from the server's list (RadioStation), a live stream
-  // with no duration, album, or cover. Its id is the station's id.
+  // with no duration, album, or cover. Its id is the station's id marked as a station's
+  // (stationTrack, stationIdOf in stations.ts), so it never matches a song's.
   source: 'local' | 'navidrome' | 'station';
   sourceFormat: string | null;
   sourceSampleRate: number | null;

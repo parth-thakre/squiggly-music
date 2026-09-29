@@ -3,6 +3,7 @@ import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSessi
 import { Metrics } from '../../../packages/core/metrics';
 import { ConnectionSchema, SaveM3uSchema } from '../../../packages/core/validation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
+import { stationIdOf } from '../../../packages/core/stations';
 import { SubsonicClient, libraryCall, resolveServerAddress, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
 import { nativeFetch } from './http';
 import { Squiggly, type NativeItem, type NativeOp, type NativePlayback } from './plugin';
@@ -133,7 +134,7 @@ const resetListeners = new Set<() => void>();
 function item(track: Track, id: string, current: SubsonicClient): NativeItem {
   // A station plays its own stream, from the station list the page read through this client; it
   // has no MP3 to fall back to. (An unknown one gets no address, and the player says it failed.)
-  const station = track.source === 'station' ? current.knownStationLocation(track.id) ?? '' : null;
+  const station = track.source === 'station' ? current.knownStationLocation(stationIdOf(track)) ?? '' : null;
   return {
     id, url: station ?? current.streamLocation(track.id), fallbackUrl: station ?? current.streamLocation(track.id, 'mp3'),
     title: track.title, artist: track.artist, album: track.album, coverArt: track.coverArt ?? null, duration: track.duration,
