@@ -27,7 +27,11 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>): Promise<
 }
 export function invalidate(prefix: string) {
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); listeners.forEach(listener => listener(key)); }
+  invalidations.forEach(listener => listener(prefix));
 }
+// For state built from answers but kept outside the cache, such as the pages of Records and Tracks.
+const invalidations = new Set<(prefix: string) => void>();
+export const onInvalidate = (listener: (prefix: string) => void) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; };
 // Read an answer that has already arrived, without asking for it.
 export const peek = <T,>(key: string) => settled.get(key) as Result<T> | undefined;
 

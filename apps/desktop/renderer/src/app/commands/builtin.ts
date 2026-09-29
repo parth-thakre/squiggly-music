@@ -49,6 +49,7 @@ add({
   },
 });
 // Ratings for the playing song, which must be from the server. setRating shows its own failures.
+// Ctrl+1 to Ctrl+5 work in the search field too, as Ctrl+Right does: Ctrl chords are commands there.
 const playingOnServer = () => getPlayer().connected && current(getPlayer())?.source === 'navidrome';
 for (const n of [1, 2, 3, 4, 5] as const) add({
   id: `rate-${n}`, title: `Rate the playing song ${n === 1 ? '1 star' : `${n} stars`}`, category: 'Playback', keys: [`ctrl+${n}`],

@@ -188,5 +188,26 @@ test.describe('ratings', () => {
     const records = app.main.getByRole('list').first().getByRole('listitem');
     await expect(records).toHaveCount(1);
     await expect(records.first()).toContainText('Quiet Harbor');
+
+    // Cleared on its page, the record has left Top rated when you come Back.
+    await records.first().getByRole('button', { name: /^Quiet Harbor/ }).click();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+    await app.main.getByRole('button', { name: 'More', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Clear rating' }).click();
+    await expect.poll(() => fake.ratings.has('al-2')).toBe(false);
+    await app.page.getByRole('button', { name: 'Back', exact: true }).click();
+    await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
+    await expect(records).toHaveCount(0);
+  });
+
+  test('a record cleared from its menu leaves Top rated while the list is showing', async ({ app, fake }) => {
+    fake.ratings.set('al-2', 3);
+    await app.section('Records').click();
+    await app.main.getByRole('group', { name: 'Sort records' }).getByRole('button', { name: 'Top rated' }).click();
+    const record = app.main.getByRole('list').first().getByRole('button', { name: /^Quiet Harbor/ });
+    await expect(record).toBeVisible();
+    await app.chooseFromMenu(record, 'Rate', 'Clear rating');
+    await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
   });
 });

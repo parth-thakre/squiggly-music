@@ -24,6 +24,9 @@ export const useRatingsVersion = () => useSyncExternalStore(listener => { listen
 
 // Rates every id, and shows the first failure in the deck, where the app's other errors appear.
 export async function setRating(target: StarTarget, ids: string[], rating: Rating): Promise<Result> {
+  // One write per item: a playlist can list a song twice, and a failed duplicate would roll back
+  // the one that was saved.
+  ids = [...new Set(ids)];
   const previous = ids.map(id => overrides.get(id));
   ids.forEach(id => remember(id, rating)); emit();
   const results = await Promise.all(ids.map(id => api.rate(target, id, rating).catch((): Result => ({ ok: false, error: 'Could not reach the library. Check your connection and try again.' }))));

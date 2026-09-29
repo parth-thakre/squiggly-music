@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
-import { api, load, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
+import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -84,20 +84,30 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
 // Records and Songs load a page at a time as the list nears its end. The pages loaded outlive
 // the page itself, so coming Back renders the same entries at once and the scroll offset has
 // somewhere to land. `request` names a page for the library cache and fetches it.
-interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number }
+interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number; keys: string[] }
 const paged = new Map<string, Paged<{ id: string }>>();
+const dropped = new Set<() => void>();
 onLibraryReset(() => paged.clear());
+// A list with a page the library has since invalidated is read again from the top: at once if
+// it's on screen, otherwise when it's next shown. A new rating drops Top rated this way.
+onInvalidate(prefix => {
+  let any = false;
+  for (const [list, p] of paged) if (p.keys.some(key => key.startsWith(prefix))) { paged.delete(list); any = true; }
+  if (any) dropped.forEach(listener => listener());
+});
 type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
 function usePaged<T extends { id: string }>(list: string, size: number, request: PageRequest<T>, once = false) {
   const session = useLibraryEpoch();
   const [, redraw] = useState(0);
   const more = useCallback(() => {
     let p = paged.get(list) as Paged<T> | undefined;
-    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random() }; paged.set(list, p); }
+    if (!p) { p = { items: [], count: 0, done: false, busy: false, error: null, seed: Math.random(), keys: [] }; paged.set(list, p); }
     if (p.busy || p.done) return;
     const page = p;
     page.busy = true; page.error = null;
-    void load(...request(page.count, page.seed)).then(result => {
+    const [key, loader] = request(page.count, page.seed);
+    page.keys.push(key);
+    void load(key, loader).then(result => {
       page.busy = false;
       if (paged.get(list) !== page) return;
       if (!result.ok) page.error = result.error;
@@ -112,6 +122,7 @@ function usePaged<T extends { id: string }>(list: string, size: number, request:
     redraw(v => v + 1);
   }, [list]);
   useEffect(() => { const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
+  useEffect(() => { const listener = () => { if (!paged.has(list)) more(); }; dropped.add(listener); return () => { dropped.delete(listener); }; }, [more]);
   const p = paged.get(list) as Paged<T> | undefined;
   return { items: p?.items ?? none as T[], done: p?.done ?? false, error: p?.error ?? null, more };
 }
