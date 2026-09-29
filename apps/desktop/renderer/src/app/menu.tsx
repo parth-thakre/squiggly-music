@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
+import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
 import { api, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, player, type PlayerState } from './player';
@@ -297,7 +298,7 @@ const creditedArtists = (t: MenuTarget) => (t.kind === 'album' ? t.album.artists
 builtin.menu({
   id: 'go-artist', section: 2, label: 'Go to artist',
   when: t => creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
-  run: t => nav.go({ view: 'artist', id: t.kind === 'album' ? t.album.artistId! : one(t)!.artistId! }),
+  run: t => nav.go({ view: 'artist', id: firstArtistId(t.kind === 'album' ? t.album : one(t)!)! }),
 });
 builtin.menu({
   id: 'go-artists', section: 2, label: 'Go to artist',

@@ -106,12 +106,13 @@ add({
 add({ id: 'radio-stop', title: 'Stop radio', category: 'Radio', when: () => !!getPlayer().radio, run: () => player.stopRadio() });
 
 // Now playing: the song on the deck, from anywhere. Only songs from the server have favorites,
-// a record, and an artist to go to.
+// a record, and an artist to go to; every song has its details.
+import { firstArtistId } from '../credits';
 import { isStarred, setStarred } from '../favorites';
 import { openSongDetails } from '../menu';
 const playingSong = () => { const track = current(getPlayer()); return getPlayer().connected && track?.source === 'navidrome' ? track : undefined; };
-// The first credited artist: the credit's own artist, or the first of several.
-const playingArtist = () => { const track = playingSong(); return track?.artistId || track?.artists?.[0]?.id || undefined; };
+// The first credited artist, as the deck's credit links it.
+const playingArtist = () => { const track = playingSong(); return track && firstArtistId(track); };
 add({
   id: 'favorite-current', title: 'Add or remove the playing song from favorites', category: 'Now playing', keys: ['f'],
   when: () => !!playingSong(),
@@ -123,7 +124,7 @@ add({
 });
 add({ id: 'go-current-album', title: 'Go to the playing record', category: 'Now playing', keys: ['g c'], when: () => !!playingSong()?.albumId, run: () => nav.go({ view: 'album', id: playingSong()!.albumId! }) });
 add({ id: 'go-current-artist', title: 'Go to the playing artist', category: 'Now playing', keys: ['g .'], when: () => !!playingArtist(), run: () => nav.go({ view: 'artist', id: playingArtist()! }) });
-add({ id: 'song-details-current', title: "Show the playing song's details", category: 'Now playing', when: () => !!playingSong(), run: () => openSongDetails(playingSong()!) });
+add({ id: 'song-details-current', title: "Show the playing song's details", category: 'Now playing', when: playing, run: () => openSongDetails(current(getPlayer())!) });
 
 // View
 add({ id: 'palette', title: 'Show all commands', category: 'View', keys: ['ctrl+k'], run: () => togglePalette() });

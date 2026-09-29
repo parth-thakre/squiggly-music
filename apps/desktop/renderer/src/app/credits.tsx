@@ -2,6 +2,10 @@ import type { ReactNode } from 'react';
 import type { ArtistRef } from '../../../../../packages/core/contracts';
 import { nav } from './route';
 
+// Where a credit's own link goes: the first of the artists the server splits it into, or its one artist.
+export const firstArtistId = (item: { artistId?: string | null; artists?: ArtistRef[] }) =>
+  (item.artists && item.artists.length > 1 ? item.artists[0].id : item.artistId) || undefined;
+
 // An artist credit where each credited artist is its own link. The server's display text (and
 // its separators, "&" or ",") stays as written; the names it lists separately, with their own
 // pages, become links inside it. A credit the server keeps whole links to its one artist.

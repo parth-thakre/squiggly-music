@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { allowedIn, chordId, formatChordId, match, parseKeys, readUserBindings, resolveKeymap, strokeId, strokeOf, type KeyEventLike, type Stroke } from '../apps/desktop/renderer/src/app/commands/keys';
 import { filterCommands } from '../apps/desktop/renderer/src/app/commands/filter';
 import { registry } from '../apps/desktop/renderer/src/app/registry';
@@ -153,13 +153,23 @@ describe('resolving bindings', () => {
 });
 
 describe('the playing song’s keys', () => {
-  // Now playing's defaults in commands/builtin.ts, beside the other built-in keys.
-  const nowPlaying = [
-    { id: 'builtin:favorite-current', title: 'Add or remove the playing song from favorites', keys: ['f'] },
-    { id: 'builtin:go-current-album', title: 'Go to the playing record', keys: ['g c'] },
-    { id: 'builtin:go-current-artist', title: 'Go to the playing artist', keys: ['g .'] },
-  ];
-  const builtins = [...commands, ...['g t', 'g p', 'g f', 'g q', 'g l', 'g s', '/'].map((key, i) => ({ id: `builtin:other-${i}`, title: `Other ${i}`, keys: [key] })), ...nowPlaying];
+  // The real built-in registrations from commands/builtin.ts, so a default key given to any
+  // other command shows up here. builtin.ts reaches the page when it loads; this is enough of one.
+  let builtins: ReturnType<typeof registry.commands.all> = [];
+  beforeAll(async () => {
+    const stored = new Map<string, string>();
+    const on = () => {};
+    vi.stubGlobal('window', globalThis);
+    vi.stubGlobal('localStorage', { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key) });
+    vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: on, removeEventListener: on }));
+    vi.stubGlobal('addEventListener', on);
+    vi.stubGlobal('history', { state: null, replaceState: on, pushState: on });
+    vi.stubGlobal('document', { hidden: true, addEventListener: on, documentElement: { style: { setProperty: on }, dataset: {} } });
+    vi.stubGlobal('Audio', class { addEventListener = on; pause = on; });
+    await import('../apps/desktop/renderer/src/app/commands/builtin');
+    builtins = registry.commands.all().filter(command => command.id.startsWith('builtin:'));
+  });
+  afterAll(() => { vi.unstubAllGlobals(); });
   it('take free keys, so nothing else loses its own', () => {
     const keymap = resolveKeymap(builtins, null);
     expect(keymap.errors).toEqual([]);
@@ -179,6 +189,15 @@ describe('the playing song’s keys', () => {
     expect(allowedIn('button', stroke('f'))).toBe(true);
     // Nothing playing: F falls through to the page.
     expect(match(keymap, [], 'f', id => id !== 'builtin:favorite-current').consumed).toBe(false);
+  });
+  it('G then . goes where the deck’s credit links first', async () => {
+    const { firstArtistId } = await import('../apps/desktop/renderer/src/app/credits');
+    const a = { id: 'ar-a', name: 'A' }, b = { id: 'ar-b', name: 'B' };
+    // The legacy artistId may name the whole credit or the second artist; the split list wins.
+    expect(firstArtistId({ artistId: 'ar-a-and-b', artists: [a, b] })).toBe('ar-a');
+    expect(firstArtistId({ artistId: 'ar-b', artists: [a, b] })).toBe('ar-a');
+    expect(firstArtistId({ artistId: 'ar-a' })).toBe('ar-a');
+    expect(firstArtistId({ artistId: null })).toBeUndefined();
   });
 });
 
