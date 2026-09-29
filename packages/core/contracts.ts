@@ -218,13 +218,18 @@ export interface RadioApi {
 }
 export interface AudioDevice { name: string; description: string }
 export type AudioServer = 'pipewire' | 'pulseaudio';
+// How the sink was found. 'stream': by following mpv's own stream to the sink the server linked
+// it to. 'device' (the sink mpv asked for) and 'default' (the server's default sink) are guesses
+// made when mpv's stream wasn't found; the session manager may have put it somewhere else.
+export type SinkRoute = 'stream' | 'device' | 'default';
 // What the sound server reports about the sink mpv plays into: the rate, sample format, and
 // channel count it has opened that sink with. The main process asks it on Linux (main/sinks.ts).
 // It is the server's report, not what a DAC receives. `name` is the sink's description.
-// `resampling` is true only when the server's sink rate and mpv's output rate are both known and
-// differ, false when both are known and equal, and null when either is unknown.
+// `resampling` is true only when the sink was found through mpv's stream and its rate and mpv's
+// output rate are both known and differ, false when they are equal, and null otherwise.
 export interface AudioSink {
   server: AudioServer;
+  route: SinkRoute;
   name: string;
   rate: number | null;
   format: string | null;

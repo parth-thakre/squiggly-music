@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyAudio, emptyPlayer, type AudioPath, type AudioSink, type PlayerSnapshot } from '../packages/core/contracts';
-import { parseSampleSpec, resampledNote, sinkFormat, sinkResampling, sinkSentence } from '../packages/core/sinks';
+import { parseSampleSpec, resampledNote, sinkFormat, sinkResamples, sinkResampling, sinkSentence } from '../packages/core/sinks';
 import {
   execText, parsePactlSinks, parsePwDump, pipewireSink, PROBE_EVERY_MS, PROBE_GAP_MS, readSink, SinkWatch,
   type Run, type SinkFacts, type SinkQuery,
@@ -9,7 +9,9 @@ import {
   BLUETOOTH, client, defaults, driverNodes, HOST_PID, link, mpvStream, pactlInfo, pactlInputs, pactlSinks, pwDump, SECRET, SINK, SINK_DESCRIPTION, sinkNode, text,
 } from './sinkFixtures';
 
-const dac: SinkFacts = { server: 'pipewire', name: SINK_DESCRIPTION, rate: 48000, format: 's32le', channels: 2 };
+const dac: SinkFacts = { server: 'pipewire', route: 'stream', name: SINK_DESCRIPTION, rate: 48000, format: 's32le', channels: 2 };
+// The same sink when mpv's stream wasn't found: a guess from the device or the default.
+const guessed = (route: SinkFacts['route']): SinkFacts => ({ ...dac, route });
 const query = (patch: Partial<SinkQuery> = {}): SinkQuery => ({ pid: HOST_PID, backend: 'pipewire', device: 'auto', ...patch });
 const dump = (parts?: Parameters<typeof pwDump>[0]) => parsePwDump(text(pwDump(parts)))!;
 
@@ -35,7 +37,7 @@ describe('the PipeWire sink', () => {
 
   it('takes the sink the stream is linked to over the device and the default', () => {
     const moved = dump({ replace: { 170: link(170, 130, 160), 171: link(171, 130, 160) } });
-    const headphones = { server: 'pipewire', name: 'Headphones', rate: 44100, format: 's16le', channels: 2 };
+    const headphones = { server: 'pipewire', route: 'stream', name: 'Headphones', rate: 44100, format: 's16le', channels: 2 };
     expect(pipewireSink(moved, query())).toEqual(headphones);
     expect(pipewireSink(moved, query({ device: `pipewire/${SINK}` }))).toEqual(headphones);
   });
@@ -47,16 +49,16 @@ describe('the PipeWire sink', () => {
 
   it('without a stream, uses the device mpv was given, then the default sink', () => {
     const none = dump({ without: 'stream' });
-    expect(pipewireSink(none, query({ device: `pipewire/${BLUETOOTH}` }))?.name).toBe('Headphones');
-    expect(pipewireSink(none, query({ device: `pulse/${BLUETOOTH}` }))?.name).toBe('Headphones');
+    expect(pipewireSink(none, query({ device: `pipewire/${BLUETOOTH}` }))).toMatchObject({ name: 'Headphones', route: 'device' });
+    expect(pipewireSink(none, query({ device: `pulse/${BLUETOOTH}` }))).toMatchObject({ name: 'Headphones', route: 'device' });
     // ao=pulse may be talking to another server, so this graph's device and default say nothing about it.
     expect(pipewireSink(none, query({ backend: 'pulse', device: `pulse/${BLUETOOTH}` }))).toBeNull();
     expect(pipewireSink(none, query({ backend: 'pulse' }))).toBeNull();
     expect(pipewireSink(none, query({ device: 'pipewire/alsa_output.gone' }))).toBeNull();
     // The default is default.audio.sink, never default.configured.audio.sink (a sink that isn't there).
-    expect(pipewireSink(none, query({ device: 'auto' }))).toEqual(dac);
-    expect(pipewireSink(none, query({ pid: undefined, device: 'pipewire' }))).toEqual(dac);
-    expect(pipewireSink(dump({ without: 'stream', replace: { 40: defaults(BLUETOOTH) } }), query())?.name).toBe('Headphones');
+    expect(pipewireSink(none, query({ device: 'auto' }))).toEqual(guessed('default'));
+    expect(pipewireSink(none, query({ pid: undefined, device: 'pipewire' }))).toEqual(guessed('default'));
+    expect(pipewireSink(dump({ without: 'stream', replace: { 40: defaults(BLUETOOTH) } }), query())).toMatchObject({ name: 'Headphones', route: 'default' });
     expect(pipewireSink(dump({ without: 'stream', replace: { 40: defaults(null) } }), query())).toBeNull();
     // A device that isn't mpv's pipewire or pulse name says nothing about a sink.
     expect(pipewireSink(none, query({ device: 'alsa/hdmi:CARD=HDMI,DEV=0' }))).toBeNull();
@@ -86,7 +88,7 @@ describe('the PipeWire sink', () => {
 
   it('keeps a suspended sink\'s name and leaves its format unknown', () => {
     const none = dump({ without: 'stream', replace: { 150: sinkNode(150, SINK, SINK_DESCRIPTION, null) } });
-    expect(pipewireSink(none, query())).toEqual({ server: 'pipewire', name: SINK_DESCRIPTION, rate: null, format: null, channels: null });
+    expect(pipewireSink(none, query())).toEqual({ server: 'pipewire', route: 'default', name: SINK_DESCRIPTION, rate: null, format: null, channels: null });
   });
 
   it('names a sink without a description by its node name', () => {
@@ -100,9 +102,9 @@ describe('the PipeWire sink', () => {
     expect(pipewireSink(dump({ replace: { 150: odd } }), query())).toEqual({ ...dac, rate: null, format: null });
   });
 
-  it('carries only the five fields, and never the file name in media.name', () => {
+  it('carries only its six fields, and never the file name in media.name', () => {
     const reading = pipewireSink(dump(), query());
-    expect(Object.keys(reading!).sort()).toEqual(['channels', 'format', 'name', 'rate', 'server']);
+    expect(Object.keys(reading!).sort()).toEqual(['channels', 'format', 'name', 'rate', 'route', 'server']);
     expect(JSON.stringify(reading)).not.toContain(SECRET);
     expect(JSON.stringify(parsePwDump(text(pwDump())))).not.toContain(SECRET);
   });
@@ -125,7 +127,7 @@ describe('the PulseAudio sink', () => {
 
   it('asks pactl when pw-dump is missing, and finds mpv\'s sink-input by process id', async () => {
     const { run, calls } = shell(answers({ inputs: pactlInputs(1) }));
-    expect(await readSink(query({ backend: 'pulse' }), run, 'linux')).toEqual({ server: 'pulseaudio', name: 'Built-in Audio Analog Stereo', rate: 44100, format: 's16le', channels: 2 });
+    expect(await readSink(query({ backend: 'pulse' }), run, 'linux')).toEqual({ server: 'pulseaudio', route: 'stream', name: 'Built-in Audio Analog Stereo', rate: 44100, format: 's16le', channels: 2 });
     expect(calls).toEqual(['pw-dump -N', 'pactl -f json list sinks', 'pactl -f json list sink-inputs']);
   });
 
@@ -136,10 +138,10 @@ describe('the PulseAudio sink', () => {
 
   it('falls back to the device, then to the default sink, which it asks for only then', async () => {
     const byDevice = shell(answers({ inputs: [] }));
-    expect((await readSink(query({ backend: 'pulse', device: 'pulse/alsa_output.pci-0000_00_1f.3.analog-stereo' }), byDevice.run, 'linux'))?.server).toBe('pulseaudio');
+    expect(await readSink(query({ backend: 'pulse', device: 'pulse/alsa_output.pci-0000_00_1f.3.analog-stereo' }), byDevice.run, 'linux')).toMatchObject({ server: 'pulseaudio', route: 'device' });
     expect(byDevice.calls).not.toContain('pactl -f json info');
     const byDefault = shell(answers({ inputs: pactlInputs(13880, '1') }));
-    expect(await readSink(query({ backend: 'pulse' }), byDefault.run, 'linux')).toEqual(dac);
+    expect(await readSink(query({ backend: 'pulse' }), byDefault.run, 'linux')).toEqual(guessed('default'));
     expect(byDefault.calls).toContain('pactl -f json info');
     const noDefault = shell({ ...answers({ inputs: [] }), info: null });
     expect(await readSink(query({ backend: 'pipewire' }), noDefault.run, 'linux')).toBeNull();
@@ -171,7 +173,7 @@ describe('asking the sound server', () => {
   });
 
   it('asks pactl for ao=pulse when mpv\'s stream isn\'t in PipeWire\'s graph', async () => {
-    const builtIn = { server: 'pulseaudio', name: 'Built-in Audio Analog Stereo', rate: 44100, format: 's16le', channels: 2 };
+    const builtIn = { server: 'pulseaudio', route: 'stream', name: 'Built-in Audio Analog Stereo', rate: 44100, format: 's16le', channels: 2 };
     const pulse = { sinks: text(pactlSinks()), inputs: text(pactlInputs(1)), info: text(pactlInfo()) };
     // PulseAudio plays, and a PipeWire with only its driver nodes runs beside it for screen sharing.
     const drivers = shell({ ...pulse, pwDump: text([...driverNodes()]) });
@@ -259,6 +261,21 @@ describe('sink wording', () => {
     expect(sinkSentence(sink({ server: 'pulseaudio', format: 's24-32le', rate: 96000 }), 44100))
       .toBe('PulseAudio runs the sink at 96 kHz, s24-32; mpv sends 44.1 kHz, so PulseAudio resamples.');
     for (const outputRate of [44100, 48000, null]) expect(sinkSentence(sink(), outputRate)).not.toMatch(/bit-perfect|DAC|!/i);
+  });
+
+  it('says a guessed sink is one, and doesn\'t say whether the server resamples', () => {
+    expect(sinkSentence(sink({ route: 'default' }), 44100))
+      .toBe('PipeWire runs the default sink at 48 kHz, s32. Whether PipeWire resamples isn\'t known: mpv\'s stream wasn\'t found, so it may be playing into another sink.');
+    expect(sinkSentence(sink({ route: 'device', server: 'pulseaudio', rate: 44100, format: 's16le' }), 44100))
+      .toBe('PulseAudio runs the sink mpv asked for at 44.1 kHz, s16. Whether PulseAudio resamples isn\'t known: mpv\'s stream wasn\'t found, so it may be playing into another sink.');
+    expect(sinkSentence(sink({ route: 'default', rate: null }), 44100))
+      .toBe('PipeWire didn\'t report what the default sink runs at, and mpv\'s stream wasn\'t found, so it may be playing into another sink.');
+    for (const route of ['device', 'default'] as const) {
+      expect(sinkSentence(sink({ route }), 44100)).not.toMatch(/so PipeWire resamples|matches/);
+      expect(sinkResamples(sink({ route }), 44100)).toBeNull();
+      expect(resampledNote(sink({ route, resampling: true }))).toBeNull();
+    }
+    expect(sinkResamples(sink(), 44100)).toBe(true);
   });
 
   it('puts a note on the deck only when the server resamples', () => {
@@ -382,6 +399,27 @@ describe('when the sink is asked', () => {
     answer = 'none';
     await run(sinks, playing(), PROBE_EVERY_MS);
     expect(sinks.view(playing().audio)).toBeNull();
+  });
+
+  it('leaves resampling unknown for a guessed sink, and asks again after the gap', async () => {
+    vi.useFakeTimers();
+    let answer: SinkFacts = guessed('default');
+    const { sinks, queries } = watch(async () => answer);
+    await run(sinks, playing(), 250);
+    // mpv sends 44.1 kHz and the default sink runs at 48 kHz, but mpv's stream may be elsewhere.
+    expect(sinks.view(playing().audio)).toEqual({ ...guessed('default'), resampling: null });
+    answer = dac;
+    await run(sinks, playing(), PROBE_GAP_MS);
+    expect(queries).toHaveLength(2);
+    expect(sinks.view(playing().audio)).toEqual({ ...dac, resampling: true });
+  });
+
+  it('asks a guess again once per song, then keeps the usual pace', async () => {
+    vi.useFakeTimers();
+    const { sinks, queries } = watch(async () => guessed('device'));
+    await run(sinks, playing(), PROBE_EVERY_MS - 250);
+    expect(queries).toHaveLength(2);
+    expect(sinks.view(playing().audio)?.resampling).toBeNull();
   });
 
   it('drops an answer that lands after a reset', async () => {

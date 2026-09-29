@@ -32,16 +32,26 @@ export function parseSampleSpec(spec: string): { format: string | null; channels
 export const showFormat = (format: string) => format.replace(/le$/, '');
 const kHz = (rate: number) => `${(rate / 1000).toLocaleString('en', { maximumFractionDigits: 1 })} kHz`;
 
+// Whether the server resamples what mpv sends through this sink. Null for a sink that was only
+// guessed at, since mpv's stream may be playing into another.
+export const sinkResamples = (sink: Omit<AudioSink, 'resampling'>, outputRate: number | null) =>
+  sink.route === 'stream' ? sinkResampling(sink.rate, outputRate) : null;
+
 // The Diagnostics page's sink row: what the server runs the sink at, against what mpv sends.
-// "Matches" means the two rates are equal, nothing more.
+// "Matches" means the two rates are equal, nothing more. A guessed sink says it is one and
+// compares nothing.
 export function sinkSentence(sink: AudioSink, outputRate: number | null): string {
   const server = serverName(sink.server);
-  if (!sink.rate) return `${server} didn't report what the sink runs at.`;
-  const runs = `${server} runs the sink at ${[kHz(sink.rate), sink.format && showFormat(sink.format)].filter(Boolean).join(', ')}`;
+  const which = sink.route === 'device' ? 'the sink mpv asked for' : sink.route === 'default' ? 'the default sink' : 'the sink';
+  const guess = 'mpv\'s stream wasn\'t found, so it may be playing into another sink';
+  if (!sink.rate) return sink.route === 'stream' ? `${server} didn't report what the sink runs at.` : `${server} didn't report what ${which} runs at, and ${guess}.`;
+  const runs = `${server} runs ${which} at ${[kHz(sink.rate), sink.format && showFormat(sink.format)].filter(Boolean).join(', ')}`;
+  if (sink.route !== 'stream') return `${runs}. Whether ${server} resamples isn't known: ${guess}.`;
   const resampling = sinkResampling(sink.rate, outputRate);
   if (resampling === null) return `${runs}. The rate mpv sends isn't known.`;
   return resampling ? `${runs}; mpv sends ${kHz(outputRate!)}, so ${server} resamples.` : `${runs}, which matches the rate mpv sends.`;
 }
 
-// The deck's note, only when the server resamples what mpv sends.
-export const resampledNote = (sink: AudioSink | null | undefined) => sink?.resampling === true ? `Resampled by ${serverName(sink.server)}.` : null;
+// The deck's note, only when the server resamples what mpv sends through the sink its stream is linked to.
+export const resampledNote = (sink: AudioSink | null | undefined) =>
+  sink?.resampling === true && sink.route === 'stream' ? `Resampled by ${serverName(sink.server)}.` : null;

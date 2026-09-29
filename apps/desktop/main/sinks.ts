@@ -1,10 +1,10 @@
 import { execFile } from 'node:child_process';
 import { Either, Schema } from 'effect';
-import type { AudioPath, AudioSink, PlayerSnapshot } from '../../../packages/core/contracts';
+import type { AudioPath, AudioSink, PlayerSnapshot, SinkRoute } from '../../../packages/core/contracts';
 import {
   PactlInfoSchema, PactlSinkInputSchema, PactlSinkSchema, PwClientSchema, PwLinkSchema, PwMetadataSchema, PwNodeSchema, PwTargetSchema,
 } from '../../../packages/core/desktopValidation';
-import { parseSampleSpec, sinkFormat, sinkResampling } from '../../../packages/core/sinks';
+import { parseSampleSpec, sinkFormat, sinkResamples } from '../../../packages/core/sinks';
 
 // The sink line (AudioPath.sink): what the Linux sound server says the sink mpv plays into runs
 // at. PipeWire answers through `pw-dump`; without it, `pactl -f json` answers for PulseAudio or
@@ -94,12 +94,12 @@ export function parsePwDump(text: string | null): PwDump | null {
 }
 
 const isSink = (node: PwNode | undefined): node is PwNode => node?.info.props['media.class'] === 'Audio/Sink';
-function pipewireFacts(node: PwNode): SinkFacts | null {
+function pipewireFacts(node: PwNode, route: SinkRoute): SinkFacts | null {
   const name = node.info.props['node.description'] || node.info.props['node.name'];
   if (!name) return null;
   // A suspended sink has no Format, so its rate and format are unknown, not its old ones.
   const format = node.info.params?.Format?.[0];
-  return { server: 'pipewire', name, rate: format?.rate ?? null, format: sinkFormat(format?.format), channels: format?.channels ?? null };
+  return { server: 'pipewire', route, name, rate: format?.rate ?? null, format: sinkFormat(format?.format), channels: format?.channels ?? null };
 }
 // The device mpv was told to use: pipewire/<node.name> or pulse/<node.name>, or null for the default.
 const namedDevice = (device: string) => /^(?:pipewire|pulse)\/(.+)$/.exec(device)?.[1] ?? null;
@@ -127,12 +127,13 @@ export function pipewireSink(dump: PwDump, query: SinkQuery): SinkFacts | null {
   if (streams.length) {
     const sinks = new Set<number>();
     for (const stream of streams) for (const target of dump.links.get(stream.id) ?? []) if (isSink(dump.nodes.get(target))) sinks.add(target);
-    return sinks.size === 1 ? pipewireFacts(dump.nodes.get([...sinks][0])!) : null;
+    return sinks.size === 1 ? pipewireFacts(dump.nodes.get([...sinks][0])!, 'stream') : null;
   }
   if (query.backend !== 'pipewire') return null;
-  const name = namedDevice(query.device) ?? (usesDefault(query.device) ? dump.defaultSink : null);
+  const device = namedDevice(query.device);
+  const name = device ?? (usesDefault(query.device) ? dump.defaultSink : null);
   const sink = name === null ? undefined : [...dump.nodes.values()].find(node => isSink(node) && node.info.props['node.name'] === name);
-  return sink ? pipewireFacts(sink) : null;
+  return sink ? pipewireFacts(sink, device === null ? 'default' : 'device') : null;
 }
 
 // PulseAudio (or pipewire-pulse without pw-dump) --------------------------------------------
@@ -144,23 +145,24 @@ export function parsePactlInfo(text: string | null) {
   if (!text) return null;
   try { return Either.getOrNull(Schema.decodeUnknownEither(PactlInfoSchema)(JSON.parse(text))); } catch { return null; }
 }
-function pulseFacts(sink: PactlSink): SinkFacts | null {
+function pulseFacts(sink: PactlSink, route: SinkRoute): SinkFacts | null {
   const name = sink.description || sink.name;
   if (!name) return null;
   // pipewire-pulse answers for PipeWire, and says so as the sink's driver.
-  return { server: sink.driver === 'PipeWire' ? 'pipewire' : 'pulseaudio', name, ...parseSampleSpec(sink.sample_specification ?? '') };
+  return { server: sink.driver === 'PipeWire' ? 'pipewire' : 'pulseaudio', route, name, ...parseSampleSpec(sink.sample_specification ?? '') };
 }
 // The same order as PipeWire's: mpv's own sink-input by process id, then the device, then the
-// default sink, which is asked for only when it's needed.
+// default sink, which is asked for only when it's needed. The last two are guesses and say so.
 export async function pulseSink(sinks: readonly PactlSink[], inputs: readonly PactlSinkInput[], query: SinkQuery, defaultSink: () => Promise<string | null>): Promise<SinkFacts | null> {
   if (!probeable(query.backend)) return null;
   const pid = query.pid === undefined ? null : String(query.pid);
   const input = pid === null ? undefined : inputs.find(item => item.properties?.['application.process.id'] === pid);
-  if (input) { const sink = sinks.find(item => item.index === input.sink); return sink ? pulseFacts(sink) : null; }
+  if (input) { const sink = sinks.find(item => item.index === input.sink); return sink ? pulseFacts(sink, 'stream') : null; }
   if (!NAMED.has(query.backend)) return null;
-  const name = namedDevice(query.device) ?? (usesDefault(query.device) ? await defaultSink() : null);
+  const device = namedDevice(query.device);
+  const name = device ?? (usesDefault(query.device) ? await defaultSink() : null);
   const sink = name === null ? undefined : sinks.find(item => item.name === name);
-  return sink ? pulseFacts(sink) : null;
+  return sink ? pulseFacts(sink, device === null ? 'default' : 'device') : null;
 }
 
 // Asks the sound server once. Linux only, and only for an mpv output that can reach one; nothing is
@@ -213,11 +215,12 @@ export class SinkWatch {
     this.query = { pid, backend: audio.outputBackend, device: audio.requestedDevice };
     if (this.pending && !this.busy && now - this.startedAt >= PROBE_GAP_MS) this.start(now, valid, this.query);
   }
-  // The reading for this output, with resampling worked out against mpv's output rate now. Null
-  // when there's none, or when mpv's output has changed since the server was asked.
+  // The reading for this output, with resampling worked out against mpv's output rate now (unknown
+  // for a guessed sink). Null when there's none, or when mpv's output has changed since the server
+  // was asked.
   view(audio: AudioPath): AudioSink | null {
     const sink = this.reading?.valid === validKey(audio) ? this.reading.sink : null;
-    return sink && { ...sink, resampling: sinkResampling(sink.rate, audio.outputRate) };
+    return sink && { ...sink, resampling: sinkResamples(sink, audio.outputRate) };
   }
   // Forgets the reading. An answer still on its way is dropped.
   reset() {
@@ -233,9 +236,10 @@ export class SinkWatch {
       this.options.record?.(performance.now() - began, failed);
       if (epoch !== this.epoch) return;
       // No answer is unknown, not the last answer. The first ask for a song may land before the
-      // server has linked mpv's new stream, so that one is asked again after the gap.
+      // server has linked mpv's new stream, so when it finds no sink, or only guesses at one from
+      // the device or the default, it is asked again after the gap.
       this.reading = sink ? { valid, sink } : null;
-      if (!sink && !this.retried) { this.retried = true; this.pending = true; }
+      if (sink?.route !== 'stream' && !this.retried) { this.retried = true; this.pending = true; }
     });
   }
 }
