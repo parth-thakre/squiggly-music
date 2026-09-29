@@ -13,6 +13,8 @@ export interface RadioShell<C extends RadioClient> {
   // Adds tracks to the main process's bounded known-track map.
   remember(tracks: readonly Track[]): void;
   replace(client: C, tracks: Track[]): Effect.Effect<void, Error>;
+  // Keeps the current entry playing and puts tracks after it in place of the rest of the queue.
+  follow(client: C, tracks: Track[]): Effect.Effect<void, Error>;
   append(client: C, tracks: Track[]): Effect.Effect<void, Error>;
   // Runs a background top-up (a bounded lane, with metrics).
   background(task: Effect.Effect<void, Error>): Promise<unknown>;
@@ -54,7 +56,10 @@ export class Radio<C extends RadioClient> {
       radio.shell.remember(tracks);
       // The previous station ends here, so none of its top-ups can reach the new queue.
       if (radio.station) { radio.station = null; radio.shell.changed(); }
-      yield* radio.shell.replace(client, tracks);
+      // Radio from the song that's playing carries on from it rather than starting it over.
+      const player = radio.shell.player();
+      if (player.queue[player.currentIndex]?.id === start.id) yield* radio.shell.follow(client, tracks.slice(1));
+      else yield* radio.shell.replace(client, tracks);
       if (generation !== radio.generation) return;
       radio.station = { generation, view: { label: seed.label }, topping: false, tried: null };
       radio.shell.changed();

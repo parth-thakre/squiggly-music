@@ -495,6 +495,11 @@ describe('main-process radio', () => {
         log.push(`replace ${tracks.map(item => item.id).join(' ')}`);
         player = snapshot({ queue: tracks, entryIds: tracks.map(() => `e${++entries}`), currentIndex: 0, playing: true });
       }),
+      follow: (_client, tracks) => Effect.sync(() => {
+        log.push(`follow ${tracks.map(item => item.id).join(' ')}`);
+        const index = player.currentIndex;
+        player = { ...player, queue: [player.queue[index], ...tracks], entryIds: [player.entryIds[index], ...tracks.map(() => `e${++entries}`)], currentIndex: 0 };
+      }),
       append: (_client, tracks) => Effect.sync(() => {
         log.push(`append ${tracks.map(item => item.id).join(' ')}`);
         player = { ...player, queue: [...player.queue, ...tracks], entryIds: [...player.entryIds, ...tracks.map(() => `e${++entries}`)] };
@@ -507,6 +512,7 @@ describe('main-process radio', () => {
       respond: (id: string, tracks: Track[]) => { pending.get(id)!(tracks); pending.delete(id); },
       setSimilar: (next: (id: string) => Track[] | null) => { similar = next; },
       player: () => player, play: (currentIndex: number) => { player = { ...player, currentIndex }; },
+      load: (ids: string[], currentIndex: number) => { player = snapshot({ queue: songs(...ids), entryIds: ids.map(() => `e${++entries}`), currentIndex, playing: true, position: 42 }); },
       disconnect: () => { session = null; },
     };
   }
@@ -536,6 +542,24 @@ describe('main-process radio', () => {
     known.set('x', track('x'));
     await run(radio.start({ kind: 'song', trackId: 'x', label: 'X' }));
     expect(log.slice(-3)).toEqual(['radio off', 'replace x x-like', 'radio X']);
+  });
+
+  it('keeps the playing song going when radio starts from it, with the station in place of the rest of the queue', async () => {
+    const { radio, known, log, setSimilar, load, player } = fixture();
+    setSimilar(id => songs(`${id}-like`));
+    load(['a', 'x', 'b'], 1);
+    const entry = player().entryIds[1];
+    known.set('x', track('x'));
+    await run(radio.start({ kind: 'song', trackId: 'x', label: 'X' }));
+    expect(log).toEqual(['follow x-like', 'radio X']);
+    expect(player()).toMatchObject({ queue: songs('x', 'x-like'), currentIndex: 0, position: 42 });
+    expect(player().entryIds[0]).toBe(entry);
+    // A record whose first track is playing, too; any other song starts the queue over.
+    await run(radio.start({ kind: 'album', id: 'al', label: 'Record' }));
+    expect(log.at(-2)).toBe('replace al1 al1-like');
+    load(['al1', 'b'], 0);
+    await run(radio.start({ kind: 'album', id: 'al', label: 'Record' }));
+    expect(log.at(-2)).toBe('follow al1-like');
   });
 
   it('reports a plain error when there is nothing to start from or nothing similar', async () => {
