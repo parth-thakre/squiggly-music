@@ -85,8 +85,10 @@ test.describe('home', () => {
   });
 
   test('a record played while a mix is on its way stays playing', async ({ app, fake, page }) => {
+    // Set before the page loads: the tiles draw their songs as soon as they are in view, in no
+    // fixed order, and the play button reuses Everything's draw, so every draw is slow from the start.
+    fake.delay('randomSongs', 1500, 1500, 1500, 1500, 1500, 1500);
     await app.signIn({ home: true });
-    fake.delay('randomSongs', 1500);
     const everything = shelf(app, 'Your mixes').locator('li').filter({ hasText: 'Everything, shuffled' });
     await everything.hover();
     await everything.getByRole('button', { name: 'Play Everything, shuffled' }).click();
@@ -95,8 +97,9 @@ test.describe('home', () => {
     await quiet.getByRole('button', { name: 'Play Quiet Harbor' }).click();
     await app.expectPlaying('Opening 2');
     await expect(app.heading).toHaveText('Queue');
-    // The mix's songs arrive after the record started; they don't replace it.
-    await expect.poll(() => fake.callsTo('randomSongs').length).toBe(1);
+    // The mix's songs arrive after the record started; they don't replace it. Its tile and its play
+    // button share one draw of sixty; the genre tiles' own draws of fifty are not this test's.
+    await expect.poll(() => fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 60).length).toBe(1);
     await page.waitForTimeout(2000);
     await expect(app.heading).toHaveText('Queue');
     await app.expectPlaying('Opening 2');
@@ -167,7 +170,8 @@ test.describe('home', () => {
     await expect(shelf(app, 'Most played')).toHaveCount(0);
     await expect(sleeves(app, 'Most played')).toHaveCount(1, { timeout: 5000 });
     await expect(shelf(app, 'Your mixes').locator('.grid-name')).toContainText(['On repeat', 'Lately']);
-    expect(fake.callsTo('albums').filter(call => call.args[0] === 'frequent')).toHaveLength(1);
+    // The shelf's list of twelve is asked for once; the On repeat tile's own draw asks for ten.
+    expect(fake.callsTo('albums').filter(call => call.args[0] === 'frequent' && call.args[2] === 12)).toHaveLength(1);
   });
 
   test('a shelf that fails says why', async ({ app, fake }) => {
