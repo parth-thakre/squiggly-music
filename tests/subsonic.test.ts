@@ -154,7 +154,7 @@ describe('OpenSubsonic', () => {
     const params = calls[1][1].body as URLSearchParams;
     expect(params.get('size')).toBe('48'); expect(params.get('offset')).toBe('48');
   });
-  it('pages through every song with an empty search3 query, mapped like any other song', async () => {
+  it('pages through every track with an empty search3 query where the server is not Navidrome', async () => {
     const library = Array.from({ length: 7 }, (_, i) => ({
       id: `s${i}`, title: `Song ${i}`, artist: 'A & B', suffix: 'flac', samplingRate: 96000, bitDepth: 24, coverArt: `mf-s${i}`,
       artists: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
@@ -170,28 +170,29 @@ describe('OpenSubsonic', () => {
     const subject = client();
     const pages: string[][] = [];
     for (let offset = 0; ; offset += 3) {
-      const page = await Effect.runPromise(subject.songs(offset, 3));
-      pages.push(page.map(track => track.id));
-      if (page.length < 3) break;
+      const page = await Effect.runPromise(subject.tracks('alphabeticalByName', offset, 3));
+      expect(page.sorted).toBe(false);
+      pages.push(page.tracks.map(track => track.id));
+      if (page.tracks.length < 3) break;
     }
     expect(pages).toEqual([['s0', 's1', 's2'], ['s3', 's4', 's5'], ['s6']]);
     const sent = () => fetchMock.mock.calls.filter(([url]) => url.endsWith('/search3.view')).map(([url, init]) => [new URL(url).pathname,
       ...['query', 'songCount', 'songOffset', 'artistCount', 'albumCount'].map(key => (init.body as URLSearchParams).get(key))]);
     expect(sent()).toEqual([0, 3, 6].map(offset => ['/navidrome/rest/search3.view', '""', '3', String(offset), '0', '0']));
-    const [track] = await Effect.runPromise(subject.songs(6, 3));
+    const [track] = (await Effect.runPromise(subject.tracks('newest', 6, 3))).tracks;
     expect(track).toEqual({
       id: 's6', title: 'Song 6', artist: 'A & B', album: '', duration: null, source: 'navidrome', sourceFormat: 'flac', sourceSampleRate: 96000, sourceBitDepth: 24,
       albumId: null, artistId: null, coverArt: 'mf-s6', trackNumber: null, discNumber: null, year: null, genre: null, starred: false,
       artists: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
     });
     fetchMock.mockClear();
-    expect(await Effect.runPromise(subject.songs(-4, 5000))).toHaveLength(7);
+    expect((await Effect.runPromise(subject.tracks('newest', -4, 5000))).tracks).toHaveLength(7);
     expect(sent()[0].slice(2, 4)).toEqual(['500', '0']);
-    expect(await Effect.runPromise(subject.songs(100, 3))).toEqual([]);
+    expect(await Effect.runPromise(subject.tracks('newest', 100, 3))).toEqual({ tracks: [], sorted: false });
   });
-  it('rejects a song page longer than asked for', async () => {
+  it('rejects a track page longer than asked for', async () => {
     servePayload({ searchResult3: { song: Array.from({ length: 4 }, (_, id) => ({ id: String(id), title: 's' })) } });
-    await expectRedactedFailure(client().songs(0, 3));
+    await expectRedactedFailure(client().tracks('newest', 0, 3));
   });
   it('rejects an oversized album page rather than truncating it', async () => {
     servePayload({ albumList2: { album: Array.from({ length: 49 }, (_, id) => ({ id: String(id), name: 'a' })) } });
@@ -409,8 +410,10 @@ describe('OpenSubsonic', () => {
     expect(decode(LibraryRequestSchemas.albums, ['alphabeticalByArtist', 0, 500])).toBe(true);
     expect(decode(LibraryRequestSchemas.randomSongs, [{ size: 5, genre: 'Jazz', fromYear: 1990, toYear: 2000 }])).toBe(true);
     expect(decode(LibraryRequestSchemas.randomSongs, [{ size: 0 }])).toBe(false);
-    expect(decode(LibraryRequestSchemas.songs, [40_000, 500])).toBe(true);
-    for (const value of [[-1, 200], [0, 0], [0, 501], [0.5, 200], [0]]) expect(decode(LibraryRequestSchemas.songs, value)).toBe(false);
+    expect(decode(LibraryRequestSchemas.tracks, ['random', 40_000, 500, '0.25'])).toBe(true);
+    for (const value of [['newest', -1, 200, ''], ['newest', 0, 0, ''], ['newest', 0, 501, ''], ['newest', 0.5, 200, ''], ['highest', 0, 200, ''], ['newest', 0, 200], ['random', 0, 200, 'x'.repeat(65)]]) {
+      expect(decode(LibraryRequestSchemas.tracks, value)).toBe(false);
+    }
     expect(decode(LibraryRequestSchemas.createPlaylist, ['name', Array.from({ length: 1001 }, () => 's')])).toBe(false);
     expect(Schema.decodeUnknownSync(LibraryRequestSchemas.search)(['  q  '])).toEqual(['q']);
     expect(decode(PlayTracksSchema, [['a', 'a'], 1])).toBe(true);

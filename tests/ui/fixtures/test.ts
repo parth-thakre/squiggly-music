@@ -36,7 +36,7 @@ export class App {
   tracks(scope: Locator = this.main) { return scope.locator('ol.tracks > li'); }
   row(title: string, scope: Locator = this.main) { return this.tracks(scope).filter({ has: this.page.getByRole('button', { name: new RegExp(`^(Play|Pause|Resume) ${escape(title)}$`) }) }); }
   rowButton(row: Locator) { return row.locator('button.track'); }
-  section(name: 'Records' | 'Artists' | 'Songs' | 'Playlists' | 'Favorites') { return this.page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: true }); }
+  section(name: 'Records' | 'Artists' | 'Tracks' | 'Playlists' | 'Favorites') { return this.page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: true }); }
 
   /** Signs in the way a browser does: the session cookie lands in this page's context. */
   async signIn() {

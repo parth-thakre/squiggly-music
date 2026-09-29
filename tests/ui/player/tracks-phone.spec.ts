@@ -4,7 +4,7 @@ import { expect, test } from '../fixtures/test';
 // The tabs along the bottom: all five on one line, none cut off, however narrow the phone.
 async function expectTabsFit(page: Page) {
   const tabs = page.getByRole('navigation', { name: 'Library' }).getByRole('button');
-  await expect(tabs).toHaveText(['Records', 'Artists', 'Songs', 'Playlists', 'Favorites']);
+  await expect(tabs).toHaveText(['Records', 'Artists', 'Tracks', 'Playlists', 'Favorites']);
   const width = page.viewportSize()!.width;
   const boxes = await tabs.evaluateAll(buttons => buttons.map(button => {
     const box = button.getBoundingClientRect();
@@ -21,13 +21,17 @@ async function expectTabsFit(page: Page) {
 test.describe('phone', () => {
   test.beforeEach(async ({ app }) => { await app.signIn(); });
 
-  test('Songs is a tab, and a tap plays a song', async ({ app, page }) => {
+  test('Tracks is a tab with the Records sorts, and a tap plays a track', async ({ app, page }) => {
     await expectTabsFit(page);
-    await app.section('Songs').tap();
-    await expect(app.heading).toHaveText('Songs');
-    await expect(app.section('Songs')).toHaveAttribute('aria-current', 'page');
-    await app.rowButton(app.row('Long Run')).tap();
-    await app.expectPlaying('Long Run');
+    await app.section('Tracks').tap();
+    await expect(app.heading).toHaveText('Tracks');
+    await expect(app.section('Tracks')).toHaveAttribute('aria-current', 'page');
+    const sorts = app.main.getByRole('group', { name: 'Sort tracks' });
+    await expect(sorts.getByRole('button')).toHaveText(['Newest', 'A to Z', 'By artist', 'Most played', 'Recently played', 'Random']);
+    await sorts.getByRole('button', { name: 'Most played' }).tap();
+    await expect(app.tracks()).toHaveCount(3);
+    await app.rowButton(app.row('Opening 5')).tap();
+    await app.expectPlaying('Opening 5');
   });
 
   test('the five tabs fit a 320px screen, even with the largest theme text', async ({ page }) => {

@@ -1,20 +1,23 @@
-import { createServer, type Server } from 'node:http';
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { preview } from 'vite';
 import { navidromePreview } from '../../../scripts/navidrome-preview';
 import { FakeNavidrome, trackOf } from './library';
+import { serveNavidrome } from './native';
 import { toneWav } from './media';
 
 export const webPassword = 'squiggly test password';
 const root = resolve(import.meta.dirname, '../../..');
 const outDir = resolve(root, 'out/web');
 
-// The upstream "Navidrome" stream endpoint the preview plugin fetches from: WAV bytes for a
-// track id, honouring Range the way Navidrome does so seeking works in the browser.
-async function audioServer() {
+// The upstream "Navidrome" the preview plugin streams from: WAV bytes for a track id, honouring
+// Range the way Navidrome does so seeking works in the browser. The track listing's routes are
+// answered first (native.ts).
+async function audioServer(navidrome: (request: IncomingMessage, response: ServerResponse) => boolean) {
   const server: Server = createServer((request, response) => {
+    if (navidrome(request, response)) return;
     const url = new URL(request.url ?? '/', 'http://audio');
     const id = url.searchParams.get('id') ?? '';
     const track = /^tr-\d+-\d+$/.test(id) ? trackOf(id) : undefined;
@@ -40,8 +43,10 @@ async function audioServer() {
 // navidrome-preview plugin, backed by the fake account. One per Playwright worker.
 export async function startPreview() {
   if (!existsSync(resolve(outDir, 'index.html'))) throw new Error('out/web is missing. Run `npx vite build` (or `npm run test:ui`) first.');
-  const audio = await audioServer();
-  const fake = new FakeNavidrome(() => audio.url);
+  // The fake needs the server's address, and the server the fake.
+  let fake: FakeNavidrome | undefined;
+  const audio = await audioServer((request, response) => serveNavidrome(fake!, request, response));
+  fake = new FakeNavidrome(() => audio.url);
   const server = await preview({
     configFile: false, root: resolve(root, 'apps/desktop/renderer'), logLevel: 'warn',
     build: { outDir },

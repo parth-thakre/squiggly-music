@@ -102,6 +102,7 @@ it('maps every library endpoint, writes repeated IDs, and serves cover art throu
       case 'getStarred2': return reply({ starred2: { artist: [artistEntry], album: [albumEntry], song: [song('s1', { starred: '2026' })] } });
       case 'getRandomSongs': return reply({ randomSongs: { song: [song('s9')] } });
       case 'search3': return reply({ searchResult3: { album: [albumEntry], song: [song('s1')] } });
+      case 'ping': return reply({});
       case 'star': case 'unstar': case 'updatePlaylist': return reply({});
       case 'createPlaylist': return reply({ playlist: { ...playlistEntry, id: 'p9', name: params.get('name'), songCount: params.getAll('songId').length, entry: [] } });
       case 'getCoverArt':
@@ -144,7 +145,7 @@ it('maps every library endpoint, writes repeated IDs, and serves cover art throu
     expect(await run(client.starred())).toEqual({ artists: [artist], albums: [album], tracks: [{ ...track, starred: true }] });
     expect((await run(client.randomSongs({ size: 0, genre: 'Jazz', fromYear: 1990, toYear: 2000 }))).map(item => item.id)).toEqual(['s9']);
     expect(await run(client.search('rec'))).toEqual({ artists: [], albums: [album], tracks: [track] });
-    expect(await run(client.songs(200, 200))).toEqual([track]);
+    expect(await run(client.tracks('newest', 200, 200))).toEqual({ tracks: [track], sorted: false });
     await run(client.star('track', 's1', true));
     await run(client.star('album', 'a1', false));
     await run(client.star('artist', 'ar1', true));
@@ -175,10 +176,10 @@ it('maps every library endpoint, writes repeated IDs, and serves cover art throu
     const called = await run(libraryCall(client, 'playlist', ['p1']));
     expect(called.tracks.map(item => item.id)).toEqual(['s2', 's1', 's2']);
     expect((await run(libraryCall(client, 'albums', ['newest', 0, 48]))).tracks).toEqual([]);
-    expect((await run(libraryCall(client, 'songs', [0, 200]))).tracks.map(item => item.id)).toEqual(['s1']);
+    expect((await run(libraryCall(client, 'tracks', ['newest', 0, 200, '']))).tracks.map(item => item.id)).toEqual(['s1']);
     const before = requests.length;
     for (const [method, args] of [['albums', ['sideways', 0, 48]], ['albums', ['newest', -1, 48]], ['albums', ['newest', 0, 501]], ['album', ['']], ['artists', ['extra']],
-      ['search', ['   ']], ['star', ['song', 's1', true]], ['createPlaylist', ['', []]], ['addToPlaylist', ['p1', []]], ['randomSongs', [{ size: 1.5 }]], ['songs', [0, 501]], ['album', 'a1']] as const) {
+      ['search', ['   ']], ['star', ['song', 's1', true]], ['createPlaylist', ['', []]], ['addToPlaylist', ['p1', []]], ['randomSongs', [{ size: 1.5 }]], ['tracks', ['newest', 0, 501, '']], ['album', 'a1']] as const) {
       await expect(run(libraryCall(client, method, args))).rejects.toThrow('Invalid library request.');
     }
     expect(requests.length).toBe(before);

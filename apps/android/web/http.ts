@@ -4,7 +4,8 @@ import { Squiggly } from './plugin';
 // a WebView fetch from there would need the server's CORS headers and couldn't reach a server on
 // plain HTTP at all (mixed content), which is how most home servers are set up. Natively,
 // neither applies. It supports what SubsonicClient and the LRCLIB client use: GET and POST,
-// string or URLSearchParams bodies, abort signals, and redirect: 'error'.
+// string (JSON, for Navidrome's own sign-in) or URLSearchParams bodies, request headers, abort
+// signals, and redirect: 'error'. Response headers come back too (Navidrome's fresh session token).
 
 // Responses are capped natively as well as by the connector, which counts the bytes it reads.
 const MAX_BYTES = 9 * 1024 * 1024;

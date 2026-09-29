@@ -50,6 +50,11 @@ export interface Genre { name: string; songCount: number; albumCount: number }
 export interface LibraryItems { artists: Artist[]; albums: Album[]; tracks: Track[] }
 export type AlbumListType = 'newest' | 'recent' | 'frequent' | 'highest' | 'random' | 'starred' | 'alphabeticalByName' | 'alphabeticalByArtist';
 export interface RandomSongOptions { size: number; genre?: string; fromYear?: number; toYear?: number }
+// The Records sorts, for tracks. Most and recently played list played tracks only.
+export type TrackSort = 'newest' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'frequent' | 'recent' | 'random';
+// sorted is false when the server can't sort tracks (only Navidrome's own API can): the page is
+// in the server's one fixed order, whatever sort was asked for.
+export interface TrackPage { tracks: Track[]; sorted: boolean }
 export type StarTarget = 'track' | 'album' | 'artist';
 
 // Library browsing, shared by the desktop bridge (IPC to the main process) and the
@@ -64,8 +69,9 @@ export interface LibraryApi {
   genres(): Promise<Result<Genre[]>>;
   starred(): Promise<Result<LibraryItems>>;
   randomSongs(options: RandomSongOptions): Promise<Result<Track[]>>;
-  // Every song on the server, a page at a time, in the server's own order. Fewer than size: the last page.
-  songs(offset: number, size: number): Promise<Result<Track[]>>;
+  // Every track on the server, a page at a time. Fewer than size: the last page. `seed` keeps a
+  // random order the same from page to page. See TrackPage for servers that can't sort.
+  tracks(sort: TrackSort, offset: number, size: number, seed: string): Promise<Result<TrackPage>>;
   search(query: string): Promise<Result<LibraryItems>>;
   star(target: StarTarget, id: string, starred: boolean): Promise<Result>;
   createPlaylist(name: string, trackIds: string[]): Promise<Result<Playlist>>;
