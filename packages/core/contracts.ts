@@ -481,6 +481,9 @@ export interface AndroidBridge {
     sleepAt(at: number | null): void;
     sleepAfterPlay(playId: number | null): void;
   };
+  // Saves an extended M3U (m3u.ts) as `<name>.m3u8` where the listener picks, through Android's
+  // document picker: the WebView doesn't download files. Cancelling is not an error.
+  saveM3u(name: string, entries: M3uEntry[]): Promise<Result>;
 }
 
 declare global { interface Window { squiggly?: DesktopBridge; squigglyAndroid?: AndroidBridge } }

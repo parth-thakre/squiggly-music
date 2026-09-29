@@ -1,7 +1,8 @@
 import { Effect, Either, Schema } from 'effect';
 import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSession, Connection, LibraryApi, Result, Track } from '../../../packages/core/contracts';
 import { Metrics } from '../../../packages/core/metrics';
-import { ConnectionSchema } from '../../../packages/core/validation';
+import { ConnectionSchema, SaveM3uSchema } from '../../../packages/core/validation';
+import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { SubsonicClient, libraryCall, resolveServerAddress, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
 import { nativeFetch } from './http';
 import { Squiggly, type NativeItem, type NativeOp, type NativePlayback } from './plugin';
@@ -189,7 +190,25 @@ async function restore(): Promise<AndroidQueueSnapshot | null> {
   return { queue, entryIds, index, playback: playback(held.playback) };
 }
 
+// Files -------------------------------------------------------------------------------------
+// A playlist file goes through the system's document picker: the WebView ignores a download.
+// Checked here as the desktop's main process checks it; the native side bounds it again
+// (SquigglyPlugin.kt's MAX_SAVE_CHARS).
+const MAX_SAVE_CHARS = 8 * 1024 * 1024;
+async function saveM3u(name: unknown, entries: unknown): Promise<Result> {
+  const decoded = Schema.decodeUnknownEither(SaveM3uSchema)([name, entries]);
+  if (Either.isLeft(decoded)) return { ok: false, error: 'Invalid playlist file.' };
+  const [title, songs] = decoded.right;
+  const text = buildM3u(songs, title);
+  if (text.length > MAX_SAVE_CHARS) return { ok: false, error: 'The playlist file is too large to save.' };
+  try {
+    await Squiggly.saveFile({ name: m3uFileName(title), mimeType: 'audio/x-mpegurl', text });
+    return { ok: true, value: undefined };
+  } catch (error) { return { ok: false, error: message(error, 'Could not save the playlist file.') }; }
+}
+
 export const androidBridge: AndroidBridge = {
+  saveM3u,
   library,
   session: {
     get: () => session,

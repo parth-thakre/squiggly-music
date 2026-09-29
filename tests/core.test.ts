@@ -4,7 +4,7 @@ import { CommandSchema, ConnectionSchema } from '../packages/core/validation';
 import { emptyAudio, emptyPlayer } from '../packages/core/contracts';
 import { Metrics } from '../packages/core/metrics';
 import { buildM3u, m3uEntry, m3uFileName, NO_PATH_NOTE, relativePath } from '../packages/core/m3u';
-import { SaveM3uSchema } from '../packages/core/desktopValidation';
+import { SaveM3uSchema } from '../packages/core/validation';
 import type { M3uEntry, Track } from '../packages/core/contracts';
 
 describe('command boundary', () => {

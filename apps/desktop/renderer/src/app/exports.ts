@@ -4,13 +4,15 @@ import { buildM3u, m3uEntry, m3uFileName } from '../../../../../packages/core/m3
 // Playlist files and the clipboard, on every platform.
 
 // Saves songs as an extended M3U (packages/core/m3u.ts) named `<name>.m3u8`. The desktop asks
-// where through its save dialog, and writes local files with their paths. The browser build and
-// Android download the file. Returns the error to show, or null (cancelling is not an error).
+// where through its save dialog, and writes local files with their paths. Android asks through
+// the system's document picker, since its WebView doesn't download. The browser build downloads
+// the file. Returns the error to show, or null (cancelling is not an error).
 export async function exportM3u(name: string, tracks: readonly Track[]): Promise<string | null> {
   const title = name.trim().slice(0, 256) || 'Playlist';
   const entries = tracks.map(m3uEntry);
-  if (window.squiggly) {
-    const result = await window.squiggly.saveM3u(title, entries);
+  const save = window.squiggly ?? window.squigglyAndroid;
+  if (save) {
+    const result = await save.saveM3u(title, entries);
     return result.ok ? null : result.error;
   }
   download(m3uFileName(title), buildM3u(entries, title), 'audio/x-mpegurl');

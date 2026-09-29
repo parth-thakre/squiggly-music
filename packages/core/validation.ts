@@ -89,3 +89,16 @@ export const LibraryRequestSchemas = {
 };
 // Track IDs must already be known to the main process; startIndex is checked against their count.
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);
+
+// saveM3u, on the desktop and Android: a playlist file's name and songs, as the renderer describes
+// them (m3u.ts). The desktop's main process fills in local files' paths itself; it never takes
+// one from the renderer.
+const M3uTextSchema = Schema.String.pipe(Schema.maxLength(1024));
+export const SaveM3uSchema = Schema.Tuple(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  Schema.Array(Schema.Struct({
+    id: IdSchema, local: Schema.Boolean, title: M3uTextSchema, artist: M3uTextSchema, album: M3uTextSchema,
+    duration: Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.between(0, 604_800))),
+    path: Schema.NullOr(Schema.String.pipe(Schema.maxLength(4096))), suffix: Schema.NullOr(Schema.String.pipe(Schema.maxLength(32))),
+  })).pipe(Schema.maxItems(5000)),
+);

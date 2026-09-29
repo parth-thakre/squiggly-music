@@ -11,12 +11,12 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Effect, Either, Schema } from 'effect';
 import iconPath from './assets/icon.png?asset';
 import { emptyPlayer, emptyDiagnostics } from '../../../packages/core/contracts';
-import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema } from '../../../packages/core/validation';
+import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema, SaveM3uSchema } from '../../../packages/core/validation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
-import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, SaveM3uSchema } from '../../../packages/core/desktopValidation';
+import { defaultPlayModes, OpenPathsSchema, PlayModesSchema } from '../../../packages/core/desktopValidation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
