@@ -86,7 +86,11 @@ img:is(.deck-cover, .head-cover) {
 .squiggle-time { font-size: calc(12px * var(--text)); color: var(--soft); }
 .squiggle-rail { position: relative; height: 26px; }
 .squiggle-rail canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.squiggle-rail input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.squiggle-rail input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; -webkit-appearance: none; appearance: none; background: none; }
+/* The invisible thumb is as wide as the drawn playhead (4px), so it travels from 2px in at each
+   end, as the canvas draws the song. A click seeks to the spot drawn under it. */
+.squiggle-rail input::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 4px; height: 18px; }
+.squiggle-rail input::-moz-range-thumb { width: 4px; height: 18px; border: 0; }
 .squiggle-rail:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 .transport { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
