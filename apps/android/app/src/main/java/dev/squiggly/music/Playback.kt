@@ -69,9 +69,12 @@ object Playback {
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
                 // A song repeating (repeat one, or repeat all with one song) starts over: a new play.
                 if (item?.mediaId != current || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) { current = item?.mediaId; playId++; error = null }
+                sleepIfPlayOver()
                 report()
             }
             override fun onEvents(player: Player, events: Player.Events) {
+                // The last song played out: nothing is left to pause after it.
+                if (player.playbackState == Player.STATE_ENDED) sleepAfter = null
                 report()
                 if (player.isPlaying) tick() else main.removeCallbacks(ticker)
             }
@@ -127,6 +130,7 @@ object Playback {
         if (play) ensureService(app)
         player.seekTo(index, (position * 1000).toLong().coerceAtLeast(0))
         player.playWhenReady = play
+        sleepIfPlayOver()
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
         report()
     }
@@ -158,6 +162,32 @@ object Playback {
             "one" -> Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
+    }
+
+    // The sleep timer. The page keeps its own and tells the player too, so it still pauses after
+    // the app is swiped away: the page and its timers go, and the player plays on. The deadline
+    // runs on the main looper's clock, which stops in deep sleep; while playing, the wake lock
+    // keeps the phone awake, and with nothing playing there is nothing to pause.
+    private val sleeper = Runnable { player.pause() }
+    private var sleepAfter: Int? = null
+
+    /** Pauses at this time (epoch milliseconds); null cancels. */
+    fun sleepAt(at: Long?) {
+        main.removeCallbacks(sleeper)
+        if (at != null) main.postDelayed(sleeper, (at - System.currentTimeMillis()).coerceAtLeast(0))
+    }
+
+    /** Pauses when the play with this id is over and another begins; null cancels. */
+    fun sleepAfterPlay(id: Int?) {
+        sleepAfter = id
+        sleepIfPlayOver()
+    }
+
+    private fun sleepIfPlayOver() {
+        val after = sleepAfter ?: return
+        if (playId == after) return
+        sleepAfter = null
+        player.pause()
     }
 
     /** The queue with each entry's Track JSON, and the state, for a page that just loaded. */

@@ -6,6 +6,7 @@ import type { Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
 import { Squiggle } from './Squiggle';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
+import { useSleepNote } from './commands/sleep';
 import { applyTheme, themePalette, useActiveTheme } from './theme';
 import { Glyph, usePalette } from './ui';
 
@@ -77,4 +78,10 @@ export function FavoriteToggle({ track }: { track: Track }) {
   };
   return <button type="button" className="icon-button favorite" aria-label="Favorite" title={on ? 'Remove from favorites' : 'Add to favorites'}
     aria-pressed={on} onClick={() => void toggle()}><Star aria-hidden="true" fill={on ? 'currentColor' : 'none'} /></button>;
+}
+
+// The sleep timer, in a few quiet words under the song, while one is set.
+export function SleepNote() {
+  const note = useSleepNote();
+  return note ? <p className="sleep-note">{note}</p> : null;
 }

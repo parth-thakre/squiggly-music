@@ -147,6 +147,20 @@ class SquigglyPlugin : Plugin() {
         onMain(call) { Playback.repeat(mode); null }
     }
 
+    // The sleep timer's deadline (epoch milliseconds) and the play it ends after; null cancels.
+    @PluginMethod
+    fun sleepAt(call: PluginCall) {
+        // Epoch milliseconds arrive as a Long (getDouble takes Integer, Float, and Double only).
+        val at = call.getLong("at")
+        onMain(call) { Playback.sleepAt(at); null }
+    }
+
+    @PluginMethod
+    fun sleepAfterPlay(call: PluginCall) {
+        val playId = call.getInt("playId")
+        onMain(call) { Playback.sleepAfterPlay(playId); null }
+    }
+
     // The window behind the page takes the room's colour, and the status and navigation bars'
     // icons go light on a dark room. With a WebView older than 140, Capacitor pads the window by
     // the system bars instead of letting the page draw under them, and this colour shows there.

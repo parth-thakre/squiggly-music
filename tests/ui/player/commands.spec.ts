@@ -217,4 +217,31 @@ test.describe('the playing song', () => {
     await expect.poll(() => fake.starred.has(special.longRun)).toBe(false);
   });
 
+  test('the sleep timer shows under the song, and after this song it pauses when the next begins', async ({ app, page }) => {
+    await app.signIn();
+    await app.play('Test Pressing', 'Short Stop');
+    const palette = page.getByRole('dialog', { name: 'Commands' });
+    const run = async (query: string) => {
+      await page.keyboard.press('Control+k');
+      await palette.getByRole('combobox').fill(query);
+      await page.keyboard.press('Enter');
+      await expect(palette).toBeHidden();
+    };
+    await app.main.focus();
+    await run('sleep in 15');
+    await expect(app.deck.getByText('Sleeps in 15 min')).toBeVisible();
+    await run('cancel the sleep');
+    await expect(app.deck.getByText(/^Sleeps/)).toBeHidden();
+    await page.keyboard.press('Control+k');
+    await palette.getByRole('combobox').fill('cancel the sleep');
+    await expect(palette.getByRole('status')).toHaveText('Nothing matches “cancel the sleep”.');
+    await page.keyboard.press('Escape');
+
+    await run('sleep after');
+    await expect(app.deck.getByText('Sleeps after this song')).toBeVisible();
+    // Short Stop is 8 seconds long; Thirty Two follows and is paused as it starts.
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Thirty Two', { timeout: 15_000 });
+    await expect(app.deck.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
+    await expect(app.deck.getByText(/^Sleeps/)).toBeHidden();
+  });
 });

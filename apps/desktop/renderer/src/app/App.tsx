@@ -7,7 +7,7 @@ import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
-import { FavoriteToggle, PlayModes } from './transport';
+import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
@@ -204,6 +204,7 @@ const Deck = memo(function Deck() {
         <PlayModes />
       </div>
       <SignalPath track={track} />
+      <SleepNote />
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}

@@ -63,7 +63,10 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       settings: async () => settings,
       updateSettings: async () => ({ ok: true, value: settings }),
       library,
-      window: { isMini: false, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }) },
+      window: {
+        isMini: false, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }),
+        followWhileHidden: async (on: boolean) => { calls.push(`follow-while-hidden:${on}`); return { ok: true, value: undefined }; },
+      },
       extensions: {
         list: async () => extensionList(),
         subscribe: (listener: (list: unknown) => void) => { extensionListeners.add(listener); return () => extensionListeners.delete(listener); },

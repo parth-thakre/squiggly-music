@@ -126,6 +126,12 @@ add({ id: 'go-current-album', title: 'Go to the playing record', category: 'Now 
 add({ id: 'go-current-artist', title: 'Go to the playing artist', category: 'Now playing', keys: ['g .'], when: () => !!playingArtist(), run: () => nav.go({ view: 'artist', id: playingArtist()! }) });
 add({ id: 'song-details-current', title: "Show the playing song's details", category: 'Now playing', when: playing, run: () => openSongDetails(current(getPlayer())!) });
 
+// Sleep timer: pauses after a while or after this song (./sleep.ts). The deck says when.
+import { sleepTimer } from './sleep';
+for (const minutes of [15, 30, 60]) add({ id: `sleep-${minutes}`, title: `Sleep in ${minutes} minutes`, category: 'Sleep timer', when: playing, run: () => sleepTimer.sleepIn(minutes) });
+add({ id: 'sleep-after-song', title: 'Sleep after this song', category: 'Sleep timer', when: playing, run: () => { sleepTimer.sleepAfterSong(); } });
+add({ id: 'sleep-cancel', title: 'Cancel the sleep timer', category: 'Sleep timer', when: () => !!sleepTimer.get(), run: () => sleepTimer.cancel() });
+
 // View
 add({ id: 'palette', title: 'Show all commands', category: 'View', keys: ['ctrl+k'], run: () => togglePalette() });
 add({

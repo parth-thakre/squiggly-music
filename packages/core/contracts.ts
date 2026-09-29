@@ -323,6 +323,9 @@ export interface DesktopBridge {
     // The main window has no title bar on Windows and Linux: the system's window buttons sit over
     // the top of the page, and tintControls gives them the room's ink colour (#rrggbb).
     frameless: boolean; tintControls(ink: string): Promise<Result>;
+    // A hidden window gets no snapshots until it's shown. On, it keeps getting them: the sleep
+    // timer's "after this song" asks for this while it waits, even in the tray.
+    followWhileHidden(on: boolean): Promise<Result>;
   };
   disconnect(): Promise<Result>;
   exportDiagnostics(): Promise<Result>;
@@ -396,6 +399,11 @@ export interface AndroidBridge {
     // ExoPlayer's repeat mode, so the queue wraps or a song repeats with the page asleep. The page
     // shuffles its own queue and sends the new order with sync().
     repeat(mode: RepeatMode): void;
+    // The sleep timer, which the native player keeps as well as the page so it still pauses after
+    // the app is swiped away. sleepAt pauses at that time (epoch milliseconds); sleepAfterPlay
+    // pauses when the play with that AndroidPlayback.playId is over and another begins. Null cancels.
+    sleepAt(at: number | null): void;
+    sleepAfterPlay(playId: number | null): void;
   };
 }
 

@@ -42,6 +42,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `extensions.list()`, `subscribe`, `setEnabled`, `reload`, `remove`, `openDir`, `writeClipboard` | Extensions in `<config>/extensions`. `remove` moves the folder to the trash. The runtime in `extensions/` is the only caller |
 | `config.dir`, `config.read()`, `config.subscribe(listener)`, `config.openDir()` | The config folder: `keybindings.json` and `themes/*.json` as parsed JSON, with plain errors for files that couldn't be read. Pushed again whenever their contents change |
 | `window.toggleMini()`, `window.setAlwaysOnTop(on)`, `window.isMini` | The mini player window |
+| `window.followWhileHidden(on)` | A hidden window gets no snapshots until it's shown; on, it keeps getting them. The sleep timer asks for this while "after this song" waits, so it still pauses in the tray |
 | `exportDiagnostics()` | Save a credential-free report |
 | `updates.check()`, `updates.install()`, `updates.open()` | Updates from GitHub releases; the state is `update` in the snapshot (`mode` install, notify, or off; `status`; `version`). `install()` restarts into a downloaded update, `open()` opens the new release's page for copies that can't update themselves |
 

@@ -459,6 +459,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 /* The playing song's star: a mark in the accent when on, like a list row's, not a pressed page toggle. */
 .icon-button.favorite[aria-pressed='true'] { color: var(--accent); background: none; }
 .icon-button.favorite[aria-pressed='true']:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.sleep-note { margin: 4px 0 0; font-size: calc(12.5px * var(--text)); line-height: 1.55; color: var(--soft); }
 .deck-links { display: flex; gap: 16px; margin: auto 0 0; padding-top: 18px; }
 .deck-links { flex-wrap: wrap; row-gap: 6px; }
 /* An update ready or out: the one deck link in the accent, first in the row. */
@@ -546,6 +547,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .transport .glyph { width: 44px; height: 44px; }
   .play { width: 46px; height: 46px; }
   .volume, .signal, .up-next, .quiet-link, .transport .glyph:first-child, .deck-actions, .deck-links { display: none; }
+  .sleep-note { display: none; }
   .resume { grid-column: 1 / -1; margin: 6px 0 4px; }
   .deck-empty { margin: 0; font-size: calc(13.5px * var(--text)); }
   .deck .deck-error { grid-column: 1 / -1; margin: 6px 0 4px; }
@@ -582,6 +584,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .deck.open .play svg { width: 30px; }
   .deck.open .signal, .deck.open .up-next { display: block; }
   .deck.open .signal { margin-top: 22px; }
+  .deck.open .sleep-note { display: block; }
   .deck.open .deck-links { display: flex; justify-content: center; gap: 28px; margin-top: auto; padding-top: 18px; }
 }
 

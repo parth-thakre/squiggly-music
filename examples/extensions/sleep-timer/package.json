@@ -1,11 +1,11 @@
 {
   "name": "sleep-timer",
   "version": "1.0.0",
-  "description": "Pause playback after a while, or at the end of the current song.",
+  "description": "An example of commands and a menu item: pause playback after a while, or at the end of the current song. Squiggly has a sleep timer of its own; this one is here to read and copy.",
   "private": true,
   "type": "module",
   "squiggly": {
-    "displayName": "Sleep timer",
+    "displayName": "Sleep timer example",
     "renderer": "src/index.ts"
   }
 }

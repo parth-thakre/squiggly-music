@@ -218,6 +218,8 @@ export const androidBridge: AndroidBridge = {
     onReset(listener) { resetListeners.add(listener); return () => { resetListeners.delete(listener); }; },
     // Page to native only: a mode changed outside the page (a MediaController) isn't observed.
     repeat(mode) { void Squiggly.repeat({ mode }); },
+    sleepAt(at) { void Squiggly.sleepAt({ at: at === null ? null : Math.round(at) }); },
+    sleepAfterPlay(playId) { void Squiggly.sleepAfterPlay({ playId }); },
   },
 };
 

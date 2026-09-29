@@ -1,6 +1,8 @@
 import { defineExtension } from '@squiggly/extension-api';
 
 // Pauses after a set number of minutes (a setting, 30 by default), or when the current song ends.
+// An example to read and copy: the app has a sleep timer of its own (the Sleep timer commands),
+// so where this one's titles would read the same, they say they're the example's.
 export default defineExtension({
   activate(ctx) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -15,7 +17,7 @@ export default defineExtension({
 
     ctx.commands.register({
       id: 'start',
-      title: 'Start the sleep timer',
+      title: 'Start the example sleep timer',
       run() {
         const minutes = ctx.settings.get('minutes', 30);
         cancel();
@@ -41,7 +43,7 @@ export default defineExtension({
 
     ctx.commands.register({
       id: 'cancel',
-      title: 'Cancel the sleep timer',
+      title: 'Cancel the example sleep timer',
       when: () => timer !== undefined || stopWatching !== undefined,
       run() { cancel(); ctx.notify('Sleep timer cancelled.'); },
     });

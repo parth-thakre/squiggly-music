@@ -49,6 +49,10 @@ export interface SquigglyPlugin {
   restore(): Promise<{ items: { id: string; track: string }[]; playback: NativePlayback }>;
   // ExoPlayer's repeat mode. The page shuffles its queue itself.
   repeat(options: { mode: 'off' | 'all' | 'one' }): Promise<void>;
+  // The sleep timer: pause at this time (epoch milliseconds), or when the play with this playId
+  // is over and another begins. Null cancels.
+  sleepAt(options: { at: number | null }): Promise<void>;
+  sleepAfterPlay(options: { playId: number | null }): Promise<void>;
   posture(): Promise<Posture>;
   // The window's own background (#rrggbb), which shows around the page on older WebViews, and
   // light (dark: true) or dark system bar icons.

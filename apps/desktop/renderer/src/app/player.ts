@@ -91,6 +91,8 @@ const set = (patch: Partial<PlayerState>) => {
 };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const getPlayer = () => state;
+// For code outside components that follows the player, such as the sleep timer.
+export const subscribePlayer = subscribe;
 export function usePlayer<T>(select: (s: PlayerState) => T): T {
   return useSyncExternalStore(subscribe, () => select(state));
 }
@@ -190,6 +192,8 @@ const entryPrefix = android ? `a${Date.now().toString(36)}-` : 'web-';
 const mint = (count: number) => Array.from({ length: count }, () => `${entryPrefix}${++entries}`);
 // Bumped by every new queue and by stopping radio, so a late radio request can tell it's stale.
 let station = 0;
+// Bumped by player.pause(), so a retry still waiting on the session doesn't start the song again.
+let pauses = 0;
 
 function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = false) {
   element.src = stream(track.id, mp3);
@@ -265,7 +269,7 @@ if (web) {
     element.addEventListener('error', () => {
       if (!mine() || !element.dataset.entry) return;
       const { instance, track } = plays;
-      const wanted = state.playing || state.buffering;
+      const wanted = state.playing || state.buffering, paused = pauses;
       const network = element.error?.code === MediaError.MEDIA_ERR_NETWORK;
       // A refused stream (an ended session) looks like an unsupported file, so check the session
       // before blaming the format. A dropped connection is reported as one, without that check.
@@ -276,7 +280,7 @@ if (web) {
           plays.startAt = plays.lastPosition;
           prepare(element, track, element.dataset.entry!, true);
           set({ delivery: 'mp3-fallback' });
-          if (wanted) void element.play().catch(() => undefined);
+          if (wanted && paused === pauses) void element.play().catch(() => undefined);
           return;
         }
         set({ playing: false, buffering: false, error: 'This song could not be played here. Try another, or check the connection.' });
@@ -596,16 +600,27 @@ export const player = {
     }
     void desktop!.command({ type: state.playing ? 'pause' : 'play' }).then(report);
   },
-  // Pauses and never resumes, for requests that mean pause, such as the media session's.
+  // Pauses whatever is playing or starting to play, for requests that mean pause: the media
+  // session's, and the sleep timer's. Unlike toggle, it never starts anything, and it doesn't
+  // trust the page's copy of the state (a hidden desktop window gets no snapshots).
   pause() {
-    if (android) { android.player.pause(); return; }
+    if (android) { if (state.index >= 0) android.player.pause(); return; }
     if (web) {
-      if (web.active.paused) return;
+      // A song still starting (or retrying as MP3) stays stopped, and the deck stops waiting for it.
+      pauses++;
       web.active.pause();
+      if (state.buffering) set({ buffering: false });
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
       return;
     }
     void desktop!.command({ type: 'pause' }).then(report);
+  },
+  // Android: the native player keeps the sleep timer too, so it still pauses once the app is swiped
+  // away and the page's own timers are gone. `afterPlay` is a PlayerState.playId.
+  sleepNatively(at: number | null, afterPlay: string | null) {
+    if (!android) return;
+    android.player.sleepAt(at);
+    android.player.sleepAfterPlay(afterPlay?.startsWith('android.') ? Number(afterPlay.slice('android.'.length)) : null);
   },
   // Plays the queue entry at this index. Pass the entry id the click saw: if the queue changed
   // underneath, the entry is refused rather than playing whatever now sits at that index.
