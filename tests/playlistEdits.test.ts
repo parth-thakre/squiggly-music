@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Playlist, PlaylistDetail, Result, Track } from '../packages/core/contracts';
 import { PlaylistEditor, resetLibraryCaches } from '../apps/desktop/renderer/src/app/library';
+import { stationTrack } from '../packages/core/stations';
 
 const track = (id: string): Track => ({ id, title: id, artist: 'Artist', album: 'Record', duration: 60, source: 'navidrome', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null });
 const info = (name: string): Playlist => ({ id: 'p', name, comment: null, owner: null, songCount: 0, duration: 0, coverArt: null, readonly: false, changed: null });
@@ -50,6 +51,18 @@ async function opened(ids: string[]) {
 }
 
 describe('playlist editing', () => {
+  it('refuses songs that come with a radio station, whole, without asking the server', async () => {
+    // A queued station dragged onto a playlist reaches the editor as a track like any other.
+    const { fake, editor } = await opened(['A', 'B']);
+    const station = stationTrack({ id: '1', name: 'Night Signal', homePageUrl: null });
+    expect(await editor.add([track('C'), station], 1)).toEqual({ ok: false, error: 'Playlists hold songs, not radio stations.' });
+    expect(await editor.add([station])).toMatchObject({ ok: false });
+    expect(shown(editor)).toEqual(['A', 'B']);
+    await flush();
+    expect(fake.waiting()).toEqual([]);
+    expect(fake.songs()).toEqual(['A', 'B']);
+  });
+
   it('sends one request at a time, so quick removals remove the songs that were chosen', async () => {
     const { fake, editor } = await opened(['A', 'B', 'C', 'D']);
     const first = editor.removeAt([0]);

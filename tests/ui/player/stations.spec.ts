@@ -1,4 +1,5 @@
-import { expect, stationIds, test, type App } from '../fixtures/test';
+import type { Locator } from '@playwright/test';
+import { expect, playlistIds, stationIds, test, type App } from '../fixtures/test';
 
 // Internet radio stations from the server, on the Playlists page. A station plays as a live
 // stream: the fixture server sends an endless WAV (fixtures/server.ts), and the page only ever
@@ -13,6 +14,20 @@ async function openStations(app: App) {
 }
 const row = (app: App, name: string) => app.main.getByRole('region', { name: 'Stations' }).getByRole('listitem')
   .filter({ has: app.page.getByRole('button', { name: `Play ${name}`, exact: true }) });
+
+// Drag and drop as drag-drop.spec.ts dispatches it, one DataTransfer kept on window between
+// steps, so a drag can start on the queue and land in a playlist after navigating.
+type Dragging = Window & { dragData?: DataTransfer };
+const dragStart = (source: Locator) => source.evaluate(element => {
+  const data = new DataTransfer();
+  (window as Dragging).dragData = data;
+  element.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer: data }));
+});
+const dragOnto = (target: Locator) => target.evaluate(element => {
+  const dataTransfer = (window as Dragging).dragData!;
+  for (const type of ['dragenter', 'dragover', 'drop']) element.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer }));
+  document.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer }));
+});
 
 test.describe('internet radio stations', () => {
   test.beforeEach(async ({ app }) => { await app.signIn(); });
@@ -85,5 +100,22 @@ test.describe('internet radio stations', () => {
     // Long Run was reported; the station never was.
     expect(fake.reports.map(report => report.id)).not.toContain(stationIds.night);
     expect(fake.callsTo('saveQueue').every(call => !(call.args[0] as string[]).includes(stationIds.night))).toBe(true);
+  });
+
+  test('a queued station dragged into a playlist is refused, and nothing is sent to the server', async ({ app, fake }) => {
+    await app.play('Test Pressing', 'Long Run');
+    const stations = await openStations(app);
+    await app.chooseFromMenu(stations.getByRole('button', { name: /^Night Signal/ }), 'Add to queue');
+    await app.openQueue();
+    await expect.poll(() => app.titles()).toContain('Night Signal');
+    const before = fake.playlist(playlistIds.road)?.trackIds;
+    await dragStart(app.row('Night Signal'));
+    await app.openPlaylist('Road Mix');
+    await dragOnto(app.tracks().nth(1));
+    await expect(app.deck.getByRole('alert')).toContainText('Playlists hold songs, not radio stations.');
+    await expect(app.main.getByText('Saving changes')).toHaveCount(0);
+    expect(fake.callsTo('addToPlaylist')).toEqual([]);
+    expect(fake.callsTo('reorderPlaylist')).toEqual([]);
+    expect(fake.playlist(playlistIds.road)?.trackIds).toEqual(before);
   });
 });
