@@ -8,24 +8,41 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { TLSSocket } from 'node:tls';
 import { Effect, Either, Schema } from 'effect';
 import type { Connect, Plugin } from 'vite';
-import { SubsonicClient, isLibraryMethod, libraryCall } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, isLibraryMethod, libraryCall, resolveServerAddress } from '../packages/adapter-opensubsonic/client';
+import type { Connection } from '../packages/core/contracts';
 import { Metrics } from '../packages/core/metrics';
-import { IdSchema } from '../packages/core/validation';
+import { ConnectionSchema, IdSchema } from '../packages/core/validation';
 
 // Dev/preview-server bridge so the browser build can browse and play a real library through
-// the same OpenSubsonic connector as the desktop app. Credentials come from the environment
-// and never reach the browser or the repo:
+// the same OpenSubsonic connector as the desktop app. The server login comes from the page
+// (POST /api/connect) or from the environment, and never reaches the browser or the repo:
 //   SQUIGGLY_PREVIEW_NAVIDROME_URL, SQUIGGLY_PREVIEW_NAVIDROME_USER, SQUIGGLY_PREVIEW_NAVIDROME_PASSWORD
+//                           optional: a server every browser uses until it connects to its own
 //   SQUIGGLY_WEB_PASSWORD   the password the browser signs in with (12 or more characters)
 //
-// Whoever reaches /api acts as the configured Navidrome account, so every /api route needs a
+// Whoever reaches /api acts as the connected Navidrome account, so every /api route needs a
 // session cookie once SQUIGGLY_WEB_PASSWORD is set:
-//   GET    /api/session  -> { ok: true, value: { signedIn, required } }
+//   GET    /api/session  -> { ok: true, value: { signedIn, required, connected, serverName, pageConnection } }
+//                        connected: library calls have a server. pageConnection: it is this
+//                        browser's own (POST /api/connect), not the environment's.
 //   POST   /api/session  body: { "password": "..." } -> { ok: true } and an HttpOnly, SameSite=Strict
 //                        session cookie (30 days, sliding), or 401/429 { ok: false, error }
 //   DELETE /api/session  -> { ok: true }; forgets the session and clears the cookie
 // Without a session every other route answers 401 { ok: false, error: 'Sign in to use this library.' }.
 // Sessions live in memory: restarting the server signs everyone out.
+//
+// Connecting from the page (same-origin JSON, and the session above when there is a password):
+//   POST   /api/connect     body: { url, username, password } -> { ok: true, value: { serverName } }
+//                           and an HttpOnly, SameSite=Strict `squiggly-connection` cookie, or
+//                           { ok: false, error } with the connector's own message. An address
+//                           without a scheme is tried as HTTPS, then HTTP, as on the desktop.
+//   POST   /api/disconnect  -> { ok: true }; forgets this browser's connection and clears the cookie
+// The cookie holds a random id; the connector, with the password it needs, stays in this
+// process's memory and is never written to disk or logged. At most 32 are kept (the one used
+// least recently goes first), each until 24 hours pass without a request, the browser
+// disconnects or signs out, or the server restarts. A browser's own connection is used before
+// the environment's. With neither, the library, cover, stream and station routes answer
+// 503 { ok: false, error: 'Not connected to a server. Connect from the page.' }.
 //
 // Binding. `npm run web` and `npm run preview` listen on 127.0.0.1 only. Without
 // SQUIGGLY_WEB_PASSWORD the library is open to this computer alone: /api refuses requests that
@@ -51,13 +68,14 @@ import { IdSchema } from '../packages/core/validation';
 //
 // POST /api/<LibraryApi method>  body: JSON array of positional arguments
 //   -> { ok: true, value } | { ok: false, error }   (200, or 400/401/403/404/405/502/503)
+// Library calls, cover, stream and station use the browser's own connection, or else the environment's.
 // GET  /api/cover?id=<coverArt>&size=<32..1200>  -> image bytes, or 404 with a Result
 // GET  /api/stream?id=<song>[&format=mp3]         -> audio bytes (Range supported), or 404 with a Result
 // GET  /api/station?id=<station>                  -> an internet radio station's live stream, or 404/502 with a Result
 // Audio and image elements load cover and stream same-origin, so the cookie rides along.
-// Writes (playlist edits, reportPlay, saveQueue) reach the configured account. `lyrics` contacts
+// Writes (playlist edits, reportPlay, saveQueue) reach the connected account. `lyrics` contacts
 // LRCLIB only when the browser passes lookup=true as its second argument.
-const unconfigured = 'Navidrome preview is not configured.';
+export const notConnected = 'Not connected to a server. Connect from the page.';
 const signInRequired = 'Sign in to use this library.';
 const minimumPasswordLength = 12;
 const cookieName = 'squiggly_session';
@@ -69,23 +87,30 @@ const freeAttempts = 4;
 const maxBackoff = 15 * 60 * 1000;
 const failureMemory = 60 * 60 * 1000;
 const maxTrackedAddresses = 10_000;
+// Connections made from the page: one per browser, in memory only.
+const connectionCookie = 'squiggly-connection';
+export const maxConnections = 32;
+export const connectionIdle = 24 * 60 * 60 * 1000;
 
 export interface PreviewOptions {
   /** Defaults to process.env. */
   env?: NodeJS.ProcessEnv;
   /** Tests substitute a connector; by default one is built from the environment. */
   client?: SubsonicClient | null;
+  /** Builds the connector for an address a page connects to. Tests substitute one. */
+  connector?: (connection: Connection) => SubsonicClient;
   now?: () => number;
   /** Where the station relay may connect. Tests let their local stations through; by default only public addresses. */
   stationAddress?: (address: string) => boolean;
 }
 
+const newClient = (connection: Connection) => new SubsonicClient(connection, new Metrics());
 function createClient(env: NodeJS.ProcessEnv) {
   const url = env.SQUIGGLY_PREVIEW_NAVIDROME_URL;
   const username = env.SQUIGGLY_PREVIEW_NAVIDROME_USER;
   const password = env.SQUIGGLY_PREVIEW_NAVIDROME_PASSWORD;
   if (!url || !username || !password) return null;
-  try { return new SubsonicClient({ url, username, password }, new Metrics()); }
+  try { return newClient({ url, username, password }); }
   catch { return null; }
 }
 const json = (response: ServerResponse, status: number, value: unknown) => {
@@ -212,18 +237,124 @@ function createAuth(password: string, now: () => number) {
 }
 type Auth = ReturnType<typeof createAuth>;
 
-async function handleSession(auth: Auth | null, request: IncomingMessage, response: ServerResponse) {
+// A plain HTTP server is named with its scheme, since nothing sent to it is encrypted (as the
+// desktop names it).
+function hostName(client: SubsonicClient) {
+  try {
+    const address = new URL(client.baseUrl);
+    return `${address.protocol === 'http:' ? 'http://' : ''}${address.host}`;
+  } catch { return null; }
+}
+
+// Each browser's own connector, found by the `squiggly-connection` cookie. Keyed by a hash of the
+// id, as sessions are, and kept in order of use so the first entry is the one idle longest.
+function createConnections(now: () => number) {
+  const connections = new Map<string, { client: SubsonicClient; serverName: string; used: number }>();
+  const values = (request: IncomingMessage) => (request.headers.cookie ?? '').split(';')
+    .map(part => part.trim().split('='))
+    .filter(([name, value]) => name === connectionCookie && !!value && /^[0-9a-f]{64}$/.test(value))
+    .map(([, value]) => value);
+  const ids = (request: IncomingMessage) => values(request).map(value => digest(value).toString('hex'));
+  const cookie = (request: IncomingMessage, value: string, maxAge: number) =>
+    `${connectionCookie}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; SameSite=Strict${secure(request) ? '; Secure' : ''}`;
+  const prune = () => {
+    const time = now();
+    for (const [key, entry] of connections) if (time - entry.used >= connectionIdle) connections.delete(key);
+  };
+  return {
+    // Every request through a connection counts as use.
+    get(request: IncomingMessage) {
+      prune();
+      for (const key of ids(request)) {
+        const entry = connections.get(key);
+        if (!entry) continue;
+        entry.used = now();
+        connections.delete(key); connections.set(key, entry);
+        return entry;
+      }
+      return null;
+    },
+    add(request: IncomingMessage, response: ServerResponse, client: SubsonicClient, serverName: string) {
+      prune();
+      // Connecting again replaces this browser's connection rather than adding a second.
+      for (const key of ids(request)) connections.delete(key);
+      while (connections.size >= maxConnections) connections.delete(connections.keys().next().value!);
+      const id = randomBytes(32).toString('hex');
+      connections.set(digest(id).toString('hex'), { client, serverName, used: now() });
+      response.setHeader('set-cookie', cookie(request, id, sessionLifetime / 1000));
+    },
+    // The cookie lasts as long as the page keeps coming back; the host forgets it sooner when idle.
+    refresh(request: IncomingMessage, response: ServerResponse) {
+      const value = values(request).find(value => connections.has(digest(value).toString('hex')));
+      if (value) response.appendHeader('set-cookie', cookie(request, value, sessionLifetime / 1000));
+    },
+    // Whether the browser sent a connection cookie at all, known here or not.
+    carries: (request: IncomingMessage) => values(request).length > 0,
+    remove(request: IncomingMessage) {
+      for (const key of ids(request)) connections.delete(key);
+      return cookie(request, '', 0);
+    },
+  };
+}
+type Connections = ReturnType<typeof createConnections>;
+
+// The page's server login: resolved and checked as the desktop does it, then kept here.
+async function handleConnect(connections: Connections, connector: (connection: Connection) => SubsonicClient, request: IncomingMessage, response: ServerResponse) {
+  if (request.method !== 'POST') return json(response, 405, { ok: false, error: 'Use POST.' });
+  if (!jsonRequest(request) || !sameOrigin(request)) return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });
+  let body: unknown;
+  try { body = JSON.parse(await readBody(request, 16 * 1024)); }
+  catch { return json(response, 400, { ok: false, error: 'Invalid connection request.' }); }
+  const typed = Schema.decodeUnknownEither(ConnectionSchema)(body);
+  if (Either.isLeft(typed)) return json(response, 400, { ok: false, error: 'Enter the server address, username, and password.' });
+  const attempt = await Effect.runPromise(Effect.either(Effect.gen(function* () {
+    const connection = yield* resolveServerAddress(typed.right, connector);
+    // The address check's own message (a bad address says how), not Effect's generic one.
+    const client = yield* Effect.try({ try: () => connector(connection), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
+    const info = yield* client.ping();
+    return { client, info };
+  })));
+  // The connector's messages are its own, never the server's text or an address with credentials.
+  if (Either.isLeft(attempt)) return json(response, 502, { ok: false, error: attempt.left.message || 'Could not connect.' });
+  const { client, info } = attempt.right;
+  const host = hostName(client);
+  const serverName = host ? `${info.name} (${host})` : info.name;
+  connections.add(request, response, client, serverName);
+  json(response, 200, { ok: true, value: { serverName } });
+}
+
+// What the page may know about its server: nothing until it has signed in.
+type Server = { client: SubsonicClient; serverName: string | null; pageConnection: boolean } | null;
+async function handleSession(auth: Auth | null, connections: Connections, server: (request: IncomingMessage) => Server, configured: Server, request: IncomingMessage, response: ServerResponse) {
   if (request.method === 'GET' || request.method === 'HEAD') {
-    if (!auth) return json(response, 200, { ok: true, value: { signedIn: true, required: false } });
-    const token = auth.session(request);
-    if (token) auth.refresh(request, response, token);
-    return json(response, 200, { ok: true, value: { signedIn: !!token, required: true } });
+    const token = auth?.session(request) ?? null;
+    if (auth && token) auth.refresh(request, response, token);
+    const signedIn = !auth || !!token;
+    let found = signedIn ? server(request) : null;
+    if (found?.pageConnection) connections.refresh(request, response);
+    else if (signedIn && connections.carries(request)) {
+      // A connection this host no longer has (it restarted, or the connection sat idle or was
+      // pushed out): the cookie goes, and the environment's server, if any, is the page's again.
+      response.appendHeader('set-cookie', connections.remove(request));
+      found = configured;
+    }
+    return json(response, 200, { ok: true, value: {
+      signedIn, required: !!auth, connected: !!found, serverName: found?.serverName ?? null, pageConnection: found?.pageConnection ?? false,
+    } });
   }
   if (request.method !== 'POST' && request.method !== 'DELETE') return json(response, 405, { ok: false, error: 'Use GET, POST or DELETE.' });
   if (!sameOrigin(request) || (request.method === 'POST' && !jsonRequest(request))) {
     return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });
   }
-  if (request.method === 'DELETE') { auth?.signOut(request, response); return json(response, 200, { ok: true }); }
+  // Signing out forgets this browser's connection too, so the next person to sign in here
+  // doesn't find the last one's account.
+  if (request.method === 'DELETE') {
+    const connected = connections.carries(request);
+    const cleared = connections.remove(request);
+    auth?.signOut(request, response);
+    if (connected) response.appendHeader('set-cookie', cleared);
+    return json(response, 200, { ok: true });
+  }
   if (!auth) return json(response, 200, { ok: true });
   const wait = auth.retryAfter(request);
   if (wait) {
@@ -331,13 +462,16 @@ export async function openStation(location: string, allowed: (address: string) =
     url = new URL(next, url);
   }
 }
-async function sendStation(client: SubsonicClient, request: IncomingMessage, response: ServerResponse, searchParams: URLSearchParams, relay: { allowed: (address: string) => boolean; listedAt: number; now: () => number }) {
+// When each server last listed its stations for an unknown id. Kept per server, since each page
+// may use its own; a browser asking for unknown stations never holds back another's.
+interface StationRelay { allowed: (address: string) => boolean; listedAt: WeakMap<SubsonicClient, number>; now: () => number }
+async function sendStation(client: SubsonicClient, request: IncomingMessage, response: ServerResponse, searchParams: URLSearchParams, relay: StationRelay) {
   const id = searchParams.get('id') ?? '';
   if (!Schema.is(IdSchema)(id)) return json(response, 404, { ok: false, error: 'This station is not available.' });
   let location = client.knownStationLocation(id);
   if (!location) {
-    if (relay.now() - relay.listedAt < stationListInterval) return json(response, 404, { ok: false, error: missingStation });
-    relay.listedAt = relay.now();
+    if (relay.now() - (relay.listedAt.get(client) ?? -Infinity) < stationListInterval) return json(response, 404, { ok: false, error: missingStation });
+    relay.listedAt.set(client, relay.now());
     const found = await Effect.runPromise(Effect.either(client.stationLocation(id)));
     if (Either.isLeft(found)) return json(response, 404, { ok: false, error: found.left.message });
     location = found.right;
@@ -376,10 +510,20 @@ interface HostedServer {
   config?: { server?: { host?: string | boolean }; preview?: { host?: string | boolean }; logger?: { error(message: string): void } };
 }
 
-export function navidromePreview({ env = process.env, client = createClient(env), now = Date.now, stationAddress = publicAddress }: PreviewOptions = {}): Plugin {
+export function navidromePreview({ env = process.env, client = createClient(env), connector = newClient, now = Date.now, stationAddress = publicAddress }: PreviewOptions = {}): Plugin {
   const password = env.SQUIGGLY_WEB_PASSWORD || undefined;
   const auth = password && password.length >= minimumPasswordLength ? createAuth(password, now) : null;
-  const relay = { allowed: stationAddress, listedAt: -Infinity, now };
+  const relay: StationRelay = { allowed: stationAddress, listedAt: new WeakMap(), now };
+  const connections = createConnections(now);
+  const configured = client && { client, serverName: hostName(client), pageConnection: false };
+  // This browser's own connection, or else the environment's. A browser whose connection the host
+  // has forgotten gets neither until it asks for the session again (which drops the cookie), so
+  // its calls never land quietly on another account.
+  const serverFor = (request: IncomingMessage): Server => {
+    const own = connections.get(request);
+    if (own) return { client: own.client, serverName: own.serverName, pageConnection: true };
+    return connections.carries(request) ? null : configured || null;
+  };
   return {
     name: 'squiggly-navidrome-preview',
     apply: 'serve',
@@ -396,9 +540,17 @@ export function navidromePreview({ env = process.env, client = createClient(env)
         if (refused) return json(response, 503, { ok: false, error: refused });
         // Without a password the library is for this computer only, so a proxy may not relay it.
         if (!auth && proxied(request)) return json(response, 503, { ok: false, error: `Set SQUIGGLY_WEB_PASSWORD (${minimumPasswordLength} or more characters) to serve this library through a proxy.` });
-        if (pathname === '/session') return await handleSession(auth, request, response);
+        if (pathname === '/session') return await handleSession(auth, connections, serverFor, configured || null, request, response);
         if (auth && !auth.session(request)) return json(response, 401, { ok: false, error: signInRequired });
-        if (!client) return json(response, 503, { ok: false, error: unconfigured });
+        if (pathname === '/connect') return await handleConnect(connections, connector, request, response);
+        if (pathname === '/disconnect') {
+          if (request.method !== 'POST') return json(response, 405, { ok: false, error: 'Use POST.' });
+          if (!jsonRequest(request) || !sameOrigin(request)) return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });
+          response.setHeader('set-cookie', connections.remove(request));
+          return json(response, 200, { ok: true });
+        }
+        const client = serverFor(request)?.client;
+        if (!client) return json(response, 503, { ok: false, error: notConnected });
         if (pathname === '/cover') {
           if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { ok: false, error: 'Use GET.' });
           return await sendCover(client, response, searchParams);

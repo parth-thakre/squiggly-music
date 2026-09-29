@@ -4,15 +4,22 @@ import { startPreview, webPassword } from './server';
 
 export { expect };
 export { webPassword };
-export { special, playlistIds, lyricLines, wordLines, trackOf, allTracks, stationIds } from './library';
+export { special, playlistIds, lyricLines, wordLines, trackOf, allTracks, stationIds, account } from './library';
 
 type Preview = Awaited<ReturnType<typeof startPreview>>;
 
 // Every worker runs its own preview server and fake account, so tests in different workers
 // never share state. Within a worker the account is reset before each test.
-export const test = base.extend<{ fake: FakeNavidrome; app: App }, { preview: Preview }>({
+// `unconfigured` is a second host, started only by the tests that ask for it, with no server and
+// no password: the page connects to its fake account from the connect screen.
+export const test = base.extend<{ fake: FakeNavidrome; app: App }, { preview: Preview; unconfigured: Preview }>({
   preview: [async ({}, use) => {
     const server = await startPreview();
+    await use(server);
+    await server.close();
+  }, { scope: 'worker' }],
+  unconfigured: [async ({}, use) => {
+    const server = await startPreview({ configured: false });
     await use(server);
     await server.close();
   }, { scope: 'worker' }],

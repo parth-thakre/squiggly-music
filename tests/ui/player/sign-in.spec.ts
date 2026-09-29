@@ -1,4 +1,4 @@
-import { expect, test, webPassword } from '../fixtures/test';
+import { account, App, expect, test, webPassword } from '../fixtures/test';
 
 const day = 24 * 60 * 60 * 1000;
 
@@ -45,5 +45,60 @@ test.describe('sign-in', () => {
     await app.section('Artists').click();
     await expect(app.heading).toHaveText('Artists');
     await expect(app.main.getByRole('button', { name: /^Ada Brass/ })).toBeVisible();
+  });
+});
+
+test.describe('connect', () => {
+  test('a host with no server of its own asks for one, and Disconnect in Settings goes back to asking', async ({ page, unconfigured }) => {
+    unconfigured.fake.reset();
+    const app = new App(page, unconfigured.url);
+    await page.goto(unconfigured.url);
+    // The same connect screen as the desktop and Android, saying what the host keeps.
+    await expect(page.getByRole('heading', { name: 'Squiggly', level: 1 })).toBeVisible();
+    await expect(page.getByText('The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.')).toBeVisible();
+    await expect(page.getByRole('button', { name: "Try Navidrome's demo" })).toBeVisible();
+    expect((await page.request.post(`${app.url}/api/playlists`, { data: [], headers: { origin: app.url } })).status()).toBe(503);
+
+    // Typed without http://, as on the desktop: the host tries HTTPS, then HTTP.
+    await page.getByLabel('Server address').fill(unconfigured.navidrome);
+    await page.getByLabel('Username').fill(account.username);
+    await page.getByLabel('Password').fill('not the password');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await expect(page.getByRole('alert')).toHaveText('Incorrect username or password. Check your Navidrome login and try again.');
+    await page.getByLabel('Password').fill(account.password);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+
+    await expect(app.heading).toHaveText('Home');
+    await app.play('Test Pressing', 'Long Run');
+    // The connection is the page's to drop, from the deck and from Settings.
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+    await expect(app.deck.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+    await app.openSettings();
+    await expect(app.main.getByText(`Connected to Navidrome (http://${unconfigured.navidrome}). Disconnecting stops playback, empties the queue, and goes back to the connect screen`)).toBeVisible();
+    await app.main.getByRole('button', { name: 'Disconnect', exact: true }).click();
+
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    await expect(app.deck).toHaveCount(0);
+    expect(await page.evaluate(() => [...document.querySelectorAll('audio')].every(audio => audio.paused))).toBe(true);
+    // The host forgot it too.
+    await page.reload();
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    expect((await page.request.post(`${app.url}/api/playlists`, { data: [], headers: { origin: app.url } })).status()).toBe(503);
+  });
+
+  test('a connection the host forgot (a restart, say) returns the page to the connect screen', async ({ page, unconfigured }) => {
+    unconfigured.fake.reset();
+    const app = new App(page, unconfigured.url);
+    await page.goto(unconfigured.url);
+    await page.getByLabel('Server address').fill(`http://${unconfigured.navidrome}`);
+    await page.getByLabel('Username').fill(account.username);
+    await page.getByLabel('Password').fill(account.password);
+    await page.getByLabel('Password').press('Enter');
+    await expect(app.heading).toHaveText('Home');
+    // The host drops it behind the page's back; the next library call finds nothing there.
+    expect((await page.request.post(`${app.url}/api/disconnect`, { data: {}, headers: { origin: app.url } })).status()).toBe(200);
+    await app.section('Artists').click();
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    await expect(app.deck).toHaveCount(0);
   });
 });

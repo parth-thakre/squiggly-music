@@ -777,7 +777,8 @@ export function SettingsView() {
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
-      {mode !== 'web' ? <Disconnect /> : <SignOut />}
+      <Disconnect />
+      {mode === 'web' && <SignOut />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
@@ -834,16 +835,16 @@ function UpdateSettings() {
   </>;
 }
 
-// Desktop and Android; the browser build signs out from the deck. The desktop's main process
-// (or the Android bridge) forgets the server and stops playback, and the app returns to the
-// connect screen.
 // The browser build: the page's own sign-in, when the host asks for a password. Without one the
 // page is open to whoever can reach it, and there is nothing here to sign out of.
 function SignOut() {
   const access = usePlayer(s => s.access);
   const serverName = usePlayer(s => s.serverName);
+  const pageConnection = usePlayer(s => s.pageConnection);
   const [busy, setBusy] = useState(false);
   if (access !== 'signed-in' && access !== 'open') return null;
+  // Disconnect above covers a server this page connected to itself.
+  if (access === 'open' && pageConnection) return null;
   return <div className="setting-action">
     <p><strong>Sign out</strong>
       <span>{access === 'signed-in'
@@ -853,18 +854,25 @@ function SignOut() {
       {busy ? 'Signing out' : 'Sign out'}</button>}
   </div>;
 }
+// The desktop's main process, the Android bridge, or (in the browser) the host forgets the
+// server and stops playback, and the app returns to the connect screen. In the browser only a
+// server the page connected to itself can be dropped; the host's configured one stays.
 function Disconnect() {
   const serverName = usePlayer(s => s.serverName);
   const connected = usePlayer(s => s.connected);
+  const web = usePlayer(s => s.mode === 'web');
+  const pageConnection = usePlayer(s => s.pageConnection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!connected) return null;
+  if (!connected || (web && !pageConnection)) return null;
   return <div className="setting-action">
     <p><strong>Disconnect or switch server</strong>
-      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. It also forgets the saved sign-in, so have your password ready.</span></p>
+      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. {web
+        ? 'The host that serves this page forgets the password too, so have it ready.'
+        : 'It also forgets the saved sign-in, so have your password ready.'}</span></p>
     <button type="button" className="text-button" disabled={busy} onClick={async () => {
       setBusy(true); setError(null);
-      const result = await (window.squiggly ?? window.squigglyAndroid!.session).disconnect();
+      const result = await (web ? player : (window.squiggly ?? window.squigglyAndroid!.session)).disconnect();
       setBusy(false);
       if (!result.ok) setError(result.error);
     }}>{busy ? 'Disconnecting' : 'Disconnect'}</button>

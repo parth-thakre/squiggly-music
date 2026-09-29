@@ -63,7 +63,7 @@ export function App() {
       <Bar />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
-    </> : access === 'checking' ? null : mode === 'web' ? <SignIn /> : <Connect />}
+    </> : access === 'checking' ? null : mode === 'web' && access === 'sign-in' ? <SignIn /> : <Connect />}
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
@@ -284,6 +284,8 @@ function UpdateLink() {
 const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
 function DeckLinks() {
   const signedIn = usePlayer(s => s.access === 'signed-in');
+  // The browser's own connection; one the host was started with isn't the page's to drop.
+  const pageConnection = usePlayer(s => s.mode === 'web' && s.connected && s.pageConnection);
   const mode = usePlayer(s => s.mode);
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
@@ -292,6 +294,7 @@ function DeckLinks() {
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
     {mode === 'desktop' && <button type="button" className="quiet-link" onClick={() => void openFiles()}>Open files</button>}
+    {pageConnection && <button type="button" className="quiet-link" onClick={() => void player.disconnect().then(result => { if (!result.ok) player.showError(result.error); })}>Disconnect</button>}
     {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}
   </p>;
 }
@@ -367,15 +370,17 @@ function asHex(color: string) {
   return context.fillStyle;
 }
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
-// The desktop's and the Android app's server login. Embedded, it stands in for a library page
-// while songs from this computer play without a server.
+// The server login on every build. The desktop's main process, the Android bridge, or the
+// browser build's host keeps it. Embedded, it stands in for a library page while songs from this
+// computer play without a server.
 function Connect({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const android = window.squigglyAndroid?.session;
+  const web = usePlayer(s => s.mode === 'web');
   const connect = async (connection: { url: string; username: string; password: string }) => {
     setBusy(true); setError(null);
-    const result = await (window.squiggly ? window.squiggly.connect(connection) : android!.connect(connection));
+    const result = await (window.squiggly ? window.squiggly.connect(connection) : android ? android.connect(connection) : player.connect(connection));
     setBusy(false);
     if (!result.ok) setError(result.error);
   };
@@ -403,7 +408,8 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
   return <Frame className="connect">
     <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
     <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
-      {canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
+      {web ? 'The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.'
+        : canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
     {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
     {reconnectError && saved && android && <button type="button" className="text-button" disabled={busy} onClick={() => void retry()}>Try {hostOf(saved.url)} again</button>}
