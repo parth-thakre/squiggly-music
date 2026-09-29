@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emptyAudio, emptyPlayer, type AudioPath, type AudioSink, type PlayerSnapshot } from '../packages/core/contracts';
 import { parseSampleSpec, resampledNote, sinkFormat, sinkResamples, sinkResampling, sinkSentence } from '../packages/core/sinks';
 import {
-  execText, parsePactlSinks, parsePwDump, pipewireSink, PROBE_EVERY_MS, PROBE_GAP_MS, readSink, SinkWatch,
+  execText, parsePactlSinkInputs, parsePactlSinks, parsePwDump, pipewireSink, PROBE_EVERY_MS, PROBE_GAP_MS, readSink, SinkWatch,
   type Run, type SinkFacts, type SinkQuery,
 } from '../apps/desktop/main/sinks';
 import {
@@ -106,7 +106,12 @@ describe('the PipeWire sink', () => {
     const reading = pipewireSink(dump(), query());
     expect(Object.keys(reading!).sort()).toEqual(['channels', 'format', 'name', 'rate', 'route', 'server']);
     expect(JSON.stringify(reading)).not.toContain(SECRET);
-    expect(JSON.stringify(parsePwDump(text(pwDump())))).not.toContain(SECRET);
+    // The dump keeps its nodes in a Map, which JSON.stringify leaves empty, so look at the values.
+    const parsed = parsePwDump(text(pwDump()))!;
+    const stream = parsed.nodes.get(130)!;
+    expect(stream.info.props['media.class']).toBe('Stream/Output/Audio');
+    expect(Object.keys(stream.info.props)).not.toContain('media.name');
+    expect(JSON.stringify([...parsed.nodes.values()])).not.toContain(SECRET);
   });
 
   it('refuses text that isn\'t a dump', () => {
@@ -159,6 +164,9 @@ describe('the PulseAudio sink', () => {
     expect(parsePactlSinks(text([...pactlSinks(), { index: 'x' }, 7]))).toHaveLength(2);
     expect(parsePactlSinks('Connection failure: Connection refused')).toBeNull();
     expect(JSON.stringify(parsePactlSinks(text(pactlSinks())))).not.toContain('volume');
+    const inputs = parsePactlSinkInputs(text(pactlInputs()))!;
+    expect(inputs[0].properties?.['application.process.id']).toBe(String(HOST_PID));
+    expect(JSON.stringify(inputs)).not.toContain(SECRET);
   });
 });
 
