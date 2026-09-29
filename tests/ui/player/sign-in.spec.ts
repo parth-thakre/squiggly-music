@@ -97,7 +97,11 @@ test.describe('connect', () => {
     await expect(app.heading).toHaveText('Home');
     // The host drops it behind the page's back; the next library call finds nothing there.
     expect((await page.request.post(`${app.url}/api/disconnect`, { data: {}, headers: { origin: app.url } })).status()).toBe(200);
-    await app.section('Artists').click();
+    // Home's shelves may still be asking for their songs, and any such call finds the host has
+    // forgotten the page; if none is on its way, going somewhere makes one.
+    const artists = app.section('Artists');
+    // The page may go back to the connect screen under the click; a short wait is enough to tell.
+    if (await artists.isVisible()) await artists.click({ timeout: 1500 }).catch(() => undefined);
     await expect(page.getByLabel('Server address')).toBeVisible();
     await expect(app.deck).toHaveCount(0);
   });
