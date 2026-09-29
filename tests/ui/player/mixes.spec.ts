@@ -41,6 +41,27 @@ test.describe('mixes', () => {
     await expect(group(app, 'From what you play')).toHaveCount(0);
   });
 
+  test('a mix that answers after another song started leaves that song playing', async ({ app, fake, page }) => {
+    await page.setViewportSize({ width: 1100, height: 480 });
+    await app.signIn();
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('m');
+    await expect(names(app, 'By decade')).toHaveCount(4);
+    // The 1990s sit below the fold, so nothing has drawn them yet. Their draw takes four seconds.
+    const nineties = () => fake.callsTo('randomSongs').filter(call => { const args = call.args[0] as { size: number; fromYear?: number }; return args.size === 50 && args.fromYear === 1990; });
+    expect(nineties()).toHaveLength(0);
+    fake.delay('randomSongs', ...Array<number>(20).fill(4000));
+    const tile = group(app, 'By decade').locator('li').filter({ hasText: 'The 1990s' });
+    await tile.hover();
+    await tile.getByRole('button', { name: 'Play The 1990s' }).click();
+    await app.play('Test Pressing', 'Long Run');
+    expect(nineties()).toHaveLength(1);
+    await page.waitForTimeout(4500);
+    await expect(app.heading).toHaveText('Test Pressing');
+    await app.expectPlaying('Long Run');
+  });
+
   test('See all on Home and on Playlists lands here, and Playlists keeps only the first eight', async ({ app, page }) => {
     await app.signIn({ home: true });
     await seeAll(app, 'Your mixes').click();

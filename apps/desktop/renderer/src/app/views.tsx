@@ -1131,14 +1131,7 @@ function HomeMixes() {
     <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
     <ul className="grid">
       {mixes.map(mix => <li key={mix.id} className="playable">
-        <PlayOver label={mix.name} play={async () => {
-          const asked = playRequests();
-          const drawn = await mixTracks(mix);
-          // Something else started playing while the songs were on their way; that stays.
-          if (playRequests() !== asked) return;
-          if (!drawn.ok) player.showError(drawn.error);
-          else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
-        }} />
+        <PlayOver label={mix.name} play={() => playMix(mix)} />
         <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
           <MixTile mix={mix} travels={mix.id === morph.id} />
           <span className="grid-name"><span>{mix.name}</span></span>
@@ -1360,15 +1353,20 @@ function MixesHead() {
 function MixGroup({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return <section className="shelf-section" aria-labelledby={id}><h2 id={id}>{title}</h2>{children}</section>;
 }
+// Plays a tile's mix from its draw. If something else started playing while the draw was on its
+// way, that stays, as with Tracks' Shuffle.
+async function playMix(mix: Mix) {
+  const asked = playRequests();
+  const drawn = await mixTracks(mix);
+  if (playRequests() !== asked) return;
+  if (!drawn.ok) player.showError(drawn.error);
+  else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+}
 // Each tile plays from its button and opens its mix, as on the Playlists page.
 function MixGrid({ mixes }: { mixes: Mix[] }) {
   return <ul className="grid">
     {mixes.map(mix => <li key={mix.id} className="playable">
-      <PlayOver label={mix.name} play={async () => {
-        const drawn = await mixTracks(mix);
-        if (!drawn.ok) player.showError(drawn.error);
-        else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
-      }} />
+      <PlayOver label={mix.name} play={() => playMix(mix)} />
       <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
         <MixTile mix={mix} travels={mix.id === morph.id} />
         <span className="grid-name"><span>{mix.name}</span></span>
