@@ -118,3 +118,65 @@ it('moves the history at once, so Back during a move counts from the new place, 
   await flush();
   expect(nav.current).toEqual({ view: 'album', id: 'x' });
 });
+
+it('keeps each place\'s scroll offset when Back and Forward come faster than the moves draw', async () => {
+  // Motion on, as above: a move draws only when its view transition's callback runs.
+  const pending: (() => Promise<void>)[] = [];
+  const flush = async () => { const run = pending.splice(0); for (const update of run) await update(); };
+  // The page's scroll area: it scrolls wherever it's told, and nothing grows while it loads.
+  const scroller = { scrollTop: 0, scrollTo(_x: number, y: number) { this.scrollTop = y; }, addEventListener() {}, removeEventListener() {} };
+  const load = async () => {
+    entries.splice(0, entries.length, null); at = 0; handlers.length = 0; pending.length = 0;
+    Object.assign(globalThis, {
+      matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
+      document: { hidden: false, querySelector: () => null, startViewTransition(update: () => Promise<void>) {
+        pending.push(update);
+        return { ready: Promise.resolve(), finished: Promise.resolve() };
+      } },
+    });
+    vi.resetModules();
+    const { nav } = await import('../apps/desktop/renderer/src/app/route');
+    nav.attach(scroller as unknown as HTMLElement);
+    return nav;
+  };
+  const visit = async (nav: Awaited<ReturnType<typeof load>>, route: Parameters<typeof nav.go>[0], offset: number) => {
+    nav.go(route); await flush(); scroller.scrollTop = offset;
+  };
+  const forward = () => (history as unknown as { forward(): void }).forward();
+
+  // Tracks, Artists, Records; two Backs before either draws, then Forward to Artists.
+  let nav = await load();
+  await visit(nav, { view: 'tracks' }, 500);
+  await visit(nav, { view: 'artists' }, 200);
+  await visit(nav, { view: 'records' }, 1000);
+  nav.back(); nav.back(); await flush();
+  expect(nav.current).toEqual({ view: 'tracks' });
+  expect(scroller.scrollTop).toBe(500);
+  forward(); await flush();
+  expect(nav.current).toEqual({ view: 'artists' });
+  expect(scroller.scrollTop).toBe(200); // not Records' 1000, which was on screen during the second Back
+  forward(); await flush();
+  expect(scroller.scrollTop).toBe(1000);
+
+  // Artists, a record, Artists again; two quick Backs, then Forward to the record.
+  nav = await load();
+  await visit(nav, { view: 'artists' }, 800);
+  await visit(nav, { view: 'album', id: 'x' }, 100);
+  await visit(nav, { view: 'artists' }, 400);
+  nav.back(); nav.back(); await flush();
+  expect(scroller.scrollTop).toBe(800);
+  forward(); await flush();
+  expect(nav.current).toEqual({ view: 'album', id: 'x' });
+  expect(scroller.scrollTop).toBe(100);
+  forward(); await flush();
+  expect(scroller.scrollTop).toBe(400);
+
+  // Back from a move that hasn't drawn yet keeps the offset of the page that was on screen.
+  nav = await load();
+  await visit(nav, { view: 'artists' }, 300);
+  nav.go({ view: 'album', id: 'y' });
+  scroller.scrollTop = 350; // the listener scrolls Artists a little more before the record draws
+  nav.back(); await flush();
+  expect(nav.current).toEqual({ view: 'artists' });
+  expect(scroller.scrollTop).toBe(350);
+});

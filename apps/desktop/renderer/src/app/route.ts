@@ -58,6 +58,9 @@ let scroller: HTMLElement | null = null;
 // A full-screen layer (the phone's now-playing sheet) that the back gesture closes first.
 let overlay: (() => void) | null = null;
 const emit = () => { shown = now; listeners.forEach(listener => listener()); };
+// The scroller holds the offset of the page on screen, which during a move is `shown`, not
+// `now`; saving it under `now` would give a place the offset of the page still in view.
+const keepScroll = () => { if (!shown.overlay) remember(shown.id, scroller?.scrollTop ?? 0); };
 
 // Moving between places animates with the browser's View Transitions: the sleeve you touched
 // travels to where it lands, everything else crossfades. Skipped for reduced motion.
@@ -108,7 +111,7 @@ addEventListener('popstate', event => {
   // Not one of ours (history from before the app loaded): just close the sheet if it was open.
   if (!place) { if (close) transition(close); return; }
   stopRestoring?.();
-  if (!now.overlay) remember(now.id, scroller?.scrollTop ?? 0);
+  keepScroll();
   // Closing the sheet, or stepping onto a sheet's old entry: the page itself stays put.
   if (same(place.route, now.route)) { now = { ...place, route: now.route }; emit(); if (close) transition(close); return; }
   now = place;
@@ -132,7 +135,7 @@ export const nav = {
       return;
     }
     stopRestoring?.();
-    if (!now.overlay) remember(now.id, scroller?.scrollTop ?? 0);
+    keepScroll();
     // The history moves at once, before any animation, so a Back pressed during the move goes
     // back from here and not from the place before it.
     const replacing = replace || close !== null;
@@ -152,7 +155,7 @@ export const nav = {
   get overlayOpen() { return overlay !== null; },
   openOverlay(open: () => void, close: () => void) {
     overlay = close;
-    remember(now.id, scroller?.scrollTop ?? 0);
+    keepScroll();
     now = { id: nextId(), depth: now.depth + 1, route: now.route, overlay: true };
     history.pushState(stateOf(now), '');
     emit();
