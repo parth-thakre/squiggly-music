@@ -28,6 +28,9 @@ export interface Track {
   starred?: boolean;
   // The account's own rating, 1 to 5. Absent when unrated (or rated 0, which is the same).
   userRating?: number;
+  // The file's path as the server reports it (Subsonic `path`), for playlist files (m3u.ts).
+  // Absent when the server gives none, and for local files, whose paths stay in the main process.
+  path?: string | null;
 }
 // One credited artist with their own page. See Track.artists.
 export interface ArtistRef { id: string; name: string }
@@ -123,9 +126,30 @@ export interface LibraryApi {
   // What other accounts on the server are playing now (getNowPlaying). This account's own
   // players are left out. Empty when nobody else is listening.
   nowPlaying(): Promise<Result<NowPlayingEntry[]>>;
+  // Public links (Subsonic shares) to songs, a record, or a playlist: ids of one kind. Navidrome
+  // offers them only with EnableSharing on; otherwise these fail with a plain message.
+  // expiresAt is epoch milliseconds; without it the server picks (Navidrome: a year).
+  createShare(ids: string[], description?: string, expiresAt?: number): Promise<Result<Share>>;
+  shares(): Promise<Result<Share[]>>;
+  deleteShare(id: string): Promise<Result>;
 }
 // One of someone else's players, as the server last heard from it.
 export interface NowPlayingEntry { username: string; track: Track }
+// A public link the server made (createShare). Times are the server's ISO strings.
+export interface Share {
+  id: string;
+  // The public address. It carries no credentials.
+  url: string;
+  description: string | null;
+  created: string | null;
+  // null: the server reported no expiry.
+  expires: string | null;
+  lastVisited: string | null;
+  visitCount: number | null;
+  // What the link plays, as the server lists it: songs, or a record.
+  entries: ShareEntry[];
+}
+export interface ShareEntry { id: string; title: string }
 export interface ArtistInfo {
   // Plain text: the server's HTML with its tags and its "Read more on Last.fm" link taken out.
   biography: string | null;
@@ -372,6 +396,14 @@ export interface DesktopBridge {
   };
   disconnect(): Promise<Result>;
   exportDiagnostics(): Promise<Result>;
+  // Saves an extended M3U (m3u.ts) through a save dialog, as `<name>.m3u8`. Local files are
+  // written with their paths, which only the main process knows. Cancelling is not an error.
+  saveM3u(name: string, entries: M3uEntry[]): Promise<Result>;
+}
+// One song in a playlist file. `local` marks a file on this computer (Track.source 'local').
+export interface M3uEntry {
+  id: string; local: boolean; title: string; artist: string; album: string;
+  duration: number | null; path: string | null; suffix: string | null;
 }
 
 export const emptyAudio = (): AudioPath => ({

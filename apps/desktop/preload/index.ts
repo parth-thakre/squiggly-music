@@ -35,6 +35,9 @@ const library: LibraryApi = {
   artistInfo: artistId => call('artistInfo', artistId),
   songsByGenre: (genre, offset, size) => call('songsByGenre', genre, offset, size),
   nowPlaying: () => call('nowPlaying'),
+  createShare: (ids, description, expiresAt) => call('createShare', ids, description ?? null, expiresAt ?? null),
+  shares: () => call('shares'),
+  deleteShare: id => call('deleteShare', id),
 };
 // Push channels from the main process, as subscribe functions.
 function listen<T>(channel: string, listener: (value: T) => void) {
@@ -116,5 +119,6 @@ const bridge: DesktopBridge = {
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
   exportDiagnostics: () => ipcRenderer.invoke('squiggly:export-diagnostics'),
+  saveM3u: (name, entries) => ipcRenderer.invoke('squiggly:save-m3u', [name, entries]),
 };
 contextBridge.exposeInMainWorld('squiggly', bridge);

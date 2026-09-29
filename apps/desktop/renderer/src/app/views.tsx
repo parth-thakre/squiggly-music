@@ -24,6 +24,8 @@ import { time } from './ui';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
+import { exportM3u } from './exports';
+import { SharesSettings } from './share';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -296,6 +298,14 @@ function StarButton({ target, id, starred, name }: { target: 'album' | 'artist';
   const on = isStarred(id, starred);
   return <button type="button" className={`text-button star-text${on ? ' on' : ''}`} aria-pressed={on} onClick={() => void setStarred(target, [id], !on)}>
     <Glyph kind={on ? 'starred' : 'star'} />{on ? 'In favorites' : 'Add to favorites'}<span className="sr-only"> {name}</span></button>;
+}
+// A playlist file of these songs (exports.ts). Errors show under the page's heading.
+function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
+  const [error, setError] = useState<string | null>(null);
+  return <>
+    <button type="button" className="text-button" disabled={!tracks.length} onClick={async () => { setError(await exportM3u(name, tracks)); }}>Export as M3U</button>
+    {error && <p className="note" role="alert">{error}</p>}
+  </>;
 }
 // The same menu as right-click, for people who don't right-click (and for touch).
 function MoreButton({ target }: { target: Parameters<typeof openMenu>[1] }) {
@@ -635,6 +645,7 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
       <Actions tracks={tracks}>
         {editable && !renaming && <button ref={renameButton} type="button" className="text-button" onClick={() => setRenaming(true)}>Rename</button>}
         <MoreButton target={{ kind: 'playlist', playlist }} />
+        <ExportButton name={playlist.name} tracks={tracks} />
       </Actions>
       {editable && tracks.length > 1 && <p className="note hint">Drag songs to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>}
       {view.error && <p className="note" role="alert">{view.error}</p>}
@@ -781,6 +792,7 @@ export function SettingsView() {
       <ThemeSettings />
       <KeySettings />
       {mode === 'desktop' && <ExtensionsSettings />}
+      <SharesSettings />
     </section>
   </>;
 }

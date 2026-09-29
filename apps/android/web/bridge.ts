@@ -113,6 +113,9 @@ const library: LibraryApi = {
   artistInfo: artistId => call('artistInfo', [artistId]),
   songsByGenre: (genre, offset, size) => call('songsByGenre', [genre, offset, size]),
   nowPlaying: () => call('nowPlaying', []),
+  createShare: (ids, description, expiresAt) => call('createShare', [ids, description ?? null, expiresAt ?? null]),
+  shares: () => call('shares', []),
+  deleteShare: id => call('deleteShare', [id]),
 };
 
 // Player -----------------------------------------------------------------------------------

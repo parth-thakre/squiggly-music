@@ -9,6 +9,8 @@ import { nav } from './route';
 import { ratingOf, ratingText, setRating } from './ratings';
 import { labelOf, registry, type MenuItem, type MenuTarget } from './registry';
 import { kHz, length, plural, shuffled, splitTitle } from './ui';
+import { exportM3u } from './exports';
+import { openShare } from './share';
 
 // One menu for right-click on desktop and long-press on phones (Chrome fires contextmenu for both).
 // Every call into an item (its label, predicate, submenu, action, or text field) goes through
@@ -423,3 +425,24 @@ export async function openSongDetails(track: Track) {
   openMenu({ clientX: anchor?.left ?? innerWidth / 2, clientY: anchor?.bottom ?? innerHeight / 3, preventDefault() {} }, target);
   if (open?.target === target) setOpen({ ...open, levels: [{ title: titleOf(target), rows }], error: problems[0] ?? null });
 }
+
+// Playlist files and public links ----------------------------------------------------------
+// An M3U of a playlist's songs (exports.ts), and a share of songs, a record, or a playlist
+// (share.tsx). Songs from this computer can't be shared: the server doesn't have them.
+builtin.menu({
+  id: 'export-m3u', section: 7, label: 'Export as M3U', when: t => t.kind === 'playlist',
+  async run(t) {
+    const tracks = await songsFor(t);
+    if (!tracks) return;
+    const error = await exportM3u(titleOf(t), tracks);
+    if (error) report(error);
+  },
+});
+builtin.menu({
+  id: 'share', section: 7, label: 'Share…',
+  when: t => t.kind === 'album' || t.kind === 'playlist' || (t.kind === 'tracks' && t.tracks.length > 0 && t.tracks.every(track => track.source === 'navidrome')),
+  run: t => openShare({
+    ids: t.kind === 'tracks' ? t.tracks.map(track => track.id) : [t.kind === 'album' ? t.album.id : (t as Extract<MenuTarget, { kind: 'playlist' }>).playlist.id],
+    title: titleOf(t),
+  }),
+});

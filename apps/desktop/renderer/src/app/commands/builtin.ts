@@ -102,6 +102,15 @@ add({
     fail(await createPlaylist(`Queue, ${date}`, getPlayer().queue.filter(t => t.source === 'navidrome').map(t => t.id)));
   },
 });
+// Every song in the queue, files from this computer too (the desktop writes their paths).
+import { exportM3u } from '../exports';
+add({
+  id: 'export-queue', title: 'Export the queue as M3U', category: 'Queue', when: () => getPlayer().queue.length > 0,
+  async run() {
+    const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    fail(await exportM3u(`Queue, ${date}`, getPlayer().queue));
+  },
+});
 
 // Radio
 add({
