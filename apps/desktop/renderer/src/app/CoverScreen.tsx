@@ -107,7 +107,7 @@ function QueuePanel() {
 
 // Nothing playing: pick up the saved queue, play a record played lately, or shuffle everything.
 function Idle() {
-  const saved = usePlayer(s => s.resumable);
+  const saved = usePlayer(s => s.reach.away ? null : s.resumable);
   const starting = usePlayer(s => s.radioStarting);
   const error = usePlayer(s => s.error);
   const [busy, setBusy] = useState(false);
@@ -139,10 +139,12 @@ function Idle() {
 }
 
 // Records played lately, or the newest on a server with no history yet. A tap plays one.
+// Away, the server isn't asked: the shelf stays empty.
 function Lately() {
-  const recent = useResource<Album[]>('albums:recent:0:8', () => api.albums('recent', 0, 8));
+  const away = usePlayer(s => s.reach.away);
+  const recent = useResource<Album[]>(away ? null : 'albums:recent:0:8', () => api.albums('recent', 0, 8));
   const empty = recent?.ok && !recent.value.length;
-  const newest = useResource<Album[]>(empty ? 'albums:newest:0:8' : null, () => api.albums('newest', 0, 8));
+  const newest = useResource<Album[]>(empty && !away ? 'albums:newest:0:8' : null, () => api.albums('newest', 0, 8));
   const albums: Result<Album[]> | undefined = empty ? newest : recent;
   if (!albums?.ok || !albums.value.length) return null;
   return <ul className="flip-lately" aria-label={empty ? 'Newest records' : 'Played lately'}>

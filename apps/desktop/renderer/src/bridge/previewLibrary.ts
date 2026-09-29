@@ -1,4 +1,5 @@
-import type { Connection, LibraryApi, Result } from '../../../../../packages/core/contracts';
+import type { Connection, LibraryApi, Reachability, Result } from '../../../../../packages/core/contracts';
+import { OUT_OF_REACH, Reach, type ProbeOutcome } from '../../../../../packages/core/reach';
 
 // Browser build only: the host runs the real OpenSubsonic connector, with the login this page
 // gave it (connect) or one from its environment. See scripts/navidrome-preview.ts for the /api
@@ -23,23 +24,54 @@ export function onDisconnected(listener: () => void): () => void {
   return () => { disconnectedListeners.delete(listener); };
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<{ status: number; result: Result<T> }> {
+type Fetch = typeof globalThis.fetch;
+async function requestWith<T>(fetcher: Fetch, path: string, init: RequestInit): Promise<{ status: number; result: Result<T> }> {
   try {
-    const response = await fetch(path, { credentials: 'same-origin', ...init });
+    const response = await fetcher(path, { credentials: 'same-origin', ...init });
     const body: unknown = await response.json().catch(() => null);
-    // Void results serialize without a value key.
-    if (body && typeof body === 'object' && 'ok' in body && (body.ok === true || (body.ok === false && 'error' in body && typeof body.error === 'string'))) return { status: response.status, result: body as Result<T> };
+    // Void results serialize without a value key; a failure may say the server gave no answer.
+    if (body && typeof body === 'object' && 'ok' in body && (body.ok === true || (body.ok === false && 'error' in body && typeof body.error === 'string'))) {
+      const result = body as Result<T> & { unreachable?: unknown };
+      return { status: response.status, result: result.ok ? result : { ok: false, error: result.error, ...(result.unreachable === true ? { unreachable: true } : {}) } };
+    }
     return { status: response.status, result: { ok: false, error: 'The preview server returned an unexpected response.' } };
   } catch { return { status: 0, result: { ok: false, error: 'Could not reach the preview server.' } }; }
 }
+const request = <T,>(path: string, init: RequestInit) => requestWith<T>((...args) => fetch(...args), path, init);
 const post = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-async function call<T>(method: string, args: unknown[]): Promise<Result<T>> {
-  const { status, result } = await request<T>(`/api/${method}`, post(args));
-  if (status === 401) notifySignedOut();
-  else if (status === 503 && !result.ok && result.error === notConnected) notifyDisconnected();
-  return result;
+// Library calls and whether the server answers them. A call the host says got no answer asks the
+// reach machine to check (one confirming probe); once the server is away, calls are answered here
+// at once, without the host, until a probe gets an answer. The host itself being gone (status 0)
+// is the sign-in flow's business, not this. Built from a fetch so tests can give their own.
+export function createWebLibrary(fetcher: Fetch, options: { timers?: ConstructorParameters<typeof Reach>[0]['timers']; now?: () => number } = {}) {
+  const listeners = new Set<(state: Reachability) => void>();
+  const probe = async (): Promise<ProbeOutcome> => {
+    const { status, result } = await requestWith<unknown>(fetcher, '/api/albums', post(['newest', 0, 1]));
+    if (status === 0) return { kind: 'unreachable' };
+    return !result.ok && result.unreachable ? { kind: 'unreachable' } : { kind: 'answered' };
+  };
+  const reach = new Reach({ probe, changed: state => listeners.forEach(listener => listener(state)), ...options });
+  async function call<T>(method: string, args: unknown[]): Promise<Result<T>> {
+    if (reach.state.away) return { ok: false, error: OUT_OF_REACH, unreachable: true };
+    const { status, result } = await requestWith<T>(fetcher, `/api/${method}`, post(args));
+    if (status === 401) notifySignedOut();
+    else if (status === 503 && !result.ok && result.error === notConnected) notifyDisconnected();
+    else if (!result.ok && result.unreachable) reach.failed();
+    return result;
+  }
+  const webReach = {
+    get: () => reach.state,
+    subscribe(listener: (state: Reachability) => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    retry: (passive = false) => reach.retry(passive),
+    leave: () => reach.leave(),
+  };
+  return { call, webReach };
 }
+const web = createWebLibrary((...args) => fetch(...args));
+const call = web.call;
+/** Whether this page's server answers. The page subscribes to show the notice and stop asking. */
+export const webReach = web.webReach;
 
 export interface WebSessionStatus {
   /** The host has a password. */

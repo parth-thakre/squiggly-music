@@ -41,6 +41,8 @@ const SongSchema = Schema.Struct({
   genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.String), artists: ArtistRefsSchema,
   userRating: RatingSchema,
   path: Schema.optional(PathSchema),
+  // The file's size in bytes, when the server reports it.
+  size: Schema.optional(CountSchema),
 });
 const AlbumFields = {
   id: IdSchema, name: Schema.String, artist: Schema.optional(Schema.String), songCount: Schema.optional(CountSchema),
@@ -108,6 +110,7 @@ const NativeSongSchema = Schema.Struct({
   participants: Schema.optional(Schema.Struct({ artist: ArtistRefsSchema })),
   rating: Schema.optional(Schema.NullOr(Schema.Number)),
   path: Schema.optional(PathSchema),
+  size: Schema.optional(CountSchema),
 });
 const NativeSongsSchema = Schema.Array(NativeSongSchema).pipe(Schema.maxItems(500));
 const NativeLoginSchema = Schema.Struct({ token: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(8192)) });
@@ -134,6 +137,7 @@ const fromNative = (song: NativeSong): Song => ({
   starred: song.starred ? song.starredAt ?? 'starred' : undefined, artists: song.participants?.artist,
   userRating: song.rating ?? undefined,
   path: song.path,
+  size: song.size,
 });
 const RandomSongsSchema = Schema.Struct({ randomSongs: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Schema.Struct({
@@ -194,7 +198,19 @@ const utf8 = (body: Uint8Array<ArrayBuffer>) => new TextDecoder('utf-8', { ignor
 
 // Only locally authored messages can cross the desktop boundary. Server error
 // text and fetch errors may contain credentials or authenticated URLs.
-class ServerError extends Error { constructor(message: string, readonly code?: number) { super(message); } }
+export class ServerError extends Error { constructor(message: string, readonly code?: number) { super(message); } }
+// No answer came: the connection failed or dropped, the request timed out, or a gateway in front of
+// the server said it is down (HTTP 502, 503, 504). Anything that did answer, even to refuse, is not
+// this. The messages are the same as before; only the class tells them apart.
+export class Unreachable extends ServerError {}
+export const reachOf = (error: unknown): 'unreachable' | 'refused' => error instanceof Unreachable ? 'unreachable' : 'refused';
+const requestFailed = 'Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.';
+const timedOut = 'The server did not respond within 15 seconds. Check your connection and try again.';
+const gatewayDown = (status: number) => status === 502 || status === 503 || status === 504;
+// A rejected fetch is no answer, except a redirect refused by redirect: 'error', which is an answer
+// (a proxy sending the request to a login page, say).
+const fetchFailure = (error: unknown) => error instanceof ServerError ? error
+  : ((error as { cause?: { message?: unknown } } | null)?.cause?.message === 'unexpected redirect' ? new ServerError(requestFailed) : new Unreachable(requestFailed));
 // An HTTP status other than 200 from a Subsonic endpoint. Navidrome answers 501 for the share
 // endpoints when sharing is off.
 class HttpError extends ServerError { constructor(message: string, readonly status: number) { super(message); } }
@@ -263,6 +279,7 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     genre: song.genre || null, starred: Boolean(song.starred), ...artistRefs(song.artists),
     ...rated(song.userRating),
     ...(song.path?.trim() ? { path: song.path } : {}),
+    ...(song.size ? { size: song.size } : {}),
   };
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max
@@ -417,14 +434,15 @@ export class SubsonicClient {
     const params = authenticated ? this.params(extra) : new URLSearchParams({ v: '1.16.1', c: 'squiggly', f: 'json' });
     if (!formPost) url.search = params.toString();
     return this.send(`server.${endpoint}`, url.href, { method: formPost ? 'POST' : 'GET', ...(formPost ? { body: params } : {}) }, limitMB, response => {
-      if (!response.ok) throw new HttpError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`, response.status);
+      const text = `Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`;
+      if (!response.ok) throw gatewayDown(response.status) ? new Unreachable(text) : new HttpError(text, response.status);
       return accept(response);
     }, parse);
   }
   private send<A, B>(metric: string, url: string, init: RequestInit, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A) {
     const task = Effect.tryPromise({
       try: async signal => {
-        const response = await (this.options.fetch ?? fetch)(url, { ...init, signal, redirect: 'error' });
+        const response = await (this.options.fetch ?? fetch)(url, { ...init, signal, redirect: 'error' }).catch(error => { throw fetchFailure(error); });
         let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
         try {
           const accepted = accept(response);
@@ -434,7 +452,8 @@ export class SubsonicClient {
           const chunks: Uint8Array[] = [];
           let total = 0;
           while (true) {
-            const { done, value } = await reader.read();
+            // A body that stops arriving is a connection that dropped.
+            const { done, value } = await reader.read().catch(error => { throw error instanceof ServerError ? error : new Unreachable(requestFailed); });
             if (done) break;
             total += value.byteLength;
             if (total > limitMB * 1024 * 1024) throw new ServerError(`Server response exceeded ${limitMB} MB.`);
@@ -448,8 +467,8 @@ export class SubsonicClient {
         }
       },
       // Never forward fetch errors containing authenticated URLs or server-provided text.
-      catch: error => error instanceof ServerError ? error : new ServerError('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.'),
-    }).pipe(Effect.timeoutFail({ duration: '15 seconds', onTimeout: () => new ServerError('The server did not respond within 15 seconds. Check your connection and try again.') }));
+      catch: error => error instanceof ServerError ? error : new ServerError(requestFailed),
+    }).pipe(Effect.timeoutFail({ duration: '15 seconds', onTimeout: () => new Unreachable(timedOut) }));
     return this.metrics.measure(metric, task);
   }
   private exchange<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params, formPost: boolean, authenticated = true) {
@@ -572,7 +591,7 @@ export class SubsonicClient {
     const get = (token: string) => this.send('native.song', url.href, { headers: { 'x-nd-authorization': `Bearer ${token}` } }, 8, response => {
       if (response.status === 401) throw new NativeSignedOut('Navidrome did not accept the sign-in. Try again, or sign in again.');
       if (response.status === 404) throw new NativeMissing('Navidrome\'s own API is not available.');
-      if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
+      if (!response.ok) { const text = `Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`; throw gatewayDown(response.status) ? new Unreachable(text) : new ServerError(text); }
       // Every answer brings the session token back with a later expiry.
       const fresh = response.headers.get('x-nd-authorization');
       if (fresh) this.#jwt = fresh;
@@ -678,8 +697,9 @@ export class SubsonicClient {
     return server.pipe(Effect.flatMap(found => found || !lookup ? Effect.succeed(found) : this.metrics.measure('lyrics.lrclib', lrclibLyrics(query, this.lrclib))));
   }
   // Now playing when a song starts; a play count and scrobble when it finishes.
-  reportPlay(trackId: string, event: 'started' | 'finished') {
-    return this.request('scrobble', StatusSchema, event === 'started' ? { id: trackId, submission: 'false' } : { id: trackId, submission: 'true', time: String(Date.now()) }).pipe(Effect.asVoid);
+  // `at` is when the play finished (epoch ms), for plays that waited while the server was away.
+  reportPlay(trackId: string, event: 'started' | 'finished', at?: number) {
+    return this.request('scrobble', StatusSchema, event === 'started' ? { id: trackId, submission: 'false' } : { id: trackId, submission: 'true', time: String(at ?? Date.now()) }).pipe(Effect.asVoid);
   }
   private toSavedQueue(queue: QueueValue, index: number): SavedQueue | null {
     const tracks = (queue.entry ?? []).map(song => toTrack(song));
@@ -731,6 +751,20 @@ export class SubsonicClient {
     return location.href;
   }
   playable(track: Track): PlayableTrack { return { track, location: this.streamLocation(track.id) }; }
+  // The original file (format=raw), to keep on the desktop. The caller reads the body. Errors are
+  // the connector's own: no failure carries the address, which carries credentials. Subsonic
+  // failures arrive as a JSON or XML envelope with HTTP 200, so text of any kind is refused.
+  async original(id: string, signal: AbortSignal): Promise<Response> {
+    const response = await (this.options.fetch ?? fetch)(this.streamLocation(id, 'raw'), { signal, redirect: 'error' })
+      .catch(error => { throw signal.aborted ? new ServerError('Keeping was stopped.') : fetchFailure(error); });
+    const text = `Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`;
+    const type = response.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
+    const refused = !response.ok ? (gatewayDown(response.status) ? new Unreachable(text) : new HttpError(text, response.status))
+      : !response.body ? new ServerError('Server returned an empty response.')
+      : type.startsWith('text/') || type === 'application/json' || type === 'application/xml' ? new ServerError('The server sent an error instead of the song.') : null;
+    if (refused) { await response.body?.cancel().catch(() => {}); throw refused; }
+    return response;
+  }
   // An artist's biography, links and similar artists, as the server's agents found them.
   artistInfo(artistId: string) {
     return this.request('getArtistInfo2', ArtistInfoSchema, { id: artistId, count: '20' }).pipe(Effect.map(({ artistInfo2: info }): ArtistInfo => {

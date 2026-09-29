@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { Effect } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
-import { type SubsonicClient, libraryMethods } from '../packages/adapter-opensubsonic/client';
+import { type SubsonicClient, libraryMethods, ServerError, Unreachable } from '../packages/adapter-opensubsonic/client';
 import { isLoopbackHost, openStation, publicAddress, refusal } from '../scripts/navidrome-preview';
 import { previewServer, webPassword } from './previewHarness';
 
@@ -317,5 +317,22 @@ describe('browser preview binding', () => {
     for (const host of [true, '', '0.0.0.0', '::', '100.64.0.1', '192.168.1.2', 'music.local', '127.0.0.1.example.com']) expect(isLoopbackHost(host), String(host)).toBe(false);
     expect(refusal('127.0.0.1', undefined)).toBeNull();
     expect(refusal(true, 'twelve chars')).toBeNull();
+  });
+});
+
+describe('browser preview: a server that gives no answer', () => {
+  it('flags a library call that got no answer, and not one that was refused', async () => {
+    const client = {
+      playlists: () => Effect.fail(new Unreachable('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.')),
+      artists: () => Effect.fail(new ServerError('The server rejected the request. Check your account and server settings.')),
+    } as unknown as SubsonicClient;
+    const preview = await previewServer({ env: {}, client, now: () => 1_800_000_000_000 });
+    cleanup.push(preview.close);
+    const away = await preview.post('/api/playlists', []);
+    expect(away.status).toBe(502);
+    expect(await away.json()).toEqual({ ok: false, error: 'Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.', unreachable: true });
+    const refused = await preview.post('/api/artists', []);
+    expect(refused.status).toBe(502);
+    expect(await refused.json()).toEqual({ ok: false, error: 'The server rejected the request. Check your account and server settings.' });
   });
 });

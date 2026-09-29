@@ -62,6 +62,13 @@ app.on('browser-window-created', (_event, window) => {
         };
         const ready = await until(s => s.player.engine !== 'starting');
         if (ready.player.engine !== 'ready') throw new Error(ready.player.error);
+        // Keep on this device: an empty list at first, and refusals for what isn't there.
+        const kept = await bridge.kept.state();
+        if (!Array.isArray(kept.containers) || kept.containers.length || typeof kept.dir !== 'string') throw new Error('Unexpected kept state');
+        const forgot = await bridge.kept.forget('album', 'not-kept');
+        if (forgot.ok) throw new Error('Forgot a record that was never kept');
+        const badKeep = await bridge.kept.keep({ kind: 'artist', id: 'x', name: 'x', artist: null, coverArt: null, tracks: [] });
+        if (badKeep.ok) throw new Error('Invalid keep request accepted');
         const invalid = await bridge.command({type:'volume',percent:101});
         if (invalid.ok) throw new Error('Invalid IPC command accepted');
         // A File the page made has no path on disk: the preload finds none, and nothing opens.

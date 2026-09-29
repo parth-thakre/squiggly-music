@@ -110,7 +110,7 @@ const port = {
 function resetTrack() {
   // Whatever plays next starts a new play, even the same entry.
   playEntry = undefined; startPending = false;
-  player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0, stationTitle: null,
+  player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0, stationTitle: null, fromDevice: false,
     audio: { ...emptyAudio(), requestedDevice: player.audio.requestedDevice,
       replayGain: player.audio.replayGain, filters: player.audio.filters, exclusiveRequested: player.audio.exclusiveRequested },
   };
@@ -350,6 +350,9 @@ timer = setInterval(() => {
       audio: native.audio(),
     };
     player.stationTitle = isStationAt(player.currentIndex) ? announced(native.property('metadata/by-key/icy-title')) : null;
+    // A kept song says it plays from this computer only when mpv really opened its file.
+    const entry = playableQueue[player.currentIndex];
+    player.fromDevice = entry?.kept === true && native.property('path') === entry.location;
     followLoop();
     followPlay(events);
     if (hostSeek) hostSeek--;

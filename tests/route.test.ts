@@ -194,3 +194,13 @@ it('keeps each place\'s scroll offset when Back and Forward come faster than the
   expect(nav.current).toEqual({ view: 'artists' });
   expect(scroller.scrollTop).toBe(350);
 });
+
+it('keeps the Kept page in history, so Back and Forward return to it', async () => {
+  const { nav } = await import('../apps/desktop/renderer/src/app/route');
+  nav.go({ view: 'playlists' });
+  nav.go({ view: 'kept' });
+  nav.go({ view: 'settings' });
+  nav.back(); expect(nav.current).toEqual({ view: 'kept' });
+  nav.back(); expect(nav.current).toEqual({ view: 'playlists' });
+  (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'kept' });
+});

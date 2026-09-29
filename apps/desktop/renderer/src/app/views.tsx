@@ -29,6 +29,8 @@ import type { SearchOptions, SearchResults } from '../../../../../packages/core/
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
 import { exportM3u } from './exports';
 import { SharesSettings } from './share';
+import { ContainerMark, KeepButton, KeptSection, KeptSettings } from './kept';
+import { keptSupported } from './keptState';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -259,6 +261,8 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
         <span className="grid-name">{album.id === nowAlbum && <Wave playing={playing} />}<span>{splitTitle(album.name).main}</span></span>
         <span className="grid-sub">{album.artist}</span>
+        {/* After the name, so the card's accessible name still starts with the record's. */}
+        <ContainerMark kind="album" id={album.id} />
       </button>
     </li>)}
   </ul>;
@@ -289,6 +293,7 @@ export function AlbumPage({ id }: { id: string }) {
           <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
           <MoreButton target={{ kind: 'album', album }} />
+          <KeepButton kind="album" id={album.id} name={album.name} artist={album.artist} coverArt={album.coverArt} tracks={tracks} />
         </Actions>
       </Head>
       <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" groups={discGroups(tracks, discTitles)} />
@@ -537,6 +542,7 @@ export function Playlists() {
         </li>)}
       </ul>
     </section>
+    <KeptSection />
     <Stations />
     <ExtensionSections />
   </>;
@@ -566,6 +572,7 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
         <span className="row-name">{splitTitle(playlist.name).main}</span>
         <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{note && `. ${note}`}</span>
       </span>
+      <ContainerMark kind="playlist" id={playlist.id} />
     </button>
   </li>;
 }
@@ -652,6 +659,7 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
         {editable && !renaming && <button ref={renameButton} type="button" className="text-button" onClick={() => setRenaming(true)}>Rename</button>}
         <MoreButton target={{ kind: 'playlist', playlist }} />
         <ExportButton name={playlist.name} tracks={tracks} />
+        {!view.saving && <KeepButton kind="playlist" id={playlist.id} name={playlist.name} coverArt={playlist.coverArt} tracks={tracks} />}
       </Actions>
       {editable && tracks.length > 1 && <p className="note hint">Drag songs to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>}
       {view.error && <p className="note" role="alert">{view.error}</p>}
@@ -688,6 +696,7 @@ export function MixPage({ id }: { id: string }) {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
           setSaved(await createPlaylist(`${mix.name}, ${date}`, tracks!.map(t => t.id)));
         }}>Save as playlist</button>
+        {tracks && <KeepButton kind="mix" id={mix.id} name={mix.name} tracks={tracks} />}
       </Actions>
       {saved && <p className="note">{saved}</p>}
     </Head>
@@ -766,7 +775,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -777,9 +786,11 @@ export function SettingsView() {
       {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Lyrics in your files always come first. For songs without them, the song\'s title, artist, and album are sent to lrclib.net.')}
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
+      <QueuedPlays />
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
       <Disconnect />
       {mode === 'web' && <SignOut />}
+      {keptSupported && <KeptSettings />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
@@ -802,6 +813,13 @@ export function SettingsView() {
       <SharesSettings />
     </section>
   </>;
+}
+
+// Finished plays waiting while the server was out of reach (desktop and Android).
+function QueuedPlays() {
+  const count = usePlayer(s => s.queuedPlays);
+  if (!count) return null;
+  return <p className="note">{count === 1 ? '1 play is' : `${count.toLocaleString()} plays are`} waiting to be reported. They are sent when your server is back.</p>;
 }
 
 // Updates from GitHub releases (apps/desktop/main/updates.ts). Development builds have none.
@@ -877,7 +895,7 @@ function Disconnect() {
     <p><strong>Disconnect or switch server</strong>
       <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. {web
         ? 'The host that serves this page forgets the password too, so have it ready.'
-        : 'It also forgets the saved sign-in, so have your password ready.'}</span></p>
+        : `It also forgets the saved sign-in, so have your password ready.${keptSupported ? ' It also forgets everything kept on this device.' : ''}`}</span></p>
     <button type="button" className="text-button" disabled={busy} onClick={async () => {
       setBusy(true); setError(null);
       const result = await (web ? player : (window.squiggly ?? window.squigglyAndroid!.session)).disconnect();

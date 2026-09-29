@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
 import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry, SearchOptions, Share } from '../../../packages/core/contracts';
-import { SubsonicClient, plainText, searchPages, searchResults } from '../../../packages/adapter-opensubsonic/client';
+import { SubsonicClient, plainText, searchPages, searchResults, Unreachable } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
@@ -143,6 +143,7 @@ const initialPlaylists = (): ServerPlaylist[] => [
   { id: playlistIds.readonly, name: 'Server Picks', comment: null, readonly: true, trackIds: ['tr-4-1', 'tr-4-2', 'tr-5-1'], changed: '2026-09-01T00:00:00Z' },
 ];
 
+const unanswered = 'Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.';
 export const sharingOff = 'This server does not share links. On Navidrome, the administrator turns sharing on with EnableSharing.';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const fail = (message: string) => Effect.fail(new Error(message));
@@ -181,6 +182,11 @@ export class FakeNavidrome {
   nativeQueries: URLSearchParams[] = [];
   /** Station streams the fixture server has been asked for, by station id. */
   stationStreams: string[] = [];
+  /** true: the server gives no answer at all. Every call fails as the connector says when a
+   *  connection is refused (Unreachable), and the audio server drops every connection. */
+  unreachable = false;
+  /** Song streams the audio server was asked for, by track id (browser playback and keeping). */
+  streamed: string[] = [];
   private issued = 0;
   private http: SubsonicClient | null = null;
 
@@ -194,6 +200,7 @@ export class FakeNavidrome {
     this.recent = []; this.frequent = []; this.listening = [];
     this.shareList = []; this.sharing = true; this.sharesMade = 0;
     this.stationStreams = []; this.listedStations.clear();
+    this.unreachable = false; this.streamed = [];
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -215,6 +222,7 @@ export class FakeNavidrome {
   // Every method logs its call, waits out any configured delay, then answers from state as it is then.
   private op<T>(method: string, args: unknown[], run: () => Effect.Effect<T, Error>): Effect.Effect<T, Error> {
     return Effect.suspend(() => {
+      if (this.unreachable) return Effect.fail(new Unreachable(unanswered));
       this.calls.push({ method, args, at: Date.now() });
       const failure = this.failures.get(method)?.shift();
       if (failure) return fail(failure);
@@ -337,6 +345,7 @@ export class FakeNavidrome {
       return Effect.void;
     }),
     coverArt: (id: string, _size: number) => {
+      if (this.unreachable) return Effect.fail(new Unreachable(unanswered));
       // Album art, or its disc's, as the native API names a song's art (dc-<album>:<disc>).
       const k = Number(/^(?:dc-)?al-(\d+)(?::\d+)?$/.exec(id)?.[1]);
       if (!k) return fail('Cover art is not available.');

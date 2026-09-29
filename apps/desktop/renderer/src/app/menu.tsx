@@ -4,7 +4,8 @@ import type { Playlist, Result, Track } from '../../../../../packages/core/contr
 import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
 import { api, invalidate, load, playlistEditor } from './library';
-import { current, getPlayer, player, type PlayerState } from './player';
+import { current, getPlayer, isAway, player, type PlayerState } from './player';
+import { forget, isContainerKept, isKept, keep, keptSupported } from './keptState';
 import { showNowPlaying } from './nowPlaying';
 import { nav } from './route';
 import { ratingOf, ratingText, setRating } from './ratings';
@@ -269,8 +270,8 @@ builtin.menu({ id: 'queue', section: 0, label: 'Add to queue', when: t => !(t.ki
   run: async t => { const tracks = await songsFor(t); if (tracks) await player.add(tracks, 'end'); } });
 builtin.menu({
   id: 'radio', section: 0, label: 'Start radio',
-  // Radio finds songs like a song; a station isn't one.
-  when: t => t.kind === 'artist' || t.kind === 'album' || (!!one(t) && !isStation(one(t))),
+  // Radio finds songs like a song; a station isn't one. It needs the server.
+  when: t => !isAway() && (t.kind === 'artist' || t.kind === 'album' || (!!one(t) && !isStation(one(t)))),
   run: t => player.radio(t.kind === 'artist' ? { kind: 'artist', id: t.artist.id, label: t.artist.name }
     : t.kind === 'album' ? { kind: 'album', id: t.album.id, label: splitTitle(t.album.name).main }
     : { kind: 'song', track: one(t)!, label: splitTitle(one(t)!.title).main }),
@@ -279,7 +280,7 @@ builtin.menu({
 // Stations aren't songs, so playlists and favorites can't hold them.
 const hasStation = (t: MenuTarget) => t.kind === 'tracks' && t.tracks.some(isStation);
 builtin.menu({
-  id: 'add-to-playlist', section: 1, label: 'Add to playlist', when: t => !hasStation(t),
+  id: 'add-to-playlist', section: 1, label: 'Add to playlist', when: t => !hasStation(t) && !isAway(),
   submenu: async t => {
     const create: MenuItem = { id: 'new-playlist', section: 0, label: 'New playlist', input: { placeholder: 'Name the new playlist', async submit(target, name) {
       const tracks = await tracksOf(target);
@@ -298,17 +299,35 @@ builtin.menu({
   },
 });
 
-builtin.menu({ id: 'go-album', section: 2, label: 'Go to record', when: t => !!one(t)?.albumId, run: t => nav.go({ view: 'album', id: one(t)!.albumId! }) });
+// Keep on this device (desktop and Android): a record or playlist, kept whole. Away, only
+// removing is offered.
+const keptTarget = (t: MenuTarget) => t.kind === 'album' ? { kind: 'album' as const, id: t.album.id, name: t.album.name, artist: t.album.artist, coverArt: t.album.coverArt }
+  : t.kind === 'playlist' ? { kind: 'playlist' as const, id: t.playlist.id, name: t.playlist.name, artist: null, coverArt: t.playlist.coverArt } : null;
+builtin.menu({
+  id: 'keep', section: 1,
+  label: t => { const target = keptTarget(t); return target && isContainerKept(target.kind, target.id) ? 'Remove from this device' : 'Keep on this device'; },
+  when: t => { const target = keptTarget(t); return keptSupported && !!target && (!isAway() || isContainerKept(target.kind, target.id)); },
+  async run(t) {
+    const target = keptTarget(t)!;
+    if (isContainerKept(target.kind, target.id)) { const result = await forget(target.kind, target.id); if (!result.ok) report(result.error); return; }
+    const tracks = await songsFor(t);
+    if (!tracks) return;
+    const result = await keep({ ...target, tracks: tracks.filter(track => track.source === 'navidrome') });
+    if (!result.ok) report(result.error);
+  },
+});
+
+builtin.menu({ id: 'go-album', section: 2, label: 'Go to record', when: t => !isAway() && !!one(t)?.albumId, run: t => nav.go({ view: 'album', id: one(t)!.albumId! }) });
 // A credit the server splits into several artists offers each of them (Track.artists).
 const creditedArtists = (t: MenuTarget) => (t.kind === 'album' ? t.album.artists : one(t)?.artists) ?? [];
 builtin.menu({
   id: 'go-artist', section: 2, label: 'Go to artist',
-  when: t => creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
+  when: t => !isAway() && creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
   run: t => nav.go({ view: 'artist', id: firstArtistId(t.kind === 'album' ? t.album : one(t)!)! }),
 });
 builtin.menu({
   id: 'go-artists', section: 2, label: 'Go to artist',
-  when: t => creditedArtists(t).length > 1,
+  when: t => !isAway() && creditedArtists(t).length > 1,
   submenu: t => creditedArtists(t).map(artist => ({ id: `go-artist:${artist.id}`, section: 0, label: artist.name, run: () => nav.go({ view: 'artist', id: artist.id }) })),
 });
 
@@ -319,7 +338,7 @@ builtin.menu({
     const item = t.kind === 'album' ? t.album : t.kind === 'artist' ? t.artist : null;
     return item && isStarred(item.id, item.starred) ? 'Remove from favorites' : 'Add to favorites';
   },
-  when: t => t.kind !== 'playlist' && !hasStation(t),
+  when: t => t.kind !== 'playlist' && !hasStation(t) && !isAway(),
   async run(t) {
     const kind = t.kind === 'tracks' ? 'track' : t.kind === 'album' ? 'album' : 'artist';
     const items = t.kind === 'tracks' ? t.tracks : [t.kind === 'album' ? t.album : (t as Extract<MenuTarget, { kind: 'artist' }>).artist];
@@ -334,7 +353,7 @@ const ratedItems = (t: MenuTarget): { kind: 'track' | 'album' | 'artist'; items:
   t.kind === 'tracks' ? t.tracks.length && t.tracks.every(track => track.source === 'navidrome') ? { kind: 'track', items: t.tracks } : null
     : t.kind === 'album' ? { kind: 'album', items: [t.album] } : t.kind === 'artist' ? { kind: 'artist', items: [t.artist] } : null;
 builtin.menu({
-  id: 'rate', section: 3, label: 'Rate', when: t => !!ratedItems(t),
+  id: 'rate', section: 3, label: 'Rate', when: t => !!ratedItems(t) && !isAway(),
   submenu: t => {
     const { kind, items } = ratedItems(t)!;
     const ids = items.map(item => item.id);
@@ -414,6 +433,9 @@ builtin.menu({
       track.source === 'navidrome' && ratingText(ratingOf(track.id, track.userRating)),
       track.source !== 'navidrome' ? 'A file on this computer.'
         : deliveryOf(track) === 'mp3-fallback' ? 'This browser couldn’t decode the original, so it is playing a 320 kbps MP3 from Navidrome instead.'
+        : deliveryOf(track) === 'device' ? 'Playing the copy kept on this device.'
+        : keptSupported && isKept(track.id) && current(getPlayer())?.id === track.id ? 'Kept on this device. This play streams from the server.'
+        : keptSupported && isKept(track.id) ? 'Kept on this device.'
         : 'Requested from Navidrome as the original file.',
     ].filter(Boolean);
     return lines.map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
@@ -449,7 +471,7 @@ builtin.menu({
 });
 builtin.menu({
   id: 'share', section: 7, label: 'Share…',
-  when: t => t.kind === 'album' || t.kind === 'playlist' || (t.kind === 'tracks' && t.tracks.length > 0 && t.tracks.every(track => track.source === 'navidrome')),
+  when: t => !isAway() && (t.kind === 'album' || t.kind === 'playlist' || (t.kind === 'tracks' && t.tracks.length > 0 && t.tracks.every(track => track.source === 'navidrome'))),
   run: t => openShare({
     ids: t.kind === 'tracks' ? t.tracks.map(track => track.id) : [t.kind === 'album' ? t.album.id : (t as Extract<MenuTarget, { kind: 'playlist' }>).playlist.id],
     title: titleOf(t),

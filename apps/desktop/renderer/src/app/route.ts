@@ -17,7 +17,9 @@ export type Route =
   // Where the app opens: what's lately played, new, and playing elsewhere.
   | { view: 'home' }
   // Every automatic playlist, grouped.
-  | { view: 'mixes' };
+  | { view: 'mixes' }
+  // Records, playlists, and mixes kept on this device.
+  | { view: 'kept' };
 
 // Navigation rides on the browser's own history, so a phone's back gesture (and Forward)
 // steps through the app instead of leaving it. Each history entry carries its route, a
@@ -25,7 +27,7 @@ export type Route =
 // however long the session runs; the app itself only remembers the current place and the
 // scroll offsets of the most recent places.
 interface Place { id: string; depth: number; route: Route; overlay?: boolean }
-const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre', 'home', 'mixes']);
+const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre', 'home', 'mixes', 'kept']);
 function placeOf(state: unknown): Place | null {
   const s = state as { squiggly?: unknown; depth?: unknown; route?: { view?: unknown }; overlay?: unknown } | null;
   if (!s || typeof s.squiggly !== 'string' || typeof s.depth !== 'number' || !views.has(String(s.route?.view))) return null;
