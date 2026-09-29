@@ -168,10 +168,3 @@ export function useRoute() {
 }
 // A sheet's entry sits one above the page it covers; Back from the page itself is what counts.
 export const useCanGoBack = () => useSyncExternalStore(subscribe, () => (shown.overlay ? shown.depth - 1 : shown.depth) > 0);
-
-// The desktop has no browser around it to act on a mouse's Back and Forward buttons, so the
-// page does. The browser build leaves them to the browser, which steps the history itself.
-if (typeof window !== 'undefined' && 'squiggly' in window) addEventListener('mouseup', event => {
-  if (event.button === 3) { event.preventDefault(); nav.back(); }
-  else if (event.button === 4) { event.preventDefault(); history.forward(); }
-});
