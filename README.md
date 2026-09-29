@@ -32,6 +32,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Search the library from the bar. All shows a few artists, records, and songs, and See all lists the rest of one kind. Enter goes to the first result, Escape goes back, and the searches you used wait under the empty field.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
 - Extensions can also put a line in the deck and the mini player, and a section on the Playlists page.
+- Keep records, playlists, and a mix's songs on the desktop or Android device. Kept songs play from the device, online or not, which also saves bandwidth. When your server is out of reach, Home shows what is kept and the rest of the app says so. The Kept page is also on the Playlists page and at G then K. The browser version can't keep songs.
 
 ![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
 
@@ -103,6 +104,8 @@ npm run web
 ```
 
 Anyone who can open the page acts as that account, or can connect the host to any server, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, set it and run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
+
+The page needs its host: the browser caches nothing, not even the page, and keeps no songs. When your server is out of reach, the page says so and offers Retry.
 
 ## Android
 
