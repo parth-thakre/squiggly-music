@@ -503,6 +503,7 @@ function playlistNote(playlist: Playlist) {
   return null;
 }
 
+const PLAYLIST_MIXES = 8;
 export function Playlists() {
   const playlists = useResource('playlists', () => api.playlists());
   const genres = useResource('genres', () => api.genres());
@@ -519,10 +520,11 @@ export function Playlists() {
       </ul> : <Status>No playlists yet. Start one here, or save an automatic playlist below.</Status>}</Pending>
     </section>
     <section className="shelf-section" aria-labelledby="automatic">
-      <h2 id="automatic">Automatic</h2>
+      <div className="section-head"><h2 id="automatic">Automatic</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
       <p className="section-note">Drawn from your library each session. Save one to keep it as it is.</p>
       <ul className="rows">
-        {mixes.map(mix => <li key={mix.id} className="playable">
+        {/* The first few; the Mixes page has them all. */}
+        {mixes.slice(0, PLAYLIST_MIXES).map(mix =><li key={mix.id} className="playable">
           <PlayOver label={mix.name} play={async () => {
             const drawn = await mixTracks(mix);
             if (drawn.ok && drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
@@ -1062,8 +1064,8 @@ export function GenrePage({ name }: { name: string }) {
 // Where the app opens. Each shelf loads on its own, so a slow answer holds up only the shelves
 // that need it: Your mixes waits for Most played's list, which says whether there is history. A
 // shelf stays hidden while it loads and when it has nothing to show. A shelf holds twelve at
-// most, and the automatic playlists show their names instead of drawing songs, so opening Home
-// asks the server for a few short lists and nothing more.
+// most, and a mix's tile draws its songs only once it scrolls into view, from the same cached
+// draw the Playlists and Mixes pages use, so opening Home asks the server for little.
 const SHELF = 12;
 export function Home() {
   return <>
@@ -1116,7 +1118,7 @@ function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; 
 }
 
 // The automatic playlists, as the Playlists page lists them. The decades appear once something
-// has found them (Records' Decade, or the Playlists page): looking for them takes nine requests.
+// has found them (Records' Decade, the Playlists page, or Mixes): looking for them takes nine requests.
 function HomeMixes() {
   const genres = useResource('genres', () => api.genres());
   // The same list as Most played, so it costs nothing more.
@@ -1126,19 +1128,12 @@ function HomeMixes() {
   const decades = peek<number[]>('decades');
   const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0).slice(0, SHELF);
   return <section className="shelf-section home-shelf" aria-labelledby="home-mixes">
-    <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="playlists" go={() => nav.go({ view: 'playlists' })} /></div>
+    <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
     <ul className="grid">
       {mixes.map(mix => <li key={mix.id} className="playable">
-        <PlayOver label={mix.name} play={async () => {
-          const asked = playRequests();
-          const drawn = await mixTracks(mix);
-          // Something else started playing while the songs were on their way; that stays.
-          if (playRequests() !== asked) return;
-          if (!drawn.ok) player.showError(drawn.error);
-          else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
-        }} />
+        <PlayOver label={mix.name} play={() => playMix(mix)} />
         <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
-          <MixTile mix={mix} tracks={null} travels={mix.id === morph.id} />
+          <MixTile mix={mix} travels={mix.id === morph.id} />
           <span className="grid-name"><span>{mix.name}</span></span>
           <span className="grid-sub">{mix.description}</span>
         </button>
@@ -1320,4 +1315,66 @@ function Stations() {
       </li>)}
     </ul> : <Status>Your server has no internet radio stations. Navidrome's administrators can add them.</Status>}</Pending>
   </section>;
+}
+
+// Mixes ------------------------------------------------------------------------------------------
+// Every automatic playlist the library can build, grouped by what it draws from. The two every
+// library has come first; the groups after them are hidden when they have nothing, and show the
+// error when their lookup failed, since a failure says nothing about what's there. This is the
+// page for the decades, so it looks for them (nine small requests, kept under the same key the
+// Playlists page and Records' Decade use), and their group appears once they're found.
+const historyMixes = new Set(['repeat', 'lately']);
+export function Mixes() {
+  const genres = useResource('genres', () => api.genres());
+  const history = useResource('albums:frequent:0:1', () => api.albums('frequent', 0, 1));
+  const decades = useResource('decades', libraryDecades);
+  // Wait for the genres and the history, so the groups don't shift as they arrive. The decades
+  // come last on the page, so they join whenever they're ready.
+  if (!genres || !history) return <>
+    <MixesHead />
+    <p className="status loading">Gathering mixes</p>
+  </>;
+  const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0);
+  const played = mixes.filter(mix => historyMixes.has(mix.id));
+  const byGenre = mixes.filter(mix => mix.id.startsWith('genre:'));
+  const byDecade = mixes.filter(mix => mix.id.startsWith('decade:'));
+  const always = mixes.filter(mix => !played.includes(mix) && !byGenre.includes(mix) && !byDecade.includes(mix));
+  return <>
+    <MixesHead />
+    <div className="shelf-section"><MixGrid mixes={always} /></div>
+    {!history.ok ? <MixGroup id="mixes-played" title="From what you play"><Status>{history.error}</Status></MixGroup>
+      : played.length > 0 && <MixGroup id="mixes-played" title="From what you play"><MixGrid mixes={played} /></MixGroup>}
+    {!genres.ok ? <MixGroup id="mixes-genre" title="By genre"><Status>{genres.error}</Status></MixGroup>
+      : byGenre.length > 0 && <MixGroup id="mixes-genre" title="By genre"><MixGrid mixes={byGenre} /></MixGroup>}
+    {decades && !decades.ok ? <MixGroup id="mixes-decade" title="By decade"><Status>{decades.error}</Status></MixGroup>
+      : byDecade.length > 0 && <MixGroup id="mixes-decade" title="By decade"><MixGrid mixes={byDecade} /></MixGroup>}
+  </>;
+}
+function MixesHead() {
+  return <Head title="Mixes"><p className="byline"><span>Playlists Squiggly builds from your library. They change as it does.</span></p></Head>;
+}
+function MixGroup({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return <section className="shelf-section" aria-labelledby={id}><h2 id={id}>{title}</h2>{children}</section>;
+}
+// Plays a tile's mix from its draw. If something else started playing while the draw was on its
+// way, that stays, as with Tracks' Shuffle.
+async function playMix(mix: Mix) {
+  const asked = playRequests();
+  const drawn = await mixTracks(mix);
+  if (playRequests() !== asked) return;
+  if (!drawn.ok) player.showError(drawn.error);
+  else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+}
+// Each tile plays from its button and opens its mix, as on the Playlists page.
+function MixGrid({ mixes }: { mixes: Mix[] }) {
+  return <ul className="grid">
+    {mixes.map(mix => <li key={mix.id} className="playable">
+      <PlayOver label={mix.name} play={() => playMix(mix)} />
+      <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
+        <MixTile mix={mix} travels={mix.id === morph.id} />
+        <span className="grid-name"><span>{mix.name}</span></span>
+        <span className="grid-sub">{mix.description}</span>
+      </button>
+    </li>)}
+  </ul>;
 }
