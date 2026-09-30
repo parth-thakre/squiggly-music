@@ -305,8 +305,11 @@ object Playback {
     private fun ids() = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
 
     // The player would also open file:, content:, asset: and data: addresses. The page's are
-    // always the server's, so anything else is a malformed operation.
+    // always the server's, so anything else is a malformed operation. An empty address is a
+    // station the server no longer lists (bridge.ts): it names nothing, so that one entry fails
+    // when it's reached instead of the whole edit being refused.
     private fun stream(address: String): String {
+        if (address.isEmpty()) return address
         val scheme = Uri.parse(address).scheme?.lowercase()
         require(scheme == "http" || scheme == "https") { "Not a stream address." }
         return address
