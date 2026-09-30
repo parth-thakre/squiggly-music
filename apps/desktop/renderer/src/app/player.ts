@@ -134,17 +134,39 @@ function sameFields<T extends object>(a: T | null, b: T) {
   return keys.length === Object.keys(a).length && keys.every(key => a[key] === b[key]);
 }
 
+// The saved output's name, so Settings can still name it while it's unplugged. Kept across
+// launches, since Squiggly may start without it.
+const OUTPUT_NAME = 'squiggly.outputName';
+let outputName: AudioDevice | null = (() => {
+  try {
+    const value = JSON.parse(localStorage.getItem(OUTPUT_NAME) ?? 'null') as Partial<AudioDevice> | null;
+    return typeof value?.name === 'string' && typeof value.description === 'string' ? { name: value.name, description: value.description } : null;
+  } catch { return null; }
+})();
+function rememberOutput(devices: readonly AudioDevice[]) {
+  const saved = getSettings().outputDevice;
+  const device = saved === 'auto' ? undefined : devices.find(d => d.name === saved);
+  if (!device || (outputName?.name === device.name && outputName.description === device.description)) return;
+  outputName = { name: device.name, description: device.description };
+  try { localStorage.setItem(OUTPUT_NAME, JSON.stringify(outputName)); } catch { /* Kept for this visit only. */ }
+}
+export const outputDescription = (name: string) => outputName?.name === name ? outputName.description : null;
+
 if (desktop) {
   // An engine error shows once; dismissing it keeps it dismissed until a different one arrives.
+  // One the engine takes back goes here too (it clears its errors on the next command, and says
+  // an output came back for a few seconds).
   let lastEngineError: string | null = null;
   const apply = (snapshot: AppSnapshot) => {
     const p = snapshot.player;
     const sessionId = snapshot.server.sessionId;
     // Another server or account: nothing cached from the last one may show.
     if (sessionId !== state.sessionId) resetLibraryCaches();
-    const error = p.error && p.error !== lastEngineError ? p.error : state.error;
+    const error = p.error && p.error !== lastEngineError ? p.error
+      : !p.error && lastEngineError && state.error === lastEngineError ? null : state.error;
     lastEngineError = p.error;
     const track = p.queue[p.currentIndex];
+    rememberOutput(p.devices);
     const { saved, canRemember, reconnecting, reconnectError } = snapshot.server;
     const signIn = state.signIn.saved?.url === saved?.url && state.signIn.saved?.username === saved?.username && state.signIn.canRemember === canRemember
       && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : { saved, canRemember, reconnecting, reconnectError };

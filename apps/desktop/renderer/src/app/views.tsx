@@ -3,7 +3,7 @@ import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort }
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
-import { current, player, playRequests, usePlayer } from './player';
+import { current, outputDescription, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
@@ -737,9 +737,9 @@ export function SettingsView() {
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
-          <span><strong>Output</strong><span>Where Squiggly plays. If this device isn't connected when Squiggly starts, it uses the system default.</span></span>
+          <span><strong>Output</strong><span>Where Squiggly plays. While this device is disconnected, Squiggly plays through the system default, and goes back to it when it returns.</span></span>
           <select value={settings.outputDevice} onChange={event => void updateSettings({ outputDevice: event.target.value })}>
-            {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${settings.outputDevice} (not connected)`}</option>}
+            {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${outputDescription(settings.outputDevice) ?? settings.outputDevice} (disconnected)`}</option>}
             {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
           </select>
         </label>
