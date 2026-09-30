@@ -18,6 +18,7 @@ import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
 import { GenrePage, Genres } from './views';
 import { Home } from './views';
+import { dropFocusRequest, focusFirstResult, rememberSearch } from './searches';
 
 onMenuError(message => player.showError(message));
 
@@ -85,8 +86,15 @@ const Bar = memo(function Bar() {
     if (route === own.current) return;
     clearTimeout(timer.current);
     setQuery(route.view === 'search' ? route.query : '');
+    // Enter's wait for a first result ends when the search is left.
+    if (route.view !== 'search') dropFocusRequest();
   }, [route]);
   useEffect(() => () => clearTimeout(timer.current), []);
+  // On the search page a new query replaces the place and keeps its tab.
+  const search = (value: string) => {
+    const target: Route = { view: 'search', query: value, ...(route.view === 'search' && route.type ? { type: route.type } : {}) };
+    own.current = target; nav.go(target, route.view === 'search');
+  };
   const active = sectionOf(route);
   return <header className="bar">
     <div className="bar-top">
@@ -97,12 +105,23 @@ const Bar = memo(function Bar() {
     <input className="search" type="search" placeholder="Find anything" aria-label="Search your library" value={query}
       onChange={event => {
         const value = event.target.value; setQuery(value);
-        clearTimeout(timer.current);
-        const replace = route.view === 'search';
-        timer.current = setTimeout(() => {
-          if (value.trim()) { const target: Route = { view: 'search', query: value }; own.current = target; nav.go(target, replace); }
-          else if (replace) nav.back();
-        }, 250);
+        clearTimeout(timer.current); dropFocusRequest();
+        // Emptied on the search page, the field stays there and the page shows recent searches.
+        timer.current = setTimeout(() => { if (value.trim() || route.view === 'search') search(value); }, 250);
+      }}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing) return;
+        // Enter searches at once, remembers the search, and moves to its first result.
+        if (event.key === 'Enter' && query.trim()) {
+          event.preventDefault(); clearTimeout(timer.current);
+          search(query); rememberSearch(query); focusFirstResult(query);
+        }
+        // Escape empties the field and leaves the search for the page before it.
+        if (event.key === 'Escape' && (query || route.view === 'search')) {
+          event.preventDefault(); clearTimeout(timer.current); dropFocusRequest();
+          setQuery('');
+          if (route.view === 'search') { if (canGoBack) nav.back(); else nav.go({ view: 'records' }, true); }
+        }
       }} />
     {/* Phones have no Ctrl+K; the palette opens from here. */}
     <button type="button" className="text-button bar-commands" onClick={openPalette}>Commands</button>
@@ -130,7 +149,7 @@ const View = memo(function View() {
     case 'artist': return <ArtistPage key={route.id} id={route.id} />;
     case 'playlist': return <PlaylistPage key={route.id} id={route.id} />;
     case 'mix': return <MixPage key={route.id} id={route.id} />;
-    case 'search': return <Search query={route.query} />;
+    case 'search': return <Search query={route.query} type={route.type} />;
     case 'queue': return <Queue />;
     case 'lyrics': return <LyricsPage />;
     case 'settings': return <SettingsView />;

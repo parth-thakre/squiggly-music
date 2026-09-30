@@ -2,7 +2,7 @@ import { Effect, Either, Schema } from 'effect';
 import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
-  AlbumYears, ArtistInfo, DiscTitle,
+  AlbumYears, ArtistInfo, DiscTitle, SearchOptions, SearchResults,
   NowPlayingEntry,
 } from '../core/contracts';
 import type { PlayableTrack } from '../player-mpv/protocol';
@@ -87,7 +87,8 @@ const itemsSchema = (artists: number, albums: number, songs: number) => Schema.S
   song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(songs))),
 });
 const StarredSchema = Schema.Struct({ starred2: itemsSchema(5000, 5000, 5000) });
-const SearchSchema = Schema.Struct({ searchResult3: itemsSchema(8, 16, 40) });
+// A kind asked for 0 times may still come back from a server that ignores the 0; it is dropped, not refused.
+const SearchSchema = (pages: SearchPages) => Schema.Struct({ searchResult3: itemsSchema(pages.artistCount || 500, pages.albumCount || 500, pages.songCount || 500) });
 const SongPageSchema = Schema.Struct({ searchResult3: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 // Navidrome's own API (/api/song), which can sort. Its song is model.MediaFile as JSON.
 const NativeSongSchema = Schema.Struct({
@@ -288,6 +289,27 @@ function discTitles(titles: readonly { disc: number; title?: string }[] | undefi
 const toItems = (items: Schema.Schema.Type<ReturnType<typeof itemsSchema>>): LibraryItems => ({
   artists: (items.artist ?? []).map(toArtist), albums: (items.album ?? []).map(toAlbum), tracks: (items.song ?? []).map(song => toTrack(song)),
 });
+// search3's page for each kind, as asked: counts 0 to 200 (8 artists, 16 records, 40 songs when
+// left out), offsets from 0.
+export type SearchPages = Required<SearchOptions>;
+export function searchPages(options: SearchOptions = {}): SearchPages {
+  const count = (value: number | undefined, fallback: number) => value === undefined ? fallback : clamp(value, 0, 200);
+  const offset = (value: number | undefined) => value === undefined ? 0 : clamp(value, 0, 1_000_000);
+  return {
+    artistCount: count(options.artistCount, 8), artistOffset: offset(options.artistOffset),
+    albumCount: count(options.albumCount, 16), albumOffset: offset(options.albumOffset),
+    songCount: count(options.songCount, 40), songOffset: offset(options.songOffset),
+  };
+}
+// Subsonic has no totals: a kind that came back full may have more.
+export function searchResults(items: LibraryItems, pages: SearchPages): SearchResults {
+  const artists = pages.artistCount ? items.artists : [], albums = pages.albumCount ? items.albums : [], tracks = pages.songCount ? items.tracks : [];
+  return { artists, albums, tracks, capped: {
+    artists: pages.artistCount > 0 && artists.length >= pages.artistCount,
+    albums: pages.albumCount > 0 && albums.length >= pages.albumCount,
+    tracks: pages.songCount > 0 && tracks.length >= pages.songCount,
+  } };
+}
 
 // How the client reaches the server. The Android app passes a fetch that runs natively
 // (bridge/android/http.ts), which has no CORS or mixed-content rules to satisfy.
@@ -460,8 +482,12 @@ export class SubsonicClient {
       ...(options.fromYear !== undefined ? { fromYear: String(options.fromYear) } : {}), ...(options.toYear !== undefined ? { toYear: String(options.toYear) } : {}),
     }).pipe(Effect.flatMap(result => songList(result.randomSongs.song, size)));
   }
-  search(query: string) {
-    return this.request('search3', SearchSchema, { query, artistCount: '8', albumCount: '16', songCount: '40' }).pipe(Effect.map(result => toItems(result.searchResult3)));
+  search(query: string, options: SearchOptions = {}) {
+    const pages = searchPages(options);
+    const params: Record<string, string> = { query, artistCount: String(pages.artistCount), albumCount: String(pages.albumCount), songCount: String(pages.songCount) };
+    // Offsets only when past the top, so a plain search asks what it always has.
+    for (const key of ['artistOffset', 'albumOffset', 'songOffset'] as const) if (pages[key]) params[key] = String(pages[key]);
+    return this.request('search3', SearchSchema(pages), params).pipe(Effect.map(result => searchResults(toItems(result.searchResult3), pages)));
   }
   // Every track. OpenSubsonic can't sort them: an empty search3 query answers with every song in
   // one fixed order (Navidrome's is the order it first scanned them). Navidrome's own API sorts,
@@ -729,7 +755,7 @@ const library = {
   starred: entry(LibraryRequestSchemas.starred, client => client.starred(), value => value.tracks),
   randomSongs: entry(LibraryRequestSchemas.randomSongs, (client, [options]) => client.randomSongs(options), value => value),
   tracks: entry(LibraryRequestSchemas.tracks, (client, [sort, offset, size, seed]) => client.tracks(sort, offset, size, seed), value => value.tracks),
-  search: entry(LibraryRequestSchemas.search, (client, [query]) => client.search(query), value => value.tracks),
+  search: entry(LibraryRequestSchemas.search, (client, [query, options]) => client.search(query, options), value => value.tracks),
   star: entry(LibraryRequestSchemas.star, (client, [target, id, starred]) => client.star(target, id, starred)),
   createPlaylist: entry(LibraryRequestSchemas.createPlaylist, (client, [name, trackIds]) => client.createPlaylist(name, trackIds)),
   addToPlaylist: entry(LibraryRequestSchemas.addToPlaylist, (client, [playlistId, trackIds]) => client.addToPlaylist(playlistId, trackIds)),

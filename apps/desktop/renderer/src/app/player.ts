@@ -7,6 +7,7 @@ import { finishThreshold } from '../../../../../packages/core/plays';
 import { onSignedOut, webSession } from '../bridge/previewLibrary';
 import { VolumeCommandCoalescer } from '../volumeCommands';
 import { api, resetLibraryCaches } from './library';
+import { clearSearches, searchesFor } from './searches';
 import { getSettings } from './settings';
 
 // One small store for playback. Views subscribe with selectors so the frequent position
@@ -142,6 +143,7 @@ if (desktop) {
     const sessionId = snapshot.server.sessionId;
     // Another server or account: nothing cached from the last one may show.
     if (sessionId !== state.sessionId) resetLibraryCaches();
+    searchesFor(snapshot.server.account ?? null);
     const error = p.error && p.error !== lastEngineError ? p.error : state.error;
     lastEngineError = p.error;
     const track = p.queue[p.currentIndex];
@@ -357,7 +359,10 @@ if (web && 'mediaSession' in navigator) {
 // An unreachable host reads as signed out; signing in then says it couldn't be reached.
 async function checkAccess() {
   const status = await webSession.status();
-  if (status.required && !status.signedIn) { set({ access: 'sign-in', connected: false }); return; }
+  // Signed out while the page was away: the searches go too.
+  if (status.required && !status.signedIn) { clearSearches(); set({ access: 'sign-in', connected: false }); return; }
+  // The host has one account; its searches last until this page signs out.
+  searchesFor('web');
   set({ access: status.required ? 'signed-in' : 'open', connected: true });
   void offerResume();
 }
@@ -365,6 +370,7 @@ function signedOut() {
   if (!web || state.access === 'sign-in') return;
   web.active.pause();
   resetLibraryCaches();
+  searchesFor(null);
   set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null });
 }
 async function stillSignedIn() {
@@ -420,6 +426,7 @@ function nativeSession(next: AndroidSession) {
   const was = state.connected;
   // Another server or account: nothing cached from the last one may show.
   if (next.sessionId !== state.sessionId) resetLibraryCaches();
+  searchesFor(next.account);
   const { saved, canRemember, reconnecting, reconnectError } = next.signIn;
   const signIn = state.signIn.saved?.url === saved?.url && state.signIn.saved?.username === saved?.username && state.signIn.canRemember === canRemember
     && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : next.signIn;
@@ -534,7 +541,7 @@ export const player = {
   // Browser sign-in -----------------------------------------------------------------------
   async signIn(password: string): Promise<Result> {
     const result = await webSession.signIn(password);
-    if (result.ok) { set({ access: 'signed-in', connected: true, error: null }); void offerResume(); }
+    if (result.ok) { searchesFor('web'); set({ access: 'signed-in', connected: true, error: null }); void offerResume(); }
     return result;
   },
   async signOut() {

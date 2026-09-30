@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
-import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry } from '../../../packages/core/contracts';
-import { SubsonicClient, plainText } from '../../../packages/adapter-opensubsonic/client';
+import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry, SearchOptions } from '../../../packages/core/contracts';
+import { SubsonicClient, plainText, searchPages, searchResults } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
@@ -261,13 +261,16 @@ export class FakeNavidrome {
     // The real connector, over HTTP to native.ts: Navidrome's own API, or search3 without it.
     tracks: (sort: TrackSort, offset: number, size: number, seed: string) => this.op('tracks', [sort, offset, size, seed], () =>
       (this.http ??= new SubsonicClient({ url: this.audioBase(), ...account }, new Metrics())).tracks(sort, offset, size, seed)),
-    search: (query: string) => this.op('search', [query], () => {
-      const q = query.toLowerCase();
-      return Effect.succeed({
-        artists: catalog.artists.filter(a => a.name.toLowerCase().includes(q)),
-        albums: catalog.albums.filter(a => a.name.toLowerCase().includes(q)).map(this.album),
-        tracks: catalog.tracks.filter(t => t.title.toLowerCase().includes(q)).map(t => this.track(t.id)),
-      });
+    // search3 as Navidrome answers it: each kind a page of its own, 8 artists, 16 records, and
+    // 40 songs when the counts are left out. With fake.large on, "night" finds 210 songs.
+    search: (query: string, options?: SearchOptions) => this.op('search', options ? [query, options] : [query], () => {
+      const q = query.toLowerCase(), pages = searchPages(options);
+      const page = <T,>(items: T[], offset: number, count: number) => items.slice(offset, offset + count);
+      return Effect.succeed(searchResults({
+        artists: page(catalog.artists.filter(a => a.name.toLowerCase().includes(q)), pages.artistOffset, pages.artistCount),
+        albums: page(this.albums().filter(a => a.name.toLowerCase().includes(q)), pages.albumOffset, pages.albumCount).map(this.album),
+        tracks: page(this.songs().filter(t => t.title.toLowerCase().includes(q)), pages.songOffset, pages.songCount).map(t => this.track(t.id)),
+      }, pages));
     }),
     star: (_target: StarTarget, id: string, starred: boolean) => this.op('star', [_target, id, starred], () => {
       if (starred) this.starred.add(id); else this.starred.delete(id);

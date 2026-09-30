@@ -20,7 +20,7 @@ const message = (error: unknown, fallback: string) => error instanceof Error && 
 let client: SubsonicClient | null = null;
 // Bumped by every connect and disconnect, so an older attempt that finishes late is dropped.
 let generation = 0;
-let session: AndroidSession = { ready: false, connected: false, serverName: null, sessionId: null, signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null } };
+let session: AndroidSession = { ready: false, connected: false, serverName: null, sessionId: null, account: null, signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null } };
 const sessionListeners = new Set<(session: AndroidSession) => void>();
 function setSession(patch: Partial<AndroidSession>, signIn: Partial<AndroidSession['signIn']> = {}) {
   session = { ...session, ...patch, signIn: { ...session.signIn, ...signIn } };
@@ -50,7 +50,7 @@ async function connectTo(typed: Connection, { save }: { save: boolean }): Promis
   }
   const address = new URL(candidate.baseUrl);
   setSession({
-    connected: true, sessionId: crypto.randomUUID(),
+    connected: true, sessionId: crypto.randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`,
     // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
     serverName: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`,
   }, { canRemember, saved: savedAccount && { url: savedAccount.url, username: savedAccount.username }, reconnecting: false, reconnectError: null });
@@ -93,7 +93,7 @@ const library: LibraryApi = {
   starred: () => call('starred', []),
   randomSongs: options => call('randomSongs', [options]),
   tracks: (sort, offset, size, seed) => call('tracks', [sort, offset, size, seed]),
-  search: query => call('search', [query]),
+  search: (query, options) => call('search', options ? [query, options] : [query]),
   star: (target, id, starred) => call('star', [target, id, starred]),
   createPlaylist: (name, trackIds) => call('createPlaylist', [name, trackIds]),
   addToPlaylist: (playlistId, trackIds) => call('addToPlaylist', [playlistId, trackIds]),
@@ -205,7 +205,7 @@ export const androidBridge: AndroidBridge = {
       client = null; savedAccount = null;
       await Squiggly.setServer({ coverBase: null, key: null }).catch(() => undefined);
       await Squiggly.forgetAccount().catch(() => undefined);
-      setSession({ connected: false, serverName: null, sessionId: null }, { saved: null, reconnecting: false, reconnectError: null });
+      setSession({ connected: false, serverName: null, sessionId: null, account: null }, { saved: null, reconnecting: false, reconnectError: null });
       return { ok: true, value: undefined };
     },
   },
