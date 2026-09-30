@@ -16,8 +16,9 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // `signIn` overrides the saved sign-in state (ServerState), and `connected: false` starts on the
 // connect screen.
 // `update` overrides the update state (UpdateState); update calls are recorded in bridgeCalls.
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch }) => {
+// `connect` answers connect by the address given (a Result); any other address fails.
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; connect?: Record<string, object> } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, connectResults }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -78,7 +79,10 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         openDir: async () => ({ ok: true, value: undefined }),
         writeClipboard: async (text: string) => { calls.push(`clipboard:${text}`); return { ok: true, value: undefined }; },
       },
-      connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
+      connect: async (connection: { url: string; username: string }) => {
+        calls.push(`connect:${connection.url}:${connection.username}`);
+        return connectResults[connection.url] ?? { ok: false, error: 'No server in the test.' };
+      },
       disconnect: async () => {
         calls.push('disconnect');
         server = { connected: false, name: null, sessionId: null };
@@ -87,5 +91,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {} });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {}, connectResults: options.connect ?? {} });
 }

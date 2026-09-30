@@ -1,5 +1,5 @@
 import { Effect, Either, Schema } from 'effect';
-import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSession, Connection, LibraryApi, Result, Track } from '../../../packages/core/contracts';
+import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSession, ConnectOutcome, Connection, LibraryApi, Result, Track } from '../../../packages/core/contracts';
 import { Metrics } from '../../../packages/core/metrics';
 import { ConnectionSchema } from '../../../packages/core/validation';
 import { SubsonicClient, libraryCall, resolveServerAddress, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
@@ -29,16 +29,20 @@ function setSession(patch: Partial<AndroidSession>, signIn: Partial<AndroidSessi
 // The saved account, for reconnecting after a failed attempt at launch without retyping.
 let savedAccount: Connection | null = null;
 
-async function connectTo(typed: Connection, { save }: { save: boolean }): Promise<Result> {
+async function connectTo(typed: Connection, { save }: { save: boolean }): Promise<Result<ConnectOutcome>> {
   const mine = ++generation;
   const attempt = await Effect.runPromise(Effect.either(Effect.gen(function* () {
-    const connection = yield* resolveServerAddress(typed, makeClient);
+    const address = yield* resolveServerAddress(typed, makeClient);
+    // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
+    if (address.type === 'plain-http') return address;
+    const { connection } = address;
     const candidate = yield* Effect.try({ try: () => makeClient(connection), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* candidate.ping();
-    return { connection, candidate, info };
+    return { type: 'ready' as const, connection, candidate, info };
   })));
   if (mine !== generation) return { ok: false, error: 'Connection canceled.' };
   if (Either.isLeft(attempt)) return { ok: false, error: message(attempt.left, 'Could not connect.') };
+  if (attempt.right.type === 'plain-http') return { ok: true, value: attempt.right };
   const { connection, candidate, info } = attempt.right;
   client = candidate;
   await Squiggly.setServer({ coverBase: candidate.coverArtBase(), key: `${candidate.baseUrl}\n${connection.username}` }).catch(() => undefined);
@@ -54,7 +58,7 @@ async function connectTo(typed: Connection, { save }: { save: boolean }): Promis
     // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
     serverName: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`,
   }, { canRemember, saved: savedAccount && { url: savedAccount.url, username: savedAccount.username }, reconnecting: false, reconnectError: null });
-  return { ok: true, value: undefined };
+  return { ok: true, value: { type: 'connected' } };
 }
 
 async function reconnect(): Promise<Result> {
@@ -62,7 +66,8 @@ async function reconnect(): Promise<Result> {
   setSession({}, { reconnecting: true, reconnectError: null });
   const result = await connectTo(savedAccount, { save: false });
   if (!result.ok && !session.connected) setSession({}, { reconnecting: false, reconnectError: result.error });
-  return result;
+  // A saved address has its scheme written out, so it's never offered as plain HTTP again.
+  return result.ok ? { ok: true, value: undefined } : result;
 }
 
 async function start() {

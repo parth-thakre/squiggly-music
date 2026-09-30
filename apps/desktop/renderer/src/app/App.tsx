@@ -1,6 +1,6 @@
 import { ListMusic, MessageSquareQuote, PictureInPicture2 } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
-import type { Track } from '../../../../../packages/core/contracts';
+import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
@@ -312,12 +312,15 @@ const hostOf = (url: string) => { try { return new URL(url).host; } catch { retu
 function Connect({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only plain HTTP answered the address: the sign-in, and the http:// address to use if they agree.
+  const [plainHttp, setPlainHttp] = useState<{ connection: Connection; url: string } | null>(null);
   const android = window.squigglyAndroid?.session;
-  const connect = async (connection: { url: string; username: string; password: string }) => {
-    setBusy(true); setError(null);
+  const connect = async (connection: Connection) => {
+    setBusy(true); setError(null); setPlainHttp(null);
     const result = await (window.squiggly ? window.squiggly.connect(connection) : android!.connect(connection));
     setBusy(false);
     if (!result.ok) setError(result.error);
+    else if (result.value.type === 'plain-http') setPlainHttp({ connection, url: result.value.url });
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -348,13 +351,19 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
     {reconnectError && saved && android && <button type="button" className="text-button" disabled={busy} onClick={() => void retry()}>Try {hostOf(saved.url)} again</button>}
     <form onSubmit={submit}>
-      {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, then HTTP. */}
+      {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, and asks before HTTP. */}
       <label>Server address<input name="url" type="text" inputMode="url" required placeholder="music.example.com" autoComplete="url"
         autoCapitalize="off" spellCheck={false} defaultValue={saved?.url} /></label>
       <label>Username<input name="username" required autoComplete="username" defaultValue={saved?.username} /></label>
       <label>Password<input name="password" type="password" required autoComplete="current-password" /></label>
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
+      {/* Someone on the network could have blocked HTTPS to get the password sent in the clear, so plain HTTP is never used without asking. */}
+      {plainHttp && <div className="connect-http" role="alert">
+        <p>This server isn't using HTTPS. Your password would be sent unprotected.</p>
+        <button type="button" className="text-button" disabled={busy} onClick={() => void connect({ ...plainHttp.connection, url: plainHttp.url })}>Continue</button>
+        <button type="button" className="text-button quiet" disabled={busy} onClick={() => setPlainHttp(null)}>Cancel</button>
+      </div>}
     </form>
     {!embedded && window.squiggly && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
     {/* Navidrome's own public demo, with Creative Commons music, for trying Squiggly without a server. */}

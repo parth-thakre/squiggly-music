@@ -378,7 +378,10 @@ function shellPlay() {
 function connectTo(typed: Connection, generation: number) {
   return Effect.gen(function* () {
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
-    const connection = yield* resolveAddress(typed);
+    const resolved = yield* resolveAddress(typed);
+    // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
+    if (resolved.type === 'plain-http') return resolved;
+    const { connection } = resolved;
     // The address check's own message (a bad address says how), not Effect's generic one.
     const candidate = yield* Effect.try({ try: () => new SubsonicClient(connection, metrics), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* candidate.ping();
@@ -392,10 +395,10 @@ function connectTo(typed: Connection, generation: number) {
     state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), reconnectError: null };
     // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
     updateTray(); updateMedia(); void loadSavedSong(candidate);
-    return connection;
+    return resolved;
   });
 }
-// HTTPS, then HTTP, for an address typed without a scheme (resolveServerAddress in the connector).
+// HTTPS, then HTTP with consent, for an address typed without a scheme (resolveServerAddress in the connector).
 const resolveAddress = (connection: Connection) => resolveServerAddress(connection, candidate => new SubsonicClient(candidate, metrics));
 // At launch, with a saved sign-in. A failure leaves the connect screen filled in, with the reason.
 async function reconnect() {
@@ -470,9 +473,12 @@ function installHandlers() {
   handle('connect', (value, generation) => Effect.gen(function* () {
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
     const resolved = yield* connectTo(connection, generation);
+    // Nothing connected or saved: the window asks, then connects to the http:// address.
+    if (resolved.type === 'plain-http') return resolved;
     // A sign-in that can't be saved securely stays in memory for this session (account.ts).
-    yield* Effect.promise(() => account.remember(resolved).catch(() => undefined));
+    yield* Effect.promise(() => account.remember(resolved.connection).catch(() => undefined));
     state.server = { ...state.server, saved: account.saved };
+    return { type: 'connected' as const };
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));

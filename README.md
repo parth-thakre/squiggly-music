@@ -53,7 +53,7 @@ On Android 7 or later, open `Squiggly-Music-<version>-android.apk` on the phone 
 
 Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe and the RPM can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
 
-To connect, enter your Navidrome address with any port or subpath (`music.example.com/navidrome` works; without `https://` or `http://`, Squiggly tries HTTPS first, then HTTP), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
+To connect, enter your Navidrome address with any port or subpath (`music.example.com/navidrome` works; without `https://` or `http://`, Squiggly tries HTTPS and asks before using plain HTTP), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
 
 ## Run from source
 

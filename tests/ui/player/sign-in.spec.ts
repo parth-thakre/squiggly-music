@@ -1,3 +1,5 @@
+import type { Page } from '@playwright/test';
+import { installDesktopBridge } from '../fixtures/desktop';
 import { expect, test, webPassword } from '../fixtures/test';
 
 const day = 24 * 60 * 60 * 1000;
@@ -45,5 +47,44 @@ test.describe('sign-in', () => {
     await app.section('Artists').click();
     await expect(app.heading).toHaveText('Artists');
     await expect(app.main.getByRole('button', { name: /^Ada Brass/ })).toBeVisible();
+  });
+});
+
+// The desktop and Android connect screen, through a stand-in for the preload bridge (fixtures/desktop.ts).
+test.describe('connecting to a server without HTTPS', () => {
+  const calls = (page: Page) => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls);
+  const typeSignIn = async (page: Page) => {
+    await page.getByLabel('Server address').fill('music.example.com');
+    await page.getByLabel('Username').fill('ana');
+    await page.getByLabel('Password').fill('secret');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  };
+
+  test('asks before plain HTTP, and connects there only on Continue', async ({ page }) => {
+    await installDesktopBridge(page, { connected: false, connect: {
+      'music.example.com': { ok: true, value: { type: 'plain-http', url: 'http://music.example.com' } },
+      'http://music.example.com': { ok: true, value: { type: 'connected' } },
+    } });
+    await page.goto('/');
+    await typeSignIn(page);
+    await expect(page.getByRole('alert')).toContainText('This server isn\'t using HTTPS. Your password would be sent unprotected.');
+    // Cancel sends nothing more.
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(await calls(page)).toEqual(['connect:music.example.com:ana']);
+
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(await calls(page)).toEqual(['connect:music.example.com:ana', 'connect:music.example.com:ana', 'connect:http://music.example.com:ana']);
+  });
+
+  test('an untrusted certificate is an error, with no way on over plain HTTP', async ({ page }) => {
+    const refused = 'This server\'s HTTPS certificate isn\'t trusted (it may be self-signed, expired, or for another address), so Squiggly won\'t connect to it. Check the address, or fix the certificate on the server.';
+    await installDesktopBridge(page, { connected: false, connect: { 'music.example.com': { ok: false, error: refused } } });
+    await page.goto('/');
+    await typeSignIn(page);
+    await expect(page.getByRole('alert')).toHaveText(refused);
+    await expect(page.getByRole('button', { name: 'Continue' })).toHaveCount(0);
   });
 });
