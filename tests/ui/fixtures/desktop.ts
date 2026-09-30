@@ -6,17 +6,19 @@ import type { Page } from '@playwright/test';
 // the calls a test may want to check.
 //
 // `extensions` are listed by window.squiggly.extensions, each with the URL its module is served
-// from (the test routes that URL to a compiled bundle).
+// from (the test routes that URL to a compiled bundle). One marked `isNew` starts off, as a new
+// folder does, until it's turned on.
 //
 // `mediaHost` makes the page the window that hosts the system media session (systemMedia.ts):
 // window.pushMedia(state) stands in for the main process, and player commands are recorded in
 // bridgeCalls.
-export interface FakeExtension { id: string; name: string; url: string; error?: string }
+export interface FakeExtension { id: string; name: string; url: string; error?: string; isNew?: boolean }
 // `signIn` overrides the saved sign-in state (ServerState), and `connected: false` starts on the
 // connect screen.
 // `update` overrides the update state (UpdateState); update calls are recorded in bridgeCalls.
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch }) => {
+// `connect` answers connect by the address given (a Result); any other address fails.
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; connect?: Record<string, object> } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, connectResults }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -40,11 +42,12 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
     const disabled = new Set<string>(), removed = new Set<string>();
+    const fresh = new Set(given.filter(extension => extension.isNew).map(extension => extension.id));
     const extensionListeners = new Set<(list: unknown) => void>();
     const extensionList = () => given.filter(extension => !removed.has(extension.id)).map(extension => ({
       id: extension.id, name: extension.name, version: '1.0.0', description: null, folder: extension.id,
-      enabled: !disabled.has(extension.id), error: extension.error ?? null,
-      rendererUrl: disabled.has(extension.id) || extension.error ? null : extension.url,
+      enabled: !disabled.has(extension.id) && !fresh.has(extension.id), isNew: fresh.has(extension.id), error: extension.error ?? null,
+      rendererUrl: disabled.has(extension.id) || fresh.has(extension.id) || extension.error ? null : extension.url,
     }));
     const pushExtensions = () => { const list = extensionList(); extensionListeners.forEach(listener => listener(list)); };
     Object.assign(window, { squiggly: {
@@ -70,13 +73,16 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       extensions: {
         list: async () => extensionList(),
         subscribe: (listener: (list: unknown) => void) => { extensionListeners.add(listener); return () => extensionListeners.delete(listener); },
-        setEnabled: async (id: string, on: boolean) => { calls.push(`set-enabled:${id}:${on}`); if (on) disabled.delete(id); else disabled.add(id); pushExtensions(); return { ok: true, value: undefined }; },
+        setEnabled: async (id: string, on: boolean) => { calls.push(`set-enabled:${id}:${on}`); fresh.delete(id); if (on) disabled.delete(id); else disabled.add(id); pushExtensions(); return { ok: true, value: undefined }; },
         reload: async () => { calls.push('reload'); return { ok: true, value: undefined }; },
         remove: async (id: string) => { calls.push(`remove:${id}`); removed.add(id); pushExtensions(); return { ok: true, value: undefined }; },
         openDir: async () => ({ ok: true, value: undefined }),
         writeClipboard: async (text: string) => { calls.push(`clipboard:${text}`); return { ok: true, value: undefined }; },
       },
-      connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
+      connect: async (connection: { url: string; username: string }) => {
+        calls.push(`connect:${connection.url}:${connection.username}`);
+        return connectResults[connection.url] ?? { ok: false, error: 'No server in the test.' };
+      },
       disconnect: async () => {
         calls.push('disconnect');
         server = { connected: false, name: null, sessionId: null };
@@ -85,5 +91,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {} });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {}, connectResults: options.connect ?? {} });
 }

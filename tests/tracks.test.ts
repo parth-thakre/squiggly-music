@@ -211,6 +211,20 @@ describe('without it', () => {
     expect(state.logins.length).toBeLessThanOrEqual(1);
   });
 
+  it('lists tracks with search3, saying why, rather than send the password over plain HTTP beyond this network', async () => {
+    const { state, client: local } = await navidrome();
+    // The same Navidrome at a public name: every request still reaches the fixture.
+    const fixture = new URL(local.baseUrl);
+    const reroute = ((input: string, init?: RequestInit) => { const url = new URL(input); url.host = fixture.host; return fetch(url.href, init); }) as typeof fetch;
+    const remote = new SubsonicClient({ url: 'http://music.example.com/music', username: 'listener', password }, new Metrics(), {}, { fetch: reroute });
+    for (const offset of [0, 2]) expect(await run(remote.tracks('alphabeticalByName', offset, 2, ''))).toMatchObject({ sorted: false, plainHttp: true });
+    expect(state.logins).toEqual([]);
+    expect(state.subsonic.filter(endpoint => endpoint === 'search3')).toHaveLength(2);
+    // At its own network's address, over the same plain HTTP, it signs in and sorts.
+    expect(await run(local.tracks('alphabeticalByName', 0, 2, ''))).not.toHaveProperty('plainHttp');
+    expect(state.logins).toHaveLength(1);
+  });
+
   it('fails a sign-in cut off on its way without giving up on the API', async () => {
     const { state, client } = await navidrome({ login: 'drop' });
     expect(await failure(client.tracks('newest', 0, 200, ''))).toBe('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.');

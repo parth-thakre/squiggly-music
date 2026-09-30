@@ -7,8 +7,10 @@ import java.io.IOException
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.cert.CertificateException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
+import javax.net.ssl.SSLPeerUnverifiedException
 
 /**
  * The connector's fetch (apps/android/web/http.ts). Requests run here, outside the WebView, so
@@ -60,7 +62,9 @@ object NativeHttp {
                 finished = true
                 call.resolve(JSObject().put("status", status).put("headers", names).put("body", String(bytes, Charsets.UTF_8)))
             } catch (error: Exception) {
-                call.reject("The request failed.")
+                // An untrusted certificate is told apart (the page won't offer plain HTTP instead).
+                if (untrusted(error)) call.reject("The server's certificate isn't trusted.", "CERT_UNTRUSTED")
+                else call.reject("The request failed.")
             } finally {
                 active.remove(id)
                 // A finished response has gone back to the connection pool; only a failed one is torn down.
@@ -84,6 +88,11 @@ object NativeHttp {
         }
         return out.toByteArray()
     }
+
+    // Another name's certificate, or one that doesn't chain to a trusted authority (self-signed,
+    // expired). A server that doesn't speak TLS at all fails the handshake without either.
+    private fun untrusted(error: Throwable) =
+        generateSequence(error) { it.cause }.take(8).any { it is SSLPeerUnverifiedException || it is CertificateException }
 
     private val token = Regex("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
     val userAgent = "Squiggly/${BuildConfig.VERSION_NAME} (Android)"

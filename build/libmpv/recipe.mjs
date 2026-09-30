@@ -54,6 +54,15 @@ export function verifyBuild(outputDir, { licensesDir } = {}) {
     const actual = sha256(readFileSync(path));
     if (actual !== entry.sha256) throw new Error(`${path} has SHA-256 ${actual}, but ${manifestPath} records ${entry.sha256}.`);
   }
+  // The manifest comes from the same place as the DLL (a CI cache, say), so it can't vouch
+  // for it. Hash the DLL itself against the pin in sources.json.
+  const dllPath = join(outputDir, DLL);
+  if (!existsSync(dllPath)) throw new Error(`Missing ${dllPath}.`);
+  const dllSha256 = sha256(readFileSync(dllPath));
+  const pinned = readSources().expectedDllSha256;
+  if (dllSha256 !== pinned) {
+    throw new Error(`${dllPath} has SHA-256 ${dllSha256}, but sources.json expects ${pinned}. Run \`npm run libmpv:build\` again.`);
+  }
   if (licensesDir) {
     for (const entry of manifest.licenses) {
       const committed = join(licensesDir, entry.file.replace(/^licenses\//, ''));

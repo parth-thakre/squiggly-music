@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { fork, type ChildProcess } from 'node:child_process';
 import type { HostMessage, HostRequest } from '../packages/player-mpv/protocol';
-import { emptyPlayer, type PlayerSnapshot } from '../packages/core/contracts';
+import { emptyPlayer, type AudioDevice, type PlayerSnapshot } from '../packages/core/contracts';
 import { clearPlayerSession } from '../packages/player-mpv/session';
 
 let worker: ChildProcess | undefined;
@@ -165,12 +165,12 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('queue editing in real libmpv
   });
 });
 
-async function mockHost(supportsStopKeepPlaylist = false, configure?: (native: { set: ReturnType<typeof vi.fn>; property: ReturnType<typeof vi.fn> }) => void) {
+async function mockHost(supportsStopKeepPlaylist = false, configure?: (native: { set: ReturnType<typeof vi.fn>; property: ReturnType<typeof vi.fn>; devices: ReturnType<typeof vi.fn> }) => void) {
   vi.useFakeTimers();
   const { emptyAudio } = await import('../packages/core/contracts');
   const native = {
     clientApiVersion: supportsStopKeepPlaylist ? '1.109' : '1.107', supportsStopKeepPlaylist,
-    devices: vi.fn(() => []), close: vi.fn(),
+    devices: vi.fn((): AudioDevice[] => []), close: vi.fn(),
     command: vi.fn(), set: vi.fn(),
     property: vi.fn((_name: string): string | null => 'no'),
     number: vi.fn((name: string) => ({ 'playlist-pos': 2, 'time-pos': 12, duration: 90, volume: 100 })[name] ?? null),
@@ -307,6 +307,35 @@ describe('host snapshot lifecycle', () => {
     expect(native.command).not.toHaveBeenCalledWith('seek', '10', 'absolute+exact');
   });
 
+  it('switches output only to the system default or a device mpv lists now', async () => {
+    const { sends, command, native } = await mockHost();
+    const dac = { name: 'alsa/plughw:CARD=DAC', description: 'USB DAC' };
+    const reply = (id: number) => sends.map(send => send.message).find(message => message.type === 'reply' && message.id === id);
+    // An ALSA string naming the file plugin, which runs a command.
+    command({ id: 1, action: { type: 'device', id: 'alsa/file:\'|sh -c id\'' } });
+    expect(reply(1)).toEqual({ type: 'reply', id: 1, error: expect.stringContaining('not connected') });
+    // Plugged in after the last poll: the list is read again before refusing.
+    native.devices.mockReturnValue([dac]);
+    command({ id: 2, action: { type: 'device', id: dac.name } });
+    expect(reply(2)).toEqual({ type: 'reply', id: 2, error: null });
+    native.devices.mockReturnValue([]);
+    command({ id: 3, action: { type: 'device', id: dac.name } });
+    expect(reply(3)).toEqual({ type: 'reply', id: 3, error: expect.stringContaining('not connected') });
+    command({ id: 4, action: { type: 'device', id: 'auto' } });
+    expect(reply(4)).toEqual({ type: 'reply', id: 4, error: null });
+    expect(native.set.mock.calls.filter(([name]) => name === 'audio-device')).toEqual([['audio-device', dac.name], ['audio-device', 'auto']]);
+  });
+
+  it('opens a saved output while it is listed and the system default once it is gone', async () => {
+    const dac = { name: 'alsa/plughw:CARD=DAC', description: 'USB DAC' };
+    vi.stubEnv('SQUIGGLY_AUDIO_DEVICE', dac.name);
+    const listed = await mockHost(false, native => native.devices.mockReturnValue([dac]));
+    expect(listed.native.set).toHaveBeenCalledWith('audio-device', dac.name);
+    vi.resetModules();
+    const gone = await mockHost();
+    expect(gone.native.set).not.toHaveBeenCalledWith('audio-device', expect.anything());
+  });
+
   it('stops polling on core shutdown, publishes failure, and exits nonzero', async () => {
     const { sends, snapshots, native, exit } = await mockHost();
     sends[0].callback(null);
@@ -363,6 +392,25 @@ describe('native client API compatibility', () => {
     expect(newer.clientApiVersion).toBe('1.109');
     expect(newer.supportsStopKeepPlaylist).toBe(true);
     newer.close();
+  });
+});
+
+describe('native player options', () => {
+  it('verifies TLS, follows no references, and asks for ytdl off where the build has it', async () => {
+    const options: [string, string][] = [];
+    vi.doMock('koffi', () => ({ default: {
+      struct: vi.fn(), decode: vi.fn(),
+      load: () => ({ func: (signature: string) => {
+        if (signature.includes('mpv_create')) return () => ({});
+        // A build without Lua (the Windows one) has no ytdl option.
+        if (signature.includes('mpv_set_option_string')) return (_ctx: unknown, name: string, value: string) => { options.push([name, value]); return name === 'ytdl' ? -5 : 0; };
+        return () => 0;
+      } }),
+    } }));
+    const { NativePlayer } = await import('../packages/player-mpv/native');
+    const native = new NativePlayer();
+    expect(options).toEqual(expect.arrayContaining([['tls-verify', 'yes'], ['access-references', 'no'], ['ytdl', 'no']]));
+    native.close();
   });
 });
 

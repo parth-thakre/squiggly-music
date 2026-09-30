@@ -1,6 +1,6 @@
 import { Effect, Either, Schema } from 'effect';
 import type {
-  Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
+  Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, ConnectOutcome, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
   AlbumYears, ArtistInfo, DiscTitle,
 } from '../core/contracts';
@@ -154,7 +154,8 @@ type QueueValue = Schema.Schema.Type<Schema.Struct<typeof QueueFields>>;
 type Song = Schema.Schema.Type<typeof SongSchema>;
 type Params = Record<string, string | readonly string[]>;
 // Raster formats only: the desktop serves these bytes to the renderer under its own scheme.
-const coverTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
+// Local files' embedded pictures (apps/desktop/main/localFiles.ts) are held to the same list.
+export const coverTypes: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const clamp = (value: number, min: number, max: number) => Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min;
 // Response bodies as one byte array, and as text. The BOM is kept, as Node's Buffer did.
 function concatBytes(chunks: readonly Uint8Array[], total: number) {
@@ -172,6 +173,19 @@ class ServerError extends Error { constructor(message: string, readonly code?: n
 // take this sign-in (the server signs people in some other way).
 class NativeMissing extends ServerError {}
 class NativeSignedOut extends ServerError {}
+// Navidrome's own sign-in would send the password over plain HTTP beyond this network.
+class NativeWithheld extends ServerError {}
+// The server speaks TLS but can't be trusted. Never a reason to try plain HTTP instead.
+class CertificateError extends ServerError {}
+// Node's fetch names why it failed in its cause's code (the Android fetch does too, http.ts).
+// These say the certificate (self-signed, expired, another name's) or the TLS handshake failed.
+// A reply that isn't TLS at all is plain HTTP on that port: a server without HTTPS.
+const notTls = new Set(['ERR_SSL_WRONG_VERSION_NUMBER', 'ERR_SSL_PACKET_LENGTH_TOO_LONG']);
+function untrusted(error: unknown) {
+  const cause = error instanceof Error ? error.cause : undefined;
+  const code = cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : '';
+  return !notTls.has(code) && /^(ERR_TLS_|ERR_SSL_|CERT_|UNABLE_TO_|DEPTH_ZERO_|SELF_SIGNED_|HOSTNAME_MISMATCH$|INVALID_CA$)/.test(code);
+}
 function protocolError(code: number | undefined): ServerError {
   const messages: Record<number, string> = {
     20: 'This server requires a newer Subsonic API version.',
@@ -184,7 +198,8 @@ function protocolError(code: number | undefined): ServerError {
   return new ServerError(messages[code ?? -1] ?? 'The server rejected the request. Check your account and server settings.', code);
 }
 
-// An address typed without a scheme ("music.example.com") is tried as HTTPS, then HTTP.
+// An address typed without a scheme ("music.example.com") is tried as HTTPS, then HTTP, which
+// is only used once the person agrees (resolveServerAddress).
 export const hasScheme = (input: string) => /^[a-z][a-z0-9+.-]*:\/\//i.test(input.trim());
 export function serverUrlCandidates(input: string): string[] {
   const trimmed = input.trim();
@@ -203,6 +218,22 @@ export function normalizeServerUrl(input: string): string {
   // /app and /rest may be the configured server base path, not UI/API routes.
   url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/rest\/[a-zA-Z0-9]+\.view$/, '');
   return url.href.replace(/\/+$/, '');
+}
+
+// Whether an address stays on this computer or its own network: loopback, private (10/8,
+// 172.16/12, 192.168/16, fc00::/7) or link-local (169.254/16, fe80::/10). A name other than
+// localhost can't be told apart without looking it up, so it counts as beyond.
+export function localAddress(url: string): boolean {
+  const host = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost') || host === '::1') return true;
+  // An IPv4 address written as IPv6 (::ffff:192.168.1.2) is written in hex by URL.
+  const mapped = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  const v4 = mapped ? [parseInt(mapped[1], 16) >> 8, parseInt(mapped[1], 16) & 255] : /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(host)?.slice(1).map(Number);
+  if (v4) {
+    const [a, b] = v4;
+    return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254);
+  }
+  return /^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host);
 }
 
 // Only credits that name more than one artist are kept: one is already artistId.
@@ -372,7 +403,9 @@ export class SubsonicClient {
         }
       },
       // Never forward fetch errors containing authenticated URLs or server-provided text.
-      catch: error => error instanceof ServerError ? error : new ServerError('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.'),
+      catch: error => error instanceof ServerError ? error
+        : untrusted(error) ? new CertificateError('This server\'s HTTPS certificate isn\'t trusted (it may be self-signed, expired, or for another address), so Squiggly won\'t connect to it. Check the address, or fix the certificate on the server.')
+        : new ServerError('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.'),
     }).pipe(Effect.timeoutFail({ duration: '15 seconds', onTimeout: () => new ServerError('The server did not respond within 15 seconds. Check your connection and try again.') }));
     return this.metrics.measure(metric, task);
   }
@@ -469,6 +502,7 @@ export class SubsonicClient {
     return this.navidrome().pipe(Effect.flatMap(navidrome => !navidrome ? scan : this.nativeTracks(sort, start, count, seed).pipe(
       Effect.map((tracks): TrackPage => ({ tracks, sorted: true })),
       Effect.catchIf(error => error instanceof NativeMissing, () => Effect.suspend(() => { this.#native = false; return scan; })),
+      Effect.catchIf(error => error instanceof NativeWithheld, () => scan.pipe(Effect.map((page): TrackPage => ({ ...page, plainHttp: true })))),
     )));
   }
   // Navidrome, as its ping says, until its own API turns out to be missing.
@@ -519,8 +553,13 @@ export class SubsonicClient {
       return this.#signingIn;
     });
   }
-  private nativeSignIn() {
+  private nativeSignIn(): Effect.Effect<string, Error> {
     const missing = () => new NativeMissing('Navidrome\'s own API is not available.');
+    // This sends the password itself, not a token made from it. Over plain HTTP it only goes to
+    // this computer or its own network, where someone out on the internet can't read it.
+    if (new URL(this.baseUrl).protocol === 'http:' && !localAddress(this.baseUrl)) {
+      return Effect.fail(new NativeWithheld('Squiggly won\'t send your password to this server without HTTPS.'));
+    }
     return this.send('native.login', this.nativeUrl('/auth/login').href, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username: this.auth.username, password: this.#password }),
     }, 1, response => {
@@ -676,17 +715,24 @@ export class SubsonicClient {
   }
 }
 
-// The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
-// where a server answers. That's asked without credentials, so the password only goes to an
-// address that answered, and a failed HTTPS attempt never sends it over plain HTTP.
-export function resolveServerAddress(connection: Connection, client: (connection: Connection) => SubsonicClient): Effect.Effect<Connection, Error> {
-  const candidates = serverUrlCandidates(connection.url);
-  if (candidates.length === 1) return Effect.succeed(connection);
+// Where to sign in: `ready` with the connection to use, or `plain-http` when an address typed
+// without a scheme answered only over HTTP. Nothing is signed in to then: the caller asks the
+// person, and connects again to `url`, with http:// written out, if they agree.
+export type ServerAddress = { type: 'ready'; connection: Connection } | Extract<ConnectOutcome, { type: 'plain-http' }>;
+
+// The address to sign in at: as typed, or, typed without a scheme, HTTPS where a server answers.
+// That's asked without credentials, so the password only goes to an address that answered. An
+// untrusted certificate is an error, never a reason to try HTTP. Otherwise HTTP is asked, and
+// only offered: someone on the network could block HTTPS to get the password sent in the clear.
+export function resolveServerAddress(connection: Connection, client: (connection: Connection) => SubsonicClient): Effect.Effect<ServerAddress, Error> {
+  if (hasScheme(connection.url)) return Effect.succeed({ type: 'ready', connection });
+  const [secure, plain] = serverUrlCandidates(connection.url);
+  const probe = (url: string) => Effect.either(Effect.try(() => client({ ...connection, url })).pipe(Effect.flatMap(candidate => candidate.probe())));
   return Effect.gen(function* () {
-    for (const url of candidates) {
-      const attempt = yield* Effect.either(Effect.try(() => client({ ...connection, url })).pipe(Effect.flatMap(candidate => candidate.probe())));
-      if (Either.isRight(attempt)) return { ...connection, url };
-    }
+    const attempt = yield* probe(secure);
+    if (Either.isRight(attempt)) return { type: 'ready', connection: { ...connection, url: secure } } satisfies ServerAddress;
+    if (attempt.left instanceof CertificateError) return yield* Effect.fail(attempt.left);
+    if (Either.isRight(yield* probe(plain))) return { type: 'plain-http', url: plain } satisfies ServerAddress;
     return yield* Effect.fail(new Error(`No Navidrome server answered at ${connection.url.trim()} over HTTPS or HTTP. Check the address and your connection.`));
   });
 }

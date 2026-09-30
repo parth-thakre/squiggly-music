@@ -37,8 +37,11 @@ export const nativeFetch: typeof fetch = async (input, init = {}) => {
     // Redirects are never followed (the connector asks for redirect: 'error'); a 3xx arrives as itself.
     return new Response(nullBody(response.status) ? null : response.body, { status: response.status, headers: response.headers });
   } catch (error) {
-    // Native failures carry the address, which carries credentials. Say nothing specific.
+    // Native failures carry the address, which carries credentials. Say nothing specific, except
+    // an untrusted certificate (NativeHttp.kt), named in the cause as Node's fetch does, so the
+    // connector never offers plain HTTP instead.
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
+    if ((error as { code?: unknown } | null)?.code === 'CERT_UNTRUSTED') throw new TypeError('Network request failed.', { cause: { code: 'CERT_UNTRUSTED' } });
     throw new TypeError('Network request failed.');
   } finally {
     if (stop) signal?.removeEventListener('abort', stop);

@@ -10,7 +10,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Effect, Either, Schema } from 'effect';
 import iconPath from './assets/icon.png?asset';
-import { emptyPlayer, emptyDiagnostics } from '../../../packages/core/contracts';
+import { emptyPlayer, emptyDiagnostics, listedDevice } from '../../../packages/core/contracts';
 import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema } from '../../../packages/core/validation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
@@ -234,7 +234,8 @@ function terminateHost(child: ChildProcess): Promise<void> {
   terminations.set(child, termination);
   return termination;
 }
-// Packaged builds ship the audio-host runtime under resources/runtime. Environment overrides still win.
+// Packaged builds ship the audio-host runtime under resources/runtime and use only that. The
+// SQUIGGLY_NODE_PATH and SQUIGGLY_LIBMPV_PATH overrides are for development builds.
 function bundledRuntime(file: string) {
   if (!app.isPackaged) return undefined;
   const path = join(process.resourcesPath, 'runtime', file);
@@ -249,10 +250,14 @@ async function launchPlayer() {
   // Packaged builds keep the app in app.asar, which the bundled Node can't read; the audio host
   // and its imports are unpacked beside it (see asarUnpack in electron-builder.yml).
   const hostDirectory = directory.replace(/app\.asar(?=[\\/]|$)/, 'app.asar.unpacked');
+  const packaged = app.isPackaged;
   const child = fork(join(hostDirectory, 'player.js'), [], {
-    execPath: process.env.SQUIGGLY_NODE_PATH || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
+    execPath: (!packaged && process.env.SQUIGGLY_NODE_PATH) || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
     env: {
-      ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
+      // An undefined value leaves the variable out, so a packaged host never inherits these.
+      // NODE_OPTIONS and NODE_PATH could load other code into it before the app's own.
+      ...process.env, SQUIGGLY_LIBMPV_PATH: packaged ? bundledRuntime('libmpv-2.dll') : process.env.SQUIGGLY_LIBMPV_PATH,
+      ...(packaged ? { NODE_OPTIONS: undefined, NODE_PATH: undefined } : {}),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
@@ -378,7 +383,10 @@ function shellPlay() {
 function connectTo(typed: Connection, generation: number) {
   return Effect.gen(function* () {
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
-    const connection = yield* resolveAddress(typed);
+    const resolved = yield* resolveAddress(typed);
+    // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
+    if (resolved.type === 'plain-http') return resolved;
+    const { connection } = resolved;
     // The address check's own message (a bad address says how), not Effect's generic one.
     const candidate = yield* Effect.try({ try: () => new SubsonicClient(connection, metrics), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* candidate.ping();
@@ -386,16 +394,16 @@ function connectTo(typed: Connection, generation: number) {
     endRadio();
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear();
-    connectionGeneration++; resetSessionState();
+    const session = ++connectionGeneration; resetSessionState();
     // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
     const address = new URL(candidate.baseUrl);
     state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), reconnectError: null };
     // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
     updateTray(); updateMedia(); void loadSavedSong(candidate);
-    return connection;
+    return { ...resolved, session };
   });
 }
-// HTTPS, then HTTP, for an address typed without a scheme (resolveServerAddress in the connector).
+// HTTPS, then HTTP with consent, for an address typed without a scheme (resolveServerAddress in the connector).
 const resolveAddress = (connection: Connection) => resolveServerAddress(connection, candidate => new SubsonicClient(candidate, metrics));
 // At launch, with a saved sign-in. A failure leaves the connect screen filled in, with the reason.
 async function reconnect() {
@@ -450,6 +458,8 @@ function installHandlers() {
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
     if (command.type === 'play' && canResume()) { yield* resumeSaved(false); return; }
     if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
+    // The host checks again against a fresh list; this keeps an unlisted name from leaving main.
+    if (command.type === 'device' && !listedDevice(command.id, state.player.devices)) return yield* Effect.fail(new Error('That output device is not connected.'));
     yield* send(command);
   }));
   handle('open-files', () => Effect.gen(function* () {
@@ -468,9 +478,13 @@ function installHandlers() {
   handle('connect', (value, generation) => Effect.gen(function* () {
     const connection = yield* Schema.decodeUnknown(ConnectionSchema)(value).pipe(Effect.mapError(() => new Error('Enter a valid server address, username, and password.')));
     const resolved = yield* connectTo(connection, generation);
+    // Nothing connected or saved: the window asks, then connects to the http:// address.
+    if (resolved.type === 'plain-http') return resolved;
     // A sign-in that can't be saved securely stays in memory for this session (account.ts).
-    yield* Effect.promise(() => account.remember(resolved).catch(() => undefined));
+    // A disconnect that ran since this session began has already forgotten it, so don't save it back.
+    yield* Effect.promise(() => resolved.session === connectionGeneration ? account.remember(resolved.connection).catch(() => undefined) : Promise.resolve());
     state.server = { ...state.server, saved: account.saved };
+    return { type: 'connected' as const };
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
@@ -541,6 +555,11 @@ function installHandlers() {
     const changes = yield* Schema.decodeUnknown(SettingsPatchSchema)(value, { onExcessProperty: 'error' }).pipe(Effect.mapError(() => new Error('Invalid settings.')));
     const previous = settings.value;
     const next = { ...previous, ...changes };
+    // A new output must be one the engine listed. A saved one that's since gone may stay; the host
+    // falls back to the system default for it at start.
+    if (next.outputDevice !== previous.outputDevice && !listedDevice(next.outputDevice, state.player.devices)) {
+      return yield* Effect.fail(new Error('That output device is not connected.'));
+    }
     // A running engine applies exclusive output now; a stopped one reads the saved value at start.
     const exclusiveChanged = next.exclusiveOutput !== previous.exclusiveOutput && host !== null && state.player.engine === 'ready';
     if (exclusiveChanged) yield* send({ type: 'exclusive', on: next.exclusiveOutput });
@@ -631,7 +650,7 @@ function createWindow(mini: boolean) {
       additionalArguments: [
         ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
         ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
-        `--squiggly-config=${configDirectory()}`,
+        `--squiggly-config=${configDirectory(app.isPackaged)}`,
       ],
     },
   });
@@ -641,7 +660,8 @@ function createWindow(mini: boolean) {
   target.on('show', () => { if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state); });
   // A reloaded page starts with no sleep timer.
   target.webContents.on('did-start-loading', () => followingHidden.delete(target.webContents));
-  if (process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
+  // electron-vite's dev server. A packaged build only loads its own page, since this one gets the preload bridge.
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void target.loadFile(join(directory, '../renderer/index.html'));
   return target;
 }
