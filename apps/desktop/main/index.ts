@@ -347,7 +347,8 @@ function setPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuffle
 function shellPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuffle' }>) {
   void Effect.runPromise(Effect.either(metrics.measure('shell.play-mode', semaphores.audio.withPermits(1)(setPlayMode(command))))).then(broadcast);
 }
-// Loads the server-saved queue at its song and position, paused or playing.
+// Plays the server-saved queue from its song and position. The host holds it paused until the
+// position is reached, so the song never starts from 0:00 first.
 function resumeSaved() {
   return Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
@@ -534,7 +535,7 @@ function installHandlers() {
     if (began && state.player.repeat !== 'off') yield* semaphores.audio.withPermits(1)(setPlayMode({ type: 'repeat', mode: 'off' }));
   }), 'library');
   handle('radio:stop', () => Effect.sync(endRadio), 'library');
-  // Loads the server-saved queue paused at its song and position. Playback starts only on play.
+  // Plays the server-saved queue from its song and position (the deck's Resume, the Flip's cover screen).
   handle('resume-queue', () => resumeSaved(), 'server');
   ipcMain.handle('squiggly:get-settings', event => { assertSender(event); return settings.value; });
   handle('update-settings', value => Effect.gen(function* () {
