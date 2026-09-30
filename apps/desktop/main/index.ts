@@ -10,7 +10,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Effect, Either, Schema } from 'effect';
 import iconPath from './assets/icon.png?asset';
-import { emptyPlayer, emptyDiagnostics } from '../../../packages/core/contracts';
+import { emptyPlayer, emptyDiagnostics, listedDevice } from '../../../packages/core/contracts';
 import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema } from '../../../packages/core/validation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
@@ -450,6 +450,8 @@ function installHandlers() {
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
     if (command.type === 'play' && canResume()) { yield* resumeSaved(false); return; }
     if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
+    // The host checks again against a fresh list; this keeps an unlisted name from leaving main.
+    if (command.type === 'device' && !listedDevice(command.id, state.player.devices)) return yield* Effect.fail(new Error('That output device is not connected.'));
     yield* send(command);
   }));
   handle('open-files', () => Effect.gen(function* () {
@@ -541,6 +543,11 @@ function installHandlers() {
     const changes = yield* Schema.decodeUnknown(SettingsPatchSchema)(value, { onExcessProperty: 'error' }).pipe(Effect.mapError(() => new Error('Invalid settings.')));
     const previous = settings.value;
     const next = { ...previous, ...changes };
+    // A new output must be one the engine listed. A saved one that's since gone may stay; the host
+    // falls back to the system default for it at start.
+    if (next.outputDevice !== previous.outputDevice && !listedDevice(next.outputDevice, state.player.devices)) {
+      return yield* Effect.fail(new Error('That output device is not connected.'));
+    }
     // A running engine applies exclusive output now; a stopped one reads the saved value at start.
     const exclusiveChanged = next.exclusiveOutput !== previous.exclusiveOutput && host !== null && state.player.engine === 'ready';
     if (exclusiveChanged) yield* send({ type: 'exclusive', on: next.exclusiveOutput });

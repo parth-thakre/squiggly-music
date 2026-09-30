@@ -77,6 +77,7 @@ describe('desktop request schemas', () => {
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ closeToTray: 'yes' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: 'no' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: '' })).toThrow();
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: 'alsa/default\u0000' })).toThrow();
   });
 
   it('accepts only known, defined setting changes', () => {

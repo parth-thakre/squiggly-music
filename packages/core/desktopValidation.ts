@@ -1,6 +1,6 @@
 import { Schema } from 'effect';
 import type { Settings } from './contracts';
-import { IdSchema, QUEUE_LIMIT } from './validation';
+import { DeviceSchema, IdSchema, QUEUE_LIMIT } from './validation';
 
 // Desktop-only request and file schemas: queue editing, radio, settings, and window state.
 // Main-process only; keep out of renderer imports like validation.ts.
@@ -17,8 +17,6 @@ export const RadioSeedSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal('album', 'artist'), id: IdSchema, label: LabelSchema }),
 );
 
-// An mpv audio-device name, as listed by the engine.
-const DeviceSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024));
 // A stored file may predate a setting, so missing keys take their default. A wrong type rejects the whole file.
 const setting = (fallback: boolean) => Schema.optionalWith(Schema.Boolean, { default: () => fallback });
 export const SettingsFileSchema = Schema.Struct({

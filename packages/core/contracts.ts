@@ -173,6 +173,9 @@ export interface RadioApi {
   stop(): Promise<Result>;
 }
 export interface AudioDevice { name: string; description: string }
+// 'auto' or an output the engine listed. An mpv device string can name an ALSA plugin, and the
+// file plugin runs commands, so no other name may reach audio-device.
+export const listedDevice = (name: string, devices: readonly AudioDevice[]) => name === 'auto' || devices.some(d => d.name === name);
 export interface AudioPath {
   codec: string | null;
   decoderRate: number | null;

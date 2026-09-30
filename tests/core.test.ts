@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Cause, Deferred, Effect, Either, Exit, Fiber, Option, Schema } from 'effect';
 import { CommandSchema, ConnectionSchema } from '../packages/core/validation';
-import { emptyAudio, emptyPlayer } from '../packages/core/contracts';
+import { emptyAudio, emptyPlayer, listedDevice } from '../packages/core/contracts';
 import { Metrics } from '../packages/core/metrics';
 
 describe('command boundary', () => {
@@ -36,6 +36,14 @@ describe('command boundary', () => {
   it('bounds string payloads', () => {
     expect(() => decode({ type: 'seek', seconds: 0, queueIndex: 0, trackId: 'x'.repeat(257) })).toThrow();
     expect(() => decode({ type: 'device', id: '' })).toThrow();
+    expect(() => decode({ type: 'device', id: 'alsa/default\n}' })).toThrow();
+  });
+  it('lets only the system default or a listed output reach mpv', () => {
+    const devices = [{ name: 'pulse/dac', description: 'DAC' }];
+    expect(listedDevice('auto', [])).toBe(true);
+    expect(listedDevice('pulse/dac', devices)).toBe(true);
+    expect(listedDevice('pulse/dac', [])).toBe(false);
+    expect(listedDevice("alsa/file:'|id'", devices)).toBe(false);
   });
   it('requires credentials without accepting unlimited payloads', () => {
     const connection = Schema.decodeUnknownSync(ConnectionSchema);

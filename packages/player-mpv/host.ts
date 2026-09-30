@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { emptyAudio, emptyPlayer, type RepeatMode } from '../core/contracts';
+import { emptyAudio, emptyPlayer, listedDevice, type RepeatMode } from '../core/contracts';
 import { shuffleOrder } from '../core/playOrder';
 import { NativePlayer } from './native';
 import { clearPlayerSession } from './session';
@@ -177,7 +177,7 @@ try {
   // The saved output device, while it's connected. An unplugged one leaves the system default
   // rather than an output that can't open.
   const device = process.env.SQUIGGLY_AUDIO_DEVICE;
-  if (device && device !== 'auto' && player.devices.some(d => d.name === device)) native.set('audio-device', device);
+  if (device && device !== 'auto' && listedDevice(device, player.devices)) native.set('audio-device', device);
   if (process.env.SQUIGGLY_AUDIO_EXCLUSIVE === '1') {
     try { applyExclusive(true); } catch (error) { exclusive = false; player.error = error instanceof Error ? error.message : exclusiveError; }
   }
@@ -259,7 +259,11 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         native.command('seek', String(action.seconds), 'absolute+exact'); hostSeek = 4; break;
       }
       case 'volume': native.set('volume', String(action.percent)); break;
-      case 'device': native.set('audio-device', action.id); break;
+      case 'device':
+        // Listed afresh, so an output plugged in since the last poll counts and an unplugged one doesn't.
+        player.devices = native.devices();
+        if (!listedDevice(action.id, player.devices)) throw new Error('That output device is not connected. Choose another in Settings.');
+        native.set('audio-device', action.id); break;
       case 'next': native.command('playlist-next', 'weak'); break;
       case 'previous': native.command('playlist-prev', 'weak'); break;
       case 'queue-jump': {
