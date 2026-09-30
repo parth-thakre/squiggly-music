@@ -60,8 +60,9 @@ afterExtract: ./scripts/release-notices.mjs
 # - NODE_OPTIONS, NODE_EXTRA_CA_CERTS, and --inspect off, so neither the environment nor the
 #   command line can load code into the main process.
 # - Load the app only from app.asar, and check app.asar against the hash electron-builder
-#   embeds in the Windows exe. Linux Electron has no asar integrity check, so there the fuse
-#   does nothing. Files in app.asar.unpacked (asarUnpack above) are never checked.
+#   embeds in the app: in the Windows exe's resources, and in Info.plist (ElectronAsarIntegrity)
+#   on macOS. Linux Electron has no asar integrity check, so there the fuse does nothing. Files
+#   in app.asar.unpacked (asarUnpack above) are never checked.
 electronFuses:
   runAsNode: true
   enableNodeOptionsEnvironmentVariable: false
