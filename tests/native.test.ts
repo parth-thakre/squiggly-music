@@ -395,6 +395,25 @@ describe('native client API compatibility', () => {
   });
 });
 
+describe('native player options', () => {
+  it('verifies TLS, follows no references, and asks for ytdl off where the build has it', async () => {
+    const options: [string, string][] = [];
+    vi.doMock('koffi', () => ({ default: {
+      struct: vi.fn(), decode: vi.fn(),
+      load: () => ({ func: (signature: string) => {
+        if (signature.includes('mpv_create')) return () => ({});
+        // A build without Lua (the Windows one) has no ytdl option.
+        if (signature.includes('mpv_set_option_string')) return (_ctx: unknown, name: string, value: string) => { options.push([name, value]); return name === 'ytdl' ? -5 : 0; };
+        return () => 0;
+      } }),
+    } }));
+    const { NativePlayer } = await import('../packages/player-mpv/native');
+    const native = new NativePlayer();
+    expect(options).toEqual(expect.arrayContaining([['tls-verify', 'yes'], ['access-references', 'no'], ['ytdl', 'no']]));
+    native.close();
+  });
+});
+
 describe('player session cleanup', () => {
   it('drops authenticated playlist entries without resetting volume or output device', () => {
     const commands: string[][] = [];

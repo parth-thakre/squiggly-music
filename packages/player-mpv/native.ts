@@ -64,15 +64,22 @@ export class NativePlayer {
       // match (an album, usually), and reopens it in the new format when they don't. ('yes'
       // would hold the first song's format and resample the rest.) prefetch-playlist opens the
       // next song's stream before this one ends, so a network fetch doesn't open a gap.
+      // Stream URLs carry the Subsonic token, and mpv leaves tls-verify off by default, so HTTPS
+      // certificates are checked (FFmpeg uses the system's CAs: Schannel on Windows, GnuTLS or
+      // OpenSSL trust on Linux). access-references=no keeps a playlist or reference inside a file
+      // from sending mpv to other URLs or paths.
       const options: Record<string, string> = {
         config: 'no', 'load-scripts': 'no', terminal: 'no', video: 'no',
         idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'weak', 'prefetch-playlist': 'yes',
         replaygain: 'no', volume: '100', 'volume-max': '100',
-        'audio-display': 'no',
+        'audio-display': 'no', 'tls-verify': 'yes', 'access-references': 'no',
       };
       for (const [name, value] of Object.entries(options)) {
         if (this.option(this.handle, name, value) < 0) throw new Error(`libmpv rejected required option: ${name}`);
       }
+      // No youtube-dl lookups for URLs. The option exists only in builds with Lua, so a build
+      // without it (the Windows one) rejects the name and has no ytdl hook to turn off.
+      this.option(this.handle, 'ytdl', 'no');
       // Only the smoke test may request a null output. Never used as an app fallback.
       if (process.env.SQUIGGLY_TEST_NULL_AUDIO === '1') {
         this.option(this.handle, 'ao', 'null');
