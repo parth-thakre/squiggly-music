@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage,
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
@@ -261,10 +261,15 @@ async function launchPlayer() {
   // Packaged builds keep the app in app.asar, which the bundled Node can't read; the audio host
   // and its imports are unpacked beside it (see asarUnpack in electron-builder.yml).
   const hostDirectory = directory.replace(/app\.asar(?=[\\/]|$)/, 'app.asar.unpacked');
+  // The host runs in the app's own data folder, not wherever the app was started from: library
+  // loaders search the current directory. Windows loses nothing, since the packaged build names its
+  // DLL by full path and that DLL links only system libraries. A relative override is resolved first.
+  const libmpvPath = process.env.SQUIGGLY_LIBMPV_PATH ? resolve(process.env.SQUIGGLY_LIBMPV_PATH) : bundledRuntime('libmpv-2.dll');
   const child = fork(join(hostDirectory, 'player.js'), [], {
     execPath: process.env.SQUIGGLY_NODE_PATH || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
+    cwd: app.getPath('userData'),
     env: {
-      ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
+      ...process.env, SQUIGGLY_LIBMPV_PATH: libmpvPath,
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',

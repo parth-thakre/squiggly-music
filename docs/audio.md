@@ -6,9 +6,11 @@ Squiggly tries to leave the signal alone and to be honest about what it can see.
 
 On the desktop, libmpv decodes and plays everything. Squiggly ignores any mpv config or scripts on your machine, asks Navidrome for the original file (`format=raw`), starts at 100% volume, turns ReplayGain off, and adds no EQ or crossfade. Anything below 100% volume is attenuation, and the signal-path line says so.
 
+On macOS the libmpv is the one you installed with Homebrew (or MacPorts), not one the app ships, so the signal-path line reports what that mpv says. Its media-key handling is off, as it is for any libmpv, so it doesn't compete with the app for the system's Now Playing controls.
+
 Songs play gaplessly when they share a format, as an album's songs usually do: mpv keeps the output open from one to the next, and opens the next song's stream a few seconds early so the network doesn't open a gap. When the format changes, the output reopens in the new format instead of converting the song to the old one. `tests/native.test.ts` checks both. The browser version plays through two audio elements that take turns, so it has a short gap between songs.
 
-Exclusive output is a request to mpv. On Windows that asks WASAPI for exclusive use of the device; most Linux setups ignore it. The app reports whether mpv accepted the request. It can't tell whether the operating system actually gave it the device. On Linux the app also asks the sound server what it runs the sink at, which shows whether the server resamples what mpv sends (see [The sink line](#the-sink-line)).
+Exclusive output is a request to mpv. On Windows that asks WASAPI for exclusive use of the device, and on macOS CoreAudio; most Linux setups ignore it. The app reports whether mpv accepted the request. It can't tell whether the operating system actually gave it the device. On Linux the app also asks the sound server what it runs the sink at, which shows whether the server resamples what mpv sends (see [The sink line](#the-sink-line)).
 
 On Windows and macOS, the system media controls come from Chromium, which only shows them while the window plays audio itself. So the window plays a silent clip alongside mpv, following its play and pause. With exclusive output on, that second stream would compete with mpv for the device, so there's no silent clip. On Windows the media keys still work, but the media flyout doesn't show Squiggly. Linux uses MPRIS and has no silent clip.
 

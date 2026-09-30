@@ -1,5 +1,6 @@
 import koffi from 'koffi';
 import type { AudioDevice, AudioPath } from '../core/contracts';
+import { libmpvCandidates, libmpvMissing } from './libraries';
 
 // All FFI calls run in the dedicated player process. No audio samples enter JS.
 // Uses libmpv's public client API, not an mpv executable or a browser audio element.
@@ -27,15 +28,12 @@ export class NativePlayer {
   private destroy;
 
   constructor(libraryPath?: string) {
-    const candidates = libraryPath ? [libraryPath] : process.platform === 'win32'
-      ? ['mpv-2.dll', 'libmpv-2.dll'] : process.platform === 'darwin'
-        ? ['libmpv.2.dylib', '/opt/homebrew/lib/libmpv.2.dylib', '/usr/local/lib/libmpv.2.dylib']
-        : ['libmpv.so.2', 'libmpv.so.1'];
+    const candidates = libmpvCandidates(process.platform, libraryPath);
     let library: ReturnType<typeof koffi.load> | undefined;
     for (const candidate of candidates) {
       try { library = koffi.load(candidate); break; } catch { /* Try the next platform path. */ }
     }
-    if (!library) throw new Error('libmpv could not be loaded. Install the libmpv runtime or set SQUIGGLY_LIBMPV_PATH, then restart the audio engine.');
+    if (!library) throw new Error(libmpvMissing(process.platform, libraryPath));
     this.library = library;
     this.clientApiVersion = null;
     this.supportsStopKeepPlaylist = false;

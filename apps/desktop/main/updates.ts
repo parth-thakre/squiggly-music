@@ -9,6 +9,8 @@ import type { UpdateState } from '../../../packages/core/contracts';
 //   on Restart to update, or quietly when the app quits.
 // - notify: the portable exe and the Fedora RPM can't replace themselves safely (the portable
 //   would become an installed copy; the RPM would need root), so they only say a version is out.
+//   So do the macOS builds: electron-updater installs through Squirrel.Mac, which needs a signed
+//   app, and they are unsigned. Their latest-mac.yml gives only the version.
 // - off: development builds, which have no release to compare with.
 const RELEASES = 'https://github.com/parth-thakre/squiggly-music/releases';
 const FIRST_CHECK = 10_000;
