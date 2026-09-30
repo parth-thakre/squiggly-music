@@ -270,6 +270,8 @@ export interface UpdatesApi {
 }
 export interface ServerState {
   connected: boolean; name: string | null; sessionId: string | null;
+  // The server address and username signed in, for what the renderer keeps per account.
+  account: string | null;
   // The saved sign-in (see apps/desktop/main/account.ts), without its password.
   saved: { url: string; username: string } | null;
   // Whether connecting will save the sign-in: the system can encrypt the password.
@@ -389,6 +391,7 @@ export interface AndroidSession {
   connected: boolean; serverName: string | null;
   // Changes with every sign-in; library caches are dropped with it, as on the desktop.
   sessionId: string | null;
+  account: string | null;
   signIn: Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
 }
 // What the native player reports. Times are seconds; a duration of 0 is unknown.
