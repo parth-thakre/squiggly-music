@@ -4,13 +4,15 @@ Windows releases are signed through SignPath Foundation, which signs open source
 
 ## How a release is signed
 
-The Windows job in `.github/workflows/release.yml` builds in two passes, because the installer can't be opened up and signed inside afterwards:
+`.github/workflows/release.yml` signs a release in two passes, because the installer can't be opened up and signed inside afterwards. The passes are split into jobs so the SignPath token never reaches a runner that ran `npm ci` or any of this repository's code:
 
-1. It builds the app and smoke-tests it. This builds unsigned installers too, because electron-builder only writes `resources/app-update.yml`, the updater's settings, into the app when it builds the NSIS installer.
-2. It sends the app to SignPath, which signs `Squiggly Music.exe` and `libmpv-2.dll` (artifact configuration `app`).
-3. It builds the installer and portable exe from the signed app (`electron-builder --prepackaged`).
-4. It sends those two to SignPath (artifact configuration `installers`).
-5. It rebuilds `latest.yml` and the installer's block map, since signing changed the installer (`scripts/rehash-windows-update.mjs`), and checks every signature.
+1. `windows` builds the app and smoke-tests it. This builds unsigned installers too, because electron-builder only writes `resources/app-update.yml`, the updater's settings, into the app when it builds the NSIS installer.
+2. `windows-sign-app` sends the app to SignPath, which signs `Squiggly Music.exe` and `libmpv-2.dll` (artifact configuration `app`).
+3. `windows-installers` checks those signatures and builds the installer and portable exe from the signed app (`electron-builder --prepackaged`).
+4. `windows-sign-installers` sends those two to SignPath (artifact configuration `installers`).
+5. `windows-release` rebuilds `latest.yml` and the installer's block map, since signing changed the installer (`scripts/rehash-windows-update.mjs`), and checks every signature.
+
+The two signing jobs check nothing out and install nothing. They hand SignPath a workflow artifact the job before uploaded, and upload what SignPath sends back for the job after.
 
 Each request waits up to an hour for someone to approve it in SignPath, so a release takes two approvals.
 
@@ -31,7 +33,7 @@ Only release tags (`v*`) are signed. A manual run of the workflow from a branch 
    - Add the secret `SIGNPATH_API_TOKEN`, the CI user's API token.
 5. Under Settings › Rules › Rulesets, add a tag ruleset for `v*` that restricts creations, updates, and deletions, with only maintainers allowed to bypass it. Anyone who can push a `v*` tag can start a signing request.
 
-The token is only given to the two signing steps, never to the build.
+The token is only given to the two signing jobs, never to a job that builds.
 
 ### Artifact configuration `app`
 
