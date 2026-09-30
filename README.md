@@ -45,7 +45,7 @@ Download a build from [Releases](https://github.com/parth-thakre/squiggly-music/
 sha256sum --ignore-missing -c SHA256SUMS
 ```
 
-On Windows, run the setup program or the portable exe. They aren't signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.
+On Windows, run the setup program or the portable exe. They aren't signed yet ([CODE_SIGNING.md](CODE_SIGNING.md) says how they will be), so SmartScreen will warn you. Choose More info, then Run anyway.
 
 On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
 
@@ -102,6 +102,7 @@ The libmpv tests only decode audio when `SQUIGGLY_LIBMPV_PATH` points at a libra
 
 - [docs/packaging.md](docs/packaging.md) covers installers, pinned runtimes, releases, and checksums.
 - [docs/android.md](docs/android.md) covers the Android app: how it's built, signing, and testing on an emulator.
+- [docs/signing.md](docs/signing.md) covers signing Windows releases through SignPath Foundation.
 - [docs/audio.md](docs/audio.md) explains what the signal-path readout can and can't tell you.
 - [docs/ui-handoff.md](docs/ui-handoff.md) describes how the interface is put together.
 - [docs/extensions.md](docs/extensions.md) covers writing extensions and what trusting one means.
