@@ -37,6 +37,7 @@
     <binary>squiggly-music.sh</binary>
   </provides>
   <releases>
+    <release version="0.3.0-beta.4" date="2026-09-30" type="development" />
     <release version="0.2.0" date="2026-09-29" />
     <release version="0.1.0" date="2026-09-28" />
   </releases>
