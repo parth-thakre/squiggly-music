@@ -143,8 +143,12 @@ function onKeyDown(event: KeyboardEvent) {
   if (event.repeat && !registry.commands.get(result.run)?.repeat) return;
   void runCommand(result.run);
 }
-// The mouse's back and forward buttons.
+// The mouse's back and forward buttons, where nothing else acts on them: the desktop window and
+// the Android app have no browser around them. In a browser the browser steps the history itself,
+// and acting here too would step it twice.
+const noBrowser = () => 'squiggly' in window || 'squigglyAndroid' in window;
 function onMouseUp(event: MouseEvent) {
+  if (!noBrowser()) return;
   const id = event.button === 3 ? 'builtin:back' : event.button === 4 ? 'builtin:forward' : null;
   if (id && allowed(id)) void runCommand(id);
 }

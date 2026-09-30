@@ -775,7 +775,7 @@ export function SettingsView() {
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
-      {mode !== 'web' && <Disconnect />}
+      {mode !== 'web' ? <Disconnect /> : <SignOut />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
@@ -835,6 +835,22 @@ function UpdateSettings() {
 // Desktop and Android; the browser build signs out from the deck. The desktop's main process
 // (or the Android bridge) forgets the server and stops playback, and the app returns to the
 // connect screen.
+// The browser build: the page's own sign-in, when the host asks for a password. Without one the
+// page is open to whoever can reach it, and there is nothing here to sign out of.
+function SignOut() {
+  const access = usePlayer(s => s.access);
+  const serverName = usePlayer(s => s.serverName);
+  const [busy, setBusy] = useState(false);
+  if (access !== 'signed-in' && access !== 'open') return null;
+  return <div className="setting-action">
+    <p><strong>Sign out</strong>
+      <span>{access === 'signed-in'
+        ? `This page is signed in with its own password; the ${serverName ?? 'server'} account stays with the host. Signing out asks for the page's password again.`
+        : `This page has no password of its own: whoever can open it uses the host's ${serverName ?? 'server'} account. There is nothing to sign out of here.`}</span></p>
+    {access === 'signed-in' && <button type="button" className="text-button" disabled={busy} onClick={async () => { setBusy(true); await player.signOut(); setBusy(false); }}>
+      {busy ? 'Signing out' : 'Sign out'}</button>}
+  </div>;
+}
 function Disconnect() {
   const serverName = usePlayer(s => s.serverName);
   const connected = usePlayer(s => s.connected);
