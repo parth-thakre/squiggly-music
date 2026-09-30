@@ -2,6 +2,7 @@ package dev.squiggly.music
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import androidx.media3.common.AudioAttributes
@@ -10,7 +11,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -58,7 +58,8 @@ object Playback {
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(30000)
         player = ExoPlayer.Builder(app)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(app, http)))
+            // HTTP only: every song streams from the server, and nothing on the phone is opened.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(http))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             // Headphones unplugged: pause, as every phone player does.
             .setHandleAudioBecomingNoisy(true)
@@ -257,10 +258,18 @@ object Playback {
 
     private fun ids() = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
 
+    // The player would also open file:, content:, asset: and data: addresses. The page's are
+    // always the server's, so anything else is a malformed operation.
+    private fun stream(address: String): String {
+        val scheme = Uri.parse(address).scheme?.lowercase()
+        require(scheme == "http" || scheme == "https") { "Not a stream address." }
+        return address
+    }
+
     private fun items(list: JSONArray): List<MediaItem> = (0 until list.length()).map { i ->
         val item = list.getJSONObject(i)
         val id = item.getString("id")
-        val entry = Entry(item.getString("url"), item.getString("fallbackUrl"), item.getString("track"))
+        val entry = Entry(stream(item.getString("url")), stream(item.getString("fallbackUrl")), item.getString("track"))
         entries[id] = entry
         val coverArt = item.optNullableString("coverArt")
         val duration = if (item.isNull("duration")) null else item.optDouble("duration")
