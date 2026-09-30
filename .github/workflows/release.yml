@@ -132,6 +132,12 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 30
+    # Remote diagnostics for beta tags only (a hyphen: v0.3.0-beta.1), from the repository's
+    # SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN secrets. Stable tags and manual runs get empty
+    # values, which the build treats as unset. See docs/packaging.md, "Beta builds and diagnostics".
+    env:
+      SQUIGGLY_DIAG_URL: ${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-') && secrets.SQUIGGLY_DIAG_URL || '' }}
+      SQUIGGLY_DIAG_TOKEN: ${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-') && secrets.SQUIGGLY_DIAG_TOKEN || '' }}
     steps:
       - name: Install system packages
         run: dnf -y install git-core tar zstd xz rpm-build libxcrypt-compat
@@ -149,6 +155,15 @@ jobs:
         with:
           path: .local/downloads
           key: linux-downloads-${{ hashFiles('scripts/fetch-linux-runtime.mjs', 'scripts/fetch-common.mjs') }}
+      # electron.vite.config.ts refuses these for a stable version too; this stops the job first.
+      - name: Diagnostics only in beta builds
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ -n "$SQUIGGLY_DIAG_URL$SQUIGGLY_DIAG_TOKEN" ] && [[ "${version%%+*}" != *-* ]]; then
+            echo "::error::Diagnostics are for beta builds only, and $version is a stable version. SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN must not be set."
+            exit 1
+          fi
       - run: npm ci
       - run: npm run package:linux
       # Installs the RPM the way users do, so dnf resolves mpv-libs from its Requires, then
@@ -173,6 +188,10 @@ jobs:
     permissions:
       contents: read
     timeout-minutes: 30
+    # Beta tags only, as in the linux job.
+    env:
+      SQUIGGLY_DIAG_URL: ${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-') && secrets.SQUIGGLY_DIAG_URL || '' }}
+      SQUIGGLY_DIAG_TOKEN: ${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-') && secrets.SQUIGGLY_DIAG_TOKEN || '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -193,6 +212,14 @@ jobs:
         with:
           name: libmpv-windows
           path: .local/libmpv-windows
+      - name: Diagnostics only in beta builds
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ -n "$SQUIGGLY_DIAG_URL$SQUIGGLY_DIAG_TOKEN" ] && [[ "${version%%+*}" != *-* ]]; then
+            echo "::error::Diagnostics are for beta builds only, and $version is a stable version. SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN must not be set."
+            exit 1
+          fi
       - run: npm ci
       - run: npm run package:win
       # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll,
@@ -286,6 +313,8 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
           ATTESTED: ${{ steps.attest.outcome == 'success' }}
+          # Beta packages were built with diagnostics when both secrets exist (the linux job's env).
+          DIAGNOSTICS: ${{ secrets.SQUIGGLY_DIAG_URL != '' && secrets.SQUIGGLY_DIAG_TOKEN != '' }}
         run: |
           version="${TAG#v}"
           notes="$RUNNER_TEMP/release-notes.md"
@@ -295,7 +324,12 @@ jobs:
             sed -i '/<!-- attestation:start -->/,/<!-- attestation:end -->/d' "$notes"
           fi
           prerelease=()
-          case "$version" in *-*) prerelease=(--prerelease) ;; esac
+          case "$version" in *-*)
+            prerelease=(--prerelease)
+            if [ "$DIAGNOSTICS" = "true" ]; then
+              { echo; sed -e "s|{{VERSION}}|$version|g" .github/release-notes-beta-diagnostics.md; } >> "$notes"
+            fi ;;
+          esac
           gh release create "$TAG" release/* \
             --verify-tag \
             --title "Squiggly Music $version" \
