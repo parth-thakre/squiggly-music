@@ -10,6 +10,13 @@ const EndFile = koffi.struct('squiggly_mpv_end_file', {
   // This prefix is also safe on client API 1.107, before playlist fields existed.
   reason: 'int', error: 'int',
 });
+// Client API 1.108 (mpv 0.33, the same version as stop keep-playlist) added the id of the
+// playlist entry that ended.
+const EndFileEntry = koffi.struct('squiggly_mpv_end_file_entry', {
+  reason: 'int', error: 'int', playlist_entry_id: 'int64_t',
+});
+// MPV_ERROR_AO_INIT_FAILED: the audio output wouldn't open (a device unplugged, or in a bad state).
+const AO_INIT_FAILED = -14;
 
 export class NativePlayer {
   readonly clientApiVersion: string | null;
@@ -115,25 +122,31 @@ export class NativePlayer {
     if (this.commandNative(this.handle, [...args, null]) < 0) throw new Error(`Audio engine rejected ${args[0]}.`);
   }
   // starts: entries mpv began loading (start-file). seeks: seeks mpv carried out, the host's own
-  // and loop-file's, which goes back to the start of a repeating song by seeking.
-  drainEvents(): { error: string | null; shutdown: boolean; starts: number; seeks: number } {
+  // and loop-file's, which goes back to the start of a repeating song by seeking. outputFailed:
+  // the first entry that ended because the audio output wouldn't open, by mpv's playlist entry id
+  // (null before client API 1.108).
+  drainEvents(): { error: string | null; shutdown: boolean; starts: number; seeks: number; outputFailed: { entry: number | null } | null } {
     let error: string | null = null;
     let starts = 0, seeks = 0;
+    let outputFailed: { entry: number | null } | null = null;
     // Limit work per tick even if a backend floods its event queue.
     for (let i = 0; i < 100; i++) {
       const pointer = this.waitEvent(this.handle, 0);
       if (!pointer) break;
       const event = koffi.decode(pointer, MpvEvent) as { event_id: number; data: unknown };
       if (event.event_id === 0) break;
-      if (event.event_id === 1) return { error, shutdown: true, starts, seeks };
+      if (event.event_id === 1) return { error, shutdown: true, starts, seeks, outputFailed };
       if (event.event_id === 6) starts++;
       if (event.event_id === 20) seeks++;
       if (event.event_id === 7 && event.data) {
-        const end = koffi.decode(event.data, EndFile) as { reason: number; error: number };
+        const end = koffi.decode(event.data, this.supportsStopKeepPlaylist ? EndFileEntry : EndFile) as { reason: number; error: number; playlist_entry_id?: number | bigint };
         if (end.reason === 4) error = `Playback failed in libmpv (code ${end.error}). Check the file, server connection, and output device.`;
+        if (end.reason === 4 && end.error === AO_INIT_FAILED && !outputFailed) {
+          outputFailed = { entry: end.playlist_entry_id === undefined ? null : Number(end.playlist_entry_id) };
+        }
       }
     }
-    return { error, shutdown: false, starts, seeks };
+    return { error, shutdown: false, starts, seeks, outputFailed };
   }
   devices(): AudioDevice[] {
     const count = Math.min(this.number('audio-device-list/count') ?? 0, 128);
