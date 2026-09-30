@@ -3,6 +3,7 @@ import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort }
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import type { RadioStation } from '../../../../../packages/core/contracts';
 import { stationTrack } from '../../../../../packages/core/stations';
+import { sinkSentence } from '../../../../../packages/core/sinks';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, playRequests, usePlayer } from './player';
@@ -907,9 +908,11 @@ export function DiagnosticsView() {
       <tr><th>Total memory</th><td>{diagnostics.processes.reduce((sum, p) => sum + p.memoryMB, 0).toFixed(0)} MB</td><td /></tr>
       <tr><th>Main thread delay</th><td>{diagnostics.eventLoopDelayMs.toFixed(1)} ms</td><td /></tr>
       <tr><th>Audio host messages</th><td>{diagnostics.playerMessagesPerSecond.toFixed(1)} per second</td><td /></tr>
-      {/* What mpv decoded into and handed to the system. The system mixer's final format isn't reported. */}
+      {/* What mpv decoded into and handed to the system, and on Linux what the sound server says it
+          runs the sink at. What the DAC receives isn't reported. */}
       {audio?.decoderFormat && <tr><th>Decoded</th><td>{[audio.decoderFormat, kHz(audio.decoderRate)].filter(Boolean).join(' · ')}</td><td /></tr>}
       {audio?.outputBackend && <tr><th>Handed to</th><td>{[audio.outputBackend, kHz(audio.outputRate), audio.outputFormat].filter(Boolean).join(' · ')}</td><td /></tr>}
+      {audio?.sink && <tr><th>Sink</th><td>{audio.sink.name}</td><td>{sinkSentence(audio.sink, audio.outputRate)}</td></tr>}
     </tbody></table>
   </>;
 }

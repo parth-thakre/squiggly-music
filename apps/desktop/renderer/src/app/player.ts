@@ -141,10 +141,15 @@ const sameTrack = (a: Track, b: Track) => a.id === b.id && a.title === b.title &
   && a.duration === b.duration && a.coverArt === b.coverArt && a.starred === b.starred && a.sourceFormat === b.sourceFormat
   && a.sourceSampleRate === b.sourceSampleRate && a.sourceBitDepth === b.sourceBitDepth;
 const sameList = <T,>(a: readonly T[], b: readonly T[], same: (x: T, y: T) => boolean) => a === b || (a.length === b.length && a.every((x, i) => same(x, b[i])));
-function sameFields<T extends object>(a: T | null, b: T) {
+// One level down too, for small objects inside (audio.sink arrives as a fresh copy every time).
+const plainObject = (value: unknown): value is object => typeof value === 'object' && value !== null && !Array.isArray(value);
+function sameFields<T extends object>(a: T | null, b: T, nested = true): boolean {
   if (!a) return false;
   const keys = Object.keys(b) as (keyof T)[];
-  return keys.length === Object.keys(a).length && keys.every(key => a[key] === b[key]);
+  return keys.length === Object.keys(a).length && keys.every(key => {
+    const x = a[key], y = b[key];
+    return x === y || (nested && plainObject(x) && plainObject(y) && sameFields(x, y, false));
+  });
 }
 
 if (desktop) {

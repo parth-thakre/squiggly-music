@@ -24,7 +24,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
       outputChannels: null, outputBackend: null, requestedDevice: 'auto', replayGain: null, exclusiveRequested: null,
-      filters: null, bufferSeconds: null, streamBytesPerSecond: null, buffering: false,
+      filters: null, bufferSeconds: null, streamBytesPerSecond: null, buffering: false, sink: null,
     };
     const signIn = { saved: null, canRemember: true, reconnecting: false, reconnectError: null, ...signInPatch };
     let server: { connected: boolean; name: string | null; sessionId: string | null; account: string | null } = connected

@@ -27,6 +27,7 @@ import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
 import { Radio } from './radio';
+import { readSink, SinkWatch } from './sinks';
 import { startMpris, type MediaSession } from './mpris';
 import { Account } from './account';
 import { initialUpdateState, Updates } from './updates';
@@ -109,6 +110,8 @@ let account = new Account('', safeStorage);
 let playModes = new JsonStore('', PlayModesSchema, defaultPlayModes());
 const updates = new Updates(() => state.update, next => { state.update = next; broadcast(); }, () => settings.value.checkForUpdates);
 const plays = new PlayTracker();
+// What the Linux sound server says the sink mpv plays into runs at (sinks.ts). Nothing elsewhere.
+const sinks = new SinkWatch(query => readSink(query), { record: (ms, failed) => metrics.record('sink.probe', ms, failed) });
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
 // still in flight) belongs to the session that was current when quit began.
 let finalSession: { generation: number; client: SubsonicClient } | null = null;
@@ -193,6 +196,7 @@ function observePlayer() {
   const player = state.player;
   updateTray(); updateMedia(); updateSystemMedia(); void radio.topUp();
   queueSync.observe(player, connectionGeneration, settings.value.syncQueue && server !== null);
+  sinks.observe(player, host?.pid);
   const events = plays.update(player, performance.now());
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
 }
@@ -253,7 +257,7 @@ async function launchPlayer() {
   rejectPending('Audio engine restarted.');
   if (previous) await terminateHost(previous);
   if (quitting) return;
-  endRadio(); state.player = emptyPlayer();
+  endRadio(); sinks.reset(); state.player = emptyPlayer();
   // Packaged builds keep the app in app.asar, which the bundled Node can't read; the audio host
   // and its imports are unpacked beside it (see asarUnpack in electron-builder.yml).
   const hostDirectory = directory.replace(/app\.asar(?=[\\/]|$)/, 'app.asar.unpacked');
@@ -274,7 +278,7 @@ async function launchPlayer() {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
     messages++; bytes += Buffer.byteLength(JSON.stringify(message));
     if (message.type === 'snapshot') {
-      state.player = { ...message.player, radio: radio.view }; hostResources = message.resources; broadcast(); observePlayer();
+      state.player = { ...message.player, radio: radio.view, audio: { ...message.player.audio, sink: sinks.view(message.player.audio) } }; hostResources = message.resources; broadcast(); observePlayer();
       if (message.player.engine === 'crashed') {
         // The host publishes its reason before native teardown. Enforce a bound
         // here because mpv_terminate_destroy may block inside the child.
@@ -622,7 +626,7 @@ function installHandlers() {
     const report = {
       version: app.getVersion(), platform: process.platform, capturedAt: new Date().toISOString(),
       diagnostics: state.diagnostics, engine: state.player.engine, audio: state.player.audio,
-      verification: 'OS mixer and physical DAC format are not verified. Bit-perfect output is not established.',
+      verification: 'OS mixer and physical DAC format are not verified. Bit-perfect output is not established. The sink is what the sound server reports.',
     };
     yield* Effect.tryPromise(() => writeFile(result.filePath!, JSON.stringify(report, null, 2), { mode: 0o600 }));
   }), 'dialog');
