@@ -6,23 +6,26 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
-import { rm, writeFile } from 'node:fs/promises';
+import { rm, statfs, writeFile } from 'node:fs/promises';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Effect, Either, Schema } from 'effect';
 import iconPath from './assets/icon.png?asset';
-import { emptyPlayer, emptyDiagnostics } from '../../../packages/core/contracts';
+import { emptyPlayer, emptyDiagnostics, ONLINE } from '../../../packages/core/contracts';
+import { LAUNCH_WAIT, OUT_OF_REACH, PROBE_TIMEOUT, Reach, type ProbeOutcome } from '../../../packages/core/reach';
+import { PlayReports, type SendOutcome } from '../../../packages/core/plays';
+import { KEPT_MESSAGES, keyOf, MB } from '../../../packages/core/kept';
 import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema, SaveM3uSchema } from '../../../packages/core/validation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
 } from '../../../packages/core/desktopValidation';
-import { defaultPlayModes, OpenPathsSchema, PlayModesSchema } from '../../../packages/core/desktopValidation';
+import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, PlaysFileSchema } from '../../../packages/core/desktopValidation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { stationIdOf } from '../../../packages/core/stations';
 import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
-import { SubsonicClient, libraryCall, libraryMethods, resolveServerAddress } from '../../../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, libraryMethods, reachOf, resolveServerAddress, ServerError, Unreachable } from '../../../packages/adapter-opensubsonic/client';
 import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
@@ -36,6 +39,9 @@ import { openLocalFiles, withLocalPaths } from './localPaths';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
+import { KeptStore } from './keptStore';
+import { choosePlayable, KeepManager, pickLocation } from './keepManager';
+import { startKept } from './keptBridge';
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
@@ -66,7 +72,7 @@ const metrics = new Metrics();
 const loop = monitorEventLoopDelay({ resolution: 20 });
 const state: AppSnapshot = {
   player: emptyPlayer(), diagnostics: emptyDiagnostics(), update: initialUpdateState(),
-  server: { connected: false, name: null, sessionId: null, account: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null },
+  server: { connected: false, name: null, sessionId: null, account: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null, reach: ONLINE, queuedPlays: 0 },
 };
 const windows: { main: BrowserWindow | null; mini: BrowserWindow | null } = { main: null, mini: null };
 let tray: Tray | null = null;
@@ -97,6 +103,10 @@ const semaphores = {
   window: Effect.runSync(Effect.makeSemaphore(1)),
   // Background play reports and queue saves. They never hold a renderer-facing permit.
   sync: Effect.runSync(Effect.makeSemaphore(2)),
+  // Keep on this device: one admission, forget, or read at a time.
+  kept: Effect.runSync(Effect.makeSemaphore(1)),
+  // Retry while the server is away.
+  reach: Effect.runSync(Effect.makeSemaphore(1)),
 };
 let connectionGeneration = 0;
 // Library tracks the renderer may queue by ID. Bounded; re-inserting on use keeps recent entries.
@@ -115,6 +125,66 @@ const sinks = new SinkWatch(query => readSink(query), { record: (ms, failed) => 
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
 // still in flight) belongs to the session that was current when quit began.
 let finalSession: { generation: number; client: SubsonicClient } | null = null;
+// Songs kept on this computer (<userData>/kept), and their downloads. Created at ready.
+let keptStore: KeptStore | null = null;
+let keeper: KeepManager | null = null;
+let keptPush: () => void = () => {};
+// Finished plays waiting for the server (<userData>/plays.json). Created at ready.
+let playsStore = new JsonStore('', PlaysFileSchema, { version: 1 as const, account: null, plays: [] });
+let reports: PlayReports | null = null;
+// A session opened at launch while the server was out of reach: the client never pinged, so its
+// extension discovery can't be trusted. Probes use a fresh client until one answers.
+let unverified: { connection: Connection } | null = null;
+let answered: SubsonicClient | null = null;
+const hostName = (client: SubsonicClient, name?: string) => {
+  // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
+  const address = new URL(client.baseUrl);
+  const where = `${address.protocol === 'http:' ? 'http://' : ''}${address.host}`;
+  return name ? `${name} (${where})` : where;
+};
+const reach = new Reach({
+  probe: probeServer,
+  changed: next => {
+    state.server = { ...state.server, reach: next };
+    // A pause that the confirming probe didn't bear out goes on at once.
+    if (!next.away && !next.checking) keeper?.resumePaused();
+    broadcast();
+  },
+  returned: outcome => serverReturned(outcome),
+  refused: error => serverRefused(error),
+});
+// Whether the server answers: a ping within 8 seconds. Unverified sessions ask with a fresh client.
+async function probeServer(): Promise<ProbeOutcome> {
+  const client = unverified ? new SubsonicClient(unverified.connection, metrics) : server;
+  if (!client) return { kind: 'refused', error: 'Connect to a server first.' };
+  const result = await Effect.runPromise(Effect.either(metrics.measure('shell.probe', client.ping().pipe(
+    Effect.timeoutFail({ duration: PROBE_TIMEOUT, onTimeout: () => new Unreachable(OUT_OF_REACH) })))));
+  if (Either.isRight(result)) { answered = client; return { kind: 'answered', name: result.right.name }; }
+  return reachOf(result.left) === 'unreachable' ? { kind: 'unreachable' } : { kind: 'refused', error: result.left.message };
+}
+// Away to online. An unverified session takes the client that answered; stream addresses the
+// queue already holds stay valid (each carries its own token).
+function serverReturned(outcome: ProbeOutcome) {
+  if (unverified && answered && server) {
+    server = answered; unverified = null;
+    state.server = { ...state.server, name: hostName(answered, outcome.kind === 'answered' ? outcome.name : undefined) };
+  }
+  updateTray(); updateMedia();
+  if (server && !state.player.queue.length) void loadSavedSong(server);
+  void reports?.flush();
+  keeper?.resumePaused();
+  broadcast();
+}
+// Answered, but refused, while unverified (the password changed, say): back to the connect
+// screen with the reason. Kept files stay, since the account is the same.
+function serverRefused(error: string) {
+  if (!unverified) return;
+  unverified = null; server = null; connectionGeneration++; knownTracks.clear(); resetSessionState(); endRadio();
+  reach.leave();
+  state.server = { ...state.server, connected: false, name: null, sessionId: null, account: null, reconnectError: error, reach: ONLINE };
+  broadcast();
+}
+const away = () => reach.state.away;
 const queueSync = new QueueSync((saved, generation) => {
   const client = generation === connectionGeneration ? server : generation === finalSession?.generation ? finalSession.client : null;
   if (!client || !settings.value.syncQueue) return Promise.resolve();
@@ -130,9 +200,9 @@ function rememberTracks(tracks: readonly Track[]) {
 // Radio keeps going while every window is hidden: top-ups follow host snapshots, not the renderer.
 const radio = new Radio<SubsonicClient>({
   client: () => server, player: () => state.player, known: id => knownTracks.get(id), remember: rememberTracks,
-  replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => client.playable(track)), ordered: true }),
-  follow: (client, tracks) => send({ type: 'queue-clear' }).pipe(Effect.zipRight(send({ type: 'queue-add', tracks: tracks.map(track => client.playable(track)), where: 'end' }))),
-  append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => client.playable(track)), where: 'end' }),
+  replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => playable(client, track)), ordered: true }),
+  follow: (client, tracks) => send({ type: 'queue-clear' }).pipe(Effect.zipRight(send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }))),
+  append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }),
   // Already one request at a time, so it never takes a sync permit from the final queue save.
   background: task => Effect.runPromise(Effect.either(metrics.measure('sync.radio-top-up', task))),
   changed: () => { state.player = { ...state.player, radio: radio.view }; },
@@ -143,7 +213,14 @@ const endRadio = () => radio.end();
 // server's station list (the connector keeps it) and, like a song's, never reaches a window.
 const playableOf = (client: SubsonicClient, track: Track) => track.source === 'station'
   ? client.stationLocation(stationIdOf(track)).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
-  : Effect.succeed(client.playable(track));
+  : Effect.succeed(playable(client, track));
+// A server song: its kept file when this computer has one (online too, which saves the download),
+// otherwise its stream. Songs queued before a keep finished stay streams.
+function playable(client: SubsonicClient, track: Track): PlayableTrack {
+  return pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
+}
+// A library track by id: one a window was shown this session, or a kept one.
+const trackById = (id: string) => knownTracks.get(id) ?? keptStore?.track(id);
 
 // Must precede app ready. Covers are fetched here so server credentials never reach the renderer.
 // CORS lets the renderer read cover pixels on a canvas for its palette.
@@ -175,6 +252,10 @@ async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8
     if (image.isEmpty() || image.getSize().width <= size) return { bytes: new Uint8Array(cover.bytes), contentType: cover.contentType };
     return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
   }
+  // A kept cover first: it works with the server away, and saves asking. Kept covers are 600 px.
+  const kept = keptStore && (size <= 600 || away()) ? await keptStore.cover(id) : null;
+  if (kept) return kept;
+  if (away()) return null;
   const client = server;
   if (!client) return null;
   const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size))));
@@ -194,17 +275,27 @@ function broadcast() {
 // Background consumers of each native snapshot: tray, OS media controls, play reports, queue sync.
 function observePlayer() {
   const player = state.player;
-  updateTray(); updateMedia(); updateSystemMedia(); void radio.topUp();
-  queueSync.observe(player, connectionGeneration, settings.value.syncQueue && server !== null);
+  updateTray(); updateMedia(); updateSystemMedia();
+  // Radio needs the server; it waits while it's away.
+  if (!away()) void radio.topUp();
+  // While the server is away the queue isn't saved, but a change is remembered and saved once it's back.
+  queueSync.observe(player, connectionGeneration, !settings.value.syncQueue || server === null ? false : away() ? 'held' : true);
   sinks.observe(player, host?.pid);
   const events = plays.update(player, performance.now());
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
+  // Kept files forgotten while queued go once they leave the queue.
+  void keeper?.retryPending();
 }
-// Silent by design: failures appear only in operation metrics.
+// Silent by design: failures appear only in operation metrics. A finished play that gets no
+// answer waits in plays.json for the server (PlayReports).
 function reportPlay({ trackId, event }: PlayEvent) {
+  void reports?.report(trackId, event);
+}
+async function sendReport(trackId: string, event: 'started' | 'finished', at?: number): Promise<SendOutcome> {
   const client = server;
-  if (!client) return;
-  void Effect.runPromise(Effect.either(metrics.measure(`sync.play-${event}`, semaphores.sync.withPermits(1)(client.reportPlay(trackId, event)))));
+  if (!client) return 'refused';
+  const result = await Effect.runPromise(Effect.either(metrics.measure(`sync.play-${event}`, semaphores.sync.withPermits(1)(client.reportPlay(trackId, event, at)))));
+  return Either.isRight(result) ? 'sent' : reachOf(result.left);
 }
 // Per-session state that must not carry across an account switch or disconnect.
 function resetSessionState() {
@@ -368,6 +459,7 @@ function shellPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuff
 function resumeSaved(paused: boolean) {
   return Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
+    if (away()) return yield* Effect.fail(new Unreachable(OUT_OF_REACH));
     const client = server;
     const saved = yield* client.savedQueue();
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
@@ -377,13 +469,13 @@ function resumeSaved(paused: boolean) {
     const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
     const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
     endRadio();
-    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused, ordered: true });
+    yield* send({ type: 'queue', tracks: saved.tracks.map(track => playable(client, track)), startIndex: currentIndex, startPosition: positionSeconds, paused, ordered: true });
     queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
   });
 }
 // Play from a media key, MPRIS, or the tray. With nothing loaded, the queue saved on the server
 // (when queue sync is on) starts where it left off, so a play key works right after launch.
-const canResume = () => state.player.engine === 'ready' && !state.player.queue.length && server !== null && settings.value.syncQueue;
+const canResume = () => state.player.engine === 'ready' && !state.player.queue.length && server !== null && settings.value.syncQueue && !away();
 function shellPlay() {
   if (!canResume()) { transport({ type: 'play' }); return; }
   const generation = connectionGeneration;
@@ -400,17 +492,42 @@ function connectTo(typed: Connection, generation: number) {
     const candidate = yield* Effect.try({ try: () => new SubsonicClient(connection, metrics), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* candidate.ping();
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
-    endRadio();
-    if (server) yield* send({ type: 'clear-session' });
-    server = candidate; knownTracks.clear();
-    connectionGeneration++; resetSessionState();
-    // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
-    const address = new URL(candidate.baseUrl);
-    state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
-    // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
-    updateTray(); updateMedia(); void loadSavedSong(candidate);
+    yield* adopt(candidate, info, connection);
     return connection;
   });
+}
+// Everything after a ping that answered: the new session replaces the old one. Another account
+// forgets what the last one kept, and its waiting plays.
+function adopt(candidate: SubsonicClient, info: { name: string }, connection: Connection) {
+  return Effect.gen(function* () {
+    endRadio();
+    if (server) yield* send({ type: 'clear-session' });
+    server = candidate; knownTracks.clear(); unverified = null;
+    connectionGeneration++; resetSessionState();
+    reach.leave();
+    state.server = { ...state.server, connected: true, name: hostName(candidate, info.name), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
+    const key = keyOf(candidate.baseUrl, connection.username);
+    if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
+    if (keptStore) yield* Effect.promise(() => keptStore!.bind(key).catch(() => undefined));
+    keptPush();
+    reports?.bind(key);
+    void reports?.flush();
+    // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
+    updateTray(); updateMedia(); void loadSavedSong(candidate);
+  });
+}
+// At launch, when the saved server didn't answer in time but songs are kept for it: open as
+// connected and away, so Home shows what is kept. Nothing is asked of the server until a probe
+// answers.
+function adoptAway(candidate: SubsonicClient, connection: Connection, key: string, probeNow: boolean) {
+  endRadio();
+  server = candidate; knownTracks.clear();
+  connectionGeneration++; resetSessionState();
+  unverified = { connection };
+  state.server = { ...state.server, connected: true, name: hostName(candidate), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnecting: false, reconnectError: null };
+  reports?.bind(key);
+  reach.enter({ probeNow });
+  updateTray(); updateMedia();
 }
 // HTTPS, then HTTP, for an address typed without a scheme (resolveServerAddress in the connector).
 const resolveAddress = (connection: Connection) => resolveServerAddress(connection, candidate => new SubsonicClient(candidate, metrics));
@@ -418,11 +535,34 @@ const resolveAddress = (connection: Connection) => resolveServerAddress(connecti
 async function reconnect() {
   const connection = account.connection();
   if (!connection) return;
+  let candidate: SubsonicClient | null = null;
+  try { candidate = new SubsonicClient(connection, metrics); } catch { candidate = null; }
+  const key = candidate ? keyOf(candidate.baseUrl, connection.username) : null;
+  if (candidate && key && keptStore?.hasSongsFor(key)) return reconnectKept(candidate, connection, key);
   state.server = { ...state.server, reconnecting: true }; broadcast();
   const generation = connectionGeneration;
   const result = await Effect.runPromise(Effect.either(metrics.measure('shell.reconnect', semaphores.server.withPermits(1)(connectTo(connection, generation)))));
   const reconnectError = Either.isLeft(result) && !state.server.connected ? (result.left instanceof Error ? result.left.message : 'Could not connect.') : null;
   state.server = { ...state.server, reconnecting: false, reconnectError };
+  broadcast();
+}
+// With songs kept for the saved account, the server gets four seconds. No answer (or none in
+// time) opens the app away; a refusal shows the connect screen with the reason, as always.
+async function reconnectKept(candidate: SubsonicClient, connection: Connection, key: string) {
+  state.server = { ...state.server, reconnecting: true }; broadcast();
+  const generation = connectionGeneration;
+  const outcome = await Promise.race([
+    Effect.runPromise(Effect.either(metrics.measure('shell.reconnect', candidate.ping()))),
+    new Promise<'late'>(resolve => setTimeout(() => resolve('late'), LAUNCH_WAIT)),
+  ]);
+  if (generation !== connectionGeneration || quitting) return;
+  if (outcome !== 'late' && Either.isRight(outcome)) {
+    const adopted = await Effect.runPromise(Effect.either(semaphores.server.withPermits(1)(Effect.suspend(() =>
+      generation === connectionGeneration ? adopt(candidate, outcome.right, connection) : Effect.fail(new Error('Connection canceled.'))))));
+    state.server = { ...state.server, reconnecting: false, reconnectError: Either.isLeft(adopted) && !state.server.connected ? adopted.left.message : null };
+  } else if (outcome !== 'late' && reachOf(outcome.left) === 'refused') {
+    state.server = { ...state.server, reconnecting: false, reconnectError: outcome.left.message };
+  } else adoptAway(candidate, connection, key, outcome === 'late');
   broadcast();
 }
 function seekTo(seconds: number) {
@@ -446,13 +586,18 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
       const program = Effect.suspend(() => {
         // Requests queued before a disconnect or account switch must not run
         // against a later session, even when the album IDs happen to match.
-        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start'].includes(channel) || channel.startsWith('library:')) && generation !== connectionGeneration) {
+        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start', 'kept:keep'].includes(channel) || channel.startsWith('library:')) && generation !== connectionGeneration) {
           return Effect.fail(new Error('Server session changed. Try again.'));
         }
         return task(value, generation);
       });
       const result = await Effect.runPromise(Effect.either(metrics.measure(`ipc.${channel}`, semaphores[lane].withPermits(1)(program))));
-      if (Either.isLeft(result)) return { ok: false, error: result.left instanceof Error ? result.left.message : 'Operation failed.' };
+      if (Either.isLeft(result)) {
+        const error = result.left instanceof Error ? result.left.message : 'Operation failed.';
+        // No answer from the server: say so, and ask whether it is gone (packages/core/reach.ts).
+        if (result.left instanceof Unreachable) { reach.failed(); return { ok: false, error, unreachable: true }; }
+        return { ok: false, error };
+      }
       return { ok: true, value: result.right };
     } catch { return { ok: false, error: 'Invalid request or unexpected desktop error.' }; }
     finally { ipcCount--; broadcast(); }
@@ -504,6 +649,8 @@ function installHandlers() {
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
+    // Away: answered at once, without the server, until a probe finds it again.
+    if (away()) return yield* Effect.fail(new Unreachable(OUT_OF_REACH));
     // The main process reports plays and saves the queue itself; renderer calls still honor the settings.
     if (method === 'reportPlay' && !settings.value.reportPlays) return yield* Effect.fail(new Error('Play reporting is turned off in Settings.'));
     if ((method === 'saveQueue' || method === 'savedQueue') && !settings.value.syncQueue) return yield* Effect.fail(new Error('Queue sync is turned off in Settings.'));
@@ -520,27 +667,36 @@ function installHandlers() {
     if (startIndex >= ids.length) return yield* Effect.fail(new Error('Invalid track selection.'));
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
     const client = server;
-    const tracks: PlayableTrack[] = [];
+    const found: Track[] = [];
     for (const id of ids) {
-      const track = knownTracks.get(id);
+      const track = trackById(id);
       if (!track) return yield* Effect.fail(new Error('Some tracks are no longer loaded. Refresh the library and try again.'));
-      tracks.push(yield* playableOf(client, track));
+      found.push(track);
     }
+    // Away, only kept songs play (stations and local files don't need the server).
+    const chosen = choosePlayable(found, startIndex, id => keptStore?.has(id) ?? false, away());
+    if (!chosen) return yield* Effect.fail(new Error(KEPT_MESSAGES.notKept));
+    const tracks: PlayableTrack[] = [];
+    for (const track of chosen.items) tracks.push(yield* playableOf(client, track));
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
     rememberTracks(tracks.map(item => item.track));
     endRadio();
-    yield* send({ type: 'queue', tracks, startIndex });
+    yield* send({ type: 'queue', tracks, startIndex: chosen.start });
   }), 'server');
   handle('queue:add', value => Effect.gen(function* () {
     const [ids, where] = yield* Schema.decodeUnknown(QueueAddSchema)(value).pipe(Effect.mapError(() => new Error('Invalid track selection.')));
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
     const client = server;
-    const tracks: PlayableTrack[] = [];
+    const found: Track[] = [];
     for (const id of ids) {
-      const track = knownTracks.get(id);
+      const track = trackById(id);
       if (!track) return yield* Effect.fail(new Error('Some tracks are no longer loaded. Refresh the library and try again.'));
-      tracks.push(yield* playableOf(client, track));
+      found.push(track);
     }
+    const chosen = choosePlayable(found, 0, id => keptStore?.has(id) ?? false, away());
+    if (!chosen) return yield* Effect.fail(new Error(KEPT_MESSAGES.notKept));
+    const tracks: PlayableTrack[] = [];
+    for (const track of chosen.items) tracks.push(yield* playableOf(client, track));
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
     rememberTracks(tracks.map(item => item.track));
     yield* send({ type: 'queue-add', tracks, where });
@@ -560,6 +716,7 @@ function installHandlers() {
   }));
   handle('radio:start', value => Effect.gen(function* () {
     const seed = yield* Schema.decodeUnknown(RadioSeedSchema)(value).pipe(Effect.mapError(() => new Error('Invalid radio request.')));
+    if (away()) return yield* Effect.fail(new Unreachable('Radio needs your server.'));
     const began = yield* radio.start(seed);
     // Radio and repeat exclude each other (setPlayMode): a station turns repeat off. A start that
     // other playback overtook began no station, so repeat stays as it is.
@@ -582,6 +739,10 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();
+    // Plays waiting to be reported go when reporting is turned off.
+    if (!next.reportPlays) reports?.clear();
+    // A new limit shows at once. Lowering it never removes anything kept.
+    if (next.keptLimitMb !== previous.keptLimitMb && keptStore) { keptStore.revision++; keptPush(); }
     applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
     if (next.checkForUpdates && !previous.checkForUpdates) updates.check();
     return settings.value;
@@ -614,13 +775,25 @@ function installHandlers() {
   handle('update:check', () => Effect.sync(() => updates.check(true)), 'window');
   handle('update:install', () => Effect.suspend(() => updates.installNow() ? Effect.void : Effect.fail(new Error('No update is ready to install.'))), 'window');
   handle('update:open', () => Effect.tryPromise({ try: () => shell.openExternal(updates.releaseUrl()), catch: () => new Error('Could not open the release page.') }), 'window');
+  // Retry while away, on its own lane so a slow probe never holds up the library.
+  handle('retry-server', value => Effect.gen(function* () {
+    const outcome = yield* Effect.promise(() => reach.retry(value === true));
+    if (outcome?.kind === 'answered' || !away()) return;
+    return yield* Effect.fail(new Unreachable(OUT_OF_REACH));
+  }), 'reach');
   handle('disconnect', () => Effect.gen(function* () {
+    // Nothing on the connect screen can reach kept songs, so they go with the sign-in, and so do
+    // plays waiting to be reported.
+    reach.leave(); unverified = null;
+    if (keeper) yield* Effect.promise(() => keeper!.forgetAll());
+    reports?.clear();
+    keptPush();
     // Restart also removes authenticated stream URLs from the player's native playlist.
     connectionGeneration++;
     server = null; knownTracks.clear(); resetSessionState();
     // Disconnecting also forgets the saved sign-in.
     yield* Effect.promise(() => account.forget().catch(() => undefined));
-    state.server = { ...state.server, connected: false, name: null, sessionId: null, account: null, saved: account.saved, reconnectError: null };
+    state.server = { ...state.server, connected: false, name: null, sessionId: null, account: null, saved: account.saved, reconnectError: null, reach: ONLINE };
     yield* Effect.tryPromise(() => launchPlayer());
   }));
   handle('export-diagnostics', () => Effect.gen(function* () {
@@ -846,7 +1019,7 @@ function applyMediaKeys() {
 let savedSong: { track: Track; position: number } | null = null;
 async function loadSavedSong(client: SubsonicClient) {
   savedSong = null;
-  if (process.platform === 'linux' || !settings.value.syncQueue) return;
+  if (process.platform === 'linux' || !settings.value.syncQueue || away()) return;
   const saved = await Effect.runPromise(Effect.either(metrics.measure('shell.saved-song', semaphores.sync.withPermits(1)(client.savedQueue()))));
   if (Either.isLeft(saved) || !saved.right?.tracks.length || server !== client) return;
   const track = saved.right.tracks[Math.min(Math.max(0, Math.trunc(saved.right.currentIndex) || 0), saved.right.tracks.length - 1)];
@@ -904,8 +1077,38 @@ app.whenReady().then(async () => {
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
   await playModes.load();
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
+  // What is kept, and plays waiting, are read before reconnecting: they decide whether the app
+  // opens away when the server doesn't answer.
+  keptStore = new KeptStore(join(userData, 'kept'));
+  await keptStore.load().catch(() => undefined);
+  playsStore = new JsonStore(join(userData, 'plays.json'), PlaysFileSchema, playsStore.value, { maxBytes: 256 * 1024, compact: true });
+  await playsStore.load();
+  reports = new PlayReports({
+    send: sendReport, away, failed: () => reach.failed(),
+    load: () => playsStore.value, save: value => { void playsStore.save({ version: 1, ...value }).catch(() => undefined); },
+    changed: count => { state.server = { ...state.server, queuedPlays: count }; broadcast(); },
+  });
+  state.server = { ...state.server, queuedPlays: reports.size };
+  const kept = keptStore;
+  keeper = new KeepManager({
+    store: kept,
+    open: (id, signal) => { const client = server; if (!client) return Promise.reject(new ServerError('Connect to a server first.')); return client.original(id, signal); },
+    cover: async id => {
+      const client = server;
+      if (!client) return null;
+      const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, 600))));
+      return Either.isRight(result) ? result.right : null;
+    },
+    known: id => knownTracks.get(id),
+    limitBytes: () => settings.value.keptLimitMb * MB,
+    freeBytes: async () => { const info = await statfs(kept.dir); return info.bavail * info.bsize; },
+    away, unreachable: () => reach.failed(),
+    inQueue: () => new Set(state.player.queue.filter(track => track.source === 'navidrome').map(track => track.id)),
+    changed: () => keptPush(),
+  });
   installHandlers(); loop.enable();
   const windowContents = () => appWindows().map(target => target.webContents);
+  keptPush = startKept({ assertSender, windows: windowContents, handle: (channel, task, lane) => handle(channel, task, lane), dir: kept.dir, manager: keeper, store: kept, remember: rememberTracks }).push;
   config = startConfigFolder({ assertSender, windows: windowContents });
   extensions = startExtensions({ configDir: config.dir, assertSender, windows: windowContents });
   protocol.handle('squiggly-art', serveCover);
@@ -944,11 +1147,14 @@ app.whenReady().then(async () => {
     globalShortcut.unregisterAll(); tray?.destroy(); tray = null; media = null;
     if (artDirectory) try { rmSync(artDirectory, { recursive: true, force: true }); } catch { /* Temporary files only. */ }
     const bounded = Promise.race([saved.catch(() => undefined), new Promise(resolve => setTimeout(resolve, 1500))]);
+    // Downloads stop, and what is kept is written. Files forgotten while queued go now if they can.
+    reach.dispose();
+    const keptClosed = Promise.race([(async () => { await keeper?.stop(); await keeper?.retryPending(true); })().catch(() => undefined), new Promise(resolve => setTimeout(resolve, 1500))]);
     // Also covers a cleanup already in progress during a restart or disconnect.
     const stopped = host ? terminateHost(host) : Promise.resolve();
     config?.close();
     const closed = extensions?.close().catch(() => undefined);
-    void Promise.all([bounded, stopped, closed]).then(() => app.exit(0), () => app.exit(1));
+    void Promise.all([bounded, stopped, closed, keptClosed]).then(() => app.exit(0), () => app.exit(1));
   });
 });
 app.on('window-all-closed', () => app.quit());

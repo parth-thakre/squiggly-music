@@ -7,6 +7,7 @@ import { Effect, Either, Schema } from 'effect';
 import { emptyPlayer, type PlayerSnapshot, type Track } from '../packages/core/contracts';
 import { OpenPathsSchema } from '../packages/core/desktopValidation';
 import { checkAudioPaths } from '../apps/desktop/main/localFiles';
+import { KeepRequestSchema, KeptIdSchema } from '../packages/core/desktopValidation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
@@ -99,7 +100,7 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096 });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
@@ -122,6 +123,29 @@ describe('desktop request schemas', () => {
   });
 });
 
+describe('keeping songs: settings and requests', () => {
+  it('bounds the room for kept songs, 64 MB to 1 TB, 4,096 MB unless set', () => {
+    const patch = (value: unknown) => Schema.decodeUnknownSync(SettingsPatchSchema)(value, { onExcessProperty: 'error' });
+    expect(patch({ keptLimitMb: 4096 })).toEqual({ keptLimitMb: 4096 });
+    for (const bad of [10, 2e6, 100.5, '4096', null]) expect(() => patch({ keptLimitMb: bad })).toThrow();
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({}).keptLimitMb).toBe(4096);
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ keptLimitMb: 64 }).keptLimitMb).toBe(64);
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ keptLimitMb: 63 })).toThrow();
+  });
+  it('takes a keep request by track id, bounded, with duplicates dropped in order', () => {
+    const decode = (value: unknown) => Schema.decodeUnknownSync(KeepRequestSchema)(value, { onExcessProperty: 'error' });
+    const request = { kind: 'album', id: 'al-1', name: 'Test Pressing', artist: 'Ada Brass', coverArt: 'al-1', trackIds: ['a', 'b', 'a', 'c'] };
+    expect(decode(request)).toEqual({ ...request, trackIds: ['a', 'b', 'c'] });
+    expect(decode({ ...request, kind: 'mix', artist: null, coverArt: null, trackIds: Array.from({ length: 5000 }, (_, i) => `t${i}`) }).trackIds).toHaveLength(5000);
+    for (const bad of [{ trackIds: [] }, { trackIds: Array.from({ length: 5001 }, (_, i) => `t${i}`) }, { kind: 'artist' }, { name: '' }, { name: 'x'.repeat(257) },
+      { coverArt: '' }, { id: 'x'.repeat(257) }, { trackIds: [''] }, { tracks: [] }, { path: '/etc/passwd' }]) {
+      expect(() => decode({ ...request, ...bad })).toThrow();
+    }
+    expect(Schema.decodeUnknownSync(KeptIdSchema)(['playlist', 'pl-1'])).toEqual(['playlist', 'pl-1']);
+    expect(() => Schema.decodeUnknownSync(KeptIdSchema)(['song', 'x'])).toThrow();
+  });
+});
+
 describe('validated JSON files', () => {
   it('reads defaults for missing, invalid, mistyped, and oversized files', async () => {
     directory = await mkdtemp(join(tmpdir(), 'squiggly-store-'));
@@ -134,6 +158,19 @@ describe('validated JSON files', () => {
     expect(await load()).toEqual(defaultSettings());
     await writeFile(path, JSON.stringify({ lyricsLookup: true, padding: 'x'.repeat(70_000) }));
     expect(await load()).toEqual(defaultSettings());
+  });
+
+  it('takes a larger bound and compact output when asked, and keeps its defaults otherwise', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-store-'));
+    const path = join(directory, 'plays.json');
+    const Big = Schema.Struct({ padding: Schema.String });
+    await writeFile(path, JSON.stringify({ padding: 'x'.repeat(70_000) }));
+    expect((await new JsonStore(path, Big, { padding: '' }).load()).padding).toBe('');
+    expect((await new JsonStore(path, Big, { padding: '' }, { maxBytes: 256 * 1024 }).load()).padding).toHaveLength(70_000);
+    await new JsonStore(path, Big, { padding: '' }, { compact: true }).save({ padding: 'y' });
+    expect(await readFile(path, 'utf8')).toBe('{"padding":"y"}\n');
+    await new JsonStore(path, Big, { padding: '' }).save({ padding: 'z' });
+    expect(await readFile(path, 'utf8')).toBe('{\n  "padding": "z"\n}\n');
   });
 
   it('writes atomically with private permissions and reads back what it wrote', async () => {
@@ -425,6 +462,45 @@ describe('queue sync', () => {
     queue.observe(snapshot({ currentIndex: 1, position: 0, playing: true }), 1, true);
     await vi.advanceTimersByTimeAsync(3000);
     expect(saves.map(save => save.state)).toEqual([{ trackIds: ['a', 'b'], currentIndex: 1, positionSeconds: 0 }]);
+  });
+});
+
+describe('queue sync while the server is away', () => {
+  it('saves nothing while held, then once if the queue changed meanwhile', async () => {
+    vi.useFakeTimers();
+    const saves: SavedState[] = [];
+    const queue = new QueueSync(async state => { saves.push(state); });
+    queue.observe(snapshot({ playing: true }), 1, true);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, 'held');
+    queue.observe(snapshot({ playing: false, currentIndex: 1 }), 1, 'held');
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(saves).toEqual([]);
+    queue.observe(snapshot({ playing: false, currentIndex: 1 }), 1, true);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(saves).toEqual([{ trackIds: ['a', 'b'], currentIndex: 1, positionSeconds: 0 }]);
+  });
+  it('saves nothing after a hold in which nothing changed', async () => {
+    vi.useFakeTimers();
+    const saves: SavedState[] = [];
+    const queue = new QueueSync(async state => { saves.push(state); });
+    queue.observe(snapshot({ playing: false }), 1, true);
+    queue.observe(snapshot({ playing: false }), 1, 'held');
+    queue.observe(snapshot({ playing: false }), 1, true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(saves).toEqual([]);
+  });
+  it('holds a save already scheduled when the hold begins, and makes it after', async () => {
+    vi.useFakeTimers();
+    const saves: SavedState[] = [];
+    const queue = new QueueSync(async state => { saves.push(state); });
+    queue.observe(snapshot({ playing: true }), 1, true);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, true);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, 'held');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(saves).toEqual([]);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, true);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(saves).toHaveLength(1);
   });
 });
 

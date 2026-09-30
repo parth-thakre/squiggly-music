@@ -8,7 +8,7 @@ import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { TLSSocket } from 'node:tls';
 import { Effect, Either, Schema } from 'effect';
 import type { Connect, Plugin } from 'vite';
-import { SubsonicClient, isLibraryMethod, libraryCall, resolveServerAddress } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, isLibraryMethod, libraryCall, resolveServerAddress, Unreachable } from '../packages/adapter-opensubsonic/client';
 import type { Connection } from '../packages/core/contracts';
 import { Metrics } from '../packages/core/metrics';
 import { ConnectionSchema, IdSchema } from '../packages/core/validation';
@@ -71,7 +71,8 @@ import { ConnectionSchema, IdSchema } from '../packages/core/validation';
 // the environment, so that is outside this boundary.
 //
 // POST /api/<LibraryApi method>  body: JSON array of positional arguments
-//   -> { ok: true, value } | { ok: false, error }   (200, or 400/401/403/404/405/502/503)
+//   -> { ok: true, value } | { ok: false, error, unreachable? }   (200, or 400/401/403/404/405/502/503)
+//      unreachable: true when the server gave no answer at all (see Unreachable in the connector)
 // Library calls, cover, stream and station use the browser's own connection, or else the environment's.
 // GET  /api/cover?id=<coverArt>&size=<32..1200>  -> image bytes, or 404 with a Result
 // GET  /api/stream?id=<song>[&format=mp3]         -> audio bytes (Range supported), or 404 with a Result
@@ -639,7 +640,8 @@ export function navidromePreview({ env = process.env, client = createClient(env)
         catch { return json(response, 400, { ok: false, error: 'Invalid library request.' }); }
         const result = await Effect.runPromise(Effect.either(libraryCall(client, method, args)));
         if (Either.isRight(result)) return json(response, 200, { ok: true, value: result.right.value });
-        json(response, result.left.message === 'Invalid library request.' ? 400 : 502, { ok: false, error: result.left.message });
+        // No answer from the server is flagged, so the page can tell the server is away (packages/core/reach.ts).
+        json(response, result.left.message === 'Invalid library request.' ? 400 : 502, { ok: false, error: result.left.message, ...(result.left instanceof Unreachable ? { unreachable: true } : {}) });
       } catch { if (!response.headersSent) json(response, 500, { ok: false, error: 'Preview request failed.' }); }
     });
   }

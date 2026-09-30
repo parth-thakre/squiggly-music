@@ -8,6 +8,9 @@ import { current, player, usePlayer } from './player';
 import { nav } from './route';
 import { useActiveTheme } from './theme';
 import { Glyph, splitTitle, time, Wave } from './ui';
+import { isKept, keptSupported, useKeptVersion } from './keptState';
+import { KeptMark } from './keptMark';
+import './kept.css';
 
 // Song rows are --row-height tall (compact themes shorten them); windowing uses the same number.
 const rowHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height')) || 44;
@@ -50,6 +53,9 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   // Queue rows are known by entry, so two copies of a song stay two rows.
   const entryIds = usePlayer(s => queue ? s.entryIds : null);
   useFavoritesVersion();
+  useKeptVersion();
+  // Away, server songs that aren't kept can't play, and stars can't be changed.
+  const away = usePlayer(s => s.reach.away);
   const table = useRef<HTMLOListElement>(null);
   const [range, setRange] = useState<[number, number]>([0, Math.min(tracks.length, 60)]);
   const keys = useMemo(() => entryIds && entryIds.length === tracks.length ? entryIds : occurrenceKeys(tracks), [tracks, entryIds]);
@@ -128,6 +134,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
       setSelected(new Set(keys.slice(Math.min(from, index), Math.max(from, index) + 1))); return;
     }
     setSelected(new Set()); anchor.current = key;
+    const track = tracks[index];
+    if (away && keptSupported && track.source === 'navidrome' && !isKept(track.id) && !isNow) { player.showError('This song isn\'t kept on this device, and your server is out of reach.'); return; }
     if (isNow) player.toggle(); else if (onPick) onPick(index, entryIds?.[index]); else void player.play(tracks, index);
   };
   const menu = (event: ReactMouseEvent, index: number) => {
@@ -187,7 +195,9 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const name = splitTitle(track.title, album);
         const starred = isStarred(track.id, track.starred);
         const credit = track.artist !== albumArtist ? track.artist : null;
-        const classes = [isNow && 'now', isSelected && 'selected', drag && drag.to === index && drag.from !== index && (drag.from < index ? 'drop-after' : 'drop-before'),
+        const kept = keptSupported && track.source === 'navidrome' && isKept(track.id);
+        const unavailable = away && keptSupported && track.source === 'navidrome' && !kept;
+        const classes = [isNow && 'now', isSelected && 'selected', unavailable && 'unavailable', drag && drag.to === index && drag.from !== index && (drag.from < index ? 'drop-after' : 'drop-before'),
           !drag && into === index && 'drop-before'].filter(Boolean).join(' ');
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
         const row = <li key={key} data-key={key} data-index={index} className={classes || undefined}
@@ -196,15 +206,18 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
           onDragStart={event => dragStart(event, index)} onDragOver={event => dragOver(event, index)}
           onDrop={event => drop(event, index)} onDragEnd={() => setDrag(null)}>
           <button type="button" className="track" onClick={event => click(event, index, isNow)}
-            aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selected.size ? isSelected : undefined}>
+            aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selected.size ? isSelected : undefined}
+            aria-description={unavailable ? 'Not kept on this device' : undefined}>
             <span className="n">{isNow ? <Wave playing={playing} /> : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1}</span>
             <span className="title"><span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
               {credit && <span className="credit">{credit}</span>}</span>
             {showAlbum && <span className="album">{splitTitle(track.album).main}</span>}
             <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
           </button>
-          {/* A station can't be a favorite: the server stars songs, records, and artists. */}
-          {isStation(track) ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
+          {/* Beside the button, so the row's name stays "Play <title>". */}
+          {keptSupported && <span className="kept-slot">{kept && <KeptMark />}</span>}
+          {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
+          {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
             aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
             onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>}
         </li>;

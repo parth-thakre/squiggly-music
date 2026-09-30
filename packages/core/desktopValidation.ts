@@ -1,6 +1,7 @@
 import { Either, Schema } from 'effect';
 import type { Settings } from './contracts';
-import { IdSchema, QUEUE_LIMIT } from './validation';
+import { IdSchema, QUEUE_LIMIT, QueuedPlaysSchema } from './validation';
+import { DEFAULT_KEPT_LIMIT_MB, KEPT_LIMIT_MB, KEPT_LIMITS } from './kept';
 
 // Desktop-only request and file schemas: queue editing, radio, settings, and window state.
 // Main-process only; keep out of renderer imports like validation.ts.
@@ -25,6 +26,8 @@ export const RadioSeedSchema = Schema.Union(
 
 // An mpv audio-device name, as listed by the engine.
 const DeviceSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024));
+// How much room kept songs may take, in MB (1024 * 1024 bytes).
+function KeptLimitSchema() { return Schema.Number.pipe(Schema.int(), Schema.between(KEPT_LIMIT_MB.min, KEPT_LIMIT_MB.max)); }
 // A stored file may predate a setting, so missing keys take their default. A wrong type rejects the whole file.
 const setting = (fallback: boolean) => Schema.optionalWith(Schema.Boolean, { default: () => fallback });
 export const SettingsFileSchema = Schema.Struct({
@@ -33,12 +36,14 @@ export const SettingsFileSchema = Schema.Struct({
   miniOnTop: setting(true),
   outputDevice: Schema.optionalWith(DeviceSchema, { default: () => 'auto' }),
   checkForUpdates: setting(true),
+  keptLimitMb: Schema.optionalWith(KeptLimitSchema(), { default: () => DEFAULT_KEPT_LIMIT_MB }),
 });
 export const defaultSettings = (): Settings => Schema.decodeUnknownSync(SettingsFileSchema)({});
 // Renderer changes: known keys only, never undefined. Decode with onExcessProperty: 'error'.
 export const SettingsPatchSchema = Schema.partialWith(Schema.Struct({
   lyricsLookup: Schema.Boolean, exclusiveOutput: Schema.Boolean, closeToTray: Schema.Boolean, syncQueue: Schema.Boolean, reportPlays: Schema.Boolean,
   miniOnTop: Schema.Boolean, outputDevice: DeviceSchema, checkForUpdates: Schema.Boolean,
+  keptLimitMb: KeptLimitSchema(),
 }), { exact: true });
 
 const CoordinateSchema = Schema.Number.pipe(Schema.int(), Schema.between(-100_000, 100_000));
@@ -116,3 +121,18 @@ export const PactlSinkInputSchema = Schema.Struct({
   properties: loose(Schema.Struct({ 'application.process.id': loose(NameSchema) })),
 });
 export const PactlInfoSchema = Schema.Struct({ default_sink_name: loose(NameSchema) });
+// Keep on this device: a record, playlist, or mix's draw, by track ids the main process has
+// returned (it looks the tracks up itself, as play-tracks does). Duplicates are dropped, in order.
+export const KeepRequestSchema = Schema.Struct({
+  kind: Schema.Literal('album', 'playlist', 'mix'), id: IdSchema,
+  name: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(KEPT_LIMITS.nameChars)),
+  artist: Schema.NullOr(Schema.String.pipe(Schema.maxLength(KEPT_LIMITS.nameChars))),
+  coverArt: Schema.NullOr(IdSchema),
+  trackIds: Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(KEPT_LIMITS.tracksPerContainer)),
+}).pipe(Schema.transform(Schema.Struct({
+  kind: Schema.Literal('album', 'playlist', 'mix'), id: Schema.String, name: Schema.String, artist: Schema.NullOr(Schema.String),
+  coverArt: Schema.NullOr(Schema.String), trackIds: Schema.Array(Schema.String),
+}), { strict: true, decode: request => ({ ...request, trackIds: [...new Set(request.trackIds)] }), encode: request => request }));
+export type KeepRequestIds = Schema.Schema.Type<typeof KeepRequestSchema>;
+export const KeptIdSchema = Schema.Tuple(Schema.Literal('album', 'playlist', 'mix'), IdSchema);
+export const PlaysFileSchema = QueuedPlaysSchema;

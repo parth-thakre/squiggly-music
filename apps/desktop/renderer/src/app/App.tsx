@@ -24,6 +24,9 @@ import { Home } from './views';
 import { dropFocusRequest, focusFirstResult, rememberSearch } from './searches';
 import { dropOnQueue, useDropTarget, useFileDrops, useSpringOpen } from './drag';
 import { ShareDialog } from './share';
+import { Kept, OfflineNotice } from './kept';
+import { keptCount, keptSupported, useKeptVersion } from './keptState';
+import { pageFor, serverPages } from './offline';
 
 onMenuError(message => player.showError(message));
 
@@ -32,11 +35,9 @@ const sections: { view: 'records' | 'artists' | 'tracks' | 'playlists' | 'favori
   { view: 'playlists', label: 'Playlists' }, { view: 'favorites', label: 'Favorites' },
   { view: 'genres', label: 'Genres' },
 ];
-// Places that need the server. Without one, they offer to connect instead.
-const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre', 'home', 'mixes']);
 const PaletteContext = createContext(neutral);
 const sectionOf = (route: Route) => route.view === 'album' ? 'records' : route.view === 'artist' ? 'artists'
-  : route.view === 'playlist' || route.view === 'mix' || route.view === 'mixes' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
+  : route.view === 'playlist' || route.view === 'mix' || route.view === 'mixes' || route.view === 'kept' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
 
 // App re-renders only when the connection or the playing record's sleeve changes. Position
 // snapshots reach the deck's own subscribers, never the page.
@@ -55,6 +56,15 @@ export function App() {
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
   // Without a title bar, the window's own buttons take the room's ink.
   useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
+  // While the server is away, coming back to the window or to the network asks it again (at most
+  // every few seconds). The app never moves to another page on its own when the server goes.
+  const away = usePlayer(s => s.reach.away);
+  useEffect(() => {
+    if (!away) return;
+    const check = () => { if (document.visibilityState === 'visible') void player.retryServer(true); };
+    addEventListener('online', check); addEventListener('focus', check); document.addEventListener('visibilitychange', check);
+    return () => { removeEventListener('online', check); removeEventListener('focus', check); document.removeEventListener('visibilitychange', check); };
+  }, [away]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
   const shell = (connected && !choosing) || (mode === 'desktop' && hasQueue);
   const cover = useCoverScreen();
@@ -152,7 +162,12 @@ function SectionButton({ view, label, current }: { view: (typeof sections)[numbe
 const View = memo(function View() {
   const route = useRoute();
   const connected = usePlayer(s => s.connected);
-  if (!connected && library.has(route.view)) return <Connect embedded />;
+  const away = usePlayer(s => s.reach.away);
+  if (!connected && serverPages.has(route.view)) return <Connect embedded />;
+  // Away: Home is what is kept, and pages that need the server say it's out of reach.
+  const page = pageFor(route, away, keptSupported);
+  if (page === 'kept') return <Kept />;
+  if (page === 'notice') return <OfflineNotice />;
   switch (route.view) {
     case 'records': return <Records />;
     case 'artists': return <Artists />;
@@ -173,6 +188,7 @@ const View = memo(function View() {
     case 'genre': return <GenrePage key={route.name} name={route.name} />;
     case 'home': return <Home />;
     case 'mixes': return <Mixes />;
+    case 'kept': return <Kept />;
   }
 });
 
@@ -355,8 +371,10 @@ function SignalPath({ track }: { track: Track }) {
   // Linux: the sound server resamples what mpv sends (AudioPath.sink). Nothing when it doesn't or isn't known.
   const resampled = usePlayer(s => resampledNote(s.audio?.sink));
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
+  // A kept song is a file on this device: said only when the player really opened it.
   const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
-    volume < 100 && `Volume at ${volume}%.`, resampled, buffering && 'Buffering.'].filter(Boolean).join(' ');
+    delivery === 'device' && 'Playing the copy kept on this device.',
+    volume < 100 && `Volume at ${volume}%.`, resampled, buffering && delivery !== 'device' && 'Buffering.'].filter(Boolean).join(' ');
   // A station: a live stream, and what mpv says it decodes, if anything. The server's list says
   // nothing about the stream, and the browser can't hear what the station says is on.
   const decoded = [codec?.toUpperCase(), kHz(decoderRate)].filter(Boolean).join(' at ');
@@ -419,6 +437,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       {web ? `The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.${choosing ? ` Connecting stops playback and empties the queue. The host keeps ${serverName ?? 'its own server'} for other browsers, and this page goes back to it when you disconnect.` : ''}`
         : canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
+    <KeptAccountNote />
     {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
     {reconnectError && saved && android && <button type="button" className="text-button" disabled={busy} onClick={() => void retry()}>Try {hostOf(saved.url)} again</button>}
     <form onSubmit={submit}>
@@ -437,6 +456,14 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
       onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>, a public server of Creative Commons music that everyone shares.</p>
     {!embedded && window.squiggly && <p className="connect-update"><UpdateLink /></p>}
   </Frame>;
+}
+
+// Kept songs belong to one account; signing in to another forgets them.
+function KeptAccountNote() {
+  useKeptVersion();
+  const count = keptCount();
+  if (!keptSupported || !count) return null;
+  return <p className="note">Squiggly keeps songs for one account. Signing in to another server or as another user forgets the {count.toLocaleString()} {count === 1 ? 'song' : 'songs'} kept here.</p>;
 }
 
 // The browser build's door: the host keeps a Navidrome account, and its password keeps

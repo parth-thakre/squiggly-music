@@ -18,13 +18,17 @@ const outDir = resolve(root, 'out/web');
 // The upstream "Navidrome" the preview plugin streams from: WAV bytes for a track id, honouring
 // Range the way Navidrome does so seeking works in the browser. The track listing's routes are
 // answered first (native.ts).
-async function audioServer(navidrome: (request: IncomingMessage, response: ServerResponse) => boolean, hearing: (id: string) => void) {
+// While `down()` says the server is unreachable, every connection is dropped unanswered.
+async function audioServer(navidrome: (request: IncomingMessage, response: ServerResponse) => boolean, hearing: (id: string) => void,
+  down: () => boolean = () => false, streamed: (id: string) => void = () => {}) {
   const server: Server = createServer((request, response) => {
+    if (down()) return void request.socket.destroy();
     if (navidrome(request, response)) return;
     const url = new URL(request.url ?? '/', 'http://audio');
     const station = /^\/radio\/(st-\d+)$/.exec(url.pathname)?.[1];
     if (station) { hearing(station); return void live(request, response); }
     const id = url.searchParams.get('id') ?? '';
+    if (url.pathname.endsWith('/stream.view') && id) streamed(id);
     const track = /^tr-\d+-\d+$/.test(id) ? trackOf(id) : undefined;
     if (!track) { response.writeHead(200, { 'content-type': 'application/json' }); return void response.end('{"subsonic-response":{"status":"failed"}}'); }
     const wav = toneWav(track.duration ?? 10, 220 + (id.length * 37) % 400);
@@ -81,7 +85,8 @@ export async function startPreview({ configured = true }: { configured?: boolean
   if (!existsSync(resolve(outDir, 'index.html'))) throw new Error('out/web is missing. Run `npx vite build` (or `npm run test:ui`) first.');
   // The fake needs the server's address, and the server the fake.
   let fake: FakeNavidrome | undefined;
-  const audio = await audioServer((request, response) => serveNavidrome(fake!, request, response), id => fake!.stationStreams.push(id));
+  const audio = await audioServer((request, response) => serveNavidrome(fake!, request, response), id => fake!.stationStreams.push(id),
+    () => fake?.unreachable === true, id => fake!.streamed.push(id));
   fake = new FakeNavidrome(() => audio.url);
   // The stations stream from this machine (audioServer, on 127.0.0.1), which the relay refuses
   // unless told otherwise; every other address is checked as usual.
