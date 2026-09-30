@@ -1,17 +1,26 @@
-import type { LibraryApi, Result } from '../../../../../packages/core/contracts';
+import type { Connection, LibraryApi, Result } from '../../../../../packages/core/contracts';
 
-// Browser build only: the host runs the real OpenSubsonic connector with credentials from
-// its environment. See scripts/navidrome-preview.ts for the /api contract.
-// Every /api route needs the session cookie once the host sets a password. The cookie is
-// HttpOnly and same-origin, so <audio src="/api/stream..."> and <img src="/api/cover..."> carry it
-// without any custom headers.
+// Browser build only: the host runs the real OpenSubsonic connector, with the login this page
+// gave it (connect) or one from its environment. See scripts/navidrome-preview.ts for the /api
+// contract. Every /api route needs the session cookie once the host sets a password. The
+// cookies are HttpOnly and same-origin, so <audio src="/api/stream..."> and
+// <img src="/api/cover..."> carry them without any custom headers.
 const signedOutListeners = new Set<() => void>();
 const notifySignedOut = () => { for (const listener of [...signedOutListeners]) listener(); };
+const disconnectedListeners = new Set<() => void>();
+const notifyDisconnected = () => { for (const listener of [...disconnectedListeners]) listener(); };
+// The host's answer when it has no server for this browser (see notConnected in the host).
+const notConnected = 'Not connected to a server. Connect from the page.';
 
 /** Called when the host rejects a library call for want of a session, and after signOut(). */
 export function onSignedOut(listener: () => void): () => void {
   signedOutListeners.add(listener);
   return () => { signedOutListeners.delete(listener); };
+}
+/** Called when the host has no server for this browser (it restarted and forgot the connection, say). Not after disconnect(). */
+export function onDisconnected(listener: () => void): () => void {
+  disconnectedListeners.add(listener);
+  return () => { disconnectedListeners.delete(listener); };
 }
 
 async function request<T>(path: string, init: RequestInit): Promise<{ status: number; result: Result<T> }> {
@@ -28,16 +37,43 @@ const post = (body: unknown): RequestInit => ({ method: 'POST', headers: { 'cont
 async function call<T>(method: string, args: unknown[]): Promise<Result<T>> {
   const { status, result } = await request<T>(`/api/${method}`, post(args));
   if (status === 401) notifySignedOut();
+  else if (status === 503 && !result.ok && result.error === notConnected) notifyDisconnected();
   return result;
 }
 
+export interface WebSessionStatus {
+  /** The host has a password. */
+  required: boolean;
+  /** Library calls will be accepted. */
+  signedIn: boolean;
+  /** The host has a server for this browser. */
+  connected: boolean;
+  serverName: string | null;
+  /** That server is this browser's own (connect), not the host's configured one, so it can disconnect. */
+  pageConnection: boolean;
+}
+const unreachable: WebSessionStatus = { signedIn: false, required: true, connected: false, serverName: null, pageConnection: false };
+
 export const webSession = {
-  /** required: the host has a password. signedIn: library calls will be accepted. Unreachable hosts read as signed out. */
-  async status(): Promise<{ signedIn: boolean; required: boolean }> {
-    const { result } = await request<{ signedIn: boolean; required: boolean }>('/api/session', { method: 'GET' });
-    return result.ok && typeof result.value?.signedIn === 'boolean' && typeof result.value.required === 'boolean'
-      ? { signedIn: result.value.signedIn, required: result.value.required }
-      : { signedIn: false, required: true };
+  /** Unreachable hosts read as signed out. */
+  async status(): Promise<WebSessionStatus> {
+    const { result } = await request<Partial<WebSessionStatus>>('/api/session', { method: 'GET' });
+    const value = result.ok ? result.value : undefined;
+    return value && typeof value.signedIn === 'boolean' && typeof value.required === 'boolean' ? {
+      signedIn: value.signedIn, required: value.required, connected: value.connected === true,
+      serverName: typeof value.serverName === 'string' ? value.serverName : null, pageConnection: value.pageConnection === true,
+    } : unreachable;
+  },
+  /** Sends the login to this page's host once. The host keeps it in memory; the page keeps nothing. */
+  async connect(connection: Connection): Promise<Result<{ serverName: string }>> {
+    const { status, result } = await request<{ serverName: string }>('/api/connect', post(connection));
+    if (status === 401) notifySignedOut();
+    return result.ok && typeof result.value?.serverName !== 'string' ? { ok: false, error: 'The preview server returned an unexpected response.' } : result;
+  },
+  async disconnect(): Promise<Result> {
+    const { status, result } = await request<void>('/api/disconnect', post({}));
+    if (status === 401) notifySignedOut();
+    return result;
   },
   async signIn(password: string): Promise<Result> {
     return (await request<void>('/api/session', post({ password }))).result;

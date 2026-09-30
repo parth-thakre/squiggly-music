@@ -9,6 +9,10 @@ const tab = (app: App, name: 'All' | 'Artists' | 'Records' | 'Songs') => tabs(ap
 const records = (app: App) => app.main.locator('ul.grid > li');
 const recent = (app: App) => app.main.getByRole('region', { name: 'Recent searches' });
 const stored = (app: App) => app.page.evaluate(() => localStorage.getItem('squiggly.searches'));
+// Searches are kept for the account the page uses: here the host's configured server, which the
+// page knows by the name the host gives it (none, since the fake has no address). See webAccount
+// in player.ts.
+const account = 'web\nhost\n';
 
 test.describe('search', () => {
   test.beforeEach(async ({ app }) => { await app.signIn(); });
@@ -198,7 +202,7 @@ test.describe('search', () => {
     await expect(app.heading).toHaveText('“glass”');
     await app.section('Records').click();
     await expect(app.heading).toHaveText('Records');
-    expect(JSON.parse((await stored(app))!)).toEqual({ account: 'web', queries: ['amber', 'harbor'] });
+    expect(JSON.parse((await stored(app))!)).toEqual({ account, queries: ['amber', 'harbor'] });
 
     // / opens Search, which shows them under the empty field.
     await app.main.focus();
@@ -221,18 +225,18 @@ test.describe('search', () => {
   });
 
   test('keeps the last eight searches and nothing else', async ({ app, page }) => {
-    await page.evaluate(() => localStorage.setItem('squiggly.searches', JSON.stringify({ account: 'web', queries: ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8'] })));
+    await page.evaluate(account => localStorage.setItem('squiggly.searches', JSON.stringify({ account, queries: ['q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7', 'q8'] })), account);
     await page.reload();
     await expect(app.heading).toHaveText('Records');
     await field(app).fill('Harbor');
     await field(app).press('Enter');
     await expect(app.heading).toHaveText('“Harbor”');
-    expect(JSON.parse((await stored(app))!)).toEqual({ account: 'web', queries: ['Harbor', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7'] });
+    expect(JSON.parse((await stored(app))!)).toEqual({ account, queries: ['Harbor', 'q1', 'q2', 'q3', 'q4', 'q5', 'q6', 'q7'] });
     // The same search again moves it to the top rather than adding it twice.
     await field(app).fill('q5');
     await field(app).press('Enter');
     await expect(app.heading).toHaveText('“q5”');
-    expect(JSON.parse((await stored(app))!)).toEqual({ account: 'web', queries: ['q5', 'Harbor', 'q1', 'q2', 'q3', 'q4', 'q6', 'q7'] });
+    expect(JSON.parse((await stored(app))!)).toEqual({ account, queries: ['q5', 'Harbor', 'q1', 'q2', 'q3', 'q4', 'q6', 'q7'] });
   });
 
   test('says when nothing matches and when the search failed', async ({ app, fake }) => {
