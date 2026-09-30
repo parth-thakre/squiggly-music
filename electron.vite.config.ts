@@ -2,6 +2,7 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'node:path';
 import type { Plugin } from 'vite';
+import { devServerCsp } from './scripts/dev-csp';
 
 // Packages unpack out/main from app.asar for the audio host, which runs under a separate
 // Node that cannot read asar. The root package.json stays inside app.asar, so the unpacked
@@ -30,7 +31,7 @@ export default defineConfig({
   },
   renderer: {
     root: 'apps/desktop/renderer',
-    plugins: [react()],
+    plugins: [react(), devServerCsp()],
     build: { minify: 'esbuild', rollupOptions: { input: resolve('apps/desktop/renderer/index.html') } },
   },
 });
