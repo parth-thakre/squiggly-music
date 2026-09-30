@@ -1085,6 +1085,30 @@ describe('restoring a saved queue', () => {
   });
 });
 
+describe('starting to play', () => {
+  it('reports a song as starting until mpv is really playing it', async () => {
+    const { snapshots, native, deliver } = await mockHost(true);
+    deliver();
+    const properties: Record<string, string> = { pause: 'no', 'idle-active': 'no', 'core-idle': 'yes' };
+    native.property.mockImplementation((name: string) => properties[name] ?? 'no');
+    const tick = () => { vi.advanceTimersByTime(250); deliver(); return snapshots().at(-1)!.player; };
+    // Asked to play; the stream or the output is still opening.
+    expect(tick()).toMatchObject({ playing: true, audio: { buffering: true } });
+    properties['core-idle'] = 'no';
+    expect(tick()).toMatchObject({ playing: true, audio: { buffering: false } });
+    // Waiting on the network part way through.
+    native.audio.mockReturnValue({ ...native.audio(), buffering: true });
+    properties['core-idle'] = 'yes';
+    expect(tick()).toMatchObject({ playing: true, audio: { buffering: true } });
+    // Paused, nothing is on its way, whatever mpv's cache is doing.
+    properties.pause = 'yes';
+    expect(tick()).toMatchObject({ playing: false, audio: { buffering: false } });
+    // Nothing loaded.
+    properties.pause = 'no'; properties['idle-active'] = 'yes';
+    expect(tick()).toMatchObject({ playing: false, audio: { buffering: false } });
+  });
+});
+
 describe('exclusive output', () => {
   const idle = (native: { property: ReturnType<typeof vi.fn> }) => native.property.mockImplementation((name: string) => name === 'idle-active' ? 'yes' : 'no');
 
@@ -1310,6 +1334,22 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('resuming in real libmpv', ()
       expect(server.requests.filter(({ path }) => path === '/b.wav').every(({ from }) => from < rate)).toBe(true);
     } finally { server.close(); }
   }, 20_000);
+
+  it('reports a song as starting until its audio flows', async () => {
+    const server = await serve({ '/a.wav': tone(48000, 4) });
+    try {
+      const { snapshots, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      // A server slow to answer, so the stream takes a while to open.
+      send({ id: 1, action: { type: 'queue', tracks: [streamed(server.url('/slow/a.wav'), 'a', 48000)] } });
+      await expect.poll(() => snapshots.at(-1)?.position ?? 0, { timeout: 5000 }).toBeGreaterThan(0.5);
+      const loaded = snapshots.slice(snapshots.findIndex(s => s.currentIndex === 0));
+      // Playing, and starting, before any audio: then playing, and not.
+      expect(loaded[0]).toMatchObject({ playing: true, position: 0, audio: { buffering: true } });
+      expect(snapshots.at(-1)).toMatchObject({ playing: true, audio: { buffering: false } });
+      expect(loaded.filter(s => s.position > 0.3).every(s => !s.audio.buffering)).toBe(true);
+    } finally { server.close(); }
+  });
 
   it('stays paused when paused while a resume loads', async () => {
     const file = await wavFixture(8);

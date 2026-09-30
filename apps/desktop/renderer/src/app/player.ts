@@ -30,6 +30,10 @@ export interface PlayerState {
   // load in the browser, the native player's playId on Android. '' before anything has played.
   playId: string;
   index: number; playing: boolean; position: number; duration: number; buffering: boolean;
+  // Asked to play, and nothing heard of this play yet: the stream or the output is still opening.
+  // The play button shows it and ignores presses meanwhile (player.toggle). A stall later in the
+  // song is only buffering.
+  starting: boolean;
   volume: number; audio: AudioPath | null; devices: AudioDevice[]; device: string;
   // What was asked of the server for the current song. A request, not proof of what arrived.
   delivery: 'original-requested' | 'mp3-fallback' | null;
@@ -70,7 +74,7 @@ const saveModes = () => { try { localStorage.setItem(MODES, JSON.stringify({ rep
 let state: PlayerState = {
   mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop || android ? null : 'Navidrome',
   sessionId: null, access: desktop ? 'open' : 'checking',
-  queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
+  queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, starting: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
@@ -80,9 +84,15 @@ let state: PlayerState = {
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
 let positionAt = performance.now();
+// The play (PlayerState.playId) last heard: playing and not buffering. A new load forgets it,
+// since Android's playId changes only once the native player reports the new entry.
+let heard: string | null = null;
 const set = (patch: Partial<PlayerState>) => {
   const before = state;
   state = { ...state, ...patch };
+  if (state.playing && !state.buffering) heard = state.playId;
+  const starting = state.buffering && state.index >= 0 && state.playId !== heard;
+  if (starting !== state.starting) state = { ...state, starting };
   if ('position' in patch || state.playing !== before.playing) positionAt = performance.now();
   // The native player gets every change to the queue, before any command that names an entry.
   if (android && state.entryIds !== before.entryIds) android.player.sync(state.queue, state.entryIds);
@@ -208,6 +218,7 @@ function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = f
 function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play?: boolean; startAt?: number; patch?: Partial<PlayerState> } = {}) {
   const queue = patch.queue ?? state.queue, entryIds = patch.entryIds ?? state.entryIds;
   const track = queue[index], entry = entryIds[index];
+  heard = null;
   if (android && track && entry) {
     // set() sends the queue to the native player before the load that names the entry. The new
     // play instance begins when the player reports the entry started (see nativePlayback).
@@ -589,7 +600,11 @@ export const player = {
     report(await desktop!.queue.clear());
   },
 
+  // Play or pause, from the play button, a song's row, the space bar. While a song is starting
+  // it does nothing: it's already on its way, and a press in that silence is nearly always meant
+  // as play, so pausing would leave it paused by surprise. pause() still stops it.
   toggle() {
+    if (state.starting) return;
     if (android) {
       if (state.index < 0) return;
       // A song that already ended starts over as a new play, as in the browser.

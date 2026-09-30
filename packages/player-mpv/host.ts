@@ -404,14 +404,18 @@ timer = setInterval(() => {
     // buffering, so the play button doesn't flash to paused and the position doesn't flash 0:00.
     const resuming = pendingSeek?.resume ? pendingSeek.seconds : null;
     const audio = native.audio();
+    const playing = resuming !== null || native.property('pause') === 'no' && native.property('idle-active') === 'no';
     player = {
       ...player,
-      playing: resuming !== null || native.property('pause') === 'no' && native.property('idle-active') === 'no',
+      playing,
       position: resuming ?? native.number('time-pos') ?? 0,
       duration: native.number('duration') ?? 0,
       volume: native.number('volume') ?? 100,
       currentIndex: native.number('playlist-pos') ?? -1,
-      audio: resuming !== null ? { ...audio, buffering: true } : audio,
+      // Playing but not heard yet, so the deck shows it starting: mpv's core-idle stays yes while
+      // the stream opens and fills and the output opens, after a seek, and while it waits on the
+      // network (paused-for-cache). Paused, nothing is on its way.
+      audio: { ...audio, buffering: playing && (resuming !== null || audio.buffering || native.property('core-idle') === 'yes') },
     };
     // The start seek of an entry opening at the saved position is the host's own too.
     followPlay(pendingSeek?.opening ? { ...events, seeks: 0 } : events);
