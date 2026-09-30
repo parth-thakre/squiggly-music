@@ -115,8 +115,10 @@ test.describe('home', () => {
     await card.getByRole('button', { name: 'Resume', exact: true }).click();
     await expect(card).toHaveCount(0);
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
-    await expect(app.deck.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
-    await expect(app.clock).toHaveText('0:17');
+    // Resume plays from the saved position.
+    await expect(app.deck.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(17);
+    expect(await app.seconds()).toBeLessThan(30);
   });
 
   test('the saved queue is not offered while something plays', async ({ app, fake }) => {
