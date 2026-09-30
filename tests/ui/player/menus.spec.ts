@@ -252,15 +252,16 @@ test.describe('ratings', () => {
   });
 
   test('Delete on the stars in a queue row clears the rating and leaves the queue alone', async ({ app, page, fake }) => {
-    fake.ratings.set('tr-2-3', 4);
     await app.play('Quiet Harbor', 'Opening 2');
     await page.getByRole('button', { name: 'Queue', exact: true }).click();
     await expect(app.heading).toHaveText('Queue');
     const songs = app.main.getByRole('list').first().locator('li[data-key]');
     await expect(songs).toHaveCount(5);
+    const stars = app.row('Middle Distance 2').getByRole('radiogroup', { name: 'Rating for Middle Distance 2' });
+    await stars.getByRole('radio', { name: '4 stars' }).click();
+    await expect.poll(() => fake.ratings.get('tr-2-3')).toBe(4);
     // Selected, so the list itself would take Delete as "remove".
     await app.row('Middle Distance 2').getByRole('button', { name: 'Play Middle Distance 2', exact: true }).click({ modifiers: ['ControlOrMeta'] });
-    const stars = app.row('Middle Distance 2').getByRole('radiogroup', { name: 'Rating for Middle Distance 2' });
     await stars.getByRole('radio', { name: '4 stars' }).focus();
     await page.keyboard.press('Delete');
     await expect.poll(() => fake.ratings.has('tr-2-3')).toBe(false);
