@@ -389,13 +389,13 @@ function connectTo(typed: Connection, generation: number) {
     endRadio();
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear();
-    connectionGeneration++; resetSessionState();
+    const session = ++connectionGeneration; resetSessionState();
     // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
     const address = new URL(candidate.baseUrl);
     state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), reconnectError: null };
     // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
     updateTray(); updateMedia(); void loadSavedSong(candidate);
-    return resolved;
+    return { ...resolved, session };
   });
 }
 // HTTPS, then HTTP with consent, for an address typed without a scheme (resolveServerAddress in the connector).
@@ -476,7 +476,8 @@ function installHandlers() {
     // Nothing connected or saved: the window asks, then connects to the http:// address.
     if (resolved.type === 'plain-http') return resolved;
     // A sign-in that can't be saved securely stays in memory for this session (account.ts).
-    yield* Effect.promise(() => account.remember(resolved.connection).catch(() => undefined));
+    // A disconnect that ran since this session began has already forgotten it, so don't save it back.
+    yield* Effect.promise(() => resolved.session === connectionGeneration ? account.remember(resolved.connection).catch(() => undefined) : Promise.resolve());
     state.server = { ...state.server, saved: account.saved };
     return { type: 'connected' as const };
   }), 'server');

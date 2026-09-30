@@ -703,6 +703,21 @@ describe('saved sign-in', () => {
     expect(after.saved).toBeNull();
   });
 
+  it('forgets a first sign-in that is still being written', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-account-'));
+    const path = join(directory, 'account.json');
+    const account = new Account(path, encryption(), 'linux');
+    const saving = account.remember(connection);
+    // The store's value changes only once the write and rename finish, so nothing looks saved yet.
+    expect(account.saved).toBeNull();
+    await Promise.all([saving, account.forget()]);
+    expect(account.saved).toBeNull();
+    const later = new Account(path, encryption(), 'linux');
+    await later.load();
+    expect(later.saved).toBeNull();
+    expect(later.connection()).toBeNull();
+  });
+
   it('saves nothing without real encryption, and drops a password that no longer decrypts', async () => {
     directory = await mkdtemp(join(tmpdir(), 'squiggly-account-'));
     const path = join(directory, 'account.json');
