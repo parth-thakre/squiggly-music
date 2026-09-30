@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { Effect } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SubsonicClient } from '../packages/adapter-opensubsonic/client';
-import { connectionIdle, maxConnections, notConnected } from '../scripts/navidrome-preview';
+import { connectFailed, connectionIdle, connectionInUse, connectionsFull, maxConnections, notConnected } from '../scripts/navidrome-preview';
 import { previewServer, webPassword } from './previewHarness';
 
 const login = { username: 'ana', password: 'navidrome secret' };
@@ -97,12 +97,13 @@ describe('connecting from the page', () => {
     expect(connected.body).toEqual({ ok: true, value: { serverName: `Navidrome (http://${server.host})` } });
   });
 
-  it('answers the connector\'s own message for a wrong login, an unreachable server, or a bad address, and sets no cookie', async () => {
-    const { server, connect } = await setup();
+  it('answers one message for a wrong login, an unreachable server, a page that is not a server, or a bad address, and sets no cookie', async () => {
+    const { server, preview, connect } = await setup();
     const cases: [unknown, number, string][] = [
-      [{ url: server.url, username: login.username, password: 'wrong' }, 502, 'Incorrect username or password. Check your Navidrome login and try again.'],
-      [{ url: 'http://127.0.0.1:1', ...login }, 502, 'Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.'],
-      [{ url: 'ftp://music.example.com', ...login }, 502, 'Use an HTTP or HTTPS server URL without embedded credentials, query parameters, or a fragment.'],
+      [{ url: server.url, username: login.username, password: 'wrong' }, 502, connectFailed],
+      [{ url: 'http://127.0.0.1:1', ...login }, 502, connectFailed],
+      [{ url: preview.url, ...login }, 502, connectFailed],
+      [{ url: 'ftp://music.example.com', ...login }, 502, connectFailed],
       [{ url: '', ...login }, 400, 'Enter the server address, username, and password.'],
       [{ url: server.url, username: login.username }, 400, 'Enter the server address, username, and password.'],
     ];
@@ -129,20 +130,30 @@ describe('connecting from the page', () => {
     expect(await session()).toMatchObject({ connected: false });
   });
 
-  it(`keeps at most ${maxConnections} connections, dropping the one idle longest, and forgets one after a day unused`, async () => {
+  it(`keeps at most ${maxConnections} connections, making room only with one left unused, and forgets one after a day unused`, async () => {
     const { server, connect, playlists, clock } = await setup();
     const cookies: string[] = [];
     for (let i = 0; i < maxConnections; i++) { cookies.push((await connect({ url: server.url, ...login })).cookie); clock.now += 1000; }
     expect(new Set(cookies).size).toBe(maxConnections);
-    // The first is used again, so the second is now the one idle longest, and the 33rd pushes it out.
+    // All in use: the next waits, without the server being asked, and pushes no one out.
+    const asked = server.paths.length;
+    const full = await connect({ url: server.url, ...login });
+    expect(full.response.status).toBe(503);
+    expect(full.body).toEqual({ ok: false, error: connectionsFull });
+    expect(full.setCookie).toBe('');
+    expect(server.paths).toHaveLength(asked);
+    expect(await playlists(cookies[1])).toEqual(ownList);
+
+    // Ten minutes on, the first is used again, so the third is the one idle longest, and the next pushes it out.
+    clock.now += connectionInUse;
     expect(await playlists(cookies[0])).toEqual(ownList);
     const newest = (await connect({ url: server.url, ...login })).cookie;
-    expect(await playlists(cookies[1])).toEqual(disconnected);
+    expect(await playlists(cookies[2])).toEqual(disconnected);
     expect(await playlists(cookies[0])).toEqual(ownList);
     expect(await playlists(newest)).toEqual(ownList);
     const another = (await connect({ url: server.url, ...login })).cookie;
-    expect(await playlists(cookies[2])).toEqual(disconnected);
-    expect(await playlists(cookies[3])).toEqual(ownList);
+    expect(await playlists(cookies[3])).toEqual(disconnected);
+    expect(await playlists(cookies[4])).toEqual(ownList);
 
     clock.now += connectionIdle - 1;
     expect(await playlists(another)).toEqual(ownList);
@@ -151,6 +162,44 @@ describe('connecting from the page', () => {
     expect(await playlists(another)).toEqual(ownList);
     clock.now += connectionIdle;
     expect(await playlists(another)).toEqual(disconnected);
+  });
+
+  it('keeps one connection per page session, even without the connection cookie', async () => {
+    const { server, preview, connect, playlists } = await setup({ password: webPassword });
+    const mine = (await preview.signIn()).cookie, theirs = (await preview.signIn()).cookie;
+    const kept = (await connect({ url: server.url, ...login }, theirs)).cookie;
+    const first = (await connect({ url: server.url, ...login }, mine)).cookie;
+    // Connecting again from the same session, the connection cookie left out, replaces the first.
+    const second = (await connect({ url: server.url, ...login }, mine)).cookie;
+    expect(await playlists(`${mine}; ${first}`)).toEqual(disconnected);
+    expect(await playlists(`${mine}; ${second}`)).toEqual(ownList);
+    expect(await playlists(`${theirs}; ${kept}`)).toEqual(ownList);
+    // Signing out forgets the session's connection, whichever cookies come along.
+    await preview.fetch('/api/session', { method: 'DELETE', headers: { cookie: mine, origin: preview.url } });
+    const again = (await preview.signIn()).cookie;
+    expect(await playlists(`${again}; ${second}`)).toEqual(disconnected);
+    expect(await playlists(`${theirs}; ${kept}`)).toEqual(ownList);
+  });
+
+  it('backs off repeated failures as page sign-in does, and a success in between doesn\'t reset it', async () => {
+    const { server, connect, clock } = await setup();
+    const wrong = { url: server.url, username: login.username, password: 'guess' };
+    for (let i = 0; i < 3; i++) expect((await connect(wrong)).body).toEqual({ ok: false, error: connectFailed });
+    expect((await connect({ url: server.url, ...login })).response.status).toBe(200);
+    expect((await connect(wrong)).response.status).toBe(502);
+    // The fifth failure starts the wait.
+    expect((await connect(wrong)).response.status).toBe(502);
+    const asked = server.paths.length;
+    const waiting = await connect({ url: server.url, ...login });
+    expect(waiting.response.status).toBe(429);
+    expect(waiting.response.headers.get('retry-after')).toBe('2');
+    expect(waiting.body).toEqual({ ok: false, error: 'Too many connection attempts. Try again in 2 seconds.' });
+    expect(server.paths).toHaveLength(asked);
+    clock.now += 2000;
+    expect((await connect(wrong)).response.status).toBe(502);
+    expect((await connect(wrong)).response.headers.get('retry-after')).toBe('4');
+    clock.now += 4000;
+    expect((await connect({ url: server.url, ...login })).response.status).toBe(200);
   });
 
   it('connecting again replaces this browser\'s connection', async () => {

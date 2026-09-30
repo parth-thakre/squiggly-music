@@ -34,15 +34,19 @@ import { ConnectionSchema, IdSchema } from '../packages/core/validation';
 // Connecting from the page (same-origin JSON, and the session above when there is a password):
 //   POST   /api/connect     body: { url, username, password } -> { ok: true, value: { serverName } }
 //                           and an HttpOnly, SameSite=Strict `squiggly-connection` cookie, or
-//                           { ok: false, error } with the connector's own message. An address
-//                           without a scheme is tried as HTTPS, then HTTP, as on the desktop.
+//                           502 { ok: false, error } with one message for every failure, 429 after
+//                           repeated failures (the sign-in backoff, counted apart), or 503 when
+//                           the host is full. An address without a scheme is tried as HTTPS, then
+//                           HTTP, as on the desktop.
 //   POST   /api/disconnect  -> { ok: true }; forgets this browser's connection and clears the cookie
 // The cookie holds a random id; the connector, with the password it needs, stays in this
-// process's memory and is never written to disk or logged. At most 32 are kept (the one used
-// least recently goes first), each until 24 hours pass without a request, the browser
-// disconnects or signs out, or the server restarts. A browser's own connection is used before
-// the environment's. With neither, the library, cover, stream and station routes answer
-// 503 { ok: false, error: 'Not connected to a server. Connect from the page.' }.
+// process's memory and is never written to disk or logged. Each browser and each page session
+// keeps one; connecting again replaces it. At most 32 are kept: when all are taken, the one used
+// least recently makes room only if it has sat unused for 10 minutes. Each is kept until 24 hours
+// pass without a request, the browser disconnects or signs out, or the server restarts. A
+// browser's own connection is used before the environment's. With neither, the library, cover,
+// stream and station routes answer 503 { ok: false, error: 'Not connected to a server. Connect
+// from the page.' }.
 //
 // Binding. `npm run web` and `npm run preview` listen on 127.0.0.1 only. Without
 // SQUIGGLY_WEB_PASSWORD the library is open to this computer alone: /api refuses requests that
@@ -81,16 +85,22 @@ const minimumPasswordLength = 12;
 const cookieName = 'squiggly_session';
 const sessionLifetime = 30 * 24 * 60 * 60 * 1000;
 const maxSessions = 1000;
-// Sign-in backoff per client address: after `freeAttempts` wrong passwords each further one
-// doubles the wait, up to `maxBackoff`. An address is forgotten an hour after its last failure.
+// Backoff per client address, for page sign-in and, counted apart, for connecting to a server:
+// after `freeAttempts` failures each further one doubles the wait, up to `maxBackoff`. An
+// address is forgotten an hour after its last failure.
 const freeAttempts = 4;
 const maxBackoff = 15 * 60 * 1000;
 const failureMemory = 60 * 60 * 1000;
 const maxTrackedAddresses = 10_000;
-// Connections made from the page: one per browser, in memory only.
+// Connections made from the page: one per browser and page session, in memory only. When all
+// are taken, the one idle longest makes room if it has sat unused for `connectionInUse`;
+// otherwise connecting waits, so one signed-in page can't push everyone else's out.
 const connectionCookie = 'squiggly-connection';
 export const maxConnections = 32;
 export const connectionIdle = 24 * 60 * 60 * 1000;
+export const connectionInUse = 10 * 60 * 1000;
+export const connectFailed = 'Could not connect. Check the address, username, and password.';
+export const connectionsFull = 'The host has too many connections open. Try again later.';
 
 export interface PreviewOptions {
   /** Defaults to process.env. */
@@ -172,11 +182,38 @@ async function readBody(request: IncomingMessage, limit: number) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
+function createBackoff(now: () => number) {
+  const failures = new Map<string, { count: number; last: number; until: number }>();
+  const prune = () => {
+    const time = now();
+    for (const [key, record] of failures) if (time - record.last > failureMemory && record.until <= time) failures.delete(key);
+  };
+  return {
+    retryAfter(request: IncomingMessage) {
+      const record = failures.get(clientAddress(request));
+      return record && record.until > now() ? Math.ceil((record.until - now()) / 1000) : 0;
+    },
+    fail(request: IncomingMessage) {
+      const address = clientAddress(request);
+      const time = now();
+      const previous = failures.get(address);
+      const count = previous && time - previous.last <= failureMemory ? previous.count + 1 : 1;
+      if (!previous && failures.size >= maxTrackedAddresses) {
+        prune();
+        if (failures.size >= maxTrackedAddresses) failures.delete(failures.keys().next().value!);
+      }
+      failures.set(address, { count, last: time, until: count > freeAttempts ? time + Math.min(maxBackoff, 1000 * 2 ** (count - freeAttempts)) : 0 });
+    },
+    clear(request: IncomingMessage) { failures.delete(clientAddress(request)); },
+  };
+}
+type Backoff = ReturnType<typeof createBackoff>;
+
 function createAuth(password: string, now: () => number) {
   const secret = digest(password);
   // Keyed by a hash of the token, so the map never holds a usable cookie value.
   const sessions = new Map<string, number>();
-  const failures = new Map<string, { count: number; last: number; until: number }>();
+  const backoff = createBackoff(now);
   const tokens = (request: IncomingMessage) => (request.headers.cookie ?? '').split(';')
     .map(part => part.trim().split('='))
     .filter(([name, value]) => name === cookieName && !!value && /^[\w-]{43}$/.test(value))
@@ -186,7 +223,6 @@ function createAuth(password: string, now: () => number) {
   const prune = () => {
     const time = now();
     for (const [key, expires] of sessions) if (expires <= time) sessions.delete(key);
-    for (const [key, record] of failures) if (time - record.last > failureMemory && record.until <= time) failures.delete(key);
   };
   return {
     // Sliding expiry: every authenticated request extends the session.
@@ -209,22 +245,11 @@ function createAuth(password: string, now: () => number) {
       const expires = sessions.get(digest(token).toString('hex'));
       return expires !== undefined && expires > now();
     },
-    retryAfter(request: IncomingMessage) {
-      const record = failures.get(clientAddress(request));
-      return record && record.until > now() ? Math.ceil((record.until - now()) / 1000) : 0;
-    },
+    retryAfter: backoff.retryAfter,
     // Compares digests so neither length nor content leaks through timing.
     verify(request: IncomingMessage, attempt: string) {
-      const address = clientAddress(request);
-      if (timingSafeEqual(digest(attempt), secret)) { failures.delete(address); return true; }
-      const time = now();
-      const previous = failures.get(address);
-      const count = previous && time - previous.last <= failureMemory ? previous.count + 1 : 1;
-      if (!previous && failures.size >= maxTrackedAddresses) {
-        prune();
-        if (failures.size >= maxTrackedAddresses) failures.delete(failures.keys().next().value!);
-      }
-      failures.set(address, { count, last: time, until: count > freeAttempts ? time + Math.min(maxBackoff, 1000 * 2 ** (count - freeAttempts)) : 0 });
+      if (timingSafeEqual(digest(attempt), secret)) { backoff.clear(request); return true; }
+      backoff.fail(request);
       return false;
     },
     signIn(request: IncomingMessage, response: ServerResponse) {
@@ -234,6 +259,8 @@ function createAuth(password: string, now: () => number) {
       sessions.set(digest(token).toString('hex'), now() + sessionLifetime);
       response.setHeader('set-cookie', cookie(request, token, sessionLifetime / 1000));
     },
+    // The session's key, which the connection it made is kept under.
+    owner: (token: string) => digest(token).toString('hex'),
     signOut(request: IncomingMessage, response: ServerResponse) {
       for (const token of tokens(request)) sessions.delete(digest(token).toString('hex'));
       response.setHeader('set-cookie', cookie(request, '', 0));
@@ -253,8 +280,9 @@ function hostName(client: SubsonicClient) {
 
 // Each browser's own connector, found by the `squiggly-connection` cookie. Keyed by a hash of the
 // id, as sessions are, and kept in order of use so the first entry is the one idle longest.
+// `owner` is the page session that made it (null without a password), which keeps one.
 function createConnections(now: () => number) {
-  const connections = new Map<string, { client: SubsonicClient; serverName: string; used: number }>();
+  const connections = new Map<string, { client: SubsonicClient; serverName: string; used: number; owner: string | null }>();
   const values = (request: IncomingMessage) => (request.headers.cookie ?? '').split(';')
     .map(part => part.trim().split('='))
     .filter(([name, value]) => name === connectionCookie && !!value && /^[0-9a-f]{64}$/.test(value))
@@ -266,7 +294,19 @@ function createConnections(now: () => number) {
     const time = now();
     for (const [key, entry] of connections) if (time - entry.used >= connectionIdle) connections.delete(key);
   };
+  // This browser's connection and its page session's, which a new one replaces.
+  const own = (request: IncomingMessage, owner: string | null) => {
+    const keys = ids(request);
+    return [...connections].filter(([key, entry]) => keys.includes(key) || (owner !== null && entry.owner === owner)).map(([key]) => key);
+  };
+  const room = (request: IncomingMessage, owner: string | null) => {
+    prune();
+    if (connections.size < maxConnections || own(request, owner).length) return true;
+    const [, oldest] = connections.entries().next().value!;
+    return now() - oldest.used >= connectionInUse;
+  };
   return {
+    room,
     // Every request through a connection counts as use.
     get(request: IncomingMessage) {
       prune();
@@ -279,14 +319,15 @@ function createConnections(now: () => number) {
       }
       return null;
     },
-    add(request: IncomingMessage, response: ServerResponse, client: SubsonicClient, serverName: string) {
-      prune();
+    add(request: IncomingMessage, response: ServerResponse, client: SubsonicClient, serverName: string, owner: string | null) {
+      if (!room(request, owner)) return false;
       // Connecting again replaces this browser's connection rather than adding a second.
-      for (const key of ids(request)) connections.delete(key);
-      while (connections.size >= maxConnections) connections.delete(connections.keys().next().value!);
+      for (const key of own(request, owner)) connections.delete(key);
+      if (connections.size >= maxConnections) connections.delete(connections.keys().next().value!);
       const id = randomBytes(32).toString('hex');
-      connections.set(digest(id).toString('hex'), { client, serverName, used: now() });
+      connections.set(digest(id).toString('hex'), { client, serverName, used: now(), owner });
       response.setHeader('set-cookie', cookie(request, id, sessionLifetime / 1000));
+      return true;
     },
     // The cookie lasts as long as the page keeps coming back; the host forgets it sooner when idle.
     refresh(request: IncomingMessage, response: ServerResponse) {
@@ -295,8 +336,8 @@ function createConnections(now: () => number) {
     },
     // Whether the browser sent a connection cookie at all, known here or not.
     carries: (request: IncomingMessage) => values(request).length > 0,
-    remove(request: IncomingMessage) {
-      for (const key of ids(request)) connections.delete(key);
+    remove(request: IncomingMessage, owner: string | null = null) {
+      for (const key of own(request, owner)) connections.delete(key);
       return cookie(request, '', 0);
     },
   };
@@ -307,14 +348,25 @@ type Connections = ReturnType<typeof createConnections>;
 // `live` says whether the page session that asked still stands: a sign-out that lands while the
 // server is being checked can't clear a connection that doesn't exist yet, so the connection is
 // kept only if the session outlived the wait.
-async function handleConnect(connections: Connections, connector: (connection: Connection) => SubsonicClient, live: () => boolean, request: IncomingMessage, response: ServerResponse) {
+// Any server may be connected to, so a failure says only that it failed, whether the login was
+// wrong, the server didn't answer, or it isn't a server at all, and failures back off as page
+// sign-in does. A success doesn't reset the count: a server of one's own in between would
+// otherwise make guessing another's password free.
+async function handleConnect(connections: Connections, backoff: Backoff, connector: (connection: Connection) => SubsonicClient, owner: string | null, live: () => boolean, request: IncomingMessage, response: ServerResponse) {
   if (request.method !== 'POST') return json(response, 405, { ok: false, error: 'Use POST.' });
   if (!jsonRequest(request) || !sameOrigin(request)) return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });
+  const wait = backoff.retryAfter(request);
+  if (wait) {
+    response.setHeader('retry-after', String(wait));
+    return json(response, 429, { ok: false, error: `Too many connection attempts. Try again in ${wait} ${wait === 1 ? 'second' : 'seconds'}.` });
+  }
   let body: unknown;
   try { body = JSON.parse(await readBody(request, 16 * 1024)); }
   catch { return json(response, 400, { ok: false, error: 'Invalid connection request.' }); }
   const typed = Schema.decodeUnknownEither(ConnectionSchema)(body);
   if (Either.isLeft(typed)) return json(response, 400, { ok: false, error: 'Enter the server address, username, and password.' });
+  // Asked before the server is, so a full host never checks a login it wouldn't keep.
+  if (!connections.room(request, owner)) return json(response, 503, { ok: false, error: connectionsFull });
   const attempt = await Effect.runPromise(Effect.either(Effect.gen(function* () {
     const connection = yield* resolveServerAddress(typed.right, connector);
     // The address check's own message (a bad address says how), not Effect's generic one.
@@ -322,13 +374,12 @@ async function handleConnect(connections: Connections, connector: (connection: C
     const info = yield* client.ping();
     return { client, info };
   })));
-  // The connector's messages are its own, never the server's text or an address with credentials.
-  if (Either.isLeft(attempt)) return json(response, 502, { ok: false, error: attempt.left.message || 'Could not connect.' });
+  if (Either.isLeft(attempt)) { backoff.fail(request); return json(response, 502, { ok: false, error: connectFailed }); }
   if (!live()) return json(response, 401, { ok: false, error: signInRequired });
   const { client, info } = attempt.right;
   const host = hostName(client);
   const serverName = host ? `${info.name} (${host})` : info.name;
-  connections.add(request, response, client, serverName);
+  if (!connections.add(request, response, client, serverName, owner)) return json(response, 503, { ok: false, error: connectionsFull });
   json(response, 200, { ok: true, value: { serverName } });
 }
 
@@ -359,7 +410,8 @@ async function handleSession(auth: Auth | null, connections: Connections, server
   // doesn't find the last one's account.
   if (request.method === 'DELETE') {
     const connected = connections.carries(request);
-    const cleared = connections.remove(request);
+    const token = auth?.session(request);
+    const cleared = connections.remove(request, token ? auth!.owner(token) : null);
     auth?.signOut(request, response);
     if (connected) response.appendHeader('set-cookie', cleared);
     return json(response, 200, { ok: true });
@@ -524,6 +576,7 @@ export function navidromePreview({ env = process.env, client = createClient(env)
   const auth = password && password.length >= minimumPasswordLength ? createAuth(password, now) : null;
   const relay: StationRelay = { allowed: stationAddress, listedAt: new WeakMap(), now };
   const connections = createConnections(now);
+  const connectBackoff = createBackoff(now);
   const configured = client && { client, serverName: hostName(client), pageConnection: false };
   // This browser's own connection, or else the environment's. A browser whose connection the host
   // has forgotten gets neither until it asks for the session again (which drops the cookie), so
@@ -552,7 +605,7 @@ export function navidromePreview({ env = process.env, client = createClient(env)
         if (pathname === '/session') return await handleSession(auth, connections, serverFor, configured || null, request, response);
         const token = auth?.session(request) ?? null;
         if (auth && !token) return json(response, 401, { ok: false, error: signInRequired });
-        if (pathname === '/connect') return await handleConnect(connections, connector, () => !auth || !!token && auth.live(token), request, response);
+        if (pathname === '/connect') return await handleConnect(connections, connectBackoff, connector, auth && token ? auth.owner(token) : null, () => !auth || !!token && auth.live(token), request, response);
         if (pathname === '/disconnect') {
           if (request.method !== 'POST') return json(response, 405, { ok: false, error: 'Use POST.' });
           if (!jsonRequest(request) || !sameOrigin(request)) return json(response, 403, { ok: false, error: 'Cross-origin or non-JSON request refused.' });

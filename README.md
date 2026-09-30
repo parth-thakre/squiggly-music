@@ -78,7 +78,7 @@ If libmpv isn't on the loader path, set `SQUIGGLY_LIBMPV_PATH` to the library fi
 npm run web
 ```
 
-This serves the app on 127.0.0.1:5173. The page asks for your Navidrome server the way the desktop app does: the address (without `https://` or `http://`, the host tries HTTPS first, then HTTP), your username, and your password. The password goes once to the host serving the page, which keeps the connection in its memory for that browser until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk, and the page never sees it again.
+This serves the app on 127.0.0.1:5173. The page asks for your Navidrome server the way the desktop app does: the address (without `https://` or `http://`, the host tries HTTPS first, then HTTP), your username, and your password. The password goes once to the host serving the page, which keeps the connection in its memory for that browser until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk, and the page never sees it again. Each browser keeps one connection, and the host keeps 32 at most; when it's full, one left unused for 10 minutes makes room. A failed connection says only that it failed, and repeated failures make the page wait before trying again.
 
 The host can also start with a server of its own, which every browser uses until it connects to another. Here the address needs its `https://` or `http://`:
 

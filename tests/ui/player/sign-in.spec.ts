@@ -91,7 +91,7 @@ test.describe('connect', () => {
     await page.getByLabel('Username').fill(account.username);
     await page.getByLabel('Password').fill('not the password');
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
-    await expect(page.getByRole('alert')).toHaveText('Incorrect username or password. Check your Navidrome login and try again.');
+    await expect(page.getByRole('alert')).toHaveText('Could not connect. Check the address, username, and password.');
     await page.getByLabel('Password').fill(account.password);
     await page.getByRole('button', { name: 'Connect', exact: true }).click();
 
