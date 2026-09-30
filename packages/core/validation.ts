@@ -91,8 +91,8 @@ export const LibraryRequestSchemas = {
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);
 
 // saveM3u, on the desktop and Android: a playlist file's name and songs, as the renderer describes
-// them (m3u.ts). The desktop's main process fills in local files' paths itself; it never takes
-// one from the renderer.
+// them (m3u.ts). The desktop's main process fills in local files' paths itself and ignores the
+// renderer's. Server paths come from the renderer as given; buildM3u writes only relative ones.
 const M3uTextSchema = Schema.String.pipe(Schema.maxLength(1024));
 export const SaveM3uSchema = Schema.Tuple(
   Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),

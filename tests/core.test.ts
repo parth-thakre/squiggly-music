@@ -107,10 +107,10 @@ describe('M3U playlist files', () => {
   });
 
   it('writes an extended M3U with lengths, credits, and the paths the server reported', () => {
-    expect(buildM3u([entry(), entry({ id: 's2', title: 'So What', duration: 562, path: '/music/Miles Davis/Kind of Blue/01 - So What.flac' })], 'Late Night')).toBe([
+    expect(buildM3u([entry(), entry({ id: 's2', title: 'So What', duration: 562, path: 'Miles Davis/Kind of Blue/01 - So What.flac' })], 'Late Night')).toBe([
       '#EXTM3U', '#PLAYLIST:Late Night',
       '#EXTINF:337,Miles Davis - Blue in Green', 'Miles Davis/Kind of Blue/03 - Blue in Green.flac',
-      '#EXTINF:562,Miles Davis - So What', '/music/Miles Davis/Kind of Blue/01 - So What.flac',
+      '#EXTINF:562,Miles Davis - So What', 'Miles Davis/Kind of Blue/01 - So What.flac',
     ].join('\n') + '\n');
     expect(buildM3u([])).toBe('#EXTM3U\n');
   });
@@ -145,6 +145,21 @@ describe('M3U playlist files', () => {
     ]);
     expect(buildM3u([entry()])).not.toContain(NO_PATH_NOTE);
     expect(relativePath({ artist: 'A\\B', album: 'C:D', title: 'E', suffix: 'fl/ac' })).toBe('A-B/C_D/E.flac');
+  });
+
+  it('writes a server path only when it is relative, never one that points at another host', () => {
+    const unsafe = [
+      '/music/Miles Davis/Kind of Blue/03.flac', '\\\\attacker\\share\\03.flac', '//attacker/share/03.flac', '\\03.flac',
+      'C:\\Music\\03.flac', 'c:03.flac', 'https://attacker.example/03.flac', 'file:///etc/passwd', 'smb://attacker/share',
+      // Hidden behind control characters or spaces, which the line drops or trims.
+      '\u0000\\\\attacker\\share', '  //attacker/share', '\n\\\\attacker\\share',
+    ];
+    for (const path of unsafe) {
+      expect(buildM3u([entry({ path })]).split('\n')).toEqual(['#EXTM3U', NO_PATH_NOTE, '#EXTINF:337,Miles Davis - Blue in Green', 'Miles Davis/Kind of Blue/Blue in Green.flac', '']);
+    }
+    // Relative paths stay as the server gave them, colons and dots included.
+    expect(buildM3u([entry({ path: 'Miles Davis/Live: 1964/01.flac' }), entry({ path: '../Kind of Blue/03.flac' })])).toBe(
+      '#EXTM3U\n#EXTINF:337,Miles Davis - Blue in Green\nMiles Davis/Live: 1964/01.flac\n#EXTINF:337,Miles Davis - Blue in Green\n../Kind of Blue/03.flac\n');
   });
 
   it('takes songs from tracks without stream addresses, leaving local paths to the desktop', () => {
