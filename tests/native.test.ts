@@ -1424,6 +1424,8 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('internet radio in real libmp
       expect(connections).toHaveLength(1);
       expect(connections[0]).toBeGreaterThan((seconds - 0.5) * 1000);
     } finally { song.close(); station.closeAllConnections(); station.close(); }
+  });
+});
 
 describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('resuming in real libmpv', () => {
   const item = (location: string, id: string, duration: number) => ({ location, track: { id, title: id, artist: '', album: '', duration, source: 'local' as const,
