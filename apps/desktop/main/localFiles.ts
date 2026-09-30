@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
 import { parseFile, selectCover } from 'music-metadata';
 import type { Track } from '../../../packages/core/contracts';
+import { coverTypes } from '../../../packages/adapter-opensubsonic/client';
 
 // Files opened from this computer. Their title, artist, album, length, and format come from the
 // file's own tags (music-metadata reads them without decoding any audio); the file name stands in
@@ -94,6 +95,12 @@ export async function readLocalCover(id: string): Promise<{ bytes: Buffer; conte
       return contentType ? { bytes: await readFile(source.path), contentType } : null;
     }
     const picture = selectCover((await parseFile(source.path)).common.picture);
-    return picture ? { bytes: Buffer.from(picture.data), contentType: picture.format.includes('/') ? picture.format : `image/${picture.format}` } : null;
+    if (!picture) return null;
+    // The type is whatever the tag says. Only a raster image type is served (the list the server's
+    // covers are held to), so a tag can't make the renderer read the bytes as SVG or HTML.
+    const format = picture.format.trim().toLowerCase();
+    const type = format.includes('/') ? format : `image/${format}`;
+    const contentType = type === 'image/jpg' ? 'image/jpeg' : type;
+    return coverTypes.has(contentType) ? { bytes: Buffer.from(picture.data), contentType } : null;
   } catch { return null; }
 }

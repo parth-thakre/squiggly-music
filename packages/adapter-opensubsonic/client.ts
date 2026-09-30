@@ -154,7 +154,8 @@ type QueueValue = Schema.Schema.Type<Schema.Struct<typeof QueueFields>>;
 type Song = Schema.Schema.Type<typeof SongSchema>;
 type Params = Record<string, string | readonly string[]>;
 // Raster formats only: the desktop serves these bytes to the renderer under its own scheme.
-const coverTypes = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
+// Local files' embedded pictures (apps/desktop/main/localFiles.ts) are held to the same list.
+export const coverTypes: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const clamp = (value: number, min: number, max: number) => Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min;
 // Response bodies as one byte array, and as text. The BOM is kept, as Node's Buffer did.
 function concatBytes(chunks: readonly Uint8Array[], total: number) {
