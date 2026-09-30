@@ -16,6 +16,7 @@ import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, u
 import { ExtensionNotices, ExtensionPage } from './extensions';
 import { DeckSlots } from './extensions';
 import { useSwipeSongs } from './swipe';
+import { RatingStars } from './ratings';
 import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
@@ -196,6 +197,7 @@ const View = memo(function View() {
 // and pause, errors, and radio; the position lives in DeckPosition alone.
 const Deck = memo(function Deck() {
   const track = usePlayer(current);
+  const away = usePlayer(s => s.reach.away);
   const playing = usePlayer(s => s.playing);
   // What Next plays: the first song after the last one under repeat all.
   const upNext = usePlayer(s => s.queue[following(s.index, s.queue.length, s.repeat, 'skip')] as Track | undefined);
@@ -273,6 +275,8 @@ const Deck = memo(function Deck() {
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
+      {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
+      {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
       <DeckLinks />
     </div>

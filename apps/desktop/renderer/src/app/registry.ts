@@ -39,6 +39,8 @@ export interface MenuItem {
   // Plain information lines, not actions.
   note?: boolean;
   danger?: boolean;
+  // A choice among its siblings, such as a rating: shown ticked when true. Leave it out for plain actions.
+  checked?: boolean;
 }
 
 // Commands appear in the command palette (Ctrl+K) and can be bound to keys.

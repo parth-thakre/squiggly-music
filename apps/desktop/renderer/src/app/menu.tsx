@@ -166,7 +166,7 @@ export function ContextMenu() {
     const wanted = focusNext.current;
     focusNext.current = null;
     const target = (wanted && box.current?.querySelector<HTMLElement>(`[data-item="${CSS.escape(wanted)}"]`))
-      || box.current?.querySelector<HTMLElement>('[role="menuitem"]') || box.current;
+      || box.current?.querySelector<HTMLElement>('[role^="menuitem"]') || box.current;
     target?.focus({ preventScroll: true });
   }, [level, position]);
   // Leaving a text field puts focus back on its item.
@@ -185,7 +185,7 @@ export function ContextMenu() {
         if (event.key === 'Escape') { event.preventDefault(); focusNext.current = typing; setTyping(null); return; }
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown' && event.key !== 'Tab') return;
       }
-      const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+      const items = [...(box.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
       const at = items.indexOf(document.activeElement as HTMLElement);
       const focused = at >= 0 ? level?.rows?.find(row => row.item.id === items[at].dataset.item) : undefined;
       if (event.key === 'Escape' || (event.key === 'ArrowLeft' && menu.levels.length > 1)) {
@@ -224,9 +224,10 @@ export function ContextMenu() {
           const value = String(new FormData(event.currentTarget).get('value') ?? '').trim();
           if (value) void submit(menu, row, value);
         }}><input name="value" autoFocus placeholder={item.input!.placeholder} aria-label={item.input!.placeholder} autoComplete="off" /></form>;
-        return <button key={item.id} type="button" role="menuitem" data-item={item.id} aria-haspopup={item.submenu ? 'menu' : undefined}
+        return <button key={item.id} type="button" role={item.checked === undefined ? 'menuitem' : 'menuitemradio'} aria-checked={item.checked} data-item={item.id} aria-haspopup={item.submenu ? 'menu' : undefined}
           className={`menu-item${item.danger ? ' danger' : ''}${divider ? ' divided' : ''}`} onClick={() => void choose(menu, row)}>
           <span>{row.label}</span>
+          {item.checked && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4 4 9-9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
           {item.submenu && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>;
       })}
@@ -357,10 +358,13 @@ builtin.menu({
   submenu: t => {
     const { kind, items } = ratedItems(t)!;
     const ids = items.map(item => item.id);
+    const ratings = new Set(items.map(item => ratingOf(item.id, item.userRating)));
+    // The current rating is ticked when everything chosen shares it; a mixed selection ticks none.
+    const shared = ratings.size === 1 ? [...ratings][0] : undefined;
     const stars = ([1, 2, 3, 4, 5] as const).map((n): MenuItem => ({
-      id: `rate-${n}`, section: 0, label: n === 1 ? '1 star' : `${n} stars`, run: async () => { await setRating(kind, ids, n); },
+      id: `rate-${n}`, section: 0, label: n === 1 ? '1 star' : `${n} stars`, checked: shared === n, run: async () => { await setRating(kind, ids, n); },
     }));
-    const rated = items.some(item => ratingOf(item.id, item.userRating) > 0);
+    const rated = [...ratings].some(rating => rating > 0);
     return rated ? [...stars, { id: 'rate-clear', section: 1, label: 'Clear rating', run: async () => { await setRating(kind, ids, 0); } }] : stars;
   },
 });

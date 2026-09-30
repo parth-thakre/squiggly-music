@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from 'react';
+import { useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import type { Rating, Result, StarTarget } from '../../../../../packages/core/contracts';
 import { api, invalidate, onLibraryReset } from './library';
 import { player } from './player';
@@ -46,12 +46,34 @@ export async function setRating(target: StarTarget, ids: string[], rating: Ratin
 
 export const ratingText = (rating: number) => rating ? `Rated ${rating} of 5` : 'Not rated';
 
-// A rating as small marks: filled up to the rating, hollow after it. Nothing when unrated.
-export function RatingMarks({ id, rating }: { id: string; rating: number | undefined }) {
+// A rating as five stars, filled up to the rating: on record and artist pages, in song rows,
+// and under the deck. Pointing at a star with a mouse shows what clicking it would set (after a
+// tap the preview would stay stuck); clicking the current rating clears it. From the keyboard
+// it is a radio group: the arrows move the rating, Backspace or Delete clears it. Those keys
+// stop here, so a song list doesn't also take them.
+export function RatingStars({ target, id, rating, name, className }: { target: StarTarget; id: string; rating: number | undefined; name: string; className?: string }) {
   useRatingsVersion();
   const value = ratingOf(id, rating);
-  if (!value) return null;
-  return <span className="rating-marks" role="img" aria-label={ratingText(value)} title={ratingText(value)}>
-    {[1, 2, 3, 4, 5].map(n => <span key={n} className={n <= value ? 'on' : undefined}><Glyph kind={n <= value ? 'starred' : 'star'} /></span>)}
+  const [pointed, setPointed] = useState(0);
+  const stars = useRef<(HTMLButtonElement | null)[]>([]);
+  const shown = pointed || value;
+  const rate = (n: number) => { void setRating(target, [id], n as Rating); };
+  const onKeyDown = (event: KeyboardEvent) => {
+    const next = event.key === 'ArrowRight' || event.key === 'ArrowUp' ? Math.min(5, value + 1)
+      : event.key === 'ArrowLeft' || event.key === 'ArrowDown' ? Math.max(1, value - 1)
+      : event.key === 'Home' ? 1 : event.key === 'End' ? 5
+      : event.key === 'Backspace' || event.key === 'Delete' ? 0 : null;
+    if (next === null) return;
+    event.preventDefault(); event.stopPropagation();
+    if (next !== value) rate(next);
+    stars.current[Math.max(1, next) - 1]?.focus();
+  };
+  return <span className={`rating${value ? '' : ' unrated'}${className ? ` ${className}` : ''}`} role="radiogroup" aria-label={`Rating for ${name}`} onKeyDown={onKeyDown} onPointerLeave={() => setPointed(0)}>
+    {([1, 2, 3, 4, 5] as const).map(n => <button key={n} ref={element => { stars.current[n - 1] = element; }} type="button" role="radio"
+      aria-checked={n === value} aria-label={n === 1 ? '1 star' : `${n} stars`} title={n === value ? 'Clear rating' : `Rate ${n} of 5`}
+      tabIndex={n === Math.max(1, value) ? 0 : -1} className={n <= shown ? 'on' : undefined}
+      onPointerEnter={event => { if (event.pointerType === 'mouse') setPointed(n); }} onClick={() => { setPointed(0); rate(n === value ? 0 : n); }}>
+      <Glyph kind={n <= shown ? 'starred' : 'star'} />
+    </button>)}
   </span>;
 }

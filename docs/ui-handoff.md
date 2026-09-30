@@ -22,7 +22,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | `keptState.ts`, `kept.tsx`, `keptMark.tsx`, `kept.css` | Keep on this device: the store over the host's `kept` (state, the kept ids, progress pushes; read again when the revision changes, at most once a second), and the Kept page, the out-of-reach notice, the Keep control, the kept mark, Settings › Kept, and the Playlists page's section. `keptState.ts` rather than `kept.ts`, so the two don't share a module name |
 | `offline.ts` | Offline mode's page rules (`pageFor`): which page a place shows while the server is away |
 | `bridge/previewLibrary.ts` | The browser build's library calls and its reachability (`webReach`), built by `createWebLibrary(fetch)` |
-| `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts`, `ratings.tsx` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites, optimistic ratings and their marks |
+| `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts`, `ratings.tsx` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites, optimistic ratings and the star control (record and artist pages, song rows, the deck) |
 
 ## Desktop contract
 
