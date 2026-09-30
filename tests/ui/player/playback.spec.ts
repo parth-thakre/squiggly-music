@@ -97,16 +97,16 @@ test.describe('playback', () => {
 });
 
 test.describe('server-saved queue', () => {
-  test('is offered once when nothing plays, and resumes paused at its song and position', async ({ app, page, fake }) => {
+  test('is offered once when nothing plays, and resumes playing from its song and position', async ({ app, page, fake }) => {
     fake.saved = { tracks: ['tr-1-4', 'tr-1-1', 'tr-1-5'].map(id => ({ ...trackOfId(id) })), currentIndex: 1, positionSeconds: 17, changed: null, changedBy: 'phone' };
     await app.signIn();
     await expect(app.deck.getByText(/Pick up where you left off: Long Run by Ada Brass, at 0:17 \(from phone\)/)).toBeVisible();
     await app.deck.getByRole('button', { name: 'Resume' }).click();
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
-    await expect(app.deck.getByRole('button', { name: 'Play', exact: true })).toBeVisible();
-    await expect(app.clock).toHaveText('0:17');
-    await app.deck.getByRole('button', { name: 'Play', exact: true }).click();
+    // Resume plays; it doesn't leave the song waiting paused.
+    await expect(app.deck.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
     await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(18);
+    expect(await app.seconds()).toBeLessThan(30);
     await app.openQueue();
     expect(await app.titles()).toEqual(['Thirty Two', 'Long Run', 'Tail Light']);
     await expect(app.tracks().nth(1)).toHaveClass(/\bnow\b/);
