@@ -5,8 +5,8 @@
 //   { "name": "sleep-timer", "version": "1.0.0",
 //     "squiggly": { "renderer": "src/index.ts", "displayName": "Sleep timer" } }
 //
-// The renderer entry runs in the app window and can add commands, menu items, pages, and
-// themes. It is TypeScript, compiled by the app when it loads; edit it and it reloads.
+// The renderer entry runs in the app window and can add commands, menu items, pages, themes,
+// slots in the deck, and sections on the Playlists page. It is TypeScript, compiled by the app when it loads; edit it and it reloads.
 //
 // Extensions are full trust. Nothing here is a sandbox: an extension can do anything the
 // window can, including changing your playlists on the server. It has no Node access.
@@ -15,7 +15,7 @@
 // the app actually implements.
 import type { LibraryApi as AppLibraryApi, Track } from '../core/contracts';
 import type { PlayerState as AppPlayerState, RadioStart } from '../../apps/desktop/renderer/src/app/player';
-import type { Command, MenuItem, MenuTarget } from '../../apps/desktop/renderer/src/app/registry';
+import type { Command, DeckPlacement, DeckSlot, DeckSlotProps, MenuItem, MenuTarget, Section } from '../../apps/desktop/renderer/src/app/registry';
 import type { Route } from '../../apps/desktop/renderer/src/app/route';
 import type { ThemeInput } from '../../apps/desktop/renderer/src/app/theme';
 import type { ThemeTokensInput } from '../../apps/desktop/renderer/src/app/theme/tokens';
@@ -25,7 +25,7 @@ export type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Genre, LibraryItems, Lyrics, LyricsQuery, Playlist,
   PlaylistDetail, RandomSongOptions, Result, StarTarget, Track,
 } from '../core/contracts';
-export type { MenuTarget, PageContribution, Route, ThemeTokensInput };
+export type { DeckPlacement, DeckSlotProps, MenuTarget, PageContribution, Route, ThemeTokensInput };
 export type { SearchOptions, SearchResults } from '../core/contracts';
 
 // Bumped only for breaking changes. Additions keep the same number.
@@ -48,6 +48,15 @@ export interface MenuContribution extends Omit<MenuItem, 'owner' | 'section' | '
   section?: number;
   submenu?(target: MenuTarget): MenuContribution[] | Promise<MenuContribution[]>;
 }
+
+// A small component in the deck and the phone's now-playing sheet, shown while a song is loaded.
+// It receives { track }, and can read the rest with ctx.player.use. `quiet-line` is one line
+// beside the signal path, and the only placement the mini player has room for; `under-title`
+// and `under-controls` are boxes a few lines tall. Anything taller is cut off.
+export type DeckContribution = Omit<DeckSlot, 'owner' | 'serial'>;
+
+// A section on the Playlists page, below the automatic playlists, under its own heading.
+export type SectionContribution = Omit<Section, 'owner' | 'serial'>;
 
 // A theme, in the same shape as a themes/*.json file in the config folder.
 export type ThemeContribution = Omit<ThemeInput, 'tokens'> & { tokens: ThemeTokensInput };
@@ -77,7 +86,7 @@ export interface PlayerApi {
   subscribe(listener: (state: PlayerState) => void): Dispose;
   // Called when the selected value changes (compared with Object.is).
   select<T>(selector: (state: PlayerState) => T, listener: (value: T) => void): Dispose;
-  // A React hook for pages: re-renders when the selected value changes.
+  // A React hook for pages, deck slots, and sections: re-renders when the selected value changes.
   use<T>(selector: (state: PlayerState) => T): T;
   current(): Track | null;
   // Replaces the queue. Tracks must come from the library API.
@@ -97,12 +106,17 @@ export interface ExtensionContext {
   readonly id: string;
   readonly version: string;
   readonly apiVersion: number;
+  // Which window this copy runs in. The mini player runs every extension too, for its deck slots
+  // and keys; work that should happen once (timers, say) can check for 'main'.
+  readonly window: 'main' | 'mini';
   commands: {
     register(command: CommandContribution): Dispose;
     // Runs any registered command by its full id, such as "builtin:toggle" or "other-extension:thing".
     execute(id: string): Promise<void>;
   };
   menus: { register(item: MenuContribution): Dispose };
+  // A slot in the deck. A slot that throws while rendering shows nothing, and the error appears in Settings › Extensions.
+  deck: { register(slot: DeckContribution): Dispose };
   player: PlayerApi;
   library: LibraryApi;
   navigation: {
@@ -111,6 +125,8 @@ export interface ExtensionContext {
     // Returns the page's full id, for go({ view: 'extension', id }).
     registerPage(page: PageContribution): { id: string; dispose: Dispose };
     openPage(id: string): void;
+    // A section on the Playlists page. One that throws while rendering shows a line in its place.
+    registerSection(section: SectionContribution): Dispose;
   };
   // Adds the theme to Settings › Theme, next to themes/*.json. Throws, listing every problem, if the tokens are invalid.
   themes: { register(theme: ThemeContribution): Dispose };

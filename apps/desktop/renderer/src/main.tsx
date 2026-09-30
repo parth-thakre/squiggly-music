@@ -11,8 +11,8 @@ import { startSystemMedia } from './app/systemMedia';
 
 // The desktop mini player is a second window running the same renderer.
 const mini = window.squiggly?.window.isMini === true;
-// Extensions run in the main window only.
-if (!mini) startExtensions();
+// Extensions run in both windows; the mini player shows their deck slots and runs their keys.
+startExtensions();
 // The Windows and macOS media controls, hosted by the main window only.
 startSystemMedia();
 createRoot(document.getElementById('root')!).render(<StrictMode>{mini ? <Mini /> : <App />}</StrictMode>);

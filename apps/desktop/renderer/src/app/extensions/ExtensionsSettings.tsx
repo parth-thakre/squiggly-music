@@ -25,7 +25,7 @@ export function ExtensionsSettings() {
   };
   return <section className="settings extensions-settings" aria-busy={busy}>
     <h2>Extensions</h2>
-    <p className="note">Extensions add commands, menu items, pages, and themes. Each is a folder of TypeScript in the extensions folder, inside the config folder. Save a file in one and it reloads.</p>
+    <p className="note">Extensions add commands, menu items, pages, themes, lines in the deck, and sections on the Playlists page. Each is a folder of TypeScript in the extensions folder, inside the config folder. Save a file in one and it reloads.</p>
     <p className="note">An extension isn't sandboxed. It runs in this window with everything the window can do, including changing your playlists on the server. Add only extensions you trust.</p>
     <div className="actions settings-actions">
       <button type="button" className="text-button" disabled={busy} onClick={() => void run('', () => bridge.extensions.openDir())}>Open the extensions folder</button>
