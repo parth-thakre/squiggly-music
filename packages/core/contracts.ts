@@ -203,6 +203,7 @@ export interface Settings {
   outputDevice: string;       // mpv audio-device name; 'auto' is the system default
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
   keptLimitMb: number;        // how much room songs kept on this device may take, in MB (1024 * 1024 bytes)
+  diagnostics: boolean;       // betas with remote diagnostics built in: send them (off: nothing sent or written)
 }
 export interface QueueApi {
   // A number inserts before the entry at that index.
@@ -497,6 +498,10 @@ export interface DesktopBridge {
   // Asks the server again while it is out of reach. passive: a check the page made on its own
   // (focus, the network coming back), skipped when one was made in the last few seconds.
   retryServer?(passive?: boolean): Promise<Result>;
+  // Betas with remote diagnostics built in only (apps/desktop/main/remoteDiagnostics.ts): send
+  // everything queued now. Absent otherwise, which is how the window knows to hide the
+  // diagnostics setting, its marker, and this command.
+  sendDiagnostics?(): Promise<Result<string>>;
 }
 // One song in a playlist file. `local` marks a file on this computer (Track.source 'local').
 export interface M3uEntry {
