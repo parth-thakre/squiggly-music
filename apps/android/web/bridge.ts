@@ -105,6 +105,9 @@ async function connectTo(typed: Connection, { save }: { save: boolean }): Promis
   await Squiggly.keptBind({ key }).catch(() => undefined);
   plays.bind(key);
   void plays.flush();
+  // A disconnect while the server or kept songs were being set up has already forgotten the
+  // sign-in and cleared the session, so this one mustn't save itself back or reopen.
+  if (mine !== generation) return { ok: false, error: 'Connection canceled.' };
   let { canRemember } = session.signIn;
   if (save && canRemember) {
     const saved = await Squiggly.saveAccount(connection).then(result => result.saved, () => false);
