@@ -4,6 +4,7 @@ import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
 import { nav } from './route';
+import { RatingStars } from './ratings';
 import { useActiveTheme } from './theme';
 import { Glyph, splitTitle, time, Wave } from './ui';
 
@@ -165,8 +166,11 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
             <span className="title"><span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
               {credit && <span className="credit">{credit}</span>}</span>
             {showAlbum && <span className="album">{splitTitle(track.album).main}</span>}
-            <span className="figure">{time(track.duration)}</span>
           </button>
+          {/* Outside the row's button, which can't hold buttons. Songs from this computer can't be
+              rated; their slot stays empty so the durations line up. */}
+          <span className="row-rating">{track.source === 'navidrome' && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>
+          <span className="figure">{time(track.duration)}</span>
           <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
             aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
             onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>

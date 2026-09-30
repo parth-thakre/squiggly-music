@@ -16,7 +16,7 @@ import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave }
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
-import { RatingMarks } from './ratings';
+import { RatingStars } from './ratings';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -264,7 +264,7 @@ export function AlbumPage({ id }: { id: string }) {
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
       <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
-        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingMarks id={album.id} rating={album.userRating} /></p>
+        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingStars target="album" id={album.id} rating={album.userRating} name={album.name} /></p>
         <Actions tracks={tracks}>
           <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
@@ -391,7 +391,7 @@ export function ArtistPage({ id }: { id: string }) {
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
     <Head title={artist.name}>
-      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingMarks id={artist.id} rating={artist.userRating} /></p>
+      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play

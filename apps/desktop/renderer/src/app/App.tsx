@@ -13,6 +13,7 @@ import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
 import { useSwipeSongs } from './swipe';
+import { RatingStars } from './ratings';
 import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
@@ -212,6 +213,8 @@ const Deck = memo(function Deck() {
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
+      {/* Songs from this computer have no rating to set. */}
+      {track.source === 'navidrome' && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
       <DeckLinks />
     </div>
