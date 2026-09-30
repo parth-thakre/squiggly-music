@@ -4,7 +4,8 @@ import { removeExtension, useExtensionList, useExtensionsLoaded } from './runtim
 import { openExtensionPage, useExtensionPages } from './pages';
 
 // Settings › Extensions: every extension in the folder, on or off, its errors in plain words,
-// reload, open the folder, and remove (to the trash).
+// reload, open the folder, and remove (to the trash). New ones are marked, and stay off until
+// turned on here.
 
 const bridge = typeof window !== 'undefined' ? window.squiggly : undefined;
 
@@ -26,7 +27,7 @@ export function ExtensionsSettings() {
   return <section className="settings extensions-settings" aria-busy={busy}>
     <h2>Extensions</h2>
     <p className="note">Extensions add commands, menu items, pages, and themes. Each is a folder of TypeScript in the extensions folder, inside the config folder. Save a file in one and it reloads.</p>
-    <p className="note">An extension isn't sandboxed. It runs in this window with everything the window can do, including changing your playlists on the server. Add only extensions you trust.</p>
+    <p className="note">An extension isn't sandboxed. It runs in this window and can do anything the window can: see what's shown and typed here, change your playlists on the server, and contact other servers. A new extension stays off until you turn it on. Turn on only extensions you trust.</p>
     <div className="actions settings-actions">
       <button type="button" className="text-button" disabled={busy} onClick={() => void run('', () => bridge.extensions.openDir())}>Open the extensions folder</button>
       <button type="button" className="text-button" disabled={busy} onClick={() => void run('Reloaded every extension.', () => bridge.extensions.reload())}>Reload all</button>
@@ -49,6 +50,7 @@ function Row({ info, busy, run }: { info: ExtensionInfo; busy: boolean; run: (la
       <span><strong>{info.name} <span className="extension-version">{info.version}</span></strong>
         <span id={describedBy}>{info.description ?? 'No description.'} <span className="extension-source">extensions/{info.folder} · {info.id}</span></span></span>
     </label>
+    {info.isNew && <p className="note extension-new">New in the extensions folder. It stays off until you turn it on.</p>}
     {info.error && <pre className="extension-error" role="alert">{info.error}</pre>}
     {pages.length > 0 && <p className="note">Pages: {pages.map((page, i) => <span key={page.id}>{i > 0 && ', '}
       <button type="button" className="link" onClick={() => openExtensionPage(page.id)}>{page.title}</button></span>)}</p>}

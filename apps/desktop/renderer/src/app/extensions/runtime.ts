@@ -7,6 +7,7 @@ import type { ExtensionInfo } from '../../../../../../packages/core/contracts';
 import * as extensionApi from '../../../../../../packages/extension-api/index';
 import type { Dispose, Extension, ExtensionContext } from '../../../../../../packages/extension-api/index';
 import { createContext, message, settingsKey, type Activation } from './context';
+import { showNotice } from './notices';
 import { onPageError } from './pages';
 
 // Loads each enabled extension's renderer entry from its squiggly-ext:// URL and activates it.
@@ -80,8 +81,17 @@ async function reconcile(list: ExtensionInfo[]) {
   for (const info of wanted.values()) if (!active.has(info.id)) await activate(info);
   publish();
 }
+// A new folder doesn't run until it's turned on in Settings, so say that it's there. Once per run.
+const announced = new Set<string>();
+function announce(list: ExtensionInfo[]) {
+  for (const info of list) if (info.isNew && !announced.has(info.id)) {
+    announced.add(info.id);
+    showNotice('Extensions', `Found “${info.name}”. It stays off until you turn it on in Settings › Extensions.`);
+  }
+}
 function apply(list: ExtensionInfo[]) {
   received = list; loaded = true; publish();
+  announce(list);
   queue = queue.then(() => reconcile(list)).catch(error => console.error('Extensions:', error));
 }
 

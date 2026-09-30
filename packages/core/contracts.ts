@@ -290,6 +290,8 @@ export interface ExtensionInfo {
   // The extension's folder name inside <config>/extensions.
   folder: string;
   enabled: boolean;
+  // Found in the folder but never turned on or off. It stays off until the user turns it on.
+  isNew: boolean;
   // A squiggly-ext:// URL for the compiled renderer entry, while the extension is on and compiles.
   rendererUrl: string | null;
   // package.json or compile problems, in plain words.

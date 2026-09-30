@@ -25,14 +25,16 @@ applies; there is nothing to restart.
   themes/<name>.json    Colour themes: { "name": "Night", "colors": { "ground": "#101418", ... } }.
                         Settings > Theme lists them, with any problems in a file.
   extensions/<name>/    Extensions: a folder with a package.json that has a "squiggly" field.
+                        New ones stay off until turned on in Settings > Extensions.
                         Edit one and it reloads.
-  extensions.json       Which extensions are turned off.
+  extensions.json       Which extensions you turned on or off.
 
 Settings > Keys lists every command and its keys.
 
 Extensions are not sandboxed. One runs inside Squiggly's window with everything the window can
 do: your library, playback, and your music server account, including changing playlists.
-Only add extensions you trust.
+It sees what's shown and typed in the window, and can make the app contact other servers.
+Only turn on extensions you trust.
 
 Guide: https://github.com/parth-thakre/squiggly-music/blob/main/docs/extensions.md
 `;
