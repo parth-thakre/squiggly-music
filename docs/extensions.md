@@ -41,7 +41,7 @@ Everything in the config folder applies while the app runs. There is nothing to 
 | `extensions/<folder>/` | Extensions. Watched and reloaded on save. |
 | `extensions.json` | Which extensions you turned on or off. |
 
-Files larger than 256 KB are skipped with a message. Set `SQUIGGLY_CONFIG_DIR` to use a different folder.
+Files larger than 256 KB are skipped with a message. When running from source, set `SQUIGGLY_CONFIG_DIR` to use a different folder. Installed builds ignore it.
 
 ## Anatomy of an extension
 

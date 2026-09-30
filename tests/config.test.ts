@@ -14,14 +14,16 @@ const until = async (check: () => boolean, ms = 4000) => {
 };
 
 describe('config folder', () => {
-  it('follows each platform, and XDG_CONFIG_HOME on Linux', () => {
-    expect(configDirectory('linux', {}, '/home/a')).toBe('/home/a/.config/squiggly');
-    expect(configDirectory('linux', { XDG_CONFIG_HOME: '/xdg' }, '/home/a')).toBe('/xdg/squiggly');
+  it('follows each platform, XDG_CONFIG_HOME on Linux, and SQUIGGLY_CONFIG_DIR in development', () => {
+    expect(configDirectory(false, 'linux', {}, '/home/a')).toBe('/home/a/.config/squiggly');
+    expect(configDirectory(false, 'linux', { XDG_CONFIG_HOME: '/xdg' }, '/home/a')).toBe('/xdg/squiggly');
     // Relative XDG paths are invalid by the spec and ignored.
-    expect(configDirectory('linux', { XDG_CONFIG_HOME: 'relative' }, '/home/a')).toBe('/home/a/.config/squiggly');
-    expect(configDirectory('win32', { APPDATA: 'C:\\Users\\a\\AppData\\Roaming' }, 'C:\\Users\\a')).toMatch(/Roaming[\\/]Squiggly$/);
-    expect(configDirectory('darwin', {}, '/Users/a')).toBe('/Users/a/Library/Application Support/Squiggly');
-    expect(configDirectory('linux', { SQUIGGLY_CONFIG_DIR: '/custom' }, '/home/a')).toBe('/custom');
+    expect(configDirectory(false, 'linux', { XDG_CONFIG_HOME: 'relative' }, '/home/a')).toBe('/home/a/.config/squiggly');
+    expect(configDirectory(false, 'win32', { APPDATA: 'C:\\Users\\a\\AppData\\Roaming' }, 'C:\\Users\\a')).toMatch(/Roaming[\\/]Squiggly$/);
+    expect(configDirectory(false, 'darwin', {}, '/Users/a')).toBe('/Users/a/Library/Application Support/Squiggly');
+    expect(configDirectory(false, 'linux', { SQUIGGLY_CONFIG_DIR: '/custom' }, '/home/a')).toBe('/custom');
+    // Only development builds let the environment move it.
+    expect(configDirectory(true, 'linux', { SQUIGGLY_CONFIG_DIR: '/custom' }, '/home/a')).toBe('/home/a/.config/squiggly');
   });
 
   it('creates its layout and a README once, and reads keybindings and themes with plain errors', async () => {

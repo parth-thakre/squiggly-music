@@ -25,7 +25,7 @@ mkdir out && podman run --rm --network=none --security-opt label=disable \
 ```
 
 To use a modified build, replace `resources\runtime\libmpv-2.dll` in the installed app
-(or set `SQUIGGLY_LIBMPV_PATH` to its full path). The app loads the DLL at run time
+(or, running from source, set `SQUIGGLY_LIBMPV_PATH` to its full path). The app loads the DLL at run time
 through libmpv's public C API, so any compatible libmpv works.
 
 ## Files

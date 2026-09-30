@@ -234,7 +234,8 @@ function terminateHost(child: ChildProcess): Promise<void> {
   terminations.set(child, termination);
   return termination;
 }
-// Packaged builds ship the audio-host runtime under resources/runtime. Environment overrides still win.
+// Packaged builds ship the audio-host runtime under resources/runtime and use only that. The
+// SQUIGGLY_NODE_PATH and SQUIGGLY_LIBMPV_PATH overrides are for development builds.
 function bundledRuntime(file: string) {
   if (!app.isPackaged) return undefined;
   const path = join(process.resourcesPath, 'runtime', file);
@@ -249,10 +250,14 @@ async function launchPlayer() {
   // Packaged builds keep the app in app.asar, which the bundled Node can't read; the audio host
   // and its imports are unpacked beside it (see asarUnpack in electron-builder.yml).
   const hostDirectory = directory.replace(/app\.asar(?=[\\/]|$)/, 'app.asar.unpacked');
+  const packaged = app.isPackaged;
   const child = fork(join(hostDirectory, 'player.js'), [], {
-    execPath: process.env.SQUIGGLY_NODE_PATH || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
+    execPath: (!packaged && process.env.SQUIGGLY_NODE_PATH) || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
     env: {
-      ...process.env, SQUIGGLY_LIBMPV_PATH: process.env.SQUIGGLY_LIBMPV_PATH || bundledRuntime('libmpv-2.dll'),
+      // An undefined value leaves the variable out, so a packaged host never inherits these.
+      // NODE_OPTIONS and NODE_PATH could load other code into it before the app's own.
+      ...process.env, SQUIGGLY_LIBMPV_PATH: packaged ? bundledRuntime('libmpv-2.dll') : process.env.SQUIGGLY_LIBMPV_PATH,
+      ...(packaged ? { NODE_OPTIONS: undefined, NODE_PATH: undefined } : {}),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
@@ -645,7 +650,7 @@ function createWindow(mini: boolean) {
       additionalArguments: [
         ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
         ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
-        `--squiggly-config=${configDirectory()}`,
+        `--squiggly-config=${configDirectory(app.isPackaged)}`,
       ],
     },
   });
@@ -655,7 +660,8 @@ function createWindow(mini: boolean) {
   target.on('show', () => { if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state); });
   // A reloaded page starts with no sleep timer.
   target.webContents.on('did-start-loading', () => followingHidden.delete(target.webContents));
-  if (process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
+  // electron-vite's dev server. A packaged build only loads its own page, since this one gets the preload bridge.
+  if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void target.loadFile(join(directory, '../renderer/index.html'));
   return target;
 }

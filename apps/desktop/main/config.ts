@@ -6,8 +6,9 @@ import type { ConfigFiles, ThemeFile } from '../../../packages/core/contracts';
 
 // The user's config folder: keybindings, themes, and extensions, edited by hand and applied live.
 // Linux follows XDG (~/.config/squiggly); Windows uses %APPDATA%\Squiggly; macOS uses Application Support.
-export function configDirectory(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
-  if (env.SQUIGGLY_CONFIG_DIR) return env.SQUIGGLY_CONFIG_DIR;
+// SQUIGGLY_CONFIG_DIR moves it in development builds only: extensions in it run inside the window.
+export function configDirectory(packaged: boolean, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
+  if (!packaged && env.SQUIGGLY_CONFIG_DIR) return env.SQUIGGLY_CONFIG_DIR;
   if (platform === 'win32') return join(env.APPDATA || join(home, 'AppData', 'Roaming'), 'Squiggly');
   if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'Squiggly');
   const xdg = env.XDG_CONFIG_HOME;
