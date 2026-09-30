@@ -1,7 +1,8 @@
 # Builds release packages and publishes a GitHub Release.
 # - Push a tag `v<package.json version>` (made by `npm version`) to build and publish.
 # - Run manually (workflow_dispatch) to build and download the packages as workflow
-#   artifacts without publishing anything. Only tag builds are signed.
+#   artifacts without publishing anything. Only tag builds are signed, so a manual run's Windows
+#   files are for testing only.
 name: Release
 
 on:
@@ -48,6 +49,17 @@ jobs:
           version="v$(node -p "require('./package.json').version")"
           if [ "$version" != "$TAG" ]; then
             echo "::error::Tag $TAG does not match package.json version $version. Cut releases with npm version."
+            exit 1
+          fi
+      # Installed copies only accept an update signed by the publisher in electron-builder.yml
+      # (win.signtoolOptions.publisherName), so a release can't ship unsigned Windows files.
+      - name: Check Windows signing is set up
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+        run: |
+          if [ -z "$ORGANIZATION_ID" ]; then
+            echo "::error::Releases must be signed, and the SIGNPATH_ORGANIZATION_ID variable isn't set. See docs/signing.md."
             exit 1
           fi
       - run: npm ci
@@ -167,10 +179,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Windows signing goes through SignPath Foundation (CODE_SIGNING.md, docs/signing.md). Only
-  # release tags (v*) are signed: a manual run from a branch builds unsigned files. Signing is also
-  # skipped until the SIGNPATH_ORGANIZATION_ID variable is set, so releases are unsigned until then
-  # rather than failing. Each signing request waits for an approver.
+  # Windows signing goes through SignPath Foundation (CODE_SIGNING.md, docs/signing.md). Release
+  # tags (v*) are always signed, and check fails a tag if signing isn't set up. A manual run from a
+  # branch builds unsigned files, for testing only: installed copies won't update to them.
+  # Each signing request waits for an approver.
   # A signed release takes five jobs, so the SignPath token never reaches a runner that ran npm ci
   # or this repository's code: windows builds the app, windows-sign-app signs it,
   # windows-installers builds the installer and portable exe from the signed app,
@@ -184,7 +196,7 @@ jobs:
       contents: read
     timeout-minutes: 30
     env:
-      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') }}
     outputs:
       unsigned-app: ${{ steps.unsigned-app.outputs.artifact-id }}
     steps:
@@ -244,7 +256,7 @@ jobs:
   windows-sign-app:
     name: Sign the Windows app
     needs: windows
-    if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -252,6 +264,14 @@ jobs:
     # Up to an hour waiting for approval.
     timeout-minutes: 70
     steps:
+      - name: Check the SignPath token is set
+        env:
+          TOKEN_SET: ${{ secrets.SIGNPATH_API_TOKEN != '' }}
+        run: |
+          if [ "$TOKEN_SET" != "true" ]; then
+            echo "::error::Releases must be signed, and the SIGNPATH_API_TOKEN secret isn't set. See docs/signing.md."
+            exit 1
+          fi
       - name: Sign the app
         uses: signpath/github-action-submit-signing-request@c92b958760219087e01f8d67a1669ed57afe2627 # v2
         with:
@@ -302,6 +322,15 @@ jobs:
             if ($subject -cne $env:SIGNPATH_EXPECTED_SUBJECT) { throw "$($file.Name) is signed by '$subject', not '$env:SIGNPATH_EXPECTED_SUBJECT'" }
             "$($file.Name): $subject"
           }
+      # Installed copies only accept an update signed by a publisher named in app-update.yml.
+      - name: Check the updater will accept this certificate
+        shell: pwsh
+        run: |
+          $certificate = (Get-AuthenticodeSignature -LiteralPath 'dist/win-unpacked/Squiggly Music.exe').SignerCertificate
+          $publisher = $certificate.GetNameInfo('SimpleName', $false)
+          $config = Get-Content -Raw -LiteralPath 'dist/win-unpacked/resources/app-update.yml'
+          if ($config -notmatch "(?m)^\s*-\s*$([regex]::Escape($publisher))\s*$") { throw "app-update.yml doesn't name $publisher as a publisher, so installed copies would refuse this release as an update" }
+          "app-update.yml names $publisher"
       - name: Build the installer and portable exe
         run: npx electron-builder --win --prepackaged dist/win-unpacked --publish never
       - name: Upload the installer and portable exe for signing
@@ -322,7 +351,7 @@ jobs:
   windows-sign-installers:
     name: Sign the Windows installer and portable
     needs: windows-installers
-    if: startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != ''
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -398,11 +427,14 @@ jobs:
 
   # linux and windows each fail before uploading if their packaged smoke test fails, so
   # assemble and publish only run on packages whose audio runtime started and decoded audio.
-  # windows-release only runs for a signed release; otherwise windows uploads the Windows files.
+  # windows-release only runs for a release tag; a manual run takes the unsigned files from windows.
+  # A tag never gets this far without windows-release.
   assemble:
     name: Collect assets and checksums
     needs: [linux, windows, windows-release, libmpv]
-    if: ${{ !cancelled() && !failure() }}
+    if: >-
+      !cancelled() && !failure()
+      && (needs.windows-release.result == 'success' || !startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-24.04
     permissions:
       contents: read

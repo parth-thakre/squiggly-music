@@ -2,7 +2,7 @@
 
 Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
 
-Signing starts once this project's SignPath Foundation application is approved. Until then, releases are unsigned; their SHA-256 checksums and GitHub build attestations are published with every release either way.
+Signing starts once this project's SignPath Foundation application is approved. Releases before that are unsigned; from then on every release is signed, and the release workflow fails rather than publish unsigned Windows files. SHA-256 checksums and GitHub build attestations are published with every release either way.
 
 ## What gets signed
 

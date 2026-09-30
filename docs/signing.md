@@ -18,7 +18,9 @@ The two signing jobs check nothing out and install nothing. They hand SignPath a
 
 Each request waits up to an hour for someone to approve it in SignPath, so a release takes two approvals.
 
-Only release tags (`v*`) are signed. A manual run of the workflow from a branch builds the same files unsigned. Every signing step is also skipped while the `SIGNPATH_ORGANIZATION_ID` repository variable is unset, and the release comes out unsigned.
+Only release tags (`v*`) are signed, and every release tag must be. A manual run of the workflow from a branch builds the same files unsigned, for testing only. Once signing is set up, don't publish an unsigned Windows build: `win.signtoolOptions.publisherName` in `electron-builder.yml` goes into the app's `resources/app-update.yml`, and electron-updater only installs an update whose signer's common name is `SignPath Foundation`. An unsigned installer would fail that check on every installed copy. So a tag build fails straight away if the `SIGNPATH_ORGANIZATION_ID` variable is unset, and the signing job fails if the `SIGNPATH_API_TOKEN` secret is. Before signing is set up, no release can be cut.
+
+`windows-installers` also checks that `app-update.yml` names the signing certificate's common name as a publisher. If the certificate ever changes names, change `publisherName` and `SIGNPATH_EXPECTED_SUBJECT` together, and remember that copies already installed only accept the old name.
 
 ## Setting it up
 
