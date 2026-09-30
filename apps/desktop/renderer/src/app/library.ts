@@ -57,7 +57,13 @@ export function useResource<T>(key: string | null, loader: () => Promise<Result<
   const [version, setVersion] = useState(0);
   useEffect(() => {
     if (!key) return;
-    const listener = (changed: string) => { if (changed === key || changed === '*') { setValue(null); setVersion(v => v + 1); } };
+    // A changed item keeps showing until its fresh answer arrives, so a page doesn't blank and
+    // lose its focus and scroll each time it's rated or favorited. A new session shows nothing
+    // of the old one.
+    const listener = (changed: string) => {
+      if (changed === '*') setValue(null);
+      if (changed === key || changed === '*') setVersion(v => v + 1);
+    };
     listeners.add(listener);
     let live = true;
     void load(key, loader).then(result => { if (live) setValue({ key, result }); });

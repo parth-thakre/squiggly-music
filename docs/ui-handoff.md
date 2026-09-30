@@ -17,7 +17,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | `config.ts` | The desktop's config folder (`keybindings.json`, `themes/*.json`), read once and shared by keys and themes. The main process reads and watches it (`main/config.ts`, wired up in `main/configBridge.ts`) |
 | `transport.tsx` | The room's palette (`useRoomPalette`: theme colours or the sleeve), its CSS variables, transport buttons, and the position squiggle, shared by the deck and the mini player |
 | `ui.tsx` | Small shared pieces: covers, glyphs, palettes from sleeves, title splitting, `time()`, `shuffled()`, formatting |
-| `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts`, `ratings.tsx` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites, optimistic ratings and their marks |
+| `lyrics.tsx`, `Mini.tsx`, `mixes.ts`, `route.ts`, `library.ts`, `settings.ts`, `favorites.ts`, `ratings.tsx` | Lyrics sheet, mini player window, automatic playlists, navigation and view transitions, cached library access, settings, optimistic favorites, optimistic ratings and the star control (record and artist pages, song rows, the deck) |
 
 ## Desktop contract
 
