@@ -78,7 +78,9 @@ export function useResource<T>(key: string | null, loader: () => Promise<Result<
 
 export interface Entry { key: string; track: Track }
 export type PlaylistEdit =
-  | { kind: 'add'; entries: Entry[] }
+  // Without `after`, the songs go at the end. With it (a drop into the list), they follow that
+  // entry (null for the top), or land at `to` when that entry is gone.
+  | { kind: 'add'; entries: Entry[]; after?: string | null; to?: number }
   | { kind: 'remove'; keys: string[] }
   // `after` is the entry the song should follow (null for the top); `to` is the fallback
   // position when that entry is gone.
@@ -86,6 +88,9 @@ export type PlaylistEdit =
   | { kind: 'rename'; name: string }
   | { kind: 'delete' };
 interface Confirmed { playlist: Playlist; entries: Entry[] }
+// Where dropped songs go: after an entry (null for the top), or at `to` when that entry is gone.
+// null: at the end.
+export type Place = { after: string | null; to: number } | null;
 export interface PlaylistView {
   playlist: Playlist | null; tracks: Track[]; entries: Entry[];
   // Loading until the first read from the server; its error if that failed.
@@ -100,7 +105,12 @@ const entryOf = (track: Track): Entry => ({ key: `e${++keys}`, track });
 
 export function applyEdit(state: Confirmed, edit: PlaylistEdit | { kind: 'sync' }): Confirmed {
   switch (edit.kind) {
-    case 'add': return { ...state, entries: [...state.entries, ...edit.entries] };
+    case 'add': {
+      if (edit.after === undefined) return { ...state, entries: [...state.entries, ...edit.entries] };
+      const anchor = edit.after === null ? -1 : state.entries.findIndex(e => e.key === edit.after);
+      const at = edit.after === null ? 0 : anchor >= 0 ? anchor + 1 : Math.min(edit.to ?? state.entries.length, state.entries.length);
+      return { ...state, entries: [...state.entries.slice(0, at), ...edit.entries, ...state.entries.slice(at)] };
+    }
     case 'remove': { const drop = new Set(edit.keys); return { ...state, entries: state.entries.filter(e => !drop.has(e.key)) }; }
     case 'move': {
       const moving = state.entries.find(e => e.key === edit.key);
@@ -140,7 +150,20 @@ export class PlaylistEditor {
 
   // Read the playlist from the server, in turn with any edits already queued.
   sync() { if (!this.tasks.some(task => task.edit.kind === 'sync')) void this.enqueue({ kind: 'sync' }); }
-  add(tracks: Track[]) { return this.enqueue({ kind: 'add', entries: tracks.map(entryOf) }); }
+  // The place before the song at `at` of the list as shown, held as the entry it follows, so
+  // edits made before the songs arrive (a drop waiting on the server) don't move it. Without
+  // `at`, or past the end, the end.
+  place(at?: number): Place {
+    const entries = this.view.entries;
+    if (at === undefined || at >= entries.length) return null;
+    const to = Math.max(0, at);
+    return { after: to === 0 ? null : entries[to - 1].key, to };
+  }
+  // `at`: an index of the list as shown (see place), or a place taken earlier.
+  add(tracks: Track[], at?: number | Place) {
+    const place = at === undefined || typeof at === 'number' ? this.place(at) : at;
+    return this.enqueue(place ? { kind: 'add', entries: tracks.map(entryOf), ...place } : { kind: 'add', entries: tracks.map(entryOf) });
+  }
   rename(name: string) { return this.enqueue({ kind: 'rename', name }); }
   delete() { return this.enqueue({ kind: 'delete' }); }
   // Indexes refer to the list as shown (this.snapshot.tracks). `expect` guards against a list
@@ -203,8 +226,10 @@ export class PlaylistEditor {
       return read;
     }
     let request: Promise<Result> | null;
+    // What a refused edit still changed on the server: songs appended, then not put in place.
+    let landed = null as PlaylistEdit | null;
     switch (edit.kind) {
-      case 'add': request = this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id)); break;
+      case 'add': request = this.addTo(base, edit, () => { landed = { kind: 'add', entries: edit.entries }; }); break;
       case 'rename': request = this.source.updatePlaylist(this.id, { name: edit.name }); break;
       case 'delete': request = this.source.deletePlaylist(this.id); break;
       case 'remove': {
@@ -228,14 +253,25 @@ export class PlaylistEditor {
     const result = await request;
     invalidate(`playlist:${this.id}`); invalidate('playlists');
     if (edit.kind === 'delete') { if (result.ok) this.deleted = true; return result; }
-    // Read back what the server now holds. Until then (or if that fails) trust the edit's own effect.
+    // Read back what the server now holds. Until then (or if that fails) trust the edit's own
+    // effect. Songs that landed keep their keys, so edits queued for them still find them.
     if (base) {
-      const expected = result.ok ? applyEdit(base, edit) : base;
+      const expected = result.ok ? applyEdit(base, edit) : landed ? applyEdit(base, landed) : base;
       const read = await this.read(expected.entries);
       if (!read.ok) this.confirmed = expected;
       if (result.ok && !read.ok) return { ok: false, error: `Saved, but the playlist could not be read back. ${read.error}` };
     }
     return result;
+  }
+  // The server only appends, so songs placed inside the list are appended, then the whole list
+  // is written in the new order, built from the server's confirmed list as a move is.
+  // `appended` is told when the songs are on the server, at the end, whatever happens next.
+  private async addTo(base: Confirmed | null, edit: Extract<PlaylistEdit, { kind: 'add' }>, appended: () => void): Promise<Result> {
+    const added = await this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id));
+    if (!added.ok || edit.after === undefined || !base) return added;
+    appended();
+    const placed = await this.source.reorderPlaylist(this.id, applyEdit(base, edit).entries.map(e => e.track.id));
+    return placed.ok ? placed : { ok: false, error: `The songs were added at the end. ${placed.error}` };
   }
   private compute(): PlaylistView {
     let state = this.confirmed;

@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect, Either, Schema } from 'effect';
 import { emptyPlayer, type PlayerSnapshot, type Track } from '../packages/core/contracts';
+import { OpenPathsSchema } from '../packages/core/desktopValidation';
+import { checkAudioPaths } from '../apps/desktop/main/localFiles';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
@@ -39,6 +41,9 @@ describe('desktop request schemas', () => {
     expect(() => add([[], 'end'])).toThrow();
     expect(() => add([['a'], 'first'])).toThrow();
     expect(() => add([Array(1001).fill('a'), 'end'])).toThrow();
+    // A drop onto the queue inserts before an entry.
+    expect(add([['a'], 3])).toEqual([['a'], 3]);
+    for (const bad of [-1, 1000, 1.5, '3']) expect(() => add([['a'], bad])).toThrow();
     const move = Schema.decodeUnknownSync(QueueMoveSchema);
     expect(move([0, 999])).toEqual([0, 999]);
     for (const bad of [[-1, 0], [0, 1000], [0.5, 1], ['1', 2]]) expect(() => move(bad)).toThrow();
@@ -56,6 +61,31 @@ describe('desktop request schemas', () => {
     expect(Either.isRight(play([['a'], 1000]))).toBe(false);
     expect(Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.createPlaylist)(['Queue', Array(1000).fill('a')]))).toBe(true);
     expect(Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.saveQueue)([Array(1001).fill('a'), 0, 0]))).toBe(false);
+  });
+
+  it('takes dropped files as paths and a play or queue choice, up to a full queue', () => {
+    const open = Schema.decodeUnknownSync(OpenPathsSchema);
+    expect(open([['/music/a.flac'], 'play'])).toEqual([['/music/a.flac'], 'play']);
+    expect(open([['/music/a.flac', '/music/b.mp3'], 'queue'])).toEqual([['/music/a.flac', '/music/b.mp3'], 'queue']);
+    // '' is a dropped File with no path on disk, sent so the main process counts it as left out.
+    expect(open([['', '/music/a.flac'], 'queue'])).toEqual([['', '/music/a.flac'], 'queue']);
+    for (const bad of [[[], 'play'], [['/a.flac'], 'next'], [[1], 'play'], [['/'.repeat(4097)], 'play'],
+      [Array(QUEUE_LIMIT + 1).fill('/a.flac'), 'play'], ['/a.flac', 'play'], [['/a.flac']]]) {
+      expect(() => open(bad)).toThrow();
+    }
+  });
+
+  it('opens only dropped regular files with an audio extension, as Open files allows, and never folders', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-drop-'));
+    const song = join(directory, 'Song.FLAC'), other = join(directory, 'b.mp3');
+    await writeFile(song, 'x'); await writeFile(other, 'x');
+    await writeFile(join(directory, 'notes.txt'), 'x');
+    const folder = await mkdtemp(join(directory, 'Album.flac-'));
+    const disguised = join(directory, 'folder.flac');
+    await mkdir(disguised);
+    const checked = await checkAudioPaths([song, join(directory, 'notes.txt'), folder, disguised, 'relative/c.flac', join(directory, 'missing.flac'), `${song}\0.flac`, '', other]);
+    expect(checked).toEqual({ files: [song, other], skipped: 7 });
+    expect(await checkAudioPaths([folder])).toEqual({ files: [], skipped: 1 });
   });
 
   it('accepts song, album, and artist radio seeds only', () => {

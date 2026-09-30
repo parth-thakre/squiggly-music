@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { parseFile, selectCover } from 'music-metadata';
 import type { Track } from '../../../packages/core/contracts';
 
@@ -11,6 +11,9 @@ import type { Track } from '../../../packages/core/contracts';
 // each one is gets remembered, under an opaque id that the squiggly-art protocol serves.
 const FOLDER_IMAGE = /^(cover|folder|front|album|albumart)\.(jpe?g|png|webp)$/i;
 const IMAGE_TYPES: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
+// The files Open files offers, and the only ones a drop onto the window opens.
+export const AUDIO_EXTENSIONS = ['flac', 'wav', 'aiff', 'aif', 'alac', 'm4a', 'mp3', 'ogg', 'opus', 'aac', 'dsf', 'dff'] as const;
+const AUDIO = new Set<string>(AUDIO_EXTENSIONS);
 // Covers for up to twice a full queue; the oldest are forgotten first.
 const COVERS = 2000;
 
@@ -71,6 +74,18 @@ async function readOne(path: string, folders: Map<string, Promise<string | null>
   if (embedded) track.coverArt = coverId({ kind: 'embedded', path });
   else if (image) track.coverArt = coverId({ kind: 'file', path: image });
   return track;
+}
+
+// Paths dropped on the window, checked before anything is read: absolute, an audio extension,
+// and a regular file. Folders are left out (this module reads files; it doesn't walk folders),
+// as is anything else, and counted as skipped. Order is kept.
+export async function checkAudioPaths(paths: readonly string[]): Promise<{ files: string[]; skipped: number }> {
+  const ok = await Promise.all(paths.map(async path => {
+    if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0') || !AUDIO.has(extname(path).slice(1).toLowerCase())) return false;
+    try { return (await stat(path)).isFile(); } catch { return false; }
+  }));
+  const files = paths.filter((_, i) => ok[i]);
+  return { files, skipped: paths.length - files.length };
 }
 
 // Reads a batch of files a few at a time, keeping their order.

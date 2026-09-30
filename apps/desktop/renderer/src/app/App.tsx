@@ -19,6 +19,7 @@ import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage,
 import { GenrePage, Genres } from './views';
 import { Home } from './views';
 import { dropFocusRequest, focusFirstResult, rememberSearch } from './searches';
+import { dropOnQueue, useDropTarget, useFileDrops, useSpringOpen } from './drag';
 
 onMenuError(message => player.showError(message));
 
@@ -43,6 +44,7 @@ export function App() {
   // The room takes the colour of the record that is playing, unless the theme fixes its colours.
   const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
   useCommandKeys();
+  useFileDrops();
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
   // Without a title bar, the window's own buttons take the room's ink.
@@ -128,11 +130,16 @@ const Bar = memo(function Bar() {
     </div>
     {/* On phones this row moves to the bottom of the screen, under the thumb. */}
     <nav className="sections" aria-label="Library">
-      {sections.map(s => <button key={s.view} type="button" aria-current={active === s.view ? 'page' : undefined}
-        onClick={() => nav.go({ view: s.view })}>{s.label}</button>)}
+      {sections.map(s => <SectionButton key={s.view} view={s.view} label={s.label} current={active === s.view} />)}
     </nav>
   </header>;
 });
+
+// A drag held over a section opens it, so what it carries can reach that section's pages.
+function SectionButton({ view, label, current }: { view: (typeof sections)[number]['view']; label: string; current: boolean }) {
+  const spring = useSpringOpen(() => { if (nav.current.view !== view) nav.go({ view }); });
+  return <button type="button" aria-current={current ? 'page' : undefined} onClick={() => nav.go({ view })} {...spring}>{label}</button>;
+}
 
 // Memoized with no props: only a route change (or the connection) re-renders the page.
 const View = memo(function View() {
@@ -225,7 +232,7 @@ const Deck = memo(function Deck() {
           and in a tooltip. */}
       <div className="deck-actions">
         <button type="button" className="icon-button" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /></button>
-        <button type="button" className="icon-button" aria-label="Queue" title="Queue" aria-pressed={route.view === 'queue'} onClick={() => route.view === 'queue' ? nav.back() : nav.go({ view: 'queue' })}><ListMusic aria-hidden="true" /></button>
+        <QueueToggle open={route.view === 'queue'} />
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
         <FavoriteToggle track={track} />
         <PlayModes />
@@ -240,6 +247,17 @@ const Deck = memo(function Deck() {
     </div>
   </aside>;
 });
+
+// Records, artists, songs, and playlists dropped on it join the end of the queue. Held over it,
+// a drag opens the queue, to be dropped between its songs.
+function QueueToggle({ open }: { open: boolean }) {
+  const { over, handlers } = useDropTarget(payload => void dropOnQueue(payload));
+  const spring = useSpringOpen(() => { if (nav.current.view !== 'queue') nav.go({ view: 'queue' }); });
+  return <button type="button" className={`icon-button${over ? ' drop-over' : ''}`} aria-label="Queue" title="Queue" aria-pressed={open}
+    onClick={() => open ? nav.back() : nav.go({ view: 'queue' })} {...handlers}
+    onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); }}
+    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}><ListMusic aria-hidden="true" /></button>;
+}
 
 // A downloaded update, or a newer release for a copy that can't update itself. Shown under the
 // deck, and on the connect screen, which has no deck.

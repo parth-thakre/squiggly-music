@@ -6,7 +6,13 @@ import { IdSchema, QUEUE_LIMIT } from './validation';
 // Main-process only; keep out of renderer imports like validation.ts.
 export { QUEUE_LIMIT };
 const IndexSchema = Schema.Number.pipe(Schema.int(), Schema.between(0, QUEUE_LIMIT - 1));
-export const QueueAddSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), Schema.Literal('next', 'end'));
+// Where: next, the end, or before the entry at an index (a drop onto the queue).
+export const QueueAddSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), Schema.Union(Schema.Literal('next', 'end'), IndexSchema));
+// Files dropped on the window: paths the preload looked up, which the main process checks
+// again (checkAudioPaths in main/localFiles.ts), and whether they play now or join the end of
+// the queue. '' is a dropped File with no path on disk; it is counted as left out.
+const PathSchema = Schema.String.pipe(Schema.maxLength(4096));
+export const OpenPathsSchema = Schema.Tuple(Schema.Array(PathSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), Schema.Literal('play', 'queue'));
 export const QueueMoveSchema = Schema.Tuple(IndexSchema, IndexSchema);
 export const QueueRemoveSchema = Schema.Tuple(Schema.Array(IndexSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)));
 // An index into the latest snapshot and the entry id the renderer saw there.

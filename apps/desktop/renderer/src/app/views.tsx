@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
@@ -8,6 +8,7 @@ import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
 import { Credits } from './credits';
+import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseDrop, startDrag, useDropTarget, useSpringOpen } from './drag';
 import { morph, nav, useRoute } from './route';
 import { updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
@@ -242,11 +243,13 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
   const offsets = useMemo(() => active ? Array.from({ length: rows + 1 }, (_, i) => i * active.stride) : [0], [active, rows]);
   const [first, last] = useVisibleRows(list, offsets);
   const shown = active ? albums.slice(first * active.columns, last * active.columns) : windowed ? albums.slice(0, WINDOWED) : albums;
+  const drags = canDrag();
   return <ul ref={list} className="grid" style={active ? { paddingTop: first * active.stride, paddingBottom: (rows - last) * active.stride } : undefined}>
     {shown.map(album => <li key={album.id} className="playable">
       <PlayOver label={splitTitle(album.name).main} play={() => playTarget({ kind: 'album', album })} />
       <button type="button" onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
-        onContextMenu={event => openMenu(event, { kind: 'album', album })}>
+        onContextMenu={event => openMenu(event, { kind: 'album', album })}
+        draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
         <span className="grid-name">{album.id === nowAlbum && <Wave playing={playing} />}<span>{splitTitle(album.name).main}</span></span>
         <span className="grid-sub">{album.artist}</span>
@@ -358,6 +361,7 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
   }, [groups, shape]);
   const [first, last] = useVisibleRows(list, offsets);
   const total = offsets[offsets.length - 1];
+  const drags = canDrag();
   const jump = (letter: string) => {
     const scroller = nav.scroller, element = list.current, at = starts.get(letter);
     if (!scroller || !element || at === undefined) return;
@@ -374,7 +378,8 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
           style={{ gridTemplateColumns: `repeat(${shape!.columns}, minmax(0, 1fr))` }}>
           {row.artists.map(artist => <li key={artist.id} className="playable">
             <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
-              onContextMenu={event => openMenu(event, { kind: 'artist', artist })}>
+              onContextMenu={event => openMenu(event, { kind: 'artist', artist })}
+              draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
               <span className="artist-name">{artist.name}</span> <span>{artist.albumCount}</span>
             </button>
             <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
@@ -497,17 +502,7 @@ export function Playlists() {
     <section className="shelf-section" aria-labelledby="yours">
       <div className="section-head"><h2 id="yours">Yours</h2><NewPlaylist /></div>
       <Pending result={playlists} waiting="Loading playlists">{list => list.length ? <ul className="rows">
-        {list.map(playlist => <li key={playlist.id} className="playable">
-          <PlayOver label={splitTitle(playlist.name).main} play={() => playTarget({ kind: 'playlist', playlist })} />
-          <button type="button" onClick={event => { travel(playlist.id, event.currentTarget); nav.go({ view: 'playlist', id: playlist.id }); }}
-            onContextMenu={event => openMenu(event, { kind: 'playlist', playlist })}>
-            <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
-            <span className="row-text">
-              <span className="row-name">{splitTitle(playlist.name).main}</span>
-              <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{playlistNote(playlist) && `. ${playlistNote(playlist)}`}</span>
-            </span>
-          </button>
-        </li>)}
+        {list.map(playlist => <PlaylistRow key={playlist.id} playlist={playlist} />)}
       </ul> : <Status>No playlists yet. Start one here, or save an automatic playlist below.</Status>}</Pending>
     </section>
     <section className="shelf-section" aria-labelledby="automatic">
@@ -527,6 +522,34 @@ export function Playlists() {
       </ul>
     </section>
   </>;
+}
+
+// A playlist on the Playlists page. It drags (its songs), and records, artists, songs, and other
+// playlists drop onto it to be added at the end; held over it, a drag opens it, to be dropped
+// between its songs. One the server manages refuses, saying why.
+function PlaylistRow({ playlist }: { playlist: Playlist }) {
+  const note = playlistNote(playlist);
+  // Not onto itself.
+  const notItself = () => { const drag = activeDrag(); return !(drag?.payload.kind === 'playlist' && drag.payload.ids.includes(playlist.id)); };
+  const { over, handlers } = useDropTarget(payload => void dropOnPlaylist(playlist, payload, note), { enabled: !playlist.readonly, accepts: notItself });
+  const spring = useSpringOpen(() => nav.go({ view: 'playlist', id: playlist.id }), () => !playlist.readonly && notItself());
+  // The server's own playlists refuse: no outline, a pointer that says no, and the reason.
+  const refuse = (event: DragEvent<HTMLElement>) => { if (playlist.readonly && carriesItems(event.dataTransfer)) refuseDrop(playlist, note); };
+  return <li className={`playable${over ? ' drop-over' : ''}`} {...handlers}
+    onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); refuse(event); }}
+    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}
+    onDrop={event => { handlers.onDrop(event); refuse(event); }}>
+    <PlayOver label={splitTitle(playlist.name).main} play={() => playTarget({ kind: 'playlist', playlist })} />
+    <button type="button" onClick={event => { travel(playlist.id, event.currentTarget); nav.go({ view: 'playlist', id: playlist.id }); }}
+      onContextMenu={event => openMenu(event, { kind: 'playlist', playlist })}
+      draggable={canDrag()} onDragStart={event => startDrag(event, { kind: 'playlist', playlist })}>
+      <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
+      <span className="row-text">
+        <span className="row-name">{splitTitle(playlist.name).main}</span>
+        <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{note && `. ${note}`}</span>
+      </span>
+    </button>
+  </li>;
 }
 
 function NewPlaylist() {
@@ -588,7 +611,9 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
   const renameButton = useRef<HTMLButtonElement>(null);
   const editable = !playlist.readonly;
   const stopRenaming = () => { setRenaming(false); requestAnimationFrame(() => renameButton.current?.focus()); };
-  return <>
+  // Records, artists, and songs dropped on the page join the end; onto the list, before that song.
+  const drop = useDropTarget(payload => void dropOnPlaylist(playlist, payload, null), { enabled: editable });
+  return <div className={`drop-area${drop.over ? ' drop-over' : ''}`} {...drop.handlers}>
     <Head title={playlist.name} cover={<Cover id={playlist.coverArt} name={playlist.name} size={600} className="head-cover" />}>
       {renaming && <form className="inline-form" onSubmit={event => {
         event.preventDefault();
@@ -614,9 +639,10 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
     </Head>
     {tracks.length ? <TrackTable tracks={tracks} showAlbum playlist={playlist}
       onMove={editable ? (from, to) => void editor.move(from, to) : undefined}
-      onRemove={editable ? indexes => void editor.removeAt(indexes) : undefined} />
+      onRemove={editable ? indexes => void editor.removeAt(indexes) : undefined}
+      onDropItems={editable ? (payload, at) => void dropOnPlaylist(playlist, payload, null, at) : undefined} />
       : <Status>This playlist is empty. Right-click any song and choose Add to playlist.</Status>}
-  </>;
+  </div>;
 }
 
 export function MixPage({ id }: { id: string }) {
@@ -669,8 +695,10 @@ export function Favorites() {
 }
 
 function ArtistNames({ artists }: { artists: Artist[] }) {
+  const drags = canDrag();
   return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
-    <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}>{artist.name} <span>{artist.albumCount}</span></button>
+    <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
+      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name} <span>{artist.albumCount}</span></button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
 }
@@ -682,11 +710,15 @@ export function Queue() {
   const repeat = usePlayer(s => s.repeat);
   const shuffle = usePlayer(s => s.shuffle);
   const [saved, setSaved] = useState<string | null>(null);
-  if (!queue.length) return <><Head title="Queue" /><Status>Nothing queued. Play a record, playlist, or song, or right-click one and choose Add to queue.</Status></>;
+  // Records, artists, songs, and playlists dropped on the page join the end of the queue; onto
+  // the list, before that song.
+  const drop = useDropTarget(payload => void dropOnQueue(payload));
+  const area = `drop-area${drop.over ? ' drop-over' : ''}`;
+  if (!queue.length) return <div className={area} {...drop.handlers}><Head title="Queue" /><Status>Nothing queued. Play a record, playlist, or song, or right-click one and choose Add to queue.</Status></div>;
   const upcoming = queue.length - index - 1;
   const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
   const modes = shuffle ? (repeats ? `Shuffled, and ${repeats}.` : 'Shuffled.') : repeats && `${repeats[0].toUpperCase()}${repeats.slice(1)}.`;
-  return <>
+  return <div className={area} {...drop.handlers}>
     <Head title="Queue">
       <p className="byline"><span>{upcoming > 0 ? `${plural(upcoming, 'song')} up next, ${length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}` : 'This is the last song.'}</span>
         {modes && <>{upcoming > 0 ? '. ' : ' '}<span>{modes}</span></>}</p>
@@ -701,8 +733,9 @@ export function Queue() {
       {saved && <p className="note" role="alert">{saved}</p>}
       <p className="note hint">Drag to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>
     </Head>
-    <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)} />
-  </>;
+    <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
+      onDropItems={(payload, at) => void dropOnQueue(payload, at)} />
+  </div>;
 }
 
 export function LyricsPage() {
