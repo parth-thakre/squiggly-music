@@ -52,6 +52,8 @@ object Kept {
         "audio/ogg" to "ogg", "application/ogg" to "ogg", "audio/opus" to "opus", "audio/wav" to "wav", "audio/x-wav" to "wav", "audio/wave" to "wav",
         "audio/aiff" to "aiff", "audio/x-aiff" to "aiff", "audio/x-dsf" to "dsf", "audio/x-dff" to "dff", "audio/x-ape" to "ape", "audio/x-wavpack" to "wv",
     )
+    // packages/core/kept.ts, audioSuffixes: a playlist or text suffix from the server isn't used.
+    private val AUDIO_SUFFIXES = SUFFIXES.values.toSet() + setOf("aac", "aif", "aifc", "caf", "m4b", "mka", "mp2", "mp4", "mpc", "oga", "tta", "webm", "wma")
 
     // packages/core/kept.ts, KEPT_MESSAGES, with "phone" for the device.
     private const val AWAY = "Your server is out of reach. Keeping needs it."
@@ -507,7 +509,7 @@ object Kept {
 
     private fun suffixFor(pending: Pending): String {
         val format = runCatching { JSONObject(pending.track).optString("sourceFormat").lowercase() }.getOrDefault("")
-        return if (Regex("^[a-z0-9]{1,8}$").matches(format)) format else "audio"
+        return if (format in AUDIO_SUFFIXES) format else "audio"
     }
     // Only the writer makes names: s- or c-, the first 32 hex digits of SHA-256 of the id, a suffix.
     private fun name(prefix: String, id: String, ext: String): String {

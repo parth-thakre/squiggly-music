@@ -73,12 +73,33 @@ const suffixes: Record<string, string> = {
   'audio/ogg': 'ogg', 'application/ogg': 'ogg', 'audio/opus': 'opus', 'audio/wav': 'wav', 'audio/x-wav': 'wav', 'audio/wave': 'wav',
   'audio/aiff': 'aiff', 'audio/x-aiff': 'aiff', 'audio/x-dsf': 'dsf', 'audio/x-dff': 'dff', 'audio/x-ape': 'ape', 'audio/x-wavpack': 'wv',
 };
-// The file's suffix: the server's own for the song when it is a plain one, else from the type the
+// Suffixes a kept song may take from the server. mpv reads audio by its contents, but a name such
+// as m3u, pls, edl, cue, or txt makes it read the file as a playlist, and a kept file is trusted as
+// local, so it could name other files on this computer. Anything not listed here is not used.
+const audioSuffixes = new Set([...Object.values(suffixes), 'aac', 'aif', 'aifc', 'caf', 'm4b', 'mka', 'mp2', 'mp4', 'mpc', 'oga', 'tta', 'webm', 'wma']);
+// The file's suffix: the server's own for the song when it is an audio one, else from the type the
 // stream came with, else 'audio'. mpv and ExoPlayer read the contents, not the name.
 export function suffixFor(sourceFormat: string | null | undefined, contentType: string | null | undefined) {
   const format = sourceFormat?.toLowerCase() ?? '';
-  if (/^[a-z0-9]{1,8}$/.test(format)) return format;
+  if (audioSuffixes.has(format)) return format;
   return suffixes[contentType?.split(';')[0].trim().toLowerCase() ?? ''] ?? 'audio';
+}
+// Whether a kept song's first bytes are an audio file's, checked before it is renamed into place.
+// The server's content type isn't enough: a playlist or EDL sent as audio would be kept, and played
+// as a local file. Needs the first 12 bytes.
+const leadingTags = ['fLaC', 'ID3', 'OggS', 'MAC ', 'wvpk', 'DSD ', 'FRM8', 'MPCK', 'MP+', 'TTA1', 'caff', 'RF64'];
+const ASF = [0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11];
+const EBML = [0x1a, 0x45, 0xdf, 0xa3];
+export function isAudioHead(head: Uint8Array) {
+  const at = (offset: number, tag: string) => [...tag].every((char, i) => head[offset + i] === char.charCodeAt(0));
+  const bytes = (values: number[]) => values.every((value, i) => head[i] === value);
+  if (leadingTags.some(tag => at(0, tag)) || bytes(ASF) || bytes(EBML)) return true;
+  if ((at(0, 'RIFF') && at(8, 'WAVE')) || (at(0, 'FORM') && (at(8, 'AIFF') || at(8, 'AIFC')))) return true;
+  // m4a and ALAC: an MP4 box of type ftyp.
+  if (at(4, 'ftyp')) return true;
+  // An MPEG audio frame (an mp3 without tags, or ADTS AAC) starts with eleven set bits. Layer I is
+  // left out: nobody keeps it, and FF FE is also how UTF-16 text starts.
+  return head.length >= 2 && head[0] === 0xff && (head[1] & 0xe0) === 0xe0 && (head[1] & 0x06) !== 0x06;
 }
 const coverExts: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif', 'image/bmp': 'bmp' };
 export const coverExt = (type: string) => coverExts[type] ?? null;

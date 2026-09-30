@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { KeptDetail, KeptState } from '../packages/core/contracts';
-import { formatBytes, keepStatus, keptOnly, limitMessage, MB } from '../packages/core/kept';
+import { formatBytes, isAudioHead, keepStatus, keptOnly, limitMessage, MB, suffixFor } from '../packages/core/kept';
 import { OUT_OF_REACH, PROBE_EVERY, PROBE_TIMEOUT } from '../packages/core/reach';
 import { pageFor } from '../apps/desktop/renderer/src/app/offline';
 import { createWebLibrary } from '../apps/desktop/renderer/src/bridge/previewLibrary';
@@ -33,6 +33,33 @@ describe('kept songs only', () => {
     expect(keptOnly(['a', 'b', 'c', 'd'], 2, isKept)).toEqual({ items: ['b', 'd'], start: 1 });
     expect(keptOnly(['a', 'b', 'c', 'd', 'e'], 4, isKept)).toEqual({ items: ['b', 'd'], start: 1 });
     expect(keptOnly(['a', 'c'], 0, isKept)).toBeNull();
+  });
+});
+
+describe('what a kept song is named and must start with', () => {
+  const head = (...parts: (string | number[])[]) => new Uint8Array(parts.flatMap(part => typeof part === 'string' ? [...part].map(char => char.charCodeAt(0)) : part));
+  it('takes the server\'s suffix only when it is an audio one', () => {
+    expect(suffixFor('FLAC', null)).toBe('flac');
+    expect(suffixFor('wma', null)).toBe('wma');
+    for (const suffix of ['m3u', 'm3u8', 'pls', 'edl', 'cue', 'txt', 'xspf', 'srt']) {
+      expect(suffixFor(suffix, 'audio/mpeg')).toBe('mp3');
+      expect(suffixFor(suffix, 'audio/x-mpegurl')).toBe('audio');
+    }
+  });
+  it('knows the audio files a server keeps', () => {
+    const heads = [
+      head('fLaC'), head('ID3', [4, 0]), head([0xff, 0xfb, 0x90]), head([0xff, 0xf1, 0x50]), head('OggS'),
+      head('RIFF', [0, 0, 0, 0], 'WAVE'), head('FORM', [0, 0, 0, 0], 'AIFF'), head('FORM', [0, 0, 0, 0], 'AIFC'),
+      head([0, 0, 0, 0x20], 'ftypM4A '), head('MAC '), head('wvpk'), head('DSD '), head('FRM8'),
+      head([0x30, 0x26, 0xb2, 0x75, 0x8e, 0x66, 0xcf, 0x11]), head([0x1a, 0x45, 0xdf, 0xa3]),
+    ];
+    for (const bytes of heads) expect(isAudioHead(bytes)).toBe(true);
+  });
+  it('refuses playlists, EDL, cue sheets, and other text', () => {
+    const texts = ['#EXTM3U\n', '/etc/passwd\n', '[playlist]\nFile1=/x', '# mpv EDL v0\n', 'FILE "a.flac" WAVE', '<?xml', '{"a":1}', 'RIFF1234AVI ', ''];
+    for (const text of texts) expect(isAudioHead(head(text))).toBe(false);
+    // UTF-16 text starts FF FE, which only an MPEG Layer I frame shares.
+    expect(isAudioHead(head([0xff, 0xfe], '#\0E\0'))).toBe(false);
   });
 });
 

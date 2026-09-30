@@ -4,7 +4,7 @@ import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { KeepKind, KeptJob, KeptProgress, KeptState, Result, Track } from '../../../packages/core/contracts';
-import { coverExt, isCoverType, jsonBytes, keptOnly, keptTrack, KEPT_LIMITS, KEPT_MESSAGES, limitMessage, MB, suffixFor } from '../../../packages/core/kept';
+import { coverExt, isAudioHead, isCoverType, jsonBytes, keptOnly, keptTrack, KEPT_LIMITS, KEPT_MESSAGES, limitMessage, MB, suffixFor } from '../../../packages/core/kept';
 import type { PlayableTrack } from '../../../packages/player-mpv/protocol';
 import type { KeepRequestIds } from '../../../packages/core/desktopValidation';
 import { Unreachable } from '../../../packages/adapter-opensubsonic/client';
@@ -52,6 +52,7 @@ class LimitReached extends Error {}
 // Not shown: a keep that got no answer pauses without a message.
 const NO_HEADERS = 'The server did not start sending the song within 15 seconds.';
 const DROPPED = 'The server stopped sending the song.';
+const NOT_AUDIO = 'The server sent something that is not a song.';
 const refusedTypes = (type: string) => type.startsWith('text/') || type === 'application/json' || type === 'application/xml';
 const fail = (error: string): Result => ({ ok: false, error });
 
@@ -387,8 +388,11 @@ export class KeepManager {
       throw late ? new Unreachable(DROPPED) : error;
     } finally { clearTimeout(idle); }
     if (Number.isFinite(declared) && declared !== count) throw new Error('The song arrived incomplete.');
+    // The file must start as audio does before it is kept (the caller deletes the .part).
+    const head = new Uint8Array(12);
     const handle = await open(part, 'r+');
-    try { await handle.sync(); } finally { await handle.close(); }
+    try { await handle.read(head, 0, head.length, 0); await handle.sync(); } finally { await handle.close(); }
+    if (!isAudioHead(head)) throw new Error(NOT_AUDIO);
     await rename(part, final);
     // The song's bytes move from running to kept in one step.
     this.inFlightBytes.delete(track.id);

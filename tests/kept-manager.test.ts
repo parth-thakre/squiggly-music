@@ -16,7 +16,9 @@ const song = (id: string, extra: Partial<Track> = {}): Track => ({
   id, title: `Song ${id}`, artist: 'Ada Brass', album: 'Test Pressing', duration: 120, source: 'navidrome',
   sourceFormat: 'flac', sourceSampleRate: 44100, sourceBitDepth: 16, albumId: 'al-1', coverArt: 'al-1', starred: true, userRating: 4, ...extra,
 });
-const bytesOf = (id: string) => new TextEncoder().encode(`audio of ${id} `.repeat(8));
+// Starts as a FLAC file does, so the kept file passes the check on its first bytes.
+const bytesOf = (id: string) => new TextEncoder().encode(`fLaC audio of ${id} `.repeat(8));
+const flacOf = (size: number) => { const bytes = new Uint8Array(size); bytes.set(new TextEncoder().encode('fLaC')); return bytes; };
 
 // A fake server: each song's body waits until the test lets it through (or streams at once).
 async function setup(options: Partial<KeepDeps> & { gated?: boolean; respond?: (id: string) => Response | Promise<Response> } = {}) {
@@ -153,7 +155,7 @@ describe('keeping songs on the desktop', () => {
     const t = await setup({ limitBytes: () => 1000, respond: () => {
       if (++opened === 2) both();
       return new Response(new ReadableStream<Uint8Array>({
-        async pull(controller) { await bothOpen; controller.enqueue(new Uint8Array(700)); controller.close(); },
+        async pull(controller) { await bothOpen; controller.enqueue(flacOf(700)); controller.close(); },
       }), { headers: { 'content-type': 'audio/flac' } });
     } });
     t.learn(song('a', { coverArt: null }), song('b', { coverArt: null }));
@@ -190,6 +192,23 @@ describe('keeping songs on the desktop', () => {
     expect(job(t.manager, 'al-1')).toMatchObject({ state: 'stopped', failed: 2, error: '2 songs couldn\'t be kept.' });
     expect(t.store.songCount).toBe(0);
     expect((await readdir(t.dir)).filter(name => name.startsWith('s-'))).toEqual([]);
+  });
+  it('refuses a playlist sent as audio, and never names a kept file after one', async () => {
+    const playlist = new TextEncoder().encode('#EXTM3U\n/home/someone/.ssh/id_ed25519\n');
+    const t = await setup({ respond: () => new Response(playlist, { headers: { 'content-type': 'audio/mpeg', 'content-length': String(playlist.length) } }) });
+    t.learn(song('m3u', { sourceFormat: 'm3u', coverArt: null }));
+    await t.manager.keep(t.request('album', 'al-1', ['m3u'], null));
+    await t.manager.idle();
+    expect(job(t.manager, 'al-1')).toMatchObject({ state: 'stopped', failed: 1 });
+    expect(t.store.songCount).toBe(0);
+    expect((await readdir(t.dir)).filter(name => name.startsWith('s-'))).toEqual([]);
+  });
+  it('keeps a song whose server suffix is a playlist\'s under an audio name', async () => {
+    const t = await setup();
+    t.learn(song('edl', { sourceFormat: 'edl', coverArt: null }));
+    await t.manager.keep(t.request('album', 'al-1', ['edl'], null));
+    await t.manager.idle();
+    expect(t.store.song('edl')?.file).toMatch(/\.flac$/);
   });
   it('pauses when the server stops answering, and carries on when it is back', async () => {
     let down = false;
