@@ -6,7 +6,7 @@ Windows releases are signed through SignPath Foundation, which signs open source
 
 The Windows job in `.github/workflows/release.yml` builds in two passes, because the installer can't be opened up and signed inside afterwards:
 
-1. It builds the unpacked app and smoke-tests it.
+1. It builds the app and smoke-tests it. This builds unsigned installers too, because electron-builder only writes `resources/app-update.yml`, the updater's settings, into the app when it builds the NSIS installer.
 2. It sends the app to SignPath, which signs `Squiggly Music.exe` and `libmpv-2.dll` (artifact configuration `app`).
 3. It builds the installer and portable exe from the signed app (`electron-builder --prepackaged`).
 4. It sends those two to SignPath (artifact configuration `installers`).

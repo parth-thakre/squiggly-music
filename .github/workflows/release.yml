@@ -200,9 +200,12 @@ jobs:
           name: libmpv-windows
           path: .local/libmpv-windows
       - run: npm ci
-      # The app first, unpacked, so its own files are signed before they go into the installers.
-      - name: Build the unpacked app
-        run: npm run package:win -- --dir
+      # The app first, so its own files are signed before they go into the installers. This builds
+      # the installers too, and a signed release rebuilds them from the signed app: electron-builder
+      # only writes resources/app-update.yml, which the updater reads, when it builds the NSIS
+      # installer, not for --dir or --prepackaged.
+      - name: Build the app
+        run: npm run package:win
       # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll,
       # and the unpacked esbuild binary.
       - name: Smoke-test the packaged audio runtime
