@@ -55,6 +55,48 @@ test('the output device is chosen in Settings and saved there', async ({ page })
   await expect(output.locator('option')).toHaveText(['System default']);
 });
 
+const setPlayer = (page: import('@playwright/test').Page, patch: object) =>
+  page.evaluate(patch => (window as unknown as { setPlayer: (patch: object) => void }).setPlayer(patch), patch);
+
+test('a saved output that is unplugged shows as disconnected, by the name it had', async ({ page }) => {
+  const system = { name: 'auto', description: 'System default' };
+  const dac = { name: 'wasapi/{b2f16eba-7d1c-4f3a-9d2e-5a1b3c4d5e6f}', description: 'USB DAC' };
+  await installDesktopBridge(page, { settings: { outputDevice: dac.name } });
+  const setDevices = (devices: typeof dac[]) => setPlayer(page, { devices });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const output = page.getByRole('combobox', { name: /Output/ });
+  // Not seen since launch: the id is all there is to go on.
+  await setDevices([system]);
+  await expect(output).toHaveValue(dac.name);
+  await expect(output.locator('option')).toHaveText([`${dac.name} (disconnected)`, 'System default']);
+  await setDevices([system, dac]);
+  await expect(output.locator('option')).toHaveText(['System default', 'USB DAC']);
+  // Unplugged: still the saved choice, named as it was listed, here and after a reload.
+  await setDevices([system]);
+  await expect(output).toHaveValue(dac.name);
+  await expect(output.locator('option')).toHaveText(['USB DAC (disconnected)', 'System default']);
+  await page.reload();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await setDevices([system]);
+  await expect(output.locator('option')).toHaveText(['USB DAC (disconnected)', 'System default']);
+});
+
+test('news from the engine goes when the engine takes it back; an error stays until dismissed', async ({ page }) => {
+  await installDesktopBridge(page);
+  await page.goto('/');
+  await setPlayer(page, { error: 'Switched back to USB DAC.' });
+  await expect(page.getByRole('alert')).toContainText('Switched back to USB DAC.');
+  await setPlayer(page, { error: null });
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await setPlayer(page, { error: 'Playback failed in libmpv (code -13).' });
+  await page.getByRole('alert').getByRole('button', { name: 'Dismiss' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  // Dismissed, it stays dismissed while the engine still reports it.
+  await setPlayer(page, { position: 1 });
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});
+
 test.describe('updates', () => {
   const calls = (page: import('@playwright/test').Page) => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls);
   test('a downloaded update offers a restart, in the deck and in Settings', async ({ page }) => {

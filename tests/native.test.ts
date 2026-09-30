@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fork, type ChildProcess } from 'node:child_process';
+import { execFileSync, fork, type ChildProcess } from 'node:child_process';
 import type { HostMessage, HostRequest } from '../packages/player-mpv/protocol';
 import { emptyPlayer, type AudioDevice, type PlayerSnapshot } from '../packages/core/contracts';
 import { clearPlayerSession } from '../packages/player-mpv/session';
@@ -165,6 +165,49 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('queue editing in real libmpv
   });
 });
 
+// A PulseAudio or PipeWire null sink stands in for a USB DAC that is unplugged and plugged back in.
+// The host still plays through the null output (start() above), so nothing is heard.
+const pactl = (...args: string[]) => execFileSync('pactl', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+const soundServer = (() => { try { pactl('info'); return true; } catch { return false; } })();
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH || !soundServer)('output device fallback in real libmpv', () => {
+  it('plays on through the system default while the chosen output is gone, and goes back when it returns', async () => {
+    const file = await wavFixture(20);
+    const sink = `squiggly_test_${process.pid}`;
+    const plug = () => pactl('load-module', 'module-null-sink', `sink_name=${sink}`, 'sink_properties=device.description=Squiggly-test');
+    let module: string | null = plug();
+    try {
+      const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+      const last = () => snapshots.at(-1)!;
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      // mpv lists the sink as pipewire/<name> or pulse/<name>; the host lists devices every 5 seconds.
+      const listed = () => last().devices.find(device => device.name.endsWith(`/${sink}`))?.name;
+      await expect.poll(listed, { timeout: 12_000 }).toBeDefined();
+      const device = listed()!;
+      send({ id: 1, action: { type: 'device', id: device } });
+      send({ id: 2, action: { type: 'queue', tracks: [{ location: file, track: { id: 'tone', title: 'Tone', artist: '', album: '',
+        duration: 20, source: 'local', sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null } }] } });
+      await expect.poll(() => last().position).toBeGreaterThan(0.5);
+      expect([replies.get(1), replies.get(2)]).toEqual([null, null]);
+      expect(last().audio.requestedDevice).toBe(device);
+      const playId = last().playId;
+      pactl('unload-module', module); module = null;
+      await expect.poll(() => last().audio.requestedDevice, { timeout: 8_000 }).toBe('auto');
+      const fallen = last();
+      expect(fallen.error).toBe('Your output device was disconnected. Playing through the system default.');
+      expect(fallen).toMatchObject({ playing: true, currentIndex: 0, playId });
+      // Playing on, not over from the top.
+      await expect.poll(() => last().position).toBeGreaterThan(fallen.position);
+      module = plug();
+      await expect.poll(() => last().audio.requestedDevice, { timeout: 8_000 }).toBe(device);
+      expect(last().error).toMatch(/^Switched back to /);
+      expect(last()).toMatchObject({ playing: true, currentIndex: 0, playId });
+      expect(last().position).toBeGreaterThan(fallen.position);
+    } finally {
+      if (module) pactl('unload-module', module);
+    }
+  }, 40_000);
+});
+
 async function mockHost(supportsStopKeepPlaylist = false, configure?: (native: { set: ReturnType<typeof vi.fn>; property: ReturnType<typeof vi.fn>; devices: ReturnType<typeof vi.fn> }) => void) {
   vi.useFakeTimers();
   const { emptyAudio } = await import('../packages/core/contracts');
@@ -175,7 +218,7 @@ async function mockHost(supportsStopKeepPlaylist = false, configure?: (native: {
     property: vi.fn((_name: string): string | null => 'no'),
     number: vi.fn((name: string) => ({ 'playlist-pos': 2, 'time-pos': 12, duration: 90, volume: 100 })[name] ?? null),
     audio: vi.fn(() => ({ ...emptyAudio(), codec: 'pcm', decoderRate: 48000, outputRate: 48000 })),
-    drainEvents: vi.fn(() => ({ error: null as string | null, shutdown: false, starts: 0, seeks: 0 })),
+    drainEvents: vi.fn(() => ({ error: null as string | null, shutdown: false, starts: 0, seeks: 0, outputFailed: null as { entry: number | null } | null })),
   };
   configure?.(native);
   vi.doMock('../packages/player-mpv/native', () => ({ NativePlayer: vi.fn(function () { return native; }) }));
@@ -339,7 +382,7 @@ describe('host snapshot lifecycle', () => {
   it('stops polling on core shutdown, publishes failure, and exits nonzero', async () => {
     const { sends, snapshots, native, exit } = await mockHost();
     sends[0].callback(null);
-    native.drainEvents.mockReturnValue({ error: null, shutdown: true, starts: 0, seeks: 0 });
+    native.drainEvents.mockReturnValue({ error: null, shutdown: true, starts: 0, seeks: 0, outputFailed: null });
     vi.advanceTimersByTime(250);
     expect(native.close).not.toHaveBeenCalled();
     expect(snapshots().at(-1)!.player).toMatchObject({ engine: 'crashed', playing: false });
@@ -354,7 +397,7 @@ describe('host snapshot lifecycle', () => {
 
   it('still exits when a shutdown snapshot cannot flush', async () => {
     const { native, exit } = await mockHost();
-    native.drainEvents.mockReturnValue({ error: null, shutdown: true, starts: 0, seeks: 0 });
+    native.drainEvents.mockReturnValue({ error: null, shutdown: true, starts: 0, seeks: 0, outputFailed: null });
     vi.advanceTimersByTime(1250);
     expect(native.close).toHaveBeenCalledOnce();
     expect(exit).toHaveBeenCalledWith(1);
@@ -364,9 +407,11 @@ describe('host snapshot lifecycle', () => {
 describe('native client API compatibility', () => {
   it('decodes only the old end-file prefix and reports shutdown separately', async () => {
     let apiVersion = (1 << 16) | 107;
-    const events = [
+    const events: { event_id: number; data: object | null }[] = [
       { event_id: 6, data: null }, { event_id: 20, data: null }, { event_id: 21, data: null },
       { event_id: 7, data: { reason: 4, error: -13 } },
+      // MPV_ERROR_AO_INIT_FAILED. The old prefix has no entry id to say which song it was.
+      { event_id: 7, data: { reason: 4, error: -14 } },
       { event_id: 1, data: null },
     ];
     const struct = vi.fn((_name: string, fields: Record<string, string>) => fields);
@@ -384,13 +429,18 @@ describe('native client API compatibility', () => {
     expect(native.clientApiVersion).toBe('1.107');
     expect(native.supportsStopKeepPlaylist).toBe(false);
     expect(struct).toHaveBeenCalledWith('squiggly_mpv_end_file', { reason: 'int', error: 'int' });
-    expect(native.drainEvents()).toEqual({ error: expect.stringContaining('code -13'), shutdown: true, starts: 1, seeks: 1 });
-    expect(native.drainEvents()).toEqual({ error: null, shutdown: false, starts: 0, seeks: 0 });
+    expect(native.drainEvents()).toEqual({ error: expect.stringContaining('code -14'), shutdown: true, starts: 1, seeks: 1, outputFailed: { entry: null } });
+    expect(native.drainEvents()).toEqual({ error: null, shutdown: false, starts: 0, seeks: 0, outputFailed: null });
     native.close();
     apiVersion = (1 << 16) | 109;
     const newer = new NativePlayer();
     expect(newer.clientApiVersion).toBe('1.109');
     expect(newer.supportsStopKeepPlaylist).toBe(true);
+    // Newer runtimes say which entry failed first; a failure of another kind is not the output's.
+    events.push({ event_id: 7, data: { reason: 4, error: -13, playlist_entry_id: 3 } },
+      { event_id: 7, data: { reason: 4, error: -14, playlist_entry_id: 4 } }, { event_id: 7, data: { reason: 4, error: -14, playlist_entry_id: 5 } });
+    expect(newer.drainEvents().outputFailed).toEqual({ entry: 4 });
+    expect(struct).toHaveBeenCalledWith('squiggly_mpv_end_file_entry', { reason: 'int', error: 'int', playlist_entry_id: 'int64_t' });
     newer.close();
   });
 });
@@ -464,6 +514,7 @@ function mpvPlaylist(native: Awaited<ReturnType<typeof mockHost>>['native']) {
     } else if (name === 'playlist-clear') entries.splice(0, entries.length, ...(current ? [current] : []));
     // Without keep-playlist (client API before 1.108), stop also empties the playlist.
     else if (name === 'stop') { current = null; if (a !== 'keep-playlist') entries.splice(0); }
+    else if (name === 'playlist-play-index') current = entries[at(a)] ?? null;
   });
   native.set.mockImplementation((name: string, value: string) => { if (name === 'playlist-pos') current = entries[at(value)] ?? null; });
   native.number.mockImplementation((name: string) => name === 'playlist-pos' ? (current ? entries.indexOf(current) : -1) : name === 'playlist-count' ? entries.length : null);
@@ -830,7 +881,7 @@ describe('play identity', () => {
   async function playHost(ids = ['a', 'b']) {
     const host = await editableHost(ids, 0);
     const tick = (events: { starts?: number; seeks?: number } = {}) => {
-      host.native.drainEvents.mockReturnValueOnce({ error: null, shutdown: false, starts: 0, seeks: 0, ...events });
+      host.native.drainEvents.mockReturnValueOnce({ error: null, shutdown: false, starts: 0, seeks: 0, outputFailed: null, ...events });
       vi.advanceTimersByTime(250); host.deliver();
       return host.snapshot().playId;
     };
@@ -901,6 +952,136 @@ describe('play identity', () => {
       events.push(...tracker.update(snapshot(), poll * 250).map(event => event.event));
     }
     expect(events).toEqual(['started', 'finished', 'started', 'finished']);
+  });
+});
+
+describe('output device fallback', () => {
+  const dac = { name: 'wasapi/{b2f16eba-7d1c-4f3a-9d2e-5a1b3c4d5e6f}', description: 'USB DAC' };
+  const failed = 'Playback failed in libmpv (code -14). Check the file, server connection, and output device.';
+  // Playing a, b, c with the DAC chosen in Settings (unplugged at startup unless `plugged`).
+  async function outputHost(plugged = true) {
+    vi.stubEnv('SQUIGGLY_AUDIO_DEVICE', dac.name);
+    const host = await mockHost(true, native => native.devices.mockReturnValue(plugged ? [dac] : []));
+    const mpv = mpvPlaylist(host.native);
+    let position: number | null = 0;
+    const read = host.native.number.getMockImplementation()!;
+    // mpv's own entry ids (100 up), which its end-file event carries.
+    host.native.number.mockImplementation((name: string) => name === 'time-pos' ? position
+      : /^playlist\/\d+\/id$/.test(name) ? 100 + Number(name.split('/')[1]) : read(name));
+    host.deliver();
+    let id = 0;
+    const run = (action: HostRequest['action']) => {
+      const requestId = ++id; host.command({ id: requestId, action }); host.deliver();
+      return host.sends.map(send => send.message).find(message => message.type === 'reply' && message.id === requestId);
+    };
+    run({ type: 'queue', tracks: ['a', 'b', 'c'].map(playable) });
+    const snapshot = () => host.snapshots().at(-1)!.player;
+    const tick = (events: Partial<ReturnType<typeof host.native.drainEvents>> = {}) => {
+      host.native.drainEvents.mockReturnValueOnce({ error: null, shutdown: false, starts: 0, seeks: 0, outputFailed: null, ...events });
+      vi.advanceTimersByTime(250); host.deliver();
+      return snapshot();
+    };
+    // The host lists devices every 20th poll.
+    const listDevices = (devices: AudioDevice[]) => {
+      host.native.devices.mockReturnValue(devices);
+      for (let poll = 0; poll < 20; poll++) tick();
+      return snapshot();
+    };
+    const outputs = () => host.native.set.mock.calls.filter(([name]) => name === 'audio-device').map(([, value]) => value);
+    return { ...host, mpv, run, snapshot, tick, listDevices, outputs, at: (seconds: number | null) => { position = seconds; } };
+  }
+
+  it('plays on through the system default when the output is unplugged, and goes back to it when it returns', async () => {
+    const { tick, listDevices, outputs, snapshot, native, at } = await outputHost();
+    expect(outputs()).toEqual([dac.name]);
+    at(42);
+    const play = tick({ starts: 1 }).playId;
+    native.command.mockClear();
+    // Unplugged mid-song while mpv plays on (PipeWire moves the stream; on Windows the song fails, below).
+    const gone = listDevices([]);
+    expect(outputs()).toEqual([dac.name, 'auto']);
+    expect(gone.error).toBe('Your output device was disconnected. Playing through the system default.');
+    // Setting audio-device reopens the output where the song is: nothing reloads or starts over.
+    expect(native.command).not.toHaveBeenCalled();
+    expect(gone).toMatchObject({ currentIndex: 0, position: 42, playId: play });
+    expect(listDevices([]).error).toContain('disconnected');
+    expect(outputs()).toEqual([dac.name, 'auto']);
+    // Plugged back in: back on it, and said for a few seconds.
+    const back = listDevices([dac]);
+    expect(outputs()).toEqual([dac.name, 'auto', dac.name]);
+    expect(back).toMatchObject({ error: 'Switched back to USB DAC.', playId: play });
+    for (let poll = 0; poll < 20; poll++) tick();
+    expect(snapshot().error).toBeNull();
+    expect(native.command).not.toHaveBeenCalled();
+  });
+
+  it('starts on the system default with the output unplugged, and moves to it once it is plugged in', async () => {
+    const { listDevices, outputs } = await outputHost(false);
+    expect(outputs()).toEqual([]);
+    expect(listDevices([]).error).toBeNull();
+    expect(listDevices([dac]).error).toBe('Switched back to USB DAC.');
+    expect(outputs()).toEqual([dac.name]);
+  });
+
+  it('plays a song whose output failed again once, through the system default, from where it was', async () => {
+    const { tick, snapshot, native, mpv, run, at } = await outputHost();
+    at(42);
+    const play = tick({ starts: 1 }).playId;
+    native.command.mockClear(); native.set.mockClear();
+    // Windows: the unplugged output fails the song (MPV_ERROR_AO_INIT_FAILED), and mpv moves on to
+    // the next, which fails the same way.
+    native.devices.mockReturnValue([]);
+    mpv.select(1); at(null);
+    const retried = tick({ error: failed, starts: 1, outputFailed: { entry: 100 } });
+    expect(native.set.mock.calls).toEqual([['audio-device', 'auto'], ['start', '42']]);
+    expect(native.command.mock.calls).toEqual([['playlist-play-index', '0']]);
+    expect(retried).toMatchObject({ currentIndex: 0, playId: play, error: 'Your output device was disconnected. Playing through the system default.' });
+    // Its start-file is the same play, and the start position applies to that song alone.
+    at(42.3);
+    expect(tick({ starts: 1 }).playId).toBe(play);
+    expect(native.set).toHaveBeenLastCalledWith('start', 'none');
+    // The system default fails as well: no second try, and the failure shows.
+    native.command.mockClear();
+    mpv.select(1);
+    expect(tick({ error: failed, outputFailed: { entry: 100 } }).error).toBe(failed);
+    expect(native.command).not.toHaveBeenCalled();
+    // Play still plays.
+    expect(run({ type: 'play' })).toMatchObject(ok);
+    expect(native.set).toHaveBeenLastCalledWith('pause', 'no');
+    expect(snapshot().error).toBeNull();
+  });
+
+  it('plays a song whose output failed as it started again from the top, as a new play', async () => {
+    const { tick, native, mpv, at } = await outputHost();
+    at(199);
+    const play = tick({ starts: 1 }).playId;
+    // a ended, b's output wouldn't open, and mpv went on to c.
+    mpv.select(2); at(null);
+    const retried = tick({ error: failed, starts: 2, outputFailed: { entry: 101 } });
+    expect(native.set).not.toHaveBeenCalledWith('start', expect.anything());
+    expect(mpv.current()).toBe(1);
+    expect(retried.playId).not.toBe(play);
+    expect(tick({ starts: 1 }).playId).toBe(retried.playId);
+  });
+
+  it('stays on the system default while a listed output will not open, until it is chosen again', async () => {
+    const { tick, outputs, mpv, at, listDevices, run } = await outputHost();
+    at(10); tick({ starts: 1 });
+    mpv.select(1);
+    const retried = tick({ error: failed, outputFailed: { entry: 100 } });
+    expect(outputs()).toEqual([dac.name, 'auto']);
+    expect(retried.error).toBe('Your output device could not be opened. Playing through the system default.');
+    expect(mpv.current()).toBe(0);
+    // Still listed, so going back would only fail again.
+    listDevices([dac]);
+    expect(outputs()).toEqual([dac.name, 'auto']);
+    // Unplugged and plugged in again, it gets another chance; so does choosing it in Settings.
+    listDevices([]);
+    listDevices([dac]);
+    expect(outputs()).toEqual([dac.name, 'auto', dac.name]);
+    expect(run({ type: 'device', id: 'auto' })).toMatchObject(ok);
+    expect(run({ type: 'device', id: dac.name })).toMatchObject(ok);
+    expect(outputs()).toEqual([dac.name, 'auto', dac.name, 'auto', dac.name]);
   });
 });
 

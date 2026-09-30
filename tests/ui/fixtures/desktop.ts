@@ -17,8 +17,10 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // connect screen.
 // `update` overrides the update state (UpdateState); update calls are recorded in bridgeCalls.
 // `connect` answers connect by the address given (a Result); any other address fails.
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; connect?: Record<string, object> } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, connectResults }) => {
+// `settings` overrides the saved settings. window.setPlayer(patch) sends a snapshot with those
+// player fields changed, as the engine does when an output is unplugged or it has news.
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; connect?: Record<string, object>; settings?: object } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, connectResults, settingsPatch }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -28,8 +30,9 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const signIn = { saved: null, canRemember: true, reconnecting: false, reconnectError: null, ...signInPatch };
     let server: { connected: boolean; name: string | null; sessionId: string | null } = connected
       ? { connected: true, name: 'Navidrome (music.example.com)', sessionId: 'session-1' } : { connected: false, name: null, sessionId: null };
+    let playerPatch: object = {};
     const snapshot = () => ({
-      player: { engine: 'ready', error: null, playing: false, position: 0, duration: 0, volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio },
+      player: { engine: 'ready', error: null, playing: false, position: 0, duration: 0, volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio, ...playerPatch },
       diagnostics: { uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0, playerBytesPerSecond: 0, pendingCommands: 0, eventLoopDelayMs: 0, processes: [], operations: [] },
       server: { ...server, ...signIn },
       update: { mode: 'install', status: 'up-to-date', current: '0.1.0', version: null, percent: null, error: null, ...updatePatch },
@@ -38,9 +41,10 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const library = new Proxy({}, {
       get: (_target, method: string) => method === 'coverUrl' ? () => '' : async () => ({ ok: true, value: method in empty ? empty[method] : [] }),
     });
-    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true };
+    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, ...settingsPatch };
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
+    Object.assign(window, { setPlayer: (patch: object) => { playerPatch = { ...playerPatch, ...patch }; const next = snapshot(); listeners.forEach(listener => listener(next)); } });
     const disabled = new Set<string>(), removed = new Set<string>();
     const fresh = new Set(given.filter(extension => extension.isNew).map(extension => extension.id));
     const extensionListeners = new Set<(list: unknown) => void>();
@@ -91,5 +95,6 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {}, connectResults: options.connect ?? {} });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {}, connectResults: options.connect ?? {},
+    settingsPatch: options.settings ?? {} });
 }
