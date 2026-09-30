@@ -14,7 +14,8 @@ export class PlayTracker {
   // `now` is a monotonic time in milliseconds.
   update(player: PlayerSnapshot, now: number): PlayEvent[] {
     const track = player.engine === 'ready' ? player.queue[player.currentIndex] : undefined;
-    // Stopping, an engine restart, or a local file ends the current play.
+    // Stopping, an engine restart, a local file, or an internet radio station ends the current play.
+    // A station is live, not a song the server can count.
     if (!track || track.source !== 'navidrome') { this.play = null; return []; }
     let play = this.play;
     // A new play is whatever the audio host says started from the top (playId): another song,

@@ -38,6 +38,7 @@ const library: LibraryApi = {
   createShare: (ids, description, expiresAt) => call('createShare', ids, description ?? null, expiresAt ?? null),
   shares: () => call('shares'),
   deleteShare: id => call('deleteShare', id),
+  radioStations: () => call('radioStations'),
 };
 // Push channels from the main process, as subscribe functions.
 function listen<T>(channel: string, listener: (value: T) => void) {

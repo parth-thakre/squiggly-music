@@ -9,6 +9,8 @@ export interface NativeItem {
   id: string; url: string; fallbackUrl: string;
   title: string; artist: string; album: string; coverArt: string | null; duration: number | null;
   track: string;
+  // An internet radio station: a live stream, with no fallback, and no repeat one.
+  live?: boolean;
 }
 export type NativeOp =
   | { type: 'replace'; items: NativeItem[] }
@@ -23,6 +25,8 @@ export interface NativePlayback {
   entryId: string | null; playId: number;
   playing: boolean; buffering: boolean; ended: boolean;
   position: number; duration: number; fallback: boolean; error: string | null;
+  // A station playing: the title its stream announces (ICY), or null.
+  stationTitle?: string | null;
 }
 export interface NativeAccount { url: string; username: string; password: string }
 export interface Posture { posture: 'flat' | 'flex'; top: number; bottom: number }

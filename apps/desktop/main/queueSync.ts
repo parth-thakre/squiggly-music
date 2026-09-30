@@ -1,8 +1,9 @@
 import type { PlayerSnapshot } from '../../../packages/core/contracts';
 
 export interface SavedState { trackIds: string[]; currentIndex: number; positionSeconds: number }
-// Only a queue made entirely of server tracks is saved. Local files have no server identity,
-// and saving the server tracks alone would misplace the current index.
+// Only a queue made entirely of server tracks is saved. Local files have no server identity, a
+// station is no song the server's play queue can hold, and saving the server tracks alone would
+// misplace the current index.
 export function savedState(player: PlayerSnapshot): SavedState | null {
   if (player.engine !== 'ready' || !player.queue.length || player.queue.some(track => track.source !== 'navidrome')) return null;
   const current = player.currentIndex;

@@ -9,7 +9,7 @@ import type { Palette } from './palette';
 import { current, currentEntry, player, usePlayer } from './player';
 import { nav } from './route';
 import { useSwipeSongs } from './swipe';
-import { Position, TransportButtons } from './transport';
+import { Position, TransportButtons, useByline } from './transport';
 import { Cover, Glyph, plural, splitTitle, time, Wave } from './ui';
 
 // The Galaxy Z Flip's cover screen (Flex Window), in place of the phone layout: what's playing,
@@ -44,12 +44,13 @@ function Playing({ track, palette, show }: { track: Track; palette: Palette; sho
   const stage = useRef<HTMLDivElement>(null);
   useSwipeSongs(stage, entry ?? track.id);
   const name = splitTitle(track.title, track.album).main;
+  const byline = useByline(track);
   return <>
     <div className="flip-stage" ref={stage}>
       <Cover key={track.id} id={track.coverArt} name={track.album} size={400} className="flip-sleeve" />
       <div className="flip-text">
         <h1 className="flip-title" title={name}>{name}</h1>
-        <p className="flip-artist" title={track.artist}>{track.artist}</p>
+        <p className="flip-artist" title={byline}>{byline}</p>
         {error && <p className="flip-error" role="alert">{error} <button type="button" className="link" onClick={player.dismissError}>Dismiss</button></p>}
       </div>
       <div className="flip-panels">

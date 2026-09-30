@@ -86,6 +86,7 @@ export const LibraryRequestSchemas = {
     Schema.optionalElement(Schema.NullOr(IntSchema(0, 253_402_300_799_999)))),
   shares: Schema.Tuple(),
   deleteShare: Schema.Tuple(IdSchema),
+  radioStations: Schema.Tuple(),
 };
 // Track IDs must already be known to the main process; startIndex is checked against their count.
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react';
+import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
@@ -268,14 +269,17 @@ builtin.menu({ id: 'queue', section: 0, label: 'Add to queue', when: t => !(t.ki
   run: async t => { const tracks = await songsFor(t); if (tracks) await player.add(tracks, 'end'); } });
 builtin.menu({
   id: 'radio', section: 0, label: 'Start radio',
-  when: t => t.kind === 'artist' || t.kind === 'album' || !!one(t),
+  // Radio finds songs like a song; a station isn't one.
+  when: t => t.kind === 'artist' || t.kind === 'album' || (!!one(t) && !isStation(one(t))),
   run: t => player.radio(t.kind === 'artist' ? { kind: 'artist', id: t.artist.id, label: t.artist.name }
     : t.kind === 'album' ? { kind: 'album', id: t.album.id, label: splitTitle(t.album.name).main }
     : { kind: 'song', track: one(t)!, label: splitTitle(one(t)!.title).main }),
 });
 
+// Stations aren't songs, so playlists and favorites can't hold them.
+const hasStation = (t: MenuTarget) => t.kind === 'tracks' && t.tracks.some(isStation);
 builtin.menu({
-  id: 'add-to-playlist', section: 1, label: 'Add to playlist',
+  id: 'add-to-playlist', section: 1, label: 'Add to playlist', when: t => !hasStation(t),
   submenu: async t => {
     const create: MenuItem = { id: 'new-playlist', section: 0, label: 'New playlist', input: { placeholder: 'Name the new playlist', async submit(target, name) {
       const tracks = await tracksOf(target);
@@ -315,7 +319,7 @@ builtin.menu({
     const item = t.kind === 'album' ? t.album : t.kind === 'artist' ? t.artist : null;
     return item && isStarred(item.id, item.starred) ? 'Remove from favorites' : 'Add to favorites';
   },
-  when: t => t.kind !== 'playlist',
+  when: t => t.kind !== 'playlist' && !hasStation(t),
   async run(t) {
     const kind = t.kind === 'tracks' ? 'track' : t.kind === 'album' ? 'album' : 'artist';
     const items = t.kind === 'tracks' ? t.tracks : [t.kind === 'album' ? t.album : (t as Extract<MenuTarget, { kind: 'artist' }>).artist];
@@ -398,6 +402,11 @@ builtin.menu({
   id: 'info', section: 6, label: 'Song details', when: t => !!one(t),
   submenu: t => {
     const track = one(t)!;
+    if (isStation(track)) {
+      const announced = current(getPlayer())?.id === track.id ? getPlayer().stationTitle : null;
+      return ['An internet radio station from your server, played as a live stream.', announced && `On now: ${announced}`]
+        .filter(Boolean).map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
+    }
     const lines = [
       [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(', ') || 'Format not reported',
       [track.duration && length(track.duration), track.year, track.genre].filter(Boolean).join(', '),

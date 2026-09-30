@@ -21,6 +21,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).
 - Start a radio station from any song, record, or artist.
 - Export a playlist or the queue as an M3U file, and share songs, records, and playlists as public links when the server allows sharing.
+- Listen to the internet radio stations your server lists, from the Playlists page. They play live, and on the desktop the line under the station says what it's playing when the station says.
 - Star the playing song from the controls or with F. G then C opens its record, and G then . its artist.
 - Set a sleep timer from Ctrl+K: it pauses in 15, 30, or 60 minutes, or after this song.
 - Build automatic playlists from your library by genre, by decade, and from what's new.

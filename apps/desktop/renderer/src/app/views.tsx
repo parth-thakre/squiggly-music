@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
+import type { RadioStation } from '../../../../../packages/core/contracts';
+import { stationTrack } from '../../../../../packages/core/stations';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, player, playRequests, usePlayer } from './player';
@@ -532,6 +534,7 @@ export function Playlists() {
         </li>)}
       </ul>
     </section>
+    <Stations />
     <ExtensionSections />
   </>;
 }
@@ -1268,5 +1271,37 @@ function RecentSearches({ type }: { type: SearchType | undefined }) {
     <ul className="similar recent-searches">{recent.map(query => <li key={query}>
       <button type="button" className="link" onClick={() => { rememberSearch(query); showSearch(query, type); }}>{query}</button>
     </li>)}</ul>
+  </section>;
+}
+
+// Stations -----------------------------------------------------------------------------
+// The server's internet radio stations, on the Playlists page below the automatic playlists.
+// A station plays as a live stream: its stream address stays with the host, and the queue holds
+// it like a song (stationTrack). The app opens no outside pages, so a station's home page shows
+// as its host name, as text.
+
+const homeHost = (url: string | null) => { if (!url) return null; try { return new URL(url).host.replace(/^www\./, ''); } catch { return null; } };
+async function playStation(station: RadioStation) {
+  await player.play([stationTrack(station)], 0);
+  showNowPlaying();
+}
+function Stations() {
+  const stations = useResource('radioStations', () => api.radioStations());
+  return <section className="shelf-section" aria-labelledby="stations">
+    <h2 id="stations">Stations</h2>
+    <p className="section-note">Internet radio from your server. Stations play live, so there is nothing to skip through.</p>
+    <Pending result={stations} waiting="Loading stations">{list => list.length ? <ul className="rows">
+      {list.map(station => <li key={station.id} className="playable">
+        <PlayOver label={station.name} play={() => playStation(station)} />
+        <button type="button" onClick={() => void playStation(station)}
+          onContextMenu={event => openMenu(event, { kind: 'tracks', tracks: [stationTrack(station)] })}>
+          <Cover id={null} name={station.name} size={160} />
+          <span className="row-text">
+            <span className="row-name">{station.name}</span>
+            <span className="row-sub">{homeHost(station.homePageUrl) ?? 'Live stream'}</span>
+          </span>
+        </button>
+      </li>)}
+    </ul> : <Status>Your server has no internet radio stations. Navidrome's administrators can add them.</Status>}</Pending>
   </section>;
 }

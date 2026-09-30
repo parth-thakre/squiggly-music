@@ -51,6 +51,20 @@ export function coverPng(hue: number) {
   ]);
 }
 
+/**
+ * The header of a WAV stream with no end, as a live encoder sends it: mono 16-bit at 8 kHz, with
+ * both sizes 0xFFFFFFFF ("unknown"). Follow it with toneWav() data for as long as the stream runs.
+ */
+export function liveWavHeader() {
+  const rate = 8000;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0, 'ascii'); header.writeUInt32LE(0xffffffff, 4); header.write('WAVE', 8, 'ascii');
+  header.write('fmt ', 12, 'ascii'); header.writeUInt32LE(16, 16); header.writeUInt16LE(1, 20); header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24); header.writeUInt32LE(rate * 2, 28); header.writeUInt16LE(2, 32); header.writeUInt16LE(16, 34);
+  header.write('data', 36, 'ascii'); header.writeUInt32LE(0xffffffff, 40);
+  return header;
+}
+
 const wavCache = new Map<string, Buffer>();
 /** A mono 16-bit, 8 kHz WAV of a quiet tone, exactly `seconds` long. */
 export function toneWav(seconds: number, frequency = 440) {

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { LibraryApi, Playlist, Result, Track } from '../../../../../packages/core/contracts';
+import { isStation } from '../../../../../packages/core/stations';
 import { previewLibrary } from '../bridge/previewLibrary';
 
 // The desktop's preload bridge, the Android app's bridge (apps/android/web/bridge.ts), or the browser build's host.
@@ -159,8 +160,11 @@ export class PlaylistEditor {
     const to = Math.max(0, at);
     return { after: to === 0 ? null : entries[to - 1].key, to };
   }
-  // `at`: an index of the list as shown (see place), or a place taken earlier.
+  // `at`: an index of the list as shown (see place), or a place taken earlier. A playlist holds
+  // songs, so tracks that include a station (dragged from the queue, say) are refused whole,
+  // before anything is sent.
   add(tracks: Track[], at?: number | Place) {
+    if (tracks.some(isStation)) return Promise.resolve<Result>({ ok: false, error: 'Playlists hold songs, not radio stations.' });
     const place = at === undefined || typeof at === 'number' ? this.place(at) : at;
     return this.enqueue(place ? { kind: 'add', entries: tracks.map(entryOf), ...place } : { kind: 'add', entries: tracks.map(entryOf) });
   }

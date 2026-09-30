@@ -92,7 +92,7 @@ export async function startMpris(controls: MediaControls, onError: () => void): 
         }
       }
       const metadata = track && current ? {
-        'mpris:trackid': current.trackId, 'xesam:title': track.title, 'xesam:artist': [track.artist], 'xesam:album': track.album,
+        'mpris:trackid': current.trackId, 'xesam:title': track.title, 'xesam:artist': [track.source === 'station' ? player.stationTitle ?? '' : track.artist], 'xesam:album': track.album,
         ...(duration > 0 ? { 'mpris:length': Math.round(duration * 1e6) } : {}),
         ...(artUrl ? { 'mpris:artUrl': artUrl } : {}),
       } : {};
