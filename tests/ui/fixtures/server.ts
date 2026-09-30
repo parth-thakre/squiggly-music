@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { preview } from 'vite';
-import { navidromePreview } from '../../../scripts/navidrome-preview';
+import { navidromePreview, publicAddress } from '../../../scripts/navidrome-preview';
 import { FakeNavidrome, trackOf } from './library';
 import { serveNavidrome } from './native';
 import { liveWavHeader, toneWav } from './media';
@@ -67,10 +67,13 @@ export async function startPreview() {
   const audio = await audioServer((request, response) => serveNavidrome(fake!, request, response));
   fake = new FakeNavidrome(() => audio.url);
   hearing = id => fake!.stationStreams.push(id);
+  // The stations stream from this machine (audioServer, on 127.0.0.1), which the relay refuses
+  // unless told otherwise; every other address is checked as usual.
+  const stationAddress = (address: string) => address === '127.0.0.1' || publicAddress(address);
   const server = await preview({
     configFile: false, root: resolve(root, 'apps/desktop/renderer'), logLevel: 'warn',
     build: { outDir },
-    plugins: [navidromePreview({ env: { SQUIGGLY_WEB_PASSWORD: webPassword }, client: fake.subsonic, now: () => fake.clock.now })],
+    plugins: [navidromePreview({ env: { SQUIGGLY_WEB_PASSWORD: webPassword }, client: fake.subsonic, now: () => fake.clock.now, stationAddress })],
     preview: { host: '127.0.0.1', port: 0, strictPort: false, open: false },
   });
   const address = server.httpServer.address();

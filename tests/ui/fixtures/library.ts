@@ -193,7 +193,7 @@ export class FakeNavidrome {
     this.ratings.clear(); this.failures.clear(); this.large = false;
     this.recent = []; this.frequent = []; this.listening = [];
     this.shareList = []; this.sharing = true; this.sharesMade = 0;
-    this.stationStreams = [];
+    this.stationStreams = []; this.listedStations.clear();
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -374,10 +374,17 @@ export class FakeNavidrome {
       return Effect.void;
     }),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
-    radioStations: () => this.op('radioStations', [], () => Effect.succeed(stations.map(station => ({ ...station, streamUrl: this.stationUrl(station.id) })))),
+    radioStations: () => this.op('radioStations', [], () => Effect.sync(() => {
+      this.listedStations = new Set(stations.map(station => station.id));
+      return stations.map(station => ({ ...station, streamUrl: this.stationUrl(station.id) }));
+    })),
     stationLocation: (id: string) => this.op('stationLocation', [id], () => stations.some(station => station.id === id)
-      ? Effect.succeed(this.stationUrl(id)) : fail('This station is no longer on the server. Refresh the stations and try again.')),
+      ? Effect.sync(() => { this.listedStations = new Set(stations.map(station => station.id)); return this.stationUrl(id); })
+      : fail('This station is no longer on the server. Refresh the stations and try again.')),
+    // As the real client: the stations the last list named, without asking the server.
+    knownStationLocation: (id: string) => this.listedStations.has(id) ? this.stationUrl(id) : null,
   };
+  private listedStations = new Set<string>();
   private stationUrl = (id: string) => `${this.audioBase()}/radio/${encodeURIComponent(id)}`;
 
   get subsonic() { return this.client as unknown as SubsonicClient; }
