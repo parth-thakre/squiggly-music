@@ -12,6 +12,8 @@ Windows releases are signed through SignPath Foundation, which signs open source
 4. `windows-sign-installers` sends those two to SignPath (artifact configuration `installers`).
 5. `windows-release` rebuilds `latest.yml` and the installer's block map, since signing changed the installer (`scripts/rehash-windows-update.mjs`), and checks every signature.
 
+Every signature check requires a valid signature from a certificate whose subject is exactly `SIGNPATH_EXPECTED_SUBJECT` (see below).
+
 The two signing jobs check nothing out and install nothing. They hand SignPath a workflow artifact the job before uploaded, and upload what SignPath sends back for the job after.
 
 Each request waits up to an hour for someone to approve it in SignPath, so a release takes two approvals.
@@ -31,6 +33,7 @@ Only release tags (`v*`) are signed. A manual run of the workflow from a branch 
 4. In the GitHub repository, under Settings › Secrets and variables › Actions:
    - Add the variable `SIGNPATH_ORGANIZATION_ID`, your SignPath organization ID.
    - Add the secret `SIGNPATH_API_TOKEN`, the CI user's API token.
+   - Only if the certificate's subject differs from `CN=SignPath Foundation, O=SignPath Foundation, L=Lewes, S=Delaware, C=US`, add the variable `SIGNPATH_EXPECTED_SUBJECT` with the subject exactly as Windows shows it (`(Get-AuthenticodeSignature <file>).SignerCertificate.Subject`). The workflow fails if any signed file has another subject, which catches files signed with some other certificate. The default is what SignPath Foundation's current certificate shows; SignPath's own documentation only says it is issued to SignPath Foundation, so check it against the first signed release.
 5. Under Settings › Rules › Rulesets, add a tag ruleset for `v*` that restricts creations, updates, and deletions, with only maintainers allowed to bypass it. Anyone who can push a `v*` tag can start a signing request.
 
 The token is only given to the two signing jobs, never to a job that builds.

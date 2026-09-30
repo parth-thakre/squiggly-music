@@ -17,6 +17,9 @@ concurrency:
 
 env:
   NODE_VERSION: '22'
+  # Every Windows signature must be from a certificate with exactly this subject. The default is
+  # SignPath Foundation's certificate; the SIGNPATH_EXPECTED_SUBJECT variable overrides it.
+  SIGNPATH_EXPECTED_SUBJECT: ${{ vars.SIGNPATH_EXPECTED_SUBJECT || 'CN=SignPath Foundation, O=SignPath Foundation, L=Lewes, S=Delaware, C=US' }}
 
 jobs:
   check:
@@ -295,7 +298,9 @@ jobs:
           foreach ($file in Get-Item 'dist/win-unpacked/Squiggly Music.exe', 'dist/win-unpacked/resources/runtime/libmpv-2.dll') {
             $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
             if ($signature.Status -ne 'Valid') { throw "$($file.Name) is not validly signed: $($signature.Status)" }
-            "$($file.Name): $($signature.SignerCertificate.Subject)"
+            $subject = $signature.SignerCertificate.Subject
+            if ($subject -cne $env:SIGNPATH_EXPECTED_SUBJECT) { throw "$($file.Name) is signed by '$subject', not '$env:SIGNPATH_EXPECTED_SUBJECT'" }
+            "$($file.Name): $subject"
           }
       - name: Build the installer and portable exe
         run: npx electron-builder --win --prepackaged dist/win-unpacked --publish never
@@ -377,7 +382,9 @@ jobs:
           foreach ($file in Get-ChildItem dist/*.exe) {
             $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
             if ($signature.Status -ne 'Valid') { throw "$($file.Name) is not validly signed: $($signature.Status)" }
-            "$($file.Name): $($signature.SignerCertificate.Subject)"
+            $subject = $signature.SignerCertificate.Subject
+            if ($subject -cne $env:SIGNPATH_EXPECTED_SUBJECT) { throw "$($file.Name) is signed by '$subject', not '$env:SIGNPATH_EXPECTED_SUBJECT'" }
+            "$($file.Name): $subject"
           }
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
