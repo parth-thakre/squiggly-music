@@ -47,15 +47,16 @@ extraResources:
 # is missing or a production dependency has an unreviewed license.
 afterPack: ./scripts/release-notices.mjs
 # Electron fuses, flipped in the packaged executable after afterPack and before signing:
-# - runAsNode off: nothing runs Electron as Node. The audio host is forked with the bundled
-#   Node in resources/runtime as its execPath, not with Electron and ELECTRON_RUN_AS_NODE.
+# - runAsNode stays on. The audio host is forked with the bundled Node in resources/runtime
+#   as its execPath, but Electron's child_process.fork still depends on ELECTRON_RUN_AS_NODE:
+#   with this fuse off the host starts and never answers ("Audio process is not running").
 # - NODE_OPTIONS, NODE_EXTRA_CA_CERTS, and --inspect off, so neither the environment nor the
 #   command line can load code into the main process.
 # - Load the app only from app.asar, and check app.asar against the hash electron-builder
 #   embeds in the Windows exe. Linux Electron has no asar integrity check, so there the fuse
 #   does nothing. Files in app.asar.unpacked (asarUnpack above) are never checked.
 electronFuses:
-  runAsNode: false
+  runAsNode: true
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
   enableEmbeddedAsarIntegrityValidation: true
