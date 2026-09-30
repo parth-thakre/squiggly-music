@@ -144,8 +144,33 @@ test.describe('cover screen', () => {
     expect(await violations(page), 'nothing playing').toEqual([]);
     await screen(page).getByRole('button', { name: 'Resume' }).tap();
     await expect(title(page)).toHaveText('Long Run');
-    await expect(screen(page).locator('.squiggle-time').first()).toHaveText('0:17');
+    await expect(screen(page).getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await expect(screen(page).locator('.squiggle-time').first()).toHaveText(/^0:(1[7-9]|2\d)$/);
     expect(await violations(page), 'now playing').toEqual([]);
+  });
+
+  test('a resumed song shows as starting until it plays, and a tap meanwhile never pauses it', async ({ page, app, fake }, info) => {
+    fake.saved = { tracks: ['tr-1-4', 'tr-1-1'].map(id => ({ ...trackOf(id) })), currentIndex: 1, positionSeconds: 17, changed: null, changedBy: null };
+    await signIn(page, app.url);
+    // The server holds the song back, so it takes a while to start.
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route('**/api/stream?*', async route => { await held; await route.continue(); });
+    await screen(page).getByRole('button', { name: 'Resume' }).tap();
+    await expect(title(page)).toHaveText('Long Run');
+    const starting = screen(page).getByRole('button', { name: 'Starting', exact: true });
+    await expect(starting).toHaveAttribute('aria-disabled', 'true');
+    await expect(starting).toBeInViewport({ ratio: 1 });
+    expect(await underCameras(page, info), 'starting').toEqual([]);
+    expect(await violations(page), 'starting').toEqual([]);
+    await starting.tap({ force: true });
+    // The queue's shelf has the same button.
+    await screen(page).getByRole('button', { name: 'Queue' }).tap();
+    await screen(page).getByRole('button', { name: 'Starting', exact: true }).tap({ force: true });
+    release();
+    await expect(screen(page).getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await screen(page).getByRole('button', { name: 'Back' }).tap();
+    await expect(screen(page).locator('.squiggle-time').first()).toHaveText(/^0:(1[7-9]|2\d)$/);
   });
 
   test('nothing playing: Shuffle plays songs from anywhere', async ({ page, app, fake }) => {

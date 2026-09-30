@@ -9,7 +9,7 @@ import type { Palette } from './palette';
 import { current, currentEntry, player, usePlayer } from './player';
 import { nav } from './route';
 import { useSwipeSongs } from './swipe';
-import { Position, TransportButtons } from './transport';
+import { PlayButton, Position, TransportButtons } from './transport';
 import { Cover, Glyph, plural, splitTitle, time, Wave } from './ui';
 
 // The Galaxy Z Flip's cover screen (Flex Window), in place of the phone layout: what's playing,
@@ -68,7 +68,7 @@ function Shelf({ back = false }: { back?: boolean }) {
   return <div className={`flip-shelf${back ? ' flip-back-shelf' : ''}`}>
     {back ? <>
       <button type="button" className="flip-back" onClick={() => nav.closeOverlay()}><ChevronLeft aria-hidden="true" />Back</button>
-      <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={player.toggle}><Glyph kind={playing ? 'pause' : 'play'} /></button>
+      <PlayButton playing={playing} />
     </> : <TransportButtons playing={playing} />}
   </div>;
 }

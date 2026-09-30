@@ -50,14 +50,24 @@ function followPlay({ starts, seeks }: { starts: number; seeks: number }) {
 }
 // The exclusive-output option last accepted by mpv. Requested, not verified.
 let exclusive = false;
-// A restored queue seeks once its entry is loaded and seekable. Changing the track or position cancels it.
-let pendingSeek: { id: string; seconds: number; polls: number } | null = null;
+// A restored queue opens its entry at the saved position (`opening`): mpv's start option has it read
+// the stream from there, one range request, rather than from 0:00 and then seek. A stream that
+// can't be opened at an offset (a server without range requests) starts at 0:00 instead, and then
+// the entry seeks once it's seekable. Changing the track or position cancels either.
+// `resume` plays once the position is reached: the queue loads paused so its first moments never play.
+// `sent`: the seek command went to mpv, which hasn't carried it out yet.
+let pendingSeek: { id: string; entry?: string; seconds: number; polls: number; resume: boolean; opening?: boolean; sent?: boolean } | null = null;
+// mpv's start option holds a saved position. It applies to every file loaded while it's set (the
+// next song too, and a prefetched one), so it goes back to none once its entry has started or been left.
+let startSet = false;
+// Checks a resume that's opening every 50 ms, not only at the four-Hz poll, so it plays as soon as it can.
+let openingTimer: ReturnType<typeof setInterval> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
 let exiting = false;
 let snapshotInFlight = false;
 let latestSnapshot: Extract<HostMessage, { type: 'snapshot' }> | null = null;
 function exit(code: number) {
-  clearInterval(timer); native?.close(); native = null; process.exit(code);
+  clearInterval(timer); clearInterval(openingTimer); native?.close(); native = null; process.exit(code);
 }
 function flushSnapshot() {
   if (snapshotInFlight || !latestSnapshot) return;
@@ -132,25 +142,81 @@ function applyRepeat(mode: RepeatMode) {
     throw new Error('The audio engine could not change the repeat mode.');
   }
 }
-function restoreSeek() {
+// Sets mpv's start option back to none, so nothing loaded later opens at the saved position.
+function clearStart() {
+  if (!native || !startSet) return;
+  try { native.set('start', 'none'); startSet = false; } catch { /* Tried again at the next poll. */ }
+}
+function stopOpeningChecks() { clearInterval(openingTimer); openingTimer = undefined; }
+function watchOpening() {
+  stopOpeningChecks();
+  openingTimer = setInterval(() => { try { checkOpening(); } catch { /* The next poll reports it. */ } }, 50);
+}
+// A resume opening its entry at the saved position. mpv starts the entry while paused: once it
+// has, `seeking` is no, the output is open, and the audio from the position is decoded, ready.
+function checkOpening() {
   const seek = pendingSeek;
-  if (!native || !seek) return;
+  if (!native || !seek?.opening) { stopOpeningChecks(); return; }
+  const index = native.number('playlist-pos') ?? -1;
+  if (playableQueue[index]?.entry !== seek.entry) {
+    // mpv moved on by itself (the entry failed to open, or the position was past its end), and the
+    // entry it went to may have opened at the saved position too. That one starts from the top.
+    clearStart(); stopOpeningChecks();
+    const track = playableQueue[index]?.track;
+    pendingSeek = track ? { id: track.id, seconds: 0, polls: 0, resume: seek.resume } : null;
+    if (!track && seek.resume) native.set('pause', 'no');
+    return;
+  }
+  if (native.property('seeking') !== 'no') return;
+  const at = native.number('time-pos');
+  if (at === null) return;
+  clearStart(); stopOpeningChecks();
+  // The start seek's event may reach the next poll after this: it's the host's own.
+  hostSeek = 4;
+  if (Math.abs(at - seek.seconds) <= 1) {
+    pendingSeek = null;
+    if (seek.resume) native.set('pause', 'no');
+    return;
+  }
+  // The stream opened at 0:00, so it seeks the usual way (restoreSeek), still paused.
+  seek.opening = false; seek.polls = 0;
+}
+function restoreSeek(seeks: number) {
+  const seek = pendingSeek;
+  if (!native || !seek || seek.opening) return;
+  // mpv carries out a seek on its next pass, after writing out the audio it had buffered, so
+  // unpausing with the seek would still play a moment of 0:00. Play once mpv reports the seek
+  // (it drops that audio first), or after a second if it never does.
+  if (seek.sent) {
+    if (!seeks && ++seek.polls <= 4) return;
+    pendingSeek = null;
+    if (seek.resume) native.set('pause', 'no');
+    return;
+  }
   // About ten seconds of polls; slow servers may not have opened the stream yet.
-  if (++seek.polls > 40) { pendingSeek = null; player.error = 'Could not restore the saved position. The song starts from the beginning.'; return; }
+  if (++seek.polls > 40) {
+    pendingSeek = null; player.error = 'Could not restore the saved position. The song starts from the beginning.';
+    if (seek.resume) native.set('pause', 'no');
+    return;
+  }
   if (player.queue[player.currentIndex]?.id !== seek.id || native.property('seekable') !== 'yes') return;
-  try { native.command('seek', String(seek.seconds), 'absolute+exact'); pendingSeek = null; hostSeek = 4; }
-  catch { /* Not seekable yet. Retry on the next poll. */ }
+  try { native.command('seek', String(seek.seconds), 'absolute+exact'); hostSeek = 4; }
+  catch { /* Not seekable yet. Retry on the next poll. */ return; }
+  if (seek.resume) { seek.sent = true; seek.polls = 0; } else pendingSeek = null;
 }
 
-function loadPlayableQueue() {
+// `at`, with nothing playing: the entry to start. mpv then opens only that one, not the first entry
+// on the way to it. Without it, the first entry loads (replace), as after a legacy stop.
+function loadPlayableQueue(at?: number) {
   if (!native) return;
   for (const [index, item] of playableQueue.entries()) {
-    native.command('loadfile', item.location, index === 0 ? 'replace' : 'append');
+    native.command('loadfile', item.location, index === 0 && at === undefined ? 'replace' : 'append');
   }
+  if (at !== undefined) native.set('playlist-pos', String(at));
   reloadPlaylistAfterStop = false;
 }
 function failEngine(message: string) {
-  clearInterval(timer);
+  clearInterval(timer); stopOpeningChecks();
   resetTrack(); player.engine = 'crashed'; player.error = message;
   exiting = true;
   // Publish before mpv_terminate_destroy: native teardown may block indefinitely.
@@ -194,10 +260,13 @@ try {
 publish();
 
 port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
+  const dropped = ['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous'].includes(action.type) ? pendingSeek : null;
   try {
     if (!native) throw new Error(player.error ?? 'Audio engine unavailable.');
     player.error = null;
-    if (['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous'].includes(action.type)) pendingSeek = null;
+    // A resume waiting on its position: a new queue sets its own pause state, stop and clear stay
+    // stopped, and a seek, skip, or jump plays from where it goes. Whatever loads next opens at its start.
+    if (dropped) { pendingSeek = null; clearStart(); stopOpeningChecks(); }
     switch (action.type) {
       case 'queue': {
         if (!action.tracks.length) throw new Error('Choose at least one track.');
@@ -207,21 +276,27 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         native.command('stop');
         native.command('playlist-clear');
         resetTrack();
-        // Pause before loading so a restored queue never plays its first moments.
-        if (action.paused) native.set('pause', 'yes');
+        const seconds = action.startPosition ?? 0;
+        const restore = Number.isFinite(seconds) && seconds > 0;
+        // Pause before loading so a restored queue never plays its first moments, even one that
+        // plays: it starts once it's at the position, not from 0:00 with a re-buffer to the position.
+        if (action.paused || restore) native.set('pause', 'yes');
         // Retain locations only inside the isolated host so old mpv versions can
         // rebuild the native playlist after their argument-less stop command.
         // With shuffle on, a new list plays from the chosen song with the rest in random order, as
         // in the browser and on Android. Radio and a restored queue keep their order (ordered).
         const order = player.shuffle && !action.ordered ? shuffleOrder(action.tracks.length, start) : null;
         playableQueue = (order ? order.map(index => action.tracks[index]) : action.tracks).map(toEntry);
-        loadPlayableQueue();
-        // The first loadfile only queues a load; moving now starts at the chosen entry instead.
-        if (start > 0) native.set('playlist-pos', String(start));
+        // Opens the chosen entry at the saved position (see pendingSeek). If mpv refuses the
+        // option, the entry opens at 0:00 and seeks instead.
+        let opening = false;
+        if (restore) { try { native.set('start', String(seconds)); startSet = opening = true; } catch { /* Seeks instead. */ } }
+        loadPlayableQueue(start);
         publishQueue();
-        if (!action.paused) native.set('pause', 'no');
-        const seconds = action.startPosition ?? 0;
-        if (Number.isFinite(seconds) && seconds > 0) pendingSeek = { id: action.tracks[start].track.id, seconds, polls: 0 };
+        if (restore) {
+          pendingSeek = { id: playableQueue[start].track.id, entry: playableQueue[start].entry, seconds, polls: 0, resume: !action.paused, opening };
+          if (opening) watchOpening();
+        } else if (!action.paused) native.set('pause', 'no');
         break;
       }
       case 'queue-add': case 'queue-move': case 'queue-remove': case 'queue-clear':
@@ -244,8 +319,11 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         if (!player.queue.length) throw new Error('Add music to the queue first.');
         if (reloadPlaylistAfterStop) loadPlayableQueue();
         if (native.property('idle-active') === 'yes') native.set('playlist-pos', '0');
-        native.set('pause', 'no'); break;
-      case 'pause': native.set('pause', 'yes'); break;
+        // Waiting on a restored position, play starts once the seek lands rather than from 0:00.
+        if (pendingSeek) pendingSeek.resume = true;
+        else native.set('pause', 'no');
+        break;
+      case 'pause': native.set('pause', 'yes'); if (pendingSeek) pendingSeek.resume = false; break;
       case 'stop':
         if (native.supportsStopKeepPlaylist) native.command('stop', 'keep-playlist');
         else { native.command('stop'); reloadPlaylistAfterStop = true; }
@@ -256,12 +334,16 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
           || (action.entryId !== undefined && playableQueue[action.queueIndex]?.entry !== action.entryId)) {
           throw new Error('The track changed before the seek completed. Try again.');
         }
-        native.command('seek', String(action.seconds), 'absolute+exact'); hostSeek = 4; break;
+        native.command('seek', String(action.seconds), 'absolute+exact'); hostSeek = 4;
+        // Still paused from the resume: play once mpv has made this seek, as restoreSeek does.
+        if (dropped?.resume) pendingSeek = { id: action.trackId, seconds: action.seconds, polls: 0, resume: true, sent: true };
+        break;
       }
       case 'volume': native.set('volume', String(action.percent)); break;
       case 'device': native.set('audio-device', action.id); break;
-      case 'next': native.command('playlist-next', 'weak'); break;
-      case 'previous': native.command('playlist-prev', 'weak'); break;
+      // Another song drops mpv's buffered audio with the old file, so unpausing at once is safe.
+      case 'next': native.command('playlist-next', 'weak'); if (dropped?.resume) native.set('pause', 'no'); break;
+      case 'previous': native.command('playlist-prev', 'weak'); if (dropped?.resume) native.set('pause', 'no'); break;
       case 'queue-jump': {
         // By entry, not song id: in [A, B, A] the second A is a different entry from the first.
         if (playableQueue[action.index]?.entry !== action.entryId) throw new Error('The queue changed before that song could play. Try again.');
@@ -291,6 +373,16 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
     }
     port.postMessage({ type: 'reply', id, error: null });
   } catch (error) {
+    // A refused seek, skip, or jump changed nothing, so the saved position still applies. (mpv
+    // refuses a seek before the entry has opened.) An entry that read the start option while it
+    // was cleared opens at 0:00, and then seeks.
+    if (dropped && !pendingSeek && ['queue-jump', 'seek', 'next', 'previous'].includes(action.type)) {
+      pendingSeek = dropped;
+      if (dropped.opening && native) {
+        try { native.set('start', String(dropped.seconds)); startSet = true; } catch { /* checkOpening finds 0:00 and seeks. */ }
+        watchOpening();
+      }
+    }
     const message = error instanceof Error ? error.message : 'Player command failed.';
     player.error = message;
     port.postMessage({ type: 'reply', id, error: message });
@@ -305,18 +397,30 @@ timer = setInterval(() => {
     const events = native.drainEvents();
     if (events.shutdown) { failEngine('The libmpv core shut down. Restart the audio engine.'); return; }
     if (events.error) player.error = events.error;
+    // Opening at the saved position, or found it opened at 0:00 and now seeking (restoreSeek).
+    checkOpening();
+    if (startSet && !pendingSeek?.opening) clearStart();
+    // A resume waiting on its position shows as starting at the saved position: playing and
+    // buffering, so the play button doesn't flash to paused and the position doesn't flash 0:00.
+    const resuming = pendingSeek?.resume ? pendingSeek.seconds : null;
+    const audio = native.audio();
+    const playing = resuming !== null || native.property('pause') === 'no' && native.property('idle-active') === 'no';
     player = {
       ...player,
-      playing: native.property('pause') === 'no' && native.property('idle-active') === 'no',
-      position: native.number('time-pos') ?? 0,
+      playing,
+      position: resuming ?? native.number('time-pos') ?? 0,
       duration: native.number('duration') ?? 0,
       volume: native.number('volume') ?? 100,
       currentIndex: native.number('playlist-pos') ?? -1,
-      audio: native.audio(),
+      // Playing but not heard yet, so the deck shows it starting: mpv's core-idle stays yes while
+      // the stream opens and fills and the output opens, after a seek, and while it waits on the
+      // network (paused-for-cache). Paused, nothing is on its way.
+      audio: { ...audio, buffering: playing && (resuming !== null || audio.buffering || native.property('core-idle') === 'yes') },
     };
-    followPlay(events);
+    // The start seek of an entry opening at the saved position is the host's own too.
+    followPlay(pendingSeek?.opening ? { ...events, seeks: 0 } : events);
     if (hostSeek) hostSeek--;
-    restoreSeek();
+    restoreSeek(events.seeks);
     if (++deviceTicks % 20 === 0) player.devices = native.devices();
     publish();
   } catch {

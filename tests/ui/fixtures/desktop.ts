@@ -15,8 +15,11 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // `signIn` overrides the saved sign-in state (ServerState), and `connected: false` starts on the
 // connect screen.
 // `update` overrides the update state (UpdateState); update calls are recorded in bridgeCalls.
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch }) => {
+// window.pushPlayer(patch) sends a snapshot with the player state changed as the audio host would
+// report it (PlayerSnapshot). `commands` records player commands in bridgeCalls, and `mini` opens
+// the page as the mini player window.
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; commands?: boolean; mini?: boolean } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, commands, mini }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -26,8 +29,9 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const signIn = { saved: null, canRemember: true, reconnecting: false, reconnectError: null, ...signInPatch };
     let server: { connected: boolean; name: string | null; sessionId: string | null } = connected
       ? { connected: true, name: 'Navidrome (music.example.com)', sessionId: 'session-1' } : { connected: false, name: null, sessionId: null };
+    let player: Record<string, unknown> = { engine: 'ready', error: null, playing: false, position: 0, duration: 0, volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio };
     const snapshot = () => ({
-      player: { engine: 'ready', error: null, playing: false, position: 0, duration: 0, volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio },
+      player,
       diagnostics: { uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0, playerBytesPerSecond: 0, pendingCommands: 0, eventLoopDelayMs: 0, processes: [], operations: [] },
       server: { ...server, ...signIn },
       update: { mode: 'install', status: 'up-to-date', current: '0.1.0', version: null, percent: null, error: null, ...updatePatch },
@@ -39,6 +43,11 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true };
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
+    Object.assign(window, { pushPlayer: (patch: Record<string, unknown>) => {
+      player = { ...player, ...patch, audio: { ...audio, ...(patch.audio as object | undefined) } };
+      const next = snapshot();
+      listeners.forEach(listener => listener(next));
+    } });
     const disabled = new Set<string>(), removed = new Set<string>();
     const extensionListeners = new Set<(list: unknown) => void>();
     const extensionList = () => given.filter(extension => !removed.has(extension.id)).map(extension => ({
@@ -50,7 +59,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     Object.assign(window, { squiggly: {
       snapshot: async () => snapshot(),
       subscribe: (listener: (snapshot: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
-      command: async (command: unknown) => { if (mediaHost) calls.push(`command:${JSON.stringify(command)}`); return { ok: true, value: undefined }; },
+      command: async (command: unknown) => { if (mediaHost || commands) calls.push(`command:${JSON.stringify(command)}`); return { ok: true, value: undefined }; },
       updates: {
         check: async () => { calls.push('update:check'); return { ok: true, value: undefined }; },
         install: async () => { calls.push('update:install'); return { ok: true, value: undefined }; },
@@ -64,7 +73,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       updateSettings: async () => ({ ok: true, value: settings }),
       library,
       window: {
-        isMini: false, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }),
+        isMini: mini, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }),
         followWhileHidden: async (on: boolean) => { calls.push(`follow-while-hidden:${on}`); return { ok: true, value: undefined }; },
       },
       extensions: {
@@ -85,5 +94,6 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {} });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {},
+    commands: options.commands ?? false, mini: options.mini ?? false });
 }

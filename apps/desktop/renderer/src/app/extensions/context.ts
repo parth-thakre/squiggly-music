@@ -36,7 +36,8 @@ function onPlayer(listener: () => void): Dispose {
   return bridge.subscribe(() => listener());
 }
 async function command(type: 'play' | 'pause') {
-  if (!bridge) { if ((type === 'play') !== getPlayer().playing) player.toggle(); return; }
+  // Pause stops a song still starting too, which toggle leaves alone.
+  if (!bridge) { if (type === 'pause') player.pause(); else if (!getPlayer().playing) player.toggle(); return; }
   const result = await bridge.command({ type });
   if (!result.ok) throw new Error(result.error);
 }

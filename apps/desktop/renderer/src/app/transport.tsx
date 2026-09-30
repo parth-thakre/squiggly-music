@@ -36,9 +36,21 @@ export function useRoomPalette(coverArt: string | null | undefined): Palette {
 export function TransportButtons({ playing }: { playing: boolean }) {
   return <>
     <button type="button" className="glyph" aria-label="Previous" onClick={player.previous}><Glyph kind="prev" /></button>
-    <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={player.toggle}><Glyph kind={playing ? 'pause' : 'play'} /></button>
+    <PlayButton playing={playing} />
     <button type="button" className="glyph" aria-label="Next" onClick={player.next}><Glyph kind="next" /></button>
   </>;
+}
+
+// Play or pause. While a song is starting (PlayerState.starting) it says so, with a ring turning
+// around a dimmed play mark, and a press does nothing: pause isn't offered before anything plays.
+// It stays focusable, so focus doesn't jump when the song starts.
+export function PlayButton({ playing }: { playing: boolean }) {
+  const starting = usePlayer(s => s.starting);
+  return <button type="button" className={`play${starting ? ' starting' : ''}`} aria-label={starting ? 'Starting' : playing ? 'Pause' : 'Play'}
+    aria-disabled={starting || undefined} title={starting ? 'Starting…' : undefined} onClick={player.toggle}>
+    <Glyph kind={playing && !starting ? 'pause' : 'play'} />
+    {starting && <span className="starting-ring" aria-hidden="true" />}
+  </button>;
 }
 
 // Shuffle and repeat, as icon toggles like the deck's others. Repeat goes off, all, one: pressed

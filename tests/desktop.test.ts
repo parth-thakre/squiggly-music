@@ -16,6 +16,7 @@ import { JsonStore } from '../apps/desktop/main/store';
 import { Account, type Encryption } from '../apps/desktop/main/account';
 import { finishThreshold, PlayTracker } from '../apps/desktop/main/plays';
 import { QueueSync, savedState, type SavedState } from '../apps/desktop/main/queueSync';
+import { SavedQueueCopy } from '../apps/desktop/main/savedQueue';
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -373,6 +374,43 @@ describe('queue sync', () => {
     queue.observe(snapshot({ currentIndex: 1, position: 0, playing: true }), 1, true);
     await vi.advanceTimersByTimeAsync(3000);
     expect(saves.map(save => save.state)).toEqual([{ trackIds: ['a', 'b'], currentIndex: 1, positionSeconds: 0 }]);
+  });
+});
+
+describe('the saved queue read at launch', () => {
+  const saved = (positionSeconds: number) => ({ tracks: [{ id: 's1', title: 'One', artist: 'A', album: 'R', duration: 200, source: 'navidrome' as const,
+    sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null }], currentIndex: 0, positionSeconds, changed: null, changedBy: null });
+
+  it('serves Resume once, for the same session, while under 30 seconds old', () => {
+    let now = 0;
+    const copies = new SavedQueueCopy<string>(30_000, () => now);
+    copies.reading('session')(saved(17));
+    now = 29_000;
+    expect(copies.take('other session')).toBeNull();
+    copies.reading('session')(saved(17));
+    expect(copies.take('session')?.positionSeconds).toBe(17);
+    // Once: a second Resume asks the server.
+    expect(copies.take('session')).toBeNull();
+    copies.reading('session')(saved(17));
+    now += 30_000;
+    expect(copies.take('session')).toBeNull();
+  });
+
+  it('forgets the copy when the queue is saved, even from a read still on its way', () => {
+    let now = 0;
+    const copies = new SavedQueueCopy<string>(30_000, () => now);
+    copies.reading('session')(saved(17));
+    copies.clear();
+    expect(copies.take('session')).toBeNull();
+    // Asked before the save, answered after: the answer may describe the queue before it.
+    const keep = copies.reading('session');
+    copies.clear();
+    keep(saved(17));
+    expect(copies.take('session')).toBeNull();
+    // A newer answer of nothing saved replaces an older copy.
+    copies.reading('session')(saved(17));
+    copies.reading('session')(null);
+    expect(copies.take('session')).toBeNull();
   });
 });
 
