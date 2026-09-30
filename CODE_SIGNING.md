@@ -15,7 +15,7 @@ Only the Windows files built by this repository's release workflow, from this re
 
 Third-party files inside the app are left as their projects shipped them. `node.exe` carries the OpenJS Foundation's own signature.
 
-Nothing built on a personal machine is signed. Signing requests come only from `.github/workflows/release.yml` in [parth-thakre/squiggly-music](https://github.com/parth-thakre/squiggly-music), the official repository.
+Nothing built on a personal machine is signed. Signing requests come only from `.github/workflows/release.yml` in [parth-thakre/squiggly-music](https://github.com/parth-thakre/squiggly-music), the official repository, and only for a release tag (`v<version>`). Builds from branches, including manual runs of the workflow, are never signed.
 
 ## Team
 

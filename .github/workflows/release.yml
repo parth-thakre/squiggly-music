@@ -1,7 +1,7 @@
 # Builds release packages and publishes a GitHub Release.
 # - Push a tag `v<package.json version>` (made by `npm version`) to build and publish.
 # - Run manually (workflow_dispatch) to build and download the packages as workflow
-#   artifacts without publishing anything.
+#   artifacts without publishing anything. Only tag builds are signed.
 name: Release
 
 on:
@@ -164,8 +164,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Windows signing goes through SignPath Foundation (CODE_SIGNING.md, docs/signing.md). Every
-  # signing step is skipped until the SIGNPATH_ORGANIZATION_ID variable is set, so releases are
+  # Windows signing goes through SignPath Foundation (CODE_SIGNING.md, docs/signing.md). Only
+  # release tags (v*) are signed: a manual run from a branch builds unsigned files. Every signing
+  # step is also skipped until the SIGNPATH_ORGANIZATION_ID variable is set, so releases are
   # unsigned until then rather than failing. Each signing request waits for an approver.
   windows:
     name: Windows installer and portable
@@ -177,7 +178,7 @@ jobs:
     # Includes up to an hour for each of the two signing approvals.
     timeout-minutes: 150
     env:
-      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+      SIGN: ${{ startsWith(github.ref, 'refs/tags/v') && vars.SIGNPATH_ORGANIZATION_ID != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

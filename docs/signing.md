@@ -14,7 +14,7 @@ The Windows job in `.github/workflows/release.yml` builds in two passes, because
 
 Each request waits up to an hour for someone to approve it in SignPath, so a release takes two approvals.
 
-Every signing step is skipped while the `SIGNPATH_ORGANIZATION_ID` repository variable is unset, and the release comes out unsigned.
+Only release tags (`v*`) are signed. A manual run of the workflow from a branch builds the same files unsigned. Every signing step is also skipped while the `SIGNPATH_ORGANIZATION_ID` repository variable is unset, and the release comes out unsigned.
 
 ## Setting it up
 
@@ -23,11 +23,13 @@ Every signing step is skipped while the `SIGNPATH_ORGANIZATION_ID` repository va
 3. Once approved, in SignPath:
    - Add the GitHub Actions trusted build system to the project, with the slug `squiggly-music`.
    - Use the signing policy SignPath Foundation sets up, and check its slug is `release-signing`.
+   - In the signing policy, turn on Verify origin and set Allowed branch names to the release tags only (`refs/tags/v*`), so SignPath refuses a request from any other ref even if the workflow is changed. SignPath's documentation only gives branch examples, so check the branch it records on the first signing request and adjust the pattern if it names tags differently.
    - Add the two artifact configurations below.
    - Create an API token for a CI user that can submit signing requests to the project.
 4. In the GitHub repository, under Settings › Secrets and variables › Actions:
    - Add the variable `SIGNPATH_ORGANIZATION_ID`, your SignPath organization ID.
    - Add the secret `SIGNPATH_API_TOKEN`, the CI user's API token.
+5. Under Settings › Rules › Rulesets, add a tag ruleset for `v*` that restricts creations, updates, and deletions, with only maintainers allowed to bypass it. Anyone who can push a `v*` tag can start a signing request.
 
 The token is only given to the two signing steps, never to the build.
 
