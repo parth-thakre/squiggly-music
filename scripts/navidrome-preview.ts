@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { IncomingMessage, ServerResponse } from 'node:http';
-import { isIP } from 'node:net';
+import { lookup as dnsLookup } from 'node:dns';
+import { type IncomingMessage, type ServerResponse, request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { BlockList, type LookupFunction, isIP } from 'node:net';
 import { Readable } from 'node:stream';
 import type { ReadableStream as WebReadableStream } from 'node:stream/web';
 import type { TLSSocket } from 'node:tls';
@@ -74,6 +76,8 @@ export interface PreviewOptions {
   /** Tests substitute a connector; by default one is built from the environment. */
   client?: SubsonicClient | null;
   now?: () => number;
+  /** Where the station relay may connect. Tests let their local stations through; by default only public addresses. */
+  stationAddress?: (address: string) => boolean;
 }
 
 function createClient(env: NodeJS.ProcessEnv) {
@@ -279,34 +283,85 @@ async function sendStream(client: SubsonicClient, request: IncomingMessage, resp
 
 // An internet radio station, relayed. Its stream address comes from the server's station list and
 // stays here, as a song's does; the browser sees /api/station?id=... . Stations live elsewhere on
-// the web, so redirects are followed (to http or https only, as fetch does). Only audio passes, and
+// the web, so up to five redirects are followed, to http or https only. Every hop must lead to a
+// public address, never this machine or the networks around it, and the connection goes to the
+// address that was checked, so a second DNS answer can't swap in another. Only audio passes, and
 // no ICY metadata is asked for, so the bytes are the stream alone. The relay runs until the
 // browser lets go.
-async function sendStation(client: SubsonicClient, request: IncomingMessage, response: ServerResponse, searchParams: URLSearchParams) {
+const maxStationRedirects = 5;
+// A station the last list didn't have makes the server list every station again; that happens
+// at most this often, however many unknown ids are asked for.
+const stationListInterval = 30_000;
+const missingStation = 'This station is no longer on the server. Refresh the stations and try again.';
+const localNetworks = new BlockList();
+// Unspecified, private, CGNAT, loopback, link-local, multicast, and reserved (with broadcast).
+for (const [network, prefix] of [['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16], ['172.16.0.0', 12], ['192.168.0.0', 16], ['224.0.0.0', 4], ['240.0.0.0', 4]] as const) localNetworks.addSubnet(network, prefix, 'ipv4');
+// Unspecified, loopback and IPv4-compatible, unique local, link-local, site-local, multicast.
+// BlockList checks IPv4-mapped addresses (::ffff:10.0.0.1) against the IPv4 networks itself.
+for (const [network, prefix] of [['::', 96], ['fc00::', 7], ['fe80::', 10], ['fec0::', 10], ['ff00::', 8]] as const) localNetworks.addSubnet(network, prefix, 'ipv6');
+export function publicAddress(address: string) {
+  const family = isIP(address);
+  return family !== 0 && !localNetworks.check(address, family === 4 ? 'ipv4' : 'ipv6');
+}
+const notPublic = () => Object.assign(new Error('The station is not at a public address.'), { code: 'EACCES' });
+// Resolves as usual, then refuses the lot if any answer isn't allowed.
+const checkedLookup = (allowed: (address: string) => boolean): LookupFunction => (hostname, options, callback) => {
+  dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
+    if (error) return callback(error, '');
+    if (!addresses.length || addresses.some(({ address }) => !allowed(address))) return callback(notPublic(), '');
+    if (options.all) return callback(null, addresses);
+    callback(null, addresses[0].address, addresses[0].family);
+  });
+};
+export async function openStation(location: string, allowed: (address: string) => boolean, signal: AbortSignal): Promise<IncomingMessage> {
+  const lookup = checkedLookup(allowed);
+  let url = new URL(location);
+  for (let hop = 0; ; hop++) {
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('The station is not at a web address.');
+    // An address written as one is connected to without a lookup, so it's checked here.
+    const host = url.hostname.replace(/^\[|\]$/g, '');
+    if (isIP(host) && !allowed(host)) throw notPublic();
+    const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+    // A connection of its own (agent: false), never a pooled socket opened without the check.
+    const upstream = await new Promise<IncomingMessage>((resolve, reject) => { send(url, { signal, lookup, agent: false }, resolve).on('error', reject).end(); });
+    const next = upstream.headers.location;
+    if (!upstream.statusCode || upstream.statusCode < 300 || upstream.statusCode > 399 || !next) return upstream;
+    upstream.destroy();
+    if (hop >= maxStationRedirects) throw new Error('The station redirected too many times.');
+    url = new URL(next, url);
+  }
+}
+async function sendStation(client: SubsonicClient, request: IncomingMessage, response: ServerResponse, searchParams: URLSearchParams, relay: { allowed: (address: string) => boolean; listedAt: number; now: () => number }) {
   const id = searchParams.get('id') ?? '';
   if (!Schema.is(IdSchema)(id)) return json(response, 404, { ok: false, error: 'This station is not available.' });
-  const location = await Effect.runPromise(Effect.either(client.stationLocation(id)));
-  if (Either.isLeft(location)) return json(response, 404, { ok: false, error: location.left.message });
+  let location = client.knownStationLocation(id);
+  if (!location) {
+    if (relay.now() - relay.listedAt < stationListInterval) return json(response, 404, { ok: false, error: missingStation });
+    relay.listedAt = relay.now();
+    const found = await Effect.runPromise(Effect.either(client.stationLocation(id)));
+    if (Either.isLeft(found)) return json(response, 404, { ok: false, error: found.left.message });
+    location = found.right;
+  }
   const controller = new AbortController();
   response.on('close', () => controller.abort());
   // Fifteen seconds to answer; the stream itself has no end.
   const timer = setTimeout(() => controller.abort(), 15_000);
-  let upstream: Response;
-  try {
-    upstream = await fetch(location.right, { signal: controller.signal, redirect: 'follow' });
-  } catch { return json(response, 502, { ok: false, error: 'The station did not answer.' }); }
+  let upstream: IncomingMessage;
+  try { upstream = await openStation(location, relay.allowed, controller.signal); }
+  catch { return json(response, 502, { ok: false, error: 'The station did not answer.' }); }
   finally { clearTimeout(timer); }
-  const type = upstream.headers.get('content-type')?.split(';')[0].trim().toLowerCase() ?? '';
-  if (!upstream.ok || !upstream.body || !(type.startsWith('audio/') || type === 'application/ogg')) {
-    await upstream.body?.cancel().catch(() => {});
+  const status = upstream.statusCode ?? 0;
+  const type = String(upstream.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+  if (status < 200 || status > 299 || !(type.startsWith('audio/') || type === 'application/ogg')) {
+    upstream.destroy();
     return json(response, 502, { ok: false, error: 'The station did not send audio this browser can play.' });
   }
   response.statusCode = 200;
   response.setHeader('content-type', type);
   response.setHeader('cache-control', 'no-store');
   response.setHeader('x-content-type-options', 'nosniff');
-  if (request.method === 'HEAD') { await upstream.body.cancel().catch(() => {}); return response.end(); }
-  Readable.fromWeb(upstream.body as WebReadableStream<Uint8Array>).on('error', () => response.destroy()).pipe(response);
+  if (request.method === 'HEAD') { upstream.destroy(); return response.end(); }
+  upstream.on('error', () => response.destroy()).pipe(response);
 }
 
 // Why /api must stay closed on this bind, or null when it may serve.
@@ -321,9 +376,10 @@ interface HostedServer {
   config?: { server?: { host?: string | boolean }; preview?: { host?: string | boolean }; logger?: { error(message: string): void } };
 }
 
-export function navidromePreview({ env = process.env, client = createClient(env), now = Date.now }: PreviewOptions = {}): Plugin {
+export function navidromePreview({ env = process.env, client = createClient(env), now = Date.now, stationAddress = publicAddress }: PreviewOptions = {}): Plugin {
   const password = env.SQUIGGLY_WEB_PASSWORD || undefined;
   const auth = password && password.length >= minimumPasswordLength ? createAuth(password, now) : null;
+  const relay = { allowed: stationAddress, listedAt: -Infinity, now };
   return {
     name: 'squiggly-navidrome-preview',
     apply: 'serve',
@@ -353,7 +409,7 @@ export function navidromePreview({ env = process.env, client = createClient(env)
         }
         if (pathname === '/station') {
           if (request.method !== 'GET' && request.method !== 'HEAD') return json(response, 405, { ok: false, error: 'Use GET.' });
-          return await sendStation(client, request, response, searchParams);
+          return await sendStation(client, request, response, searchParams, relay);
         }
         const method = pathname.slice(1);
         if (!isLibraryMethod(method)) return json(response, 404, { ok: false, error: 'Unknown library method.' });
