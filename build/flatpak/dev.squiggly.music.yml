@@ -32,7 +32,12 @@ finish-args:
   - --device=dri
   # Music in the Music folder opens without the file chooser portal.
   - --filesystem=xdg-music:ro
-  # safeStorage keeps the saved sign-in in the desktop keyring.
+  # safeStorage keeps the saved sign-in in the desktop keyring. This reaches the whole Secret
+  # Service, which has no per-app access: code running in the app could read any unlocked secret.
+  # The Secret portal can't replace it yet. The synchronous safeStorage the app uses (account.ts)
+  # asks the Secret Service directly, and without it reports basic_text, which the app refuses;
+  # Chromium's portal key only encrypts behind a feature that is off by default. Flathub's
+  # Chromium, VS Code, Signal, and Obsidian grant the same name. docs/packaging.md, Flatpak.
   - --talk-name=org.freedesktop.secrets
   # The tray icon. Chromium names it org.freedesktop.StatusNotifierItem-<pid>-<id>, and the
   # sandbox's pid is 2 (Flathub's Obsidian grants the same name).

@@ -153,7 +153,7 @@ xvfb-run -a -s "-screen 0 1280x800x24" node scripts/packaged-smoke.mjs dist/Squi
 xvfb-run -a -s "-screen 0 1280x800x24" node scripts/packaged-smoke.mjs ".local/check/deb/opt/Squiggly Music/squiggly-music" -- --no-sandbox
 ```
 
-An AppImage runs with `APPIMAGE_EXTRACT_AND_RUN`, so it needs no FUSE; `--mount` runs it the usual way. The unpacked deb or RPM needs `--no-sandbox` after `--`, because its `chrome-sandbox` isn't setuid until the package installs it.
+An AppImage runs with `APPIMAGE_EXTRACT_AND_RUN`, so it needs no FUSE; `--mount` runs it the usual way. The unpacked deb or RPM needs `--no-sandbox` after `--`, because its `chrome-sandbox` isn't setuid until the package installs it. Neither package has maintainer scripts of its own: they run electron-builder's default after-install script, which links `/usr/bin/squiggly-music`, makes `chrome-sandbox` setuid root only where unprivileged user namespaces don't work (and 0755 where they do), and installs electron-builder's AppArmor profile where AppArmor supports it.
 
 `npm run release:checksums` writes `dist/SHA256SUMS`. The release workflow uses the same script.
 
@@ -203,6 +203,7 @@ The workflow doesn't build macOS. A macOS job would need a macOS runner (for the
 - It builds libmpv from the sources the Windows build pins (`build/libmpv/sources.json`): mpv 0.41.0 with `-Dgpl=false`, and FFmpeg 8.1.3 with the Windows build's component list, GnuTLS in place of Schannel, and no GPL, version 3, or nonfree parts. libass and libplacebo are built only because mpv requires them. The runtime supplies FreeType, HarfBuzz, FriBiDi, GnuTLS, ALSA, PulseAudio, and PipeWire. The license texts go in `/app/share/licenses/dev.squiggly.music/libmpv`.
 - It uses the Freedesktop 26.08 runtime and the Electron base app of the same branch, with Chromium under zypak as Flathub's Electron apps run it. 24.08's two years of support ended in August 2026, and the `ffmpeg-full` extension stops at 24.08, which is why FFmpeg is built here.
 - The app turns its update check off in a Flatpak (`FLATPAK_ID` is set), since its store updates it, and names its MPRIS entry after the Flatpak's desktop file.
+- It can talk to the desktop keyring (`--talk-name=org.freedesktop.secrets`), so a saved sign-in is encrypted as in the other packages. The trade-off: the Secret Service has no per-app access control, so code running in the app could read every unlocked secret in the keyring, not only its own. The Secret portal (`org.freedesktop.portal.Secret`) would avoid that, but not yet. The app uses the synchronous `safeStorage`, which Electron 44 keeps on Chromium's old libsecret code: it asks the Secret Service over D-Bus, and without it reports `basic_text`, which the app refuses to save a password with. Chromium's portal key provider serves only the asynchronous API, and encrypts with the portal only behind `SecretPortalKeyProviderUseForEncryption`, off by default in Chromium 152. Flathub's Chromium, VS Code, Signal, and Obsidian grant the same name. Checked 2026-09-30.
 
 To try it (none of this has been run):
 
