@@ -369,14 +369,18 @@ async function handleConnect(connections: Connections, backoff: Backoff, connect
   // Asked before the server is, so a full host never checks a login it wouldn't keep.
   if (!connections.room(request, owner)) return json(response, 503, { ok: false, error: connectionsFull });
   const attempt = await Effect.runPromise(Effect.either(Effect.gen(function* () {
-    const connection = yield* resolveServerAddress(typed.right, connector);
+    const address = yield* resolveServerAddress(typed.right, connector);
+    // Only plain HTTP answered, asked without the login: nothing is connected until the page
+    // asks the person and connects again to the http:// address.
+    if (address.type === 'plain-http') return address;
     // The address check's own message (a bad address says how), not Effect's generic one.
-    const client = yield* Effect.try({ try: () => connector(connection), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
+    const client = yield* Effect.try({ try: () => connector(address.connection), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* client.ping();
-    return { client, info };
+    return { type: 'ready' as const, client, info };
   })));
   if (Either.isLeft(attempt)) { backoff.fail(request); return json(response, 502, { ok: false, error: connectFailed }); }
   if (!live()) return json(response, 401, { ok: false, error: signInRequired });
+  if (attempt.right.type === 'plain-http') return json(response, 200, { ok: true, value: { type: 'plain-http', url: attempt.right.url } });
   const { client, info } = attempt.right;
   const host = hostName(client);
   const serverName = host ? `${info.name} (${host})` : info.name;

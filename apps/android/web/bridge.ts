@@ -1,5 +1,5 @@
 import { Effect, Either, Schema } from 'effect';
-import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSession, Connection, LibraryApi, Result, Track } from '../../../packages/core/contracts';
+import type { AndroidBridge, AndroidPlayback, AndroidQueueSnapshot, AndroidSession, ConnectOutcome, Connection, LibraryApi, Result, Track } from '../../../packages/core/contracts';
 import { ONLINE } from '../../../packages/core/contracts';
 import { Metrics } from '../../../packages/core/metrics';
 import { ConnectionSchema, SaveM3uSchema } from '../../../packages/core/validation';
@@ -82,16 +82,20 @@ const away = () => reach.state.away;
 const plays = createPlays({ client: () => client, away, failed: () => reach.failed(), changed: count => setSession({ queuedPlays: count }) });
 session = { ...session, queuedPlays: plays.size };
 
-async function connectTo(typed: Connection, { save }: { save: boolean }): Promise<Result> {
+async function connectTo(typed: Connection, { save }: { save: boolean }): Promise<Result<ConnectOutcome>> {
   const mine = ++generation;
   const attempt = await Effect.runPromise(Effect.either(Effect.gen(function* () {
-    const connection = yield* resolveServerAddress(typed, makeClient);
+    const address = yield* resolveServerAddress(typed, makeClient);
+    // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
+    if (address.type === 'plain-http') return address;
+    const { connection } = address;
     const candidate = yield* Effect.try({ try: () => makeClient(connection), catch: error => error instanceof Error ? error : new Error('Check the server address.') });
     const info = yield* candidate.ping();
-    return { connection, candidate, info };
+    return { type: 'ready' as const, connection, candidate, info };
   })));
   if (mine !== generation) return { ok: false, error: 'Connection canceled.' };
   if (Either.isLeft(attempt)) return { ok: false, error: message(attempt.left, 'Could not connect.') };
+  if (attempt.right.type === 'plain-http') return { ok: true, value: attempt.right };
   const { connection, candidate, info } = attempt.right;
   client = candidate; unverified = null;
   reach.leave();
@@ -111,7 +115,7 @@ async function connectTo(typed: Connection, { save }: { save: boolean }): Promis
     connected: true, sessionId: crypto.randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`,
     serverName: hostName(candidate, info.name),
   }, { canRemember, saved: savedAccount && { url: savedAccount.url, username: savedAccount.username }, reconnecting: false, reconnectError: null });
-  return { ok: true, value: undefined };
+  return { ok: true, value: { type: 'connected' } };
 }
 
 async function reconnect(): Promise<Result> {
@@ -122,7 +126,8 @@ async function reconnect(): Promise<Result> {
   if (kept) return kept;
   const result = await connectTo(savedAccount, { save: false });
   if (!result.ok && !session.connected) setSession({}, { reconnecting: false, reconnectError: result.error });
-  return result;
+  // A saved address has its scheme written out, so it's never offered as plain HTTP again.
+  return result.ok ? { ok: true, value: undefined } : result;
 }
 
 async function reconnectKept(saved: Connection): Promise<Result | null> {

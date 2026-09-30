@@ -8,12 +8,19 @@ import { extensionId, readManifest, type Manifest } from './manifest';
 // Finds, compiles, and reloads the extensions in the config folder.
 //
 //   <config>/extensions/<folder>   one extension each: watched, recompiled and reloaded on save
-//   <config>/extensions.json       { "disabled": [ids] }
+//   <config>/extensions.json       { "version": 2, "enabled": [ids], "disabled": [ids] }
+//
+// A new folder stays off until the user turns it on in Settings. Otherwise anything that can
+// write a folder there would get code running in the window. Folders that were already there
+// when this version first starts were running, so they're recorded as on (see migrate).
 //
 // Renderer entries are served to the window as squiggly-ext://<id>/<hash>.js. Every operation
 // runs one at a time.
 
 export const EXTENSION_SCHEME = 'squiggly-ext';
+// extensions.json without it is from before new extensions started off.
+const STATE_VERSION = 2;
+const ids = (value: unknown) => Array.isArray(value) ? value.filter((id): id is string => typeof id === 'string') : [];
 
 interface Loaded {
   id: string; dir: string;
@@ -37,7 +44,9 @@ export const errorText = (error: unknown) => error instanceof Error ? error.mess
 
 export class ExtensionManager {
   private loaded = new Map<string, Loaded>();
+  private enabled: string[] = [];
   private disabled: string[] = [];
+  private migrated = false;
   private work: Promise<unknown> = Promise.resolve();
   private listeners = new Set<(list: ExtensionInfo[]) => void>();
   private rootWatchers: Watchers | null = null;
@@ -64,7 +73,7 @@ export class ExtensionManager {
 
   async start(): Promise<void> {
     await mkdir(this.extensionsDir, { recursive: true });
-    await this.exclusive(() => this.sync());
+    await this.exclusive(async () => { await this.migrate(); await this.sync(); });
     if (this.options.watch !== false) {
       this.rootWatchers = new Watchers((dir, file) => {
         if (dir === this.options.configDir && file && file !== 'extensions.json' && file !== 'extensions') return;
@@ -76,11 +85,13 @@ export class ExtensionManager {
 
   // Info --------------------------------------------------------------------------------
 
+  private isOn(id: string) { return this.enabled.includes(id) && !this.disabled.includes(id); }
   private info(record: Loaded): ExtensionInfo {
-    const enabled = !this.disabled.includes(record.id);
+    const enabled = this.isOn(record.id);
     return {
       id: record.id, name: record.manifest?.name ?? record.id, version: record.manifest?.version ?? '0.0.0',
       description: record.manifest?.description ?? null, folder: basename(record.dir), enabled,
+      isNew: !enabled && !this.disabled.includes(record.id),
       rendererUrl: enabled && record.renderer ? this.rendererUrl(record.id, record.renderer) : null,
       error: record.manifestError ?? (enabled ? record.loadError : null),
     };
@@ -95,22 +106,45 @@ export class ExtensionManager {
     let parsed: URL;
     try { parsed = new URL(url); } catch { return null; }
     const record = this.loaded.get(parsed.hostname);
-    if (!record?.renderer || this.disabled.includes(record.id)) return null;
+    if (!record?.renderer || !this.isOn(record.id)) return null;
     return this.rendererUrl(record.id, record.renderer) === `${parsed.protocol}//${parsed.hostname}${parsed.pathname}` ? record.renderer.code : null;
   }
 
   // State file --------------------------------------------------------------------------
 
-  private async readState(): Promise<void> {
+  // extensions.json, or null when it exists but can't be read. A missing file is empty.
+  private async stateFile() {
     const read = await readJson(this.statePath, 'extensions.json');
-    if (!read || 'error' in read || !read.value || typeof read.value !== 'object') return;
-    const disabled = (read.value as { disabled?: unknown }).disabled;
-    this.disabled = Array.isArray(disabled) ? disabled.filter((id): id is string => typeof id === 'string') : [];
+    if (read && 'error' in read) return null;
+    const value = (read?.value && typeof read.value === 'object' ? read.value : {}) as { version?: unknown; enabled?: unknown; disabled?: unknown };
+    return { current: value.version === STATE_VERSION, enabled: ids(value.enabled), disabled: ids(value.disabled) };
+  }
+  private async readState(): Promise<void> {
+    const state = await this.stateFile();
+    // If migrate() couldn't save, the file is still the older one. Keep what it recorded.
+    if (!state || (!state.current && this.migrated)) return;
+    this.enabled = state.enabled; this.disabled = state.disabled;
   }
   private async writeState(): Promise<void> {
     const temporary = `${this.statePath}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify({ disabled: this.disabled }, null, 2)}\n`);
+    await writeFile(temporary, `${JSON.stringify({ version: STATE_VERSION, enabled: this.enabled, disabled: this.disabled }, null, 2)}\n`);
     await rename(temporary, this.statePath);
+  }
+
+  // Once, on the first start with an older extensions.json (or none): every folder used to load
+  // unless turned off, so the extensions there now are recorded as on. After this, new ones start off.
+  // An unreadable file is left alone, and everything stays off until it's fixed.
+  private async migrate(): Promise<void> {
+    const state = await this.stateFile();
+    if (!state || state.current) return;
+    this.disabled = state.disabled;
+    this.enabled = [];
+    for (const dir of await this.folders()) {
+      const manifest = await readManifest(dir);
+      if (manifest.ok && !this.disabled.includes(manifest.value.id) && !this.enabled.includes(manifest.value.id)) this.enabled.push(manifest.value.id);
+    }
+    this.migrated = true;
+    await this.writeState().catch(() => undefined);
   }
 
   // Discovery ---------------------------------------------------------------------------
@@ -139,7 +173,7 @@ export class ExtensionManager {
     for (const [id, record] of this.loaded) if (!found.has(id) || found.get(id)!.dir !== record.dir) this.unload(record, true);
     for (const [id, next] of found) {
       const existing = this.loaded.get(id);
-      const enabled = !this.disabled.includes(id);
+      const enabled = this.isOn(id);
       const same = existing && JSON.stringify(existing.manifest) === JSON.stringify(next.manifest) && existing.manifestError === next.error;
       const running = existing && (existing.renderer || existing.loadError);
       if (existing && same && !force && Boolean(running) === (enabled && !next.error)) continue;
@@ -193,7 +227,7 @@ export class ExtensionManager {
     if (!manifest.ok || manifest.value.id !== id) { await this.sync(); return; }
     const before = `${record.renderer?.hash}:${record.loadError}`;
     record.manifest = manifest.value; record.manifestError = null;
-    if (!this.disabled.includes(id)) await this.load(record);
+    if (this.isOn(id)) await this.load(record);
     this.watch(record);
     if (`${record.renderer?.hash}:${record.loadError}` !== before) this.changed();
   }
@@ -213,8 +247,9 @@ export class ExtensionManager {
     return this.exclusive(async () => {
       const record = this.loaded.get(id);
       if (!record) return { ok: false as const, error: 'No such extension.' };
+      this.enabled = this.enabled.filter(other => other !== id);
       this.disabled = this.disabled.filter(other => other !== id);
-      if (!enabled) this.disabled.push(id);
+      (enabled ? this.enabled : this.disabled).push(id);
       try { await this.writeState(); } catch { return { ok: false as const, error: 'Could not save extensions.json. Check that the config folder is writable.' }; }
       if (enabled) { await this.load(record); this.watch(record); } else this.unload(record, false);
       this.changed();
@@ -233,7 +268,9 @@ export class ExtensionManager {
         await this.sync();
         return { ok: false, error: `Could not move ${record.dir} to the trash: ${errorText(error)}` };
       }
-      if (this.disabled.includes(id)) {
+      // Forgotten, so a different folder that later takes this id starts off.
+      if (this.enabled.includes(id) || this.disabled.includes(id)) {
+        this.enabled = this.enabled.filter(other => other !== id);
         this.disabled = this.disabled.filter(other => other !== id);
         await this.writeState().catch(() => undefined);
       }

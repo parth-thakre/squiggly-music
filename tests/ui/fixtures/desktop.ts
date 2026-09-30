@@ -8,11 +8,12 @@ import type { Page } from '@playwright/test';
 // `extensions` are listed by window.squiggly.extensions, each with the URL its module is served
 // from (the test routes that URL to a compiled bundle). Reload all gives every URL a new
 // `?v=` number, as the main process gives each a new hash, so the window starts them again.
+// One marked `isNew` starts off, as a new folder does, until it's turned on.
 //
 // `mediaHost` makes the page the window that hosts the system media session (systemMedia.ts):
 // window.pushMedia(state) stands in for the main process, and player commands are recorded in
 // bridgeCalls.
-export interface FakeExtension { id: string; name: string; url: string; error?: string }
+export interface FakeExtension { id: string; name: string; url: string; error?: string; isNew?: boolean }
 // `signIn` overrides the saved sign-in state (ServerState), and `connected: false` starts on the
 // connect screen.
 // `update` overrides the update state (UpdateState); update calls are recorded in bridgeCalls.
@@ -31,10 +32,11 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // once window.keepGate.allow says so (the test raises it with page.evaluate). playTracks records
 // `play:<ids>:device|stream` in bridgeCalls and plays at once, from the device when every song is
 // kept. Nothing here checks limits or files; vitest covers the real main process.
+// `connect` answers connect by the address given (a Result); any other address fails.
 export interface KeptSeed { kind: 'album' | 'playlist' | 'mix'; id: string; name: string; artist: string | null; coverArt: string | null; tracks: object[] }
 export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; player?: object; mini?: boolean;
-  server?: boolean; away?: boolean; kept?: { seed?: KeptSeed[]; refuse?: string } } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, playerPatch, mini, useServer, startAway, keptOptions }) => {
+  server?: boolean; away?: boolean; kept?: { seed?: KeptSeed[]; refuse?: string }; connect?: Record<string, object> } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, playerPatch, mini, useServer, startAway, keptOptions, connectResults }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -174,11 +176,12 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     Object.assign(window, { bridgeCalls: calls });
     const disabled = new Set<string>(), removed = new Set<string>();
     let reloads = 0;
+    const fresh = new Set(given.filter(extension => extension.isNew).map(extension => extension.id));
     const extensionListeners = new Set<(list: unknown) => void>();
     const extensionList = () => given.filter(extension => !removed.has(extension.id)).map(extension => ({
       id: extension.id, name: extension.name, version: '1.0.0', description: null, folder: extension.id,
-      enabled: !disabled.has(extension.id), error: extension.error ?? null,
-      rendererUrl: disabled.has(extension.id) || extension.error ? null : reloads ? `${extension.url}?v=${reloads}` : extension.url,
+      enabled: !disabled.has(extension.id) && !fresh.has(extension.id), isNew: fresh.has(extension.id), error: extension.error ?? null,
+      rendererUrl: disabled.has(extension.id) || fresh.has(extension.id) || extension.error ? null : reloads ? `${extension.url}?v=${reloads}` : extension.url,
     }));
     const pushExtensions = () => { const list = extensionList(); extensionListeners.forEach(listener => listener(list)); };
     Object.assign(window, { squiggly: {
@@ -225,7 +228,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       extensions: {
         list: async () => extensionList(),
         subscribe: (listener: (list: unknown) => void) => { extensionListeners.add(listener); return () => extensionListeners.delete(listener); },
-        setEnabled: async (id: string, on: boolean) => { calls.push(`set-enabled:${id}:${on}`); if (on) disabled.delete(id); else disabled.add(id); pushExtensions(); return { ok: true, value: undefined }; },
+        setEnabled: async (id: string, on: boolean) => { calls.push(`set-enabled:${id}:${on}`); fresh.delete(id); if (on) disabled.delete(id); else disabled.add(id); pushExtensions(); return { ok: true, value: undefined }; },
         reload: async () => { calls.push('reload'); reloads++; pushExtensions(); return { ok: true, value: undefined }; },
         remove: async (id: string) => { calls.push(`remove:${id}`); removed.add(id); pushExtensions(); return { ok: true, value: undefined }; },
         openDir: async () => ({ ok: true, value: undefined }),
@@ -239,7 +242,10 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         if (files.length > 1000) return { ok: false, error: 'Drop up to 1,000 files at a time.' };
         return { ok: true, value: { opened: files.length, skipped: 0 } };
       },
-      connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
+      connect: async (connection: { url: string; username: string }) => {
+        calls.push(`connect:${connection.url}:${connection.username}`);
+        return connectResults[connection.url] ?? { ok: false, error: 'No server in the test.' };
+      },
       disconnect: async () => {
         calls.push('disconnect');
         server = { connected: false, name: null, sessionId: null, account: null };
@@ -249,5 +255,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       },
     } });
   }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {},
-    playerPatch: options.player ?? {}, mini: options.mini ?? false, useServer: options.server ?? false, startAway: options.away ?? false, keptOptions: options.kept ?? null });
+    playerPatch: options.player ?? {}, mini: options.mini ?? false, useServer: options.server ?? false, startAway: options.away ?? false, keptOptions: options.kept ?? null, connectResults: options.connect ?? {} });
 }

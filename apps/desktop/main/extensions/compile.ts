@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { relative, resolve, sep } from 'node:path';
+import { realpath } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Message, Plugin } from 'esbuild';
 
 // Compiles an extension's renderer entry to one ES module with esbuild, bundling the
@@ -28,6 +29,43 @@ module.exports = host.modules[${JSON.stringify(args.path)}];`,
   },
 };
 
+// Whether `path` is `root` or inside it. Both should already have their symlinks followed.
+export function within(root: string, path: string): boolean {
+  const inside = relative(root, path);
+  return inside !== '..' && !inside.startsWith(`..${sep}`) && !isAbsolute(inside);
+}
+
+// Every other import is resolved as esbuild would, then refused unless the file really is inside
+// the extension's folder, after following symlinks. The loaders inline text, JSON, and images, so
+// without this an import could copy any readable file into the bundle.
+function folderOnly(dir: string): Plugin {
+  return {
+    name: 'squiggly-folder-only',
+    setup(build) {
+      // The folder's own name isn't followed, so a folder that is itself a link holds nothing.
+      let root: Promise<string> | undefined;
+      const inside = async (path: string) => {
+        const real = await realpath(path).catch(() => null);
+        root ??= realpath(dirname(resolve(dir))).then(parent => join(parent, basename(resolve(dir))));
+        return real !== null && within(await root, real);
+      };
+      const refuse = (path: string) => ({ errors: [{ text: `“${path}” is outside the extension's folder. An extension can only use files inside its own folder.` }] });
+      build.onResolve({ filter: /.*/ }, async args => {
+        if (args.pluginData === folderOnly) return undefined;
+        const found = await build.resolve(args.path, {
+          kind: args.kind, importer: args.importer, namespace: args.namespace, resolveDir: args.resolveDir, with: args.with, pluginData: folderOnly,
+        });
+        if (found.errors.length) return { errors: found.errors };
+        if (found.external || found.namespace !== 'file' || !found.path) return found;
+        return await inside(found.path) ? found : refuse(args.path);
+      });
+      // Glob imports such as import(`../${name}.txt`) skip onResolve, so every file is checked
+      // again before it's read.
+      build.onLoad({ filter: /.*/, namespace: 'file' }, async args => await inside(args.path) ? undefined : refuse(args.path));
+    },
+  };
+}
+
 // esbuild's messages as plain lines: "src/index.ts:3:10: Could not resolve "x"".
 export function formatMessages(messages: readonly Message[], limit = 5): string {
   const lines = messages.slice(0, limit).map(message => {
@@ -48,7 +86,7 @@ export async function compileEntry(entry: string, dir: string): Promise<Bundle> 
       jsx: 'automatic', sourcemap: 'inline', sourcesContent: true, logLevel: 'silent', charset: 'utf8',
       define: { 'process.env.NODE_ENV': '"production"' },
       loader: { '.css': 'text', '.svg': 'dataurl', '.png': 'dataurl', '.jpg': 'dataurl', '.webp': 'dataurl', '.woff2': 'dataurl', '.txt': 'text' },
-      plugins: [hostModules],
+      plugins: [hostModules, folderOnly(dir)],
     });
   } catch (error) {
     const failure = error as { errors?: Message[] };

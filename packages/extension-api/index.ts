@@ -9,7 +9,9 @@
 // slots in the deck, and sections on the Playlists page. It is TypeScript, compiled by the app when it loads; edit it and it reloads.
 //
 // Extensions are full trust. Nothing here is a sandbox: an extension can do anything the
-// window can, including changing your playlists on the server. It has no Node access.
+// window can, including changing your playlists on the server and making the app contact other
+// servers. It sees everything shown and typed in the window, the sign-in form included. It has
+// no Node access, and when the app compiles it, it can read only files inside its own folder.
 //
 // The types below come from the app's own modules, so what an extension is promised is what
 // the app actually implements.
@@ -37,7 +39,8 @@ export type Dispose = () => void;
 
 // The app's library API, without the calls the app makes for itself (play reports and the
 // server-saved queue). Calls return { ok, value } or { ok: false, error } and never throw.
-// They use the app's server session; credentials never reach extensions.
+// They use the app's server session. The API hands out no credentials, and the saved password
+// stays in the main process; the sign-in form is in the window, though, while you sign in.
 export type LibraryApi = Omit<AppLibraryApi, 'reportPlay' | 'savedQueue' | 'saveQueue'>;
 
 // A command, as the registry keeps it. `id` is without the extension's prefix; the app adds it

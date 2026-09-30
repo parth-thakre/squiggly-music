@@ -87,6 +87,11 @@ img {
   height: auto;
 }
 
+/* The symbol sprite. A class, not a style attribute, because the CSP blocks inline styles. */
+.sprite {
+  position: absolute;
+}
+
 a {
   color: inherit;
   text-decoration-thickness: 1px;

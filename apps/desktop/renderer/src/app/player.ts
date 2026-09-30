@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
+import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
@@ -671,9 +671,11 @@ export const player = {
     return result;
   },
   // The browser's connect screen. The login goes to the host once and stays there.
-  async connect(connection: Connection): Promise<Result> {
+  async connect(connection: Connection): Promise<Result<ConnectOutcome>> {
     const result = await webSession.connect(connection);
     if (!result.ok) return result;
+    // Only plain HTTP answered: nothing changed, and the connect screen asks first.
+    if ('type' in result.value) return { ok: true, value: result.value };
     // A queue from the server before (the host's configured one, say) doesn't carry over.
     disconnected();
     // A new connection may be another account on the same server, so the last one's searches go,
@@ -682,7 +684,7 @@ export const player = {
     searchesFor(webAccount({ connected: true, pageConnection: true, serverName: result.value.serverName }));
     set({ connected: true, pageConnection: true, serverName: result.value.serverName, error: null });
     void offerResume();
-    return { ok: true, value: undefined };
+    return { ok: true, value: { type: 'connected' } };
   },
   async disconnect(): Promise<Result> {
     const result = await webSession.disconnect();

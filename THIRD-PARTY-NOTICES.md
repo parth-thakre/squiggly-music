@@ -82,7 +82,7 @@ This is a summary of what these licenses usually require, not legal advice.
 - **LGPL-2.1-or-later (Chromium's FFmpeg, libmpv-2.dll):** provide the license text and the
   library's source, and let users replace the library. Electron loads FFmpeg as a separate
   shared library. The audio host loads `libmpv-2.dll` at run time through libmpv's public C
-  API, and users can replace it or point `SQUIGGLY_LIBMPV_PATH` at their own build. The
+  API, and users can replace the file (`resources\runtime\libmpv-2.dll`) with their own build. The
   source bundle is offered from the same place as the binaries (the GitHub release).
 - **FreeType License (FTL):** credit FreeType in the documentation. `NOTICE.md` carries the
   credit line.

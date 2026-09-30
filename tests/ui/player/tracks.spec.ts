@@ -123,6 +123,19 @@ test.describe('tracks', () => {
     await expect(app.heading).toHaveText('Records');
   });
 
+  test('over plain HTTP beyond this network, says why tracks come in the server\'s order', async ({ app, page }) => {
+    // The connector's answer for such a server (tests/tracks.test.ts), put on the fixture's pages.
+    await page.route('**/api/tracks', async route => {
+      const response = await route.fetch();
+      const body = await response.json() as { ok: boolean; value?: object };
+      await route.fulfill({ response, json: body.ok ? { ...body, value: { ...body.value, sorted: false, plainHttp: true } } : body });
+    });
+    await app.section('Tracks').click();
+    await expect(app.tracks().first()).toBeVisible();
+    await expect(sorts(app)).toHaveCount(0);
+    await expect(app.main.getByText('Sorting them means sending your password to Navidrome, and this server isn\'t using HTTPS.')).toBeVisible();
+  });
+
   test('says so while the first page loads, and Shuffle draws from the whole library', async ({ app, fake }) => {
     fake.delay('tracks', 1000);
     await app.section('Tracks').click();

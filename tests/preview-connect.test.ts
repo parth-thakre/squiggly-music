@@ -91,9 +91,16 @@ describe('connecting from the page', () => {
     expect(preview.errors).toEqual([]);
   });
 
-  it('tries HTTPS, then HTTP, for an address without a scheme', async () => {
+  it('tries HTTPS, then offers HTTP without connecting, for an address without a scheme', async () => {
     const { server, connect } = await setup();
-    const connected = await connect({ url: server.host, ...login });
+    // Only plain HTTP answered: the page asks before sending the login there, so nothing is kept.
+    const offered = await connect({ url: server.host, ...login });
+    expect(offered.response.status).toBe(200);
+    expect(offered.body).toEqual({ ok: true, value: { type: 'plain-http', url: `http://${server.host}` } });
+    expect(offered.setCookie).toBe('');
+    expect(server.paths).not.toContain('/rest/getPlaylists.view');
+    // Agreed: the http:// address connects.
+    const connected = await connect({ url: `http://${server.host}`, ...login });
     expect(connected.body).toEqual({ ok: true, value: { serverName: `Navidrome (http://${server.host})` } });
   });
 

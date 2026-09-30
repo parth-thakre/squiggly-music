@@ -31,17 +31,23 @@ object CoverProxy {
     private const val MAX_BYTES = 6 * 1024 * 1024
     private const val CACHE_BYTES = 64L * 1024 * 1024
     private const val MAX_AGE_MS = 30L * 24 * 60 * 60 * 1000
+    // A few megabytes can describe an image of billions of pixels, and even a shrunk decode reads
+    // every one. Covers bigger than this aren't decoded for the notification.
+    private const val MAX_PIXELS = 8192L * 8192
     private val types = listOf("image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/bmp")
 
     @Volatile private var base: String? = null
     @Volatile private var account: String? = null
     private var directory: File? = null
+    // Writes to the cache take turns, so the running total of its bytes stays true.
+    private val cacheLock = Any()
+    private var cached = 0L
 
     fun init(context: Context) {
         if (directory != null) return
         val dir = File(context.cacheDir, "covers").apply { mkdirs() }
         directory = dir
-        Thread { trim(dir) }.start()
+        Thread { synchronized(cacheLock) { trim(dir) } }.start()
     }
 
     /** The authenticated getCoverArt address without id and size, and a name for the account. */
@@ -75,12 +81,22 @@ object CoverProxy {
             }
         }
         val fetched = fetch("$server&id=${URLEncoder.encode(id, "UTF-8")}&size=$size") ?: return null
-        if (file != null && server == base) runCatching {
-            val temporary = File(file.parentFile, "${file.name}.part")
-            temporary.writeBytes(byteArrayOf(types.indexOf(fetched.first).toByte()) + fetched.second)
-            temporary.renameTo(file)
-        }
+        if (file != null && server == base) store(file, byteArrayOf(types.indexOf(fetched.first).toByte()) + fetched.second)
         return fetched
+    }
+
+    // Through a .part file, so a reader never sees half a cover. The total counts both files
+    // before and after, then trims if this write took the cache past its limit.
+    private fun store(file: File, bytes: ByteArray) {
+        val dir = file.parentFile ?: return
+        synchronized(cacheLock) {
+            val temporary = File(dir, "${file.name}.part")
+            val before = file.length() + temporary.length()
+            val stored = runCatching { temporary.writeBytes(bytes); temporary.renameTo(file) }.getOrDefault(false)
+            if (!stored) temporary.delete()
+            cached += file.length() + temporary.length() - before
+            if (cached > CACHE_BYTES) trim(dir)
+        }
     }
 
     private fun fetch(address: String): Pair<String, ByteArray>? {
@@ -112,16 +128,31 @@ object CoverProxy {
         }
     }
 
-    // Oldest first, down to three quarters of the limit once the cache passes it.
+    // Oldest first, down to three quarters of the limit once the cache passes it, and counts
+    // what's left. Hold cacheLock.
     private fun trim(dir: File) {
         val files = dir.listFiles()?.filter { it.isFile } ?: return
         var total = files.sumOf { it.length() }
-        if (total <= CACHE_BYTES) return
-        for (file in files.sortedBy { it.lastModified() }) {
+        if (total > CACHE_BYTES) for (file in files.sortedBy { it.lastModified() }) {
             if (total <= CACHE_BYTES * 3 / 4) break
-            total -= file.length()
-            file.delete()
+            val length = file.length()
+            if (file.delete()) total -= length
         }
+        cached = total
+    }
+
+    // The notification shows a cover at a few hundred pixels. Read the size first, refuse an
+    // image too big to decode, and decode the rest shrunk by powers of two until its longer side
+    // is under twice the size asked for.
+    private fun decode(bytes: ByteArray, size: Int): Bitmap {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        val longer = maxOf(bounds.outWidth, bounds.outHeight)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0 || bounds.outWidth.toLong() * bounds.outHeight > MAX_PIXELS) throw IOException("Unreadable cover.")
+        var sample = 1
+        while (longer / (sample * 2) >= size) sample *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sample }
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: throw IOException("Unreadable cover.")
     }
 
     private fun empty(status: Int, reason: String) =
@@ -139,7 +170,7 @@ object CoverProxy {
             if (uri.scheme != "squiggly-cover") return fallback.loadBitmap(uri)
             return executor.submit<Bitmap> {
                 val bytes = load(uri.getQueryParameter("id") ?: throw IOException("No cover."), 512)?.second ?: throw IOException("No cover.")
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: throw IOException("Unreadable cover.")
+                decode(bytes, 512)
             }
         }
     }

@@ -49,7 +49,7 @@ How the recipe stays reproducible:
 - The build runs with no network, with fixed paths and `SOURCE_DATE_EPOCH`. It gives the same DLL every time, and `build.mjs` fails unless the DLL matches `expectedDllSha256` in `sources.json`. After changing the build on purpose, update that value.
 - The build fails if FFmpeg reports a GPL, version 3, or nonfree configuration, if mpv compiles one of its GPL-only files, or if the DLL imports anything other than Windows system libraries.
 
-`scripts/fetch-windows-runtime.mjs` packages the DLL only when `.local/libmpv-windows/manifest.json` was built from the current recipe and every file still matches its recorded SHA-256. It also checks that the license files the build extracted from the sources match the copies committed in `licenses/libmpv-windows/`. Set `SQUIGGLY_LIBMPV_WINDOWS_DIR` to package a build from another directory, such as the `libmpv-windows` artifact from the release workflow.
+`scripts/fetch-windows-runtime.mjs` packages the DLL only when `.local/libmpv-windows/manifest.json` was built from the current recipe, every file still matches its recorded SHA-256, and the DLL itself matches `expectedDllSha256`. It also checks that the license files the build extracted from the sources match the copies committed in `licenses/libmpv-windows/`. Set `SQUIGGLY_LIBMPV_WINDOWS_DIR` to package a build from another directory, such as the `libmpv-windows` artifact from the release workflow.
 
 To update a component, change its entry in `sources.json` (version, URL, SHA-256, commit), run `npm run libmpv:build`, set the new `expectedDllSha256`, copy any changed license file from `.local/libmpv-windows/licenses/` to `licenses/libmpv-windows/`, and update `licenses/libmpv-windows/NOTICE.md`.
 

@@ -15,12 +15,13 @@ export const extensionScheme = {
 } as const;
 
 // esbuild runs a native binary, which can't be spawned from inside app.asar. Packaged builds
-// unpack it (electron-builder asarUnpack) and point esbuild at the unpacked copy.
+// unpack it (electron-builder asarUnpack) and point esbuild at the unpacked copy, never at a
+// binary the environment names.
 function useUnpackedEsbuild() {
-  if (!app.isPackaged || process.env.ESBUILD_BINARY_PATH) return;
+  if (!app.isPackaged) return;
   const binary = process.platform === 'win32' ? 'esbuild.exe' : join('bin', 'esbuild');
   const path = join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '@esbuild', `${process.platform}-${process.arch}`, binary);
-  if (existsSync(path)) process.env.ESBUILD_BINARY_PATH = path;
+  if (existsSync(path)) process.env.ESBUILD_BINARY_PATH = path; else delete process.env.ESBUILD_BINARY_PATH;
 }
 
 const text = (value: unknown, limit = 256) => typeof value === 'string' && value.length > 0 && value.length <= limit ? value : null;

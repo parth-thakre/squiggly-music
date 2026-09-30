@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-N9v3EnPaUyp6HvI/g75KoK11mUw7quk1fPSwEhREnaU='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Squiggly — a music player for Navidrome</title>
   <meta name="description" content="Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and leaves the signal alone. Open source, for Windows, macOS, Linux, and Android, with a browser version for phones.">
   <meta name="color-scheme" content="light dark">
@@ -19,12 +20,13 @@
   <link rel="preload" href="fonts/young-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/familjen-grotesk-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
+  <!-- The Content-Security-Policy above allows this script by its SHA-256. Change one, change the other. -->
   <script>document.documentElement.className = "js";</script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
     <symbol id="mark" viewBox="79 170 355 172">
       <path d="M96 256l2.8-5.7 2.9-5.7 2.8-5.4 2.8-5.2 2.9-4.8 2.8-4.3 2.8-3.8 2.9-3.2 2.8-2.6 2.8-1.8 2.9-1.1 2.8-.4 2.8.4 2.9 1.1 2.8 1.8 2.8 2.6 2.9 3.2 2.8 3.8 2.8 4.3 2.9 4.8 2.8 5.2 2.8 5.4 2.9 5.7 2.8 5.7 2.8 5.7 2.9 5.7 2.8 5.4 2.8 5.2 2.9 4.8 2.8 4.3 2.8 3.8 2.9 3.2 2.8 2.6 2.8 1.8 2.9 1.1 2.8.4 2.8-.4 2.9-1.1 2.8-1.8 2.8-2.6 2.9-3.2 2.8-3.8 2.8-4.3 2.9-4.8 2.8-5.2 2.8-5.4 2.9-5.7 2.8-5.7 2.8-5.7 2.9-5.7 2.8-5.4 2.8-5.2 2.9-4.8 2.8-4.3 2.8-3.8 2.9-3.2 2.8-2.6 2.8-1.8 2.9-1.1 2.8-.4 2.8.4 2.9 1.1 2.8 1.8 2.8 2.6 2.9 3.2 2.8 3.8 2.8 4.3 2.9 4.8 2.8 5.2 2.8 5.4 2.9 5.7 2.8 5.7" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
       <rect x="336" y="170" width="34" height="172" rx="17" fill="currentColor"/>
