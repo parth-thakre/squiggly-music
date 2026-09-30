@@ -19,7 +19,7 @@
 
 ## libmpv and Node
 
-The audio process looks for `libmpv.so.2` or `.1` on Linux, `libmpv.2.dylib` on macOS, and `mpv-2.dll` or `libmpv-2.dll` on Windows. On macOS it also tries Homebrew's `/opt/homebrew/lib` and `/usr/local/lib` and MacPorts' `/opt/local/lib`; `brew install mpv` provides it. `SQUIGGLY_LIBMPV_PATH` points it at a specific file instead. If that file is missing, the engine reports itself unavailable. It won't fall back to a system copy. The standalone `mpv` program isn't enough; it needs the library.
+The audio process looks for `libmpv.so.2` or `.1` on Linux, `mpv-2.dll` or `libmpv-2.dll` on Windows, and on macOS `libmpv.2.dylib` in Homebrew's `/opt/homebrew/lib` or `/usr/local/lib` or MacPorts' `/opt/local/lib`, by full path only; `brew install mpv` provides it. `SQUIGGLY_LIBMPV_PATH` points it at a specific file instead. If that file is missing, the engine reports itself unavailable. It won't fall back to a system copy. The audio process runs in the app's data folder, so a copy in the folder you started the app from isn't picked up. The standalone `mpv` program isn't enough; it needs the library.
 
 In development the audio process runs on the `node` from your PATH, or `SQUIGGLY_NODE_PATH`, on a Mac too. libmpv crashed during initialisation inside Electron's utility process, which is why it runs in plain Node.
 

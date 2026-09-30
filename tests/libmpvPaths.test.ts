@@ -4,8 +4,11 @@ import { libmpvCandidates, libmpvMissing } from '../packages/player-mpv/librarie
 afterEach(() => { vi.doUnmock('koffi'); vi.unstubAllGlobals(); vi.resetModules(); });
 
 describe('where libmpv is looked for', () => {
-  it('tries Homebrew and MacPorts on macOS, after the loader\'s own search', () => {
-    expect(libmpvCandidates('darwin')).toEqual(['libmpv.2.dylib', '/opt/homebrew/lib/libmpv.2.dylib', '/usr/local/lib/libmpv.2.dylib', '/opt/local/lib/libmpv.2.dylib']);
+  it('tries only Homebrew and MacPorts on macOS, by absolute path', () => {
+    expect(libmpvCandidates('darwin')).toEqual(['/opt/homebrew/lib/libmpv.2.dylib', '/usr/local/lib/libmpv.2.dylib', '/opt/local/lib/libmpv.2.dylib']);
+  });
+  it('never gives macOS a bare name, which dyld would also look for in the current directory', () => {
+    for (const candidate of libmpvCandidates('darwin')) expect(candidate.startsWith('/')).toBe(true);
   });
   it('keeps the other platforms as they were', () => {
     expect(libmpvCandidates('linux')).toEqual(['libmpv.so.2', 'libmpv.so.1']);

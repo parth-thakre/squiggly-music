@@ -57,7 +57,7 @@ zipinfo dist/Squiggly-Music-<version>-macos-arm64.zip | awk '{print substr($1,1,
 
 ### macOS libmpv
 
-The app doesn't bundle libmpv. The audio host tries `libmpv.2.dylib` on the loader's own search path, then `/opt/homebrew/lib` (Homebrew on Apple silicon), `/usr/local/lib` (Homebrew on Intel), and `/opt/local/lib` (MacPorts). When none loads, the engine reports itself unavailable and the deck says to run `brew install mpv`, or with MacPorts `sudo port install mpv +libmpv` (MacPorts builds libmpv only with that variant), then restart the audio engine. `SQUIGGLY_LIBMPV_PATH` points it at a specific file instead.
+The app doesn't bundle libmpv. The audio host tries `libmpv.2.dylib` in `/opt/homebrew/lib` (Homebrew on Apple silicon), `/usr/local/lib` (Homebrew on Intel), and `/opt/local/lib` (MacPorts). When none loads, the engine reports itself unavailable and the deck says to run `brew install mpv`, or with MacPorts `sudo port install mpv +libmpv` (MacPorts builds libmpv only with that variant), then restart the audio engine. `SQUIGGLY_LIBMPV_PATH` points it at a specific file instead.
 
 The library must be built for the app's CPU: the arm64 app needs Homebrew in `/opt/homebrew`, and the x64 app, on an Intel Mac or under Rosetta, needs an Intel Homebrew in `/usr/local`. A library for the wrong CPU fails to load and the deck gives the same message. Homebrew lists no Intel macOS bottle for mpv (checked 2026-09-30), so on an Intel Mac `brew install mpv` compiles it.
 
@@ -70,7 +70,7 @@ The macOS apps aren't signed or notarized, like the Windows builds. Gatekeeper s
 - macOS 15 and later: open the app once, then choose Open Anyway in System Settings, Privacy & Security. Apple removed the Control-click way round in macOS 15.
 - macOS 14 and earlier: Control-click the app, choose Open, and confirm.
 
-If macOS says the app is damaged, `xattr -dr com.apple.quarantine "/Applications/Squiggly Music.app"` is the usual fix. It hasn't been tried with this app.
+Open Anyway is the way to prefer. If macOS instead says the app is damaged and offers no Open Anyway, `xattr -dr com.apple.quarantine "/Applications/Squiggly Music.app"` clears the flag on this one app. Don't run it on a folder such as Downloads or Applications: that skips Gatekeeper's check for everything in it. The command hasn't been tried with this app.
 
 The updater only says a new version is out on macOS. electron-updater installs macOS updates through Squirrel.Mac, which needs a signed app. It still reads `latest-mac.yml` for the version.
 

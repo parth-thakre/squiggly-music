@@ -3,13 +3,14 @@
 
 // An explicit path (SQUIGGLY_LIBMPV_PATH, or the one the packaged Windows build passes) is the only
 // candidate. On macOS libmpv comes from Homebrew (/opt/homebrew on Apple silicon, /usr/local on
-// Intel) or MacPorts (`sudo port install mpv +libmpv`). The bare name goes first: the loader
-// searches /usr/local/lib for it, and DYLD_LIBRARY_PATH.
+// Intel) or MacPorts (`sudo port install mpv +libmpv`), and only those absolute paths are tried:
+// for a bare name dyld also searches the current directory, and the app isn't hardened, so a
+// libmpv.2.dylib left wherever the app was started from would load.
 export function libmpvCandidates(platform: NodeJS.Platform, explicit?: string): string[] {
   if (explicit) return [explicit];
   if (platform === 'win32') return ['mpv-2.dll', 'libmpv-2.dll'];
   if (platform === 'darwin') {
-    return ['libmpv.2.dylib', '/opt/homebrew/lib/libmpv.2.dylib', '/usr/local/lib/libmpv.2.dylib', '/opt/local/lib/libmpv.2.dylib'];
+    return ['/opt/homebrew/lib/libmpv.2.dylib', '/usr/local/lib/libmpv.2.dylib', '/opt/local/lib/libmpv.2.dylib'];
   }
   return ['libmpv.so.2', 'libmpv.so.1'];
 }
