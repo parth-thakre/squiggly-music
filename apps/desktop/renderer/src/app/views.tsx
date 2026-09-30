@@ -9,7 +9,7 @@ import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
 import { Credits } from './credits';
 import { morph, nav, useRoute } from './route';
-import { updateSettings, useSettings, useSettingsError } from './settings';
+import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from './settings';
 import { Lyrics } from './lyrics';
 import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
@@ -721,7 +721,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'diagnostics'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -748,6 +748,7 @@ export function SettingsView() {
         <h2>Window</h2>
         {row('closeToTray', 'Keep playing when the window closes', 'Closing the window leaves Squiggly in the tray. Quit from the tray menu.')}
         {row('miniOnTop', 'Keep the mini player on top', 'The mini player stays above other windows.')}
+        {diagnosticsBuilt && <><h2>Diagnostics</h2><DiagnosticsSwitch /></>}
       </>}
       {error && <p className="note" role="alert">{error}</p>}
       <ThemeSettings />
@@ -787,6 +788,37 @@ function UpdateSettings() {
       {!['checking', 'downloading', 'ready'].includes(update.status) && <button type="button" className="text-button" onClick={() => void bridge.check()}>Check now</button>}
     </div>
   </>;
+}
+
+// Desktop betas with remote diagnostics built in (apps/desktop/main/remoteDiagnostics.ts). Off,
+// the main process sends and writes nothing until it's turned on again. The beta marker
+// (App.tsx) opens Settings here with the switch focused.
+let focusDiagnostics = false;
+const diagnosticsFocus = new Set<() => void>();
+export function showDiagnosticsSetting() {
+  focusDiagnostics = true;
+  nav.go({ view: 'settings' });
+  // Already on Settings: the switch is there to take focus now.
+  diagnosticsFocus.forEach(take => take());
+}
+export function DiagnosticsSwitch() {
+  const settings = useSettings();
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const take = () => {
+      if (!focusDiagnostics || !input.current) return;
+      focusDiagnostics = false;
+      input.current.scrollIntoView({ block: 'center' });
+      input.current.focus({ preventScroll: true });
+    };
+    take();
+    diagnosticsFocus.add(take);
+    return () => { diagnosticsFocus.delete(take); };
+  }, []);
+  return <label className="setting">
+    <input ref={input} type="checkbox" checked={settings.diagnostics} onChange={event => void updateSettings({ diagnostics: event.target.checked })} />
+    <span><strong>Send diagnostics to the developer</strong><span>This beta sends errors, logs, and what the audio engine is doing, and keeps a copy in its data folder. Never passwords, tokens, usernames, or server addresses with their sign-in parameters.</span></span>
+  </label>;
 }
 
 // Desktop and Android; the browser build signs out from the deck. The desktop's main process

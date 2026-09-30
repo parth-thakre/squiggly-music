@@ -17,8 +17,11 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // connect screen.
 // `update` overrides the update state (UpdateState); update calls are recorded in bridgeCalls.
 // `connect` answers connect by the address given (a Result); any other address fails.
-export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; connect?: Record<string, object> } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, connectResults }) => {
+// `diagnostics` makes it a beta with remote diagnostics built in: the bridge has sendDiagnostics,
+// whose calls are recorded in bridgeCalls. Without it (the default) there are none, as in
+// stable releases. Settings changes are kept and recorded as `settings:<json>`.
+export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; connect?: Record<string, object>; diagnostics?: boolean } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, connectResults, diagnostics }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -38,7 +41,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const library = new Proxy({}, {
       get: (_target, method: string) => method === 'coverUrl' ? () => '' : async () => ({ ok: true, value: method in empty ? empty[method] : [] }),
     });
-    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true };
+    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, diagnostics: true };
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
     const disabled = new Set<string>(), removed = new Set<string>();
@@ -63,8 +66,9 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         hosted: mediaHost,
         subscribe: (listener: (state: unknown) => void) => { Object.assign(window, { pushMedia: listener }); return () => undefined; },
       },
-      settings: async () => settings,
-      updateSettings: async () => ({ ok: true, value: settings }),
+      settings: async () => ({ ...settings }),
+      updateSettings: async (changes: object) => { calls.push(`settings:${JSON.stringify(changes)}`); Object.assign(settings, changes); return { ok: true, value: { ...settings } }; },
+      ...(diagnostics ? { sendDiagnostics: async () => { calls.push('send-diagnostics'); return { ok: true, value: 'Sent 3 diagnostic events.' }; } } : {}),
       library,
       window: {
         isMini: false, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }),
@@ -91,5 +95,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         return { ok: true, value: undefined };
       },
     } });
-  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {}, connectResults: options.connect ?? {} });
+  }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {}, connectResults: options.connect ?? {}, diagnostics: options.diagnostics ?? false });
 }

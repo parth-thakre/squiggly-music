@@ -7,6 +7,7 @@ import { getThemes, onThemesChange, selectTheme } from '../theme';
 import { splitTitle } from '../ui';
 import { openConfigFolder } from '../config';
 import { setRating } from '../ratings';
+import { diagnosticsBuilt, getSettings } from '../settings';
 import { following, nextRepeat } from '../../../../../../packages/core/playOrder';
 import { onCommandError } from './keymap';
 import { togglePalette } from './palette-state';
@@ -150,9 +151,9 @@ add({
   id: 'reload-extensions', title: 'Reload extensions', category: 'App', when: () => !!window.squiggly?.extensions,
   async run() { const result = await window.squiggly!.extensions.reload(); if (!result.ok) fail(result.error); },
 });
-// Test builds with remote diagnostics only: the preload offers sendDiagnostics there.
+// Desktop betas with remote diagnostics built in, while their setting is on.
 add({
-  id: 'send-diagnostics', title: 'Send diagnostics now', category: 'App', when: () => !!window.squiggly?.sendDiagnostics,
+  id: 'send-diagnostics', title: 'Send diagnostics now', category: 'App', when: () => diagnosticsBuilt && getSettings().diagnostics,
   async run() { const result = await window.squiggly!.sendDiagnostics!(); if (!result.ok) fail(result.error); },
 });
 

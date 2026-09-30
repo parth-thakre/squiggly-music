@@ -34,7 +34,7 @@ import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { remote } from './remoteDiagnostics';
 
-// Test builds with remote diagnostics compiled in (remoteDiagnostics.ts); otherwise does nothing.
+// Betas with remote diagnostics compiled in (remoteDiagnostics.ts); otherwise does nothing.
 remote.installEarly();
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
@@ -393,8 +393,10 @@ function shellPlay() {
 // URL before replacing the account, while keeping the audio engine's volume and output device.
 function connectTo(typed: Connection, generation: number) {
   return Effect.gen(function* () {
-    // Diagnostics builds replace this password with *** in everything they send.
+    // Betas with diagnostics replace the password, and a username long enough not to match
+    // everywhere, with *** in everything they send or write.
     remote.addSecret(typed.password);
+    if (typed.username.length >= 3) remote.addSecret(typed.username);
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const resolved = yield* resolveAddress(typed);
     // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
@@ -591,6 +593,8 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();
+    // Betas with diagnostics: off stops sending and writing at once; on picks up again.
+    if (next.diagnostics !== previous.diagnostics) { remote.setActive(next.diagnostics); tray?.setToolTip(`Squiggly Music${remote.titleSuffix}`); }
     applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
     if (next.checkForUpdates && !previous.checkForUpdates) updates.check();
     return settings.value;
@@ -644,11 +648,14 @@ function installHandlers() {
     };
     yield* Effect.tryPromise(() => writeFile(result.filePath!, JSON.stringify(report, null, 2), { mode: 0o600 }));
   }), 'dialog');
-  // Diagnostics builds only: the palette's "Send diagnostics now".
-  if (remote.enabled) handle('diagnostics:send', () => Effect.promise(async () => {
+  // Betas with diagnostics only: the palette's "Send diagnostics now".
+  if (remote.enabled) handle('diagnostics:send', () => Effect.gen(function* () {
+    if (!remote.live) return yield* Effect.fail(new Error('Diagnostics are off. Turn on "Send diagnostics to the developer" in Settings first.'));
     remote.event('diag.flush-requested', {});
-    return remote.flush(true);
-  }).pipe(Effect.flatMap(result => result.error && result.queued ? Effect.fail(new Error(`Diagnostics not sent: ${result.error}`)) : Effect.succeed(`Sent ${result.sent} diagnostic events.`))), 'window');
+    const result = yield* Effect.promise(() => remote.flush(true));
+    if (result.error && result.queued) return yield* Effect.fail(new Error(`Diagnostics not sent: ${result.error}`));
+    return `Sent ${result.sent} diagnostic events.`;
+  }), 'window');
 }
 
 // Both windows load the same renderer with the same sandbox, isolation, and navigation limits.
@@ -908,7 +915,7 @@ app.whenReady().then(async () => {
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
   await playModes.load();
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
-  remote.start(userData, { snapshot: () => state, outputDevice: () => settings.value.outputDevice, exclusiveOutput: () => settings.value.exclusiveOutput });
+  remote.start(userData, { snapshot: () => state, outputDevice: () => settings.value.outputDevice, exclusiveOutput: () => settings.value.exclusiveOutput }, settings.value.diagnostics);
   installHandlers(); loop.enable();
   const windowContents = () => appWindows().map(target => target.webContents);
   config = startConfigFolder({ assertSender, windows: windowContents });

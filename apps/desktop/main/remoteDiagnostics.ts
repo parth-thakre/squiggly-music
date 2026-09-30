@@ -9,23 +9,29 @@ import type { Readable } from 'node:stream';
 import { format } from 'node:util';
 import type { AppSnapshot, ExtensionInfo, PlayerSnapshot } from '../../../packages/core/contracts';
 
-// TEST BUILDS ONLY. Streams the main process's logs and state to a collector
+// BETA BUILDS ONLY. Streams the main process's logs and state to a collector
 // (scripts/diag-collector.mjs) so a real install can be debugged live.
 //
-// Compiled in only when SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN are set while building
-// (electron.vite.config.ts defines the constants below, for the main process only). Without
-// them every method here returns at once: nothing is hooked, written, or sent. Nothing is ever
-// read from the runtime environment.
+// Compiled in only when SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN are set while building a
+// prerelease version (electron.vite.config.ts defines the constants below, for the main process
+// only, and refuses them for a stable version). Without them every method here returns at once:
+// nothing is hooked, written, or sent. Nothing is ever read from the runtime environment.
+//
+// The person can turn it off in Settings (the diagnostics setting, setActive). Off, nothing is
+// queued, sent, or appended to the local file, and whatever was waiting is dropped. On again, it
+// picks up from there.
 //
 // Every string is scrubbed before it's queued (scrub): Subsonic credential query parameters and
-// the connected account's password never leave the process, and no stored account object is
-// ever passed in.
+// the connected account's password and username never leave the process, and no stored account
+// object is ever passed in.
 
 declare const __SQUIGGLY_DIAG_URL__: string | undefined;
 declare const __SQUIGGLY_DIAG_TOKEN__: string | undefined;
 declare const __SQUIGGLY_DIAG_BUILD__: Record<string, unknown> | undefined;
 
-export const TITLE_SUFFIX = ' — diagnostics build';
+// Added to the window titles and the tray's tooltip while diagnostics are on. The window shows
+// its own marker too (App.tsx), which opens the setting.
+export const TITLE_SUFFIX = ' — Beta · sends diagnostics';
 const SECRET_PARAMS = ['u', 't', 's', 'p', 'apiKey', 'token', 'password'];
 // A parameter after ? & or ; (or their percent-encoded forms, for a URL inside a URL), up to the
 // next separator. The name and = stay so the log still shows which parameter was there.
@@ -70,10 +76,17 @@ const errorFields = (error: unknown) => error instanceof Error
   ? { name: error.name, message: error.message, stack: error.stack ?? null }
   : { name: typeof error, message: typeof error === 'string' ? error : safeFormat(error), stack: null };
 function safeFormat(value: unknown) { try { return format('%o', value); } catch { return String(value); } }
+// fetch says only "fetch failed"; why (ENOTFOUND for a tailnet name off the tailnet,
+// ECONNREFUSED, a timeout) is in its cause.
+function sendError(error: unknown) {
+  if (!(error instanceof Error)) return 'Send failed.';
+  const cause = error.cause as { code?: unknown; message?: unknown } | undefined;
+  const reason = typeof cause?.code === 'string' ? cause.code : typeof cause?.message === 'string' ? cause.message : null;
+  return reason ? `${error.message} (${reason})` : error.message;
+}
 
 export class RemoteDiagnostics {
   readonly enabled: boolean;
-  readonly titleSuffix: string;
   private readonly url: string;
   private readonly token: string;
   private readonly fetch: typeof fetch;
@@ -103,7 +116,14 @@ export class RemoteDiagnostics {
   private installed = false;
   private started = false;
   private closed = false;
-  // The local NDJSON copy.
+  // The Settings switch. On until start() says otherwise, so what happens before settings load
+  // is kept, then dropped unsent if the switch turns out to be off.
+  private active = true;
+  // Whether the startup facts went out; they wait for the first time the switch is on.
+  private reported = false;
+  private windows = new Map<BrowserWindow, string>();
+  // The local NDJSON copy, in <userData>/diagnostics once diagnostics are first on.
+  private userData = '';
   private directory: string | null = null;
   private file: { day: string; part: number; path: string; bytes: number } | null = null;
   private fileWork: Promise<void> = Promise.resolve();
@@ -119,12 +139,30 @@ export class RemoteDiagnostics {
   constructor(options: DiagnosticsOptions) {
     this.url = options.url; this.token = options.token;
     this.enabled = Boolean(options.url && options.token);
-    this.titleSuffix = this.enabled ? TITLE_SUFFIX : '';
     this.fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
     this.flushMs = options.flushMs ?? 2000;
     this.heartbeatMs = options.heartbeatMs ?? 5000;
     this.maxQueue = options.maxQueue ?? 5000;
     this.maxFileBytes = options.maxFileBytes ?? 20 * 1024 * 1024;
+  }
+
+  // Whether this build has diagnostics and the switch is on.
+  get live() { return this.enabled && this.active && !this.closed; }
+  get titleSuffix() { return this.live ? TITLE_SUFFIX : ''; }
+
+  // The Settings switch. Off drops everything waiting (queued events and unwritten lines) and
+  // stops the local file; on again reports what it hasn't yet, then carries on.
+  setActive(on: boolean) {
+    if (!this.enabled || this.closed || on === this.active) return;
+    this.active = on;
+    if (!on) {
+      this.queue = []; this.lines = [];
+      if (this.urgentTimer) { clearTimeout(this.urgentTimer); this.urgentTimer = null; }
+      this.failures = 0; this.retryAt = 0; this.lastError = null;
+    } else if (this.started) {
+      if (!this.reported) this.report(); else { this.event('diag.resumed', {}, true); this.heartbeat(); }
+    }
+    this.retitle();
   }
 
   // Events ------------------------------------------------------------------------------
@@ -159,7 +197,7 @@ export class RemoteDiagnostics {
 
   // Queues one event for the collector and the local file. Urgent ones are sent within a moment.
   event(kind: string, data: Record<string, unknown> = {}, urgent = false) {
-    if (!this.enabled || this.closed) return;
+    if (!this.live) return;
     if (NOISY.has(kind) && !this.allowNoise(kind)) return;
     const base = { t: new Date().toISOString(), seq: ++this.seq, session: this.session, kind };
     const event = Object.assign({ ...base }, this.clean(data) as Record<string, unknown>, base) as DiagnosticEvent;
@@ -198,10 +236,12 @@ export class RemoteDiagnostics {
 
   // Transport ---------------------------------------------------------------------------
 
-  // Writes pending lines to the local file and posts queued events. Never throws. A failed post
-  // keeps its events and waits (2 s doubling to 60 s) before the next; force skips that wait.
+  // Writes pending lines to the local file and posts queued events. Never throws or logs. A failed
+  // post (a collector that's down, or a name that doesn't resolve off its network) keeps its events
+  // and waits (2 s doubling to 60 s) before the next; force skips that wait.
   async flush(force = false): Promise<{ sent: number; queued: number; error: string | null }> {
     if (!this.enabled) return { sent: 0, queued: 0, error: 'Diagnostics are not built in.' };
+    if (!this.active) return { sent: 0, queued: 0, error: 'Diagnostics are turned off in Settings.' };
     this.writeLines();
     if (this.sending) { await this.sending.catch(() => 0); if (!force) return this.result(0); }
     if (!this.queue.length || (!force && Date.now() < this.retryAt)) return this.result(0);
@@ -213,7 +253,8 @@ export class RemoteDiagnostics {
 
   private async post(): Promise<number> {
     let sent = 0;
-    while (this.queue.length) {
+    // Stops when the switch goes off mid-send; a batch already in flight may still arrive.
+    while (this.queue.length && this.active) {
       const batch = this.queue.splice(0, BATCH);
       try {
         const response = await this.fetch(this.url, {
@@ -223,12 +264,14 @@ export class RemoteDiagnostics {
         await response.arrayBuffer().catch(() => undefined);
         if (!response.ok) throw new Error(`Collector answered HTTP ${response.status}.`);
       } catch (error) {
+        // Turned off while this was on its way: it's dropped with the rest, not kept for later.
+        if (!this.active) return sent;
         // Back to the front, oldest first, within the bound.
         this.queue.unshift(...batch);
         if (this.queue.length > this.maxQueue) { const over = this.queue.length - this.maxQueue; this.queue.splice(0, over); this.dropped += over; }
         if (!this.failures) this.offlineSince = Date.now();
         this.failures++;
-        this.lastError = error instanceof Error ? error.message : 'Send failed.';
+        this.lastError = sendError(error);
         this.retryAt = Date.now() + Math.min(60_000, 2000 * 2 ** Math.min(this.failures - 1, 5));
         return sent;
       }
@@ -308,19 +351,37 @@ export class RemoteDiagnostics {
     process.on('warning', warning => this.event('main.warning', errorFields(warning)));
   }
 
-  // At ready: the startup report, the heartbeat, and Chromium's process events.
-  start(userData: string, source: DiagnosticsSource) {
+  // At ready, with the Settings switch as saved: the startup report, the heartbeat, and
+  // Chromium's process events. Off, what was kept since launch is dropped unsent and the report
+  // waits until the switch is turned on.
+  start(userData: string, source: DiagnosticsSource, active = true) {
     if (!this.enabled || this.started) return;
-    this.started = true; this.source = source;
+    this.started = true; this.source = source; this.userData = userData;
     this.installEarly();
-    const directory = join(userData, 'diagnostics');
-    try { mkdirSync(directory, { recursive: true }); this.directory = directory; } catch { this.fileErrors++; }
-
+    this.setActive(active);
     const every = (ms: number, run: () => void) => { const timer = setInterval(() => { try { run(); } catch { /* Keep going. */ } }, ms); timer.unref?.(); this.timers.push(timer); };
-    every(this.flushMs, () => void this.flush());
+    every(this.flushMs, () => { if (this.active) void this.flush(); });
     every(this.heartbeatMs, () => this.heartbeat());
     every(60_000, () => this.ipcCounts());
     // Diagnostics must never stop the app starting.
+    try {
+      app.on('child-process-gone', (_event, details) => this.event('chromium.child-gone', {
+        type: details.type, reason: details.reason, exitCode: details.exitCode, name: details.name ?? null, serviceName: details.serviceName ?? null,
+      }, details.reason !== 'clean-exit'));
+      app.on('render-process-gone', (_event, contents, details) => this.event('renderer.gone', {
+        window: this.windowNames.get(contents) ?? 'other', reason: details.reason, exitCode: details.exitCode,
+      }, true));
+      for (const name of ['suspend', 'resume', 'lock-screen', 'unlock-screen'] as const) powerMonitor.on(name as 'suspend', () => this.event('system.power', { state: name }));
+    } catch (error) { this.event('diag.start-failed', errorFields(error), true); }
+    if (this.active) this.report();
+  }
+
+  // The local file's folder and the startup facts, once, the first time diagnostics are on.
+  private report() {
+    this.reported = true;
+    const userData = this.userData;
+    const directory = join(userData, 'diagnostics');
+    try { mkdirSync(directory, { recursive: true }); this.directory = directory; } catch { this.fileErrors++; }
     try {
       const runtime = (file: string) => { const path = join(process.resourcesPath ?? '', 'runtime', file); return { path, exists: existsSync(path) }; };
       this.event('startup', {
@@ -340,27 +401,18 @@ export class RemoteDiagnostics {
       const file = this.target(0);
       this.event('diag.note', {
         message: file
-          ? `Diagnostics build. Every event is also appended to ${file} (a new remote-YYYYMMDD[-N].ndjson each day or past ${Math.round(this.maxFileBytes / 1048576)} MB).`
-          : 'Diagnostics build. No local copy: the diagnostics folder could not be created.',
+          ? `Beta with diagnostics. Every event is also appended to ${file} (a new remote-YYYYMMDD[-N].ndjson each day or past ${Math.round(this.maxFileBytes / 1048576)} MB).`
+          : 'Beta with diagnostics. No local copy: the diagnostics folder could not be created.',
         file, collector, flushMs: this.flushMs, heartbeatMs: this.heartbeatMs, maxQueue: this.maxQueue,
       }, true);
       void app.getGPUInfo('basic').then(info => this.event('gpu.info', { info }), error => this.event('gpu.info', { error: errorFields(error) }));
-
-      app.on('child-process-gone', (_event, details) => this.event('chromium.child-gone', {
-        type: details.type, reason: details.reason, exitCode: details.exitCode, name: details.name ?? null, serviceName: details.serviceName ?? null,
-      }, details.reason !== 'clean-exit'));
-      app.on('render-process-gone', (_event, contents, details) => this.event('renderer.gone', {
-        window: this.windowNames.get(contents) ?? 'other', reason: details.reason, exitCode: details.exitCode,
-      }, true));
-      for (const name of ['suspend', 'resume', 'lock-screen', 'unlock-screen'] as const) powerMonitor.on(name as 'suspend', () => this.event('system.power', { state: name }));
-
       this.heartbeat();
     } catch (error) { this.event('diag.start-failed', errorFields(error), true); }
   }
 
   private heartbeat() {
     const source = this.source;
-    if (!source) return;
+    if (!source || !this.live) return;
     const { player, diagnostics, server, update } = source.snapshot();
     const track = player.queue[player.currentIndex];
     this.event('heartbeat', {
@@ -386,13 +438,15 @@ export class RemoteDiagnostics {
     this.ipcCalls.clear(); this.ipcFailures.clear();
   }
 
-  // Both app windows: renderer console, load failures, hangs. Adds the build's title marker.
+  // Both app windows: renderer console, load failures, hangs. Adds the title marker while on.
   watchWindow(window: BrowserWindow, name: string) {
     if (!this.enabled) return;
     const contents = window.webContents;
     this.windowNames.set(contents, name);
-    window.setTitle(`${window.getTitle()}${TITLE_SUFFIX}`);
-    window.on('page-title-updated', (event, title) => { event.preventDefault(); window.setTitle(`${title}${TITLE_SUFFIX}`); });
+    this.windows.set(window, window.getTitle());
+    window.once('closed', () => this.windows.delete(window));
+    window.on('page-title-updated', (event, title) => { event.preventDefault(); this.windows.set(window, title); window.setTitle(`${title}${this.titleSuffix}`); });
+    this.retitle();
     contents.on('console-message', details => this.event('renderer.console', {
       window: name, level: details.level, message: details.message, source: details.sourceId, line: details.lineNumber,
     }, details.level === 'error'));
@@ -400,11 +454,10 @@ export class RemoteDiagnostics {
     contents.on('responsive', () => this.event('renderer.responsive', { window: name }, true));
     contents.on('did-fail-load', (_event, code, description, url, isMainFrame) => this.event('renderer.load-failed', { window: name, code, description, url, isMainFrame }, true));
     contents.on('preload-error', (_event, preloadPath, error) => this.event('renderer.preload-error', { window: name, preloadPath, ...errorFields(error) }, true));
-    contents.on('did-finish-load', () => {
-      this.event('renderer.loaded', { window: name, url: contents.getURL() });
-      // A small corner marker, so a screenshot shows which build it is.
-      if (name === 'main') void contents.insertCSS(`body::after{content:'diagnostics build';position:fixed;left:6px;bottom:4px;z-index:2147483647;font:10px/1 ui-monospace,monospace;opacity:.55;pointer-events:none;color:#f0c;}`).catch(() => undefined);
-    });
+    contents.on('did-finish-load', () => this.event('renderer.loaded', { window: name, url: contents.getURL() }));
+  }
+  private retitle() {
+    for (const [window, title] of this.windows) if (!window.isDestroyed()) window.setTitle(`${title}${this.titleSuffix}`);
   }
 
   // The audio host: where it runs from, its lifecycle, and its output (piped in this build).
@@ -487,14 +540,16 @@ export class RemoteDiagnostics {
     this.event(`update.${name}`, data, name === 'error');
   }
 
-  // At quit: a last event, then a flush bounded by the caller.
+  // At quit: a last event, then a flush bounded by the caller. Nothing, with the switch off.
   async close() {
     if (!this.enabled || this.closed) return;
+    const active = this.active;
     this.event('diag.stop', { stats: this.stats() });
     this.closed = true;
     for (const timer of this.timers) clearInterval(timer);
     this.timers = [];
     if (this.urgentTimer) clearTimeout(this.urgentTimer);
+    if (!active) return;
     this.writeLines();
     await Promise.race([Promise.all([this.flush(true), this.fileWork]), new Promise(resolve => setTimeout(resolve, 1500))]);
   }
