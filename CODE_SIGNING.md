@@ -28,4 +28,4 @@ Every signing request is approved by hand in SignPath. Team members use multi-fa
 
 This program will not transfer any information to other networked systems unless specifically requested by the user or the person installing or operating it.
 
-Squiggly talks to the Navidrome or OpenSubsonic server you connect it to. It looks up lyrics on lrclib.net only if you turn that on in Settings. It doesn't check for updates or send analytics.
+Squiggly talks to the Navidrome or OpenSubsonic server you connect it to. It looks up lyrics on lrclib.net only if you turn that on in Settings. It checks this repository's GitHub releases for a newer version, which Settings › Updates turns off. It doesn't send analytics.
