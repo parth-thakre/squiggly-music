@@ -348,7 +348,7 @@ function shellPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuff
   void Effect.runPromise(Effect.either(metrics.measure('shell.play-mode', semaphores.audio.withPermits(1)(setPlayMode(command))))).then(broadcast);
 }
 // Loads the server-saved queue at its song and position, paused or playing.
-function resumeSaved(paused: boolean) {
+function resumeSaved() {
   return Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
     const client = server;
@@ -360,7 +360,7 @@ function resumeSaved(paused: boolean) {
     const currentIndex = Math.min(Math.max(0, Math.trunc(saved.currentIndex) || 0), saved.tracks.length - 1);
     const positionSeconds = Number.isFinite(saved.positionSeconds) ? Math.max(0, saved.positionSeconds) : 0;
     endRadio();
-    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused, ordered: true });
+    yield* send({ type: 'queue', tracks: saved.tracks.map(track => client.playable(track)), startIndex: currentIndex, startPosition: positionSeconds, paused: false, ordered: true });
     queueSync.markSaved({ trackIds: saved.tracks.map(track => track.id), currentIndex, positionSeconds: Math.floor(positionSeconds) });
   });
 }
@@ -370,7 +370,7 @@ const canResume = () => state.player.engine === 'ready' && !state.player.queue.l
 function shellPlay() {
   if (!canResume()) { transport({ type: 'play' }); return; }
   const generation = connectionGeneration;
-  const resume = Effect.suspend(() => generation === connectionGeneration && canResume() ? resumeSaved(false) : Effect.void);
+  const resume = Effect.suspend(() => generation === connectionGeneration && canResume() ? resumeSaved() : Effect.void);
   void Effect.runPromise(Effect.either(metrics.measure('shell.resume', semaphores.server.withPermits(1)(resume)))).then(broadcast);
 }
 // Connects to a server, replacing any current one. Stops playback and clears every authenticated
@@ -448,7 +448,7 @@ function installHandlers() {
     const command = yield* Schema.decodeUnknown(CommandSchema)(value).pipe(Effect.mapError(() => new Error('Invalid player command.')));
     if (command.type === 'restart') { yield* Effect.tryPromise(() => launchPlayer()); return; }
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
-    if (command.type === 'play' && canResume()) { yield* resumeSaved(false); return; }
+    if (command.type === 'play' && canResume()) { yield* resumeSaved(); return; }
     if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
     yield* send(command);
   }));
@@ -535,7 +535,7 @@ function installHandlers() {
   }), 'library');
   handle('radio:stop', () => Effect.sync(endRadio), 'library');
   // Loads the server-saved queue paused at its song and position. Playback starts only on play.
-  handle('resume-queue', () => resumeSaved(true), 'server');
+  handle('resume-queue', () => resumeSaved(), 'server');
   ipcMain.handle('squiggly:get-settings', event => { assertSender(event); return settings.value; });
   handle('update-settings', value => Effect.gen(function* () {
     const changes = yield* Schema.decodeUnknown(SettingsPatchSchema)(value, { onExcessProperty: 'error' }).pipe(Effect.mapError(() => new Error('Invalid settings.')));
