@@ -21,6 +21,7 @@ import { GenrePage, Genres } from './views';
 import { Home } from './views';
 import { dropFocusRequest, focusFirstResult, rememberSearch } from './searches';
 import { dropOnQueue, useDropTarget, useFileDrops, useSpringOpen } from './drag';
+import { ShareDialog } from './share';
 
 onMenuError(message => player.showError(message));
 
@@ -65,6 +66,7 @@ export function App() {
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
+    <ShareDialog />
   </div></PaletteContext.Provider>;
 }
 

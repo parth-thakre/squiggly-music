@@ -2,7 +2,7 @@ import { Effect, Either, Schema } from 'effect';
 import type {
   Album, AlbumDetail, AlbumListType, Artist, ArtistDetail, Connection, Genre, LibraryApi, LibraryItems, Lyrics, LyricsQuery,
   Playlist, PlaylistDetail, RandomSongOptions, Result, SavedQueue, StarTarget, Track, TrackPage, TrackSort,
-  AlbumYears, ArtistInfo, DiscTitle, SearchOptions, SearchResults,
+  AlbumYears, ArtistInfo, DiscTitle, SearchOptions, SearchResults, Share,
   NowPlayingEntry,
 } from '../core/contracts';
 import type { PlayableTrack } from '../player-mpv/protocol';
@@ -27,6 +27,9 @@ const ArtistRefsSchema = Schema.optional(Schema.Array(Schema.Struct({ id: Refere
 // The account's rating, 1 to 5; 0 or absent is unrated. Anything else is ignored rather than
 // failing the whole response (see rated()).
 const RatingSchema = Schema.optional(Schema.Number);
+// The file's path as the server reports it (Navidrome: relative to the library, or a made-up
+// artist/album/track path unless it is set to report the real one). Only written to playlist files.
+const PathSchema = Schema.String.pipe(Schema.maxLength(4096));
 const SongSchema = Schema.Struct({
   id: IdSchema, title: Schema.String,
   artist: Schema.optional(Schema.String), album: Schema.optional(Schema.String),
@@ -36,6 +39,7 @@ const SongSchema = Schema.Struct({
   track: Schema.optional(KnownCountSchema), discNumber: Schema.optional(KnownCountSchema), year: Schema.optional(KnownCountSchema),
   genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.String), artists: ArtistRefsSchema,
   userRating: RatingSchema,
+  path: Schema.optional(PathSchema),
 });
 const AlbumFields = {
   id: IdSchema, name: Schema.String, artist: Schema.optional(Schema.String), songCount: Schema.optional(CountSchema),
@@ -102,6 +106,7 @@ const NativeSongSchema = Schema.Struct({
   playCount: Schema.optional(CountSchema), playDate: Schema.optional(Schema.NullOr(Schema.String)),
   participants: Schema.optional(Schema.Struct({ artist: ArtistRefsSchema })),
   rating: Schema.optional(Schema.NullOr(Schema.Number)),
+  path: Schema.optional(PathSchema),
 });
 const NativeSongsSchema = Schema.Array(NativeSongSchema).pipe(Schema.maxItems(500));
 const NativeLoginSchema = Schema.Struct({ token: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(8192)) });
@@ -127,6 +132,7 @@ const fromNative = (song: NativeSong): Song => ({
   track: song.trackNumber, discNumber: song.discNumber, year: song.year, genre: song.genre,
   starred: song.starred ? song.starredAt ?? 'starred' : undefined, artists: song.participants?.artist,
   userRating: song.rating ?? undefined,
+  path: song.path,
 });
 const RandomSongsSchema = Schema.Struct({ randomSongs: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
 const ExtensionsSchema = Schema.Struct({ openSubsonicExtensions: Schema.Array(Schema.Struct({
@@ -136,6 +142,14 @@ const SongListSchema = Schema.Struct({ song: Schema.optional(Schema.Array(SongSc
 const SimilarSongsSchema = Schema.Struct({ similarSongs: SongListSchema });
 const TopSongsSchema = Schema.Struct({ topSongs: SongListSchema });
 const SongsByGenreSchema = Schema.Struct({ songsByGenre: Schema.Struct({ song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))) }) });
+// Shares: public links. Their entries are songs, or a record as a directory (title is its name).
+const ShareFieldText = Schema.optional(Schema.String.pipe(Schema.maxLength(1024)));
+const ShareSchema = Schema.Struct({
+  id: IdSchema, url: Schema.String.pipe(Schema.maxLength(2048)), description: ShareFieldText, username: ShareFieldText,
+  created: ShareFieldText, expires: ShareFieldText, lastVisited: ShareFieldText, visitCount: Schema.optional(CountSchema),
+  entry: Schema.optional(Schema.Array(Schema.Struct({ id: IdSchema, title: Schema.optional(Schema.String.pipe(Schema.maxLength(1024))), name: ShareFieldText })).pipe(Schema.maxItems(5000))),
+});
+const SharesSchema = Schema.Struct({ shares: Schema.optional(Schema.Struct({ share: Schema.optional(Schema.Array(ShareSchema).pipe(Schema.maxItems(5000))) })) });
 // Navidrome fills these from its Last.fm and Spotify agents; with the agents off, or nothing
 // found, every field is missing or empty. Similar artists outside the library have no id.
 const TextFieldSchema = Schema.optional(Schema.String.pipe(Schema.maxLength(100_000)));
@@ -174,6 +188,9 @@ const utf8 = (body: Uint8Array<ArrayBuffer>) => new TextDecoder('utf-8', { ignor
 // Only locally authored messages can cross the desktop boundary. Server error
 // text and fetch errors may contain credentials or authenticated URLs.
 class ServerError extends Error { constructor(message: string, readonly code?: number) { super(message); } }
+// An HTTP status other than 200 from a Subsonic endpoint. Navidrome answers 501 for the share
+// endpoints when sharing is off.
+class HttpError extends ServerError { constructor(message: string, readonly status: number) { super(message); } }
 // Navidrome's own API isn't there (another server, or a proxy that passes only /rest), or won't
 // take this sign-in (the server signs people in some other way).
 class NativeMissing extends ServerError {}
@@ -238,6 +255,7 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     trackNumber: song.track ?? null, discNumber: song.discNumber ?? null, year: song.year ?? null,
     genre: song.genre || null, starred: Boolean(song.starred), ...artistRefs(song.artists),
     ...rated(song.userRating),
+    ...(song.path?.trim() ? { path: song.path } : {}),
   };
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max
@@ -285,6 +303,23 @@ const webAddress = (value: string | undefined) => {
 function discTitles(titles: readonly { disc: number; title?: string }[] | undefined): { discTitles?: DiscTitle[] } {
   const named = (titles ?? []).filter(item => item.title?.trim()).map(item => ({ disc: item.disc, title: item.title!.trim() }));
   return named.length ? { discTitles: named } : {};
+}
+// Shares need EnableSharing on Navidrome; without it the endpoints answer HTTP 501.
+const shareMessages: Record<number, string> = {
+  50: 'Your account is not allowed to share. Ask the server\'s administrator.',
+  70: 'Something in this share is no longer on the server. Refresh the library.',
+};
+const shareError = (error: Error) => error instanceof HttpError && (error.status === 501 || error.status === 404)
+  ? new ServerError('This server does not share links. On Navidrome, the administrator turns sharing on with EnableSharing.')
+  : error instanceof ServerError && error.code !== undefined && shareMessages[error.code] ? new ServerError(shareMessages[error.code], error.code) : error;
+function toShare(share: Schema.Schema.Type<typeof ShareSchema>): Share | null {
+  const url = webAddress(share.url);
+  if (!url) return null;
+  return {
+    id: share.id, url, description: share.description?.trim() || null, created: share.created || null, expires: share.expires || null,
+    lastVisited: share.lastVisited || null, visitCount: share.visitCount ?? null,
+    entries: (share.entry ?? []).map(entry => ({ id: entry.id, title: (entry.title ?? entry.name ?? '').trim() })),
+  };
 }
 const toItems = (items: Schema.Schema.Type<ReturnType<typeof itemsSchema>>): LibraryItems => ({
   artists: (items.artist ?? []).map(toArtist), albums: (items.album ?? []).map(toAlbum), tracks: (items.song ?? []).map(song => toTrack(song)),
@@ -368,7 +403,7 @@ export class SubsonicClient {
     const params = authenticated ? this.params(extra) : new URLSearchParams({ v: '1.16.1', c: 'squiggly', f: 'json' });
     if (!formPost) url.search = params.toString();
     return this.send(`server.${endpoint}`, url.href, { method: formPost ? 'POST' : 'GET', ...(formPost ? { body: params } : {}) }, limitMB, response => {
-      if (!response.ok) throw new ServerError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`);
+      if (!response.ok) throw new HttpError(`Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`, response.status);
       return accept(response);
     }, parse);
   }
@@ -719,6 +754,23 @@ export class SubsonicClient {
       });
     }));
   }
+  // A public link to songs, a record, or a playlist. Without an expiry the server picks one.
+  createShare(ids: readonly string[], description?: string | null, expiresAt?: number | null) {
+    return this.request('createShare', SharesSchema, {
+      id: ids, ...(description?.trim() ? { description: description.trim() } : {}),
+      ...(expiresAt ? { expires: String(Math.round(expiresAt)) } : {}),
+    }).pipe(Effect.mapError(shareError), Effect.flatMap(result => {
+      const share = result.shares?.share?.[0];
+      const made = share && toShare(share);
+      return made ? Effect.succeed(made) : Effect.fail(new ServerError('The server made the share but did not return its link. See Settings, Shares.'));
+    }));
+  }
+  // Shares without a usable web address are left out.
+  shares() {
+    return this.request('getShares', SharesSchema).pipe(Effect.mapError(shareError),
+      Effect.map(result => (result.shares?.share ?? []).flatMap(share => toShare(share) ?? [])));
+  }
+  deleteShare(id: string) { return this.request('deleteShare', StatusSchema, { id }).pipe(Effect.mapError(shareError), Effect.asVoid); }
 }
 
 // The address to sign in at: as typed, or, typed without a scheme, the first of HTTPS and HTTP
@@ -773,6 +825,9 @@ const library = {
   artistInfo: entry(LibraryRequestSchemas.artistInfo, (client, [artistId]) => client.artistInfo(artistId)),
   songsByGenre: entry(LibraryRequestSchemas.songsByGenre, (client, [genre, offset, size]) => client.songsByGenre(genre, offset, size), value => value),
   nowPlaying: entry(LibraryRequestSchemas.nowPlaying, client => client.nowPlaying()),
+  createShare: entry(LibraryRequestSchemas.createShare, (client, [ids, description, expiresAt]) => client.createShare(ids, description, expiresAt)),
+  shares: entry(LibraryRequestSchemas.shares, client => client.shares()),
+  deleteShare: entry(LibraryRequestSchemas.deleteShare, (client, [id]) => client.deleteShare(id)),
 } satisfies { [K in LibraryMethod]: LibraryEntry<any, LibraryValue<K>> };
 export const libraryMethods = Object.keys(library) as LibraryMethod[];
 export const isLibraryMethod = (method: string): method is LibraryMethod => Object.hasOwn(library, method);

@@ -19,11 +19,11 @@ test.describe('menus', () => {
     await page.keyboard.press('ArrowUp');
     await expect(item('Play next')).toBeFocused();
     await page.keyboard.press('End');
-    await expect(item('Song details')).toBeFocused();
+    await expect(item('Share…')).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await expect(item('Play')).toBeFocused();
     await page.keyboard.press('ArrowUp');
-    await expect(item('Song details')).toBeFocused();
+    await expect(item('Share…')).toBeFocused();
 
     await page.keyboard.press('Escape');
     await expect(app.menu).toBeHidden();
@@ -36,6 +36,10 @@ test.describe('menus', () => {
     await app.openMenuOn(invoker);
     await expect(app.menu.getByRole('menuitem', { name: 'Play all' })).toBeFocused();
     await page.keyboard.press('End');
+    await expect(app.menu.getByRole('menuitem', { name: 'Share…' })).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(app.menu.getByRole('menuitem', { name: 'Export as M3U' })).toBeFocused();
+    await page.keyboard.press('ArrowUp');
     await expect(app.menu.getByRole('menuitem', { name: 'Delete playlist' })).toBeFocused();
     await page.keyboard.press('ArrowUp');
     const rename = app.menu.getByRole('menuitem', { name: 'Rename', exact: true });

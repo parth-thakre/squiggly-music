@@ -1,0 +1,25 @@
+/* The share dialog: a menu-styled box, centred near the top on desktop, a sheet on phones. */
+.share-layer { position: fixed; inset: 0; z-index: 60; }
+.menu.share-dialog { left: 0; right: 0; top: 14vh; width: min(420px, 100vw - 32px); max-width: none; margin: 0 auto; padding: 6px 6px 12px; }
+.menu.share-dialog.sheet { top: auto; width: auto; margin: 0; }
+.share-form { display: grid; gap: 6px; padding: 0 10px; }
+.share-form fieldset { margin: 0; padding: 0; border: 0; }
+.share-form legend, .share-field > span { padding: 6px 0 2px; font-size: calc(13.5px * var(--text)); color: var(--soft); }
+.share-expiries { display: flex; flex-wrap: wrap; gap: 6px 18px; padding: 4px 0; font-size: calc(14.5px * var(--text)); }
+.share-expiries label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.share-expiries input { margin: 0; accent-color: var(--ink); }
+.share-field { display: grid; }
+.share-field input { width: 100%; padding: 6px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-size: calc(14.5px * var(--text)); color: var(--ink); }
+.share-field input:focus-visible { outline: none; border-bottom-color: var(--ink); }
+.share-form .menu-note { padding: 4px 0; max-width: none; }
+.share-actions { margin-top: 6px; gap: 18px; }
+
+/* Settings › Shares */
+.shares-settings { margin-top: 26px; }
+.share-list { list-style: none; margin: 10px 0 0; padding: 0; }
+.share-row { padding: 10px 0 10px 36px; }
+.share-row p { margin: 0 0 4px; }
+.share-row strong { display: block; font-size: calc(15.5px * var(--text)); font-weight: 600; }
+.share-row p > span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
+.share-row .share-url { overflow-wrap: anywhere; }
+.share-row-actions { margin-top: 6px; gap: 8px 18px; }

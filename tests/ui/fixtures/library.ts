@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
-import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry, SearchOptions } from '../../../packages/core/contracts';
+import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry, SearchOptions, Share } from '../../../packages/core/contracts';
 import { SubsonicClient, plainText, searchPages, searchResults } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
@@ -99,6 +99,8 @@ function buildLibrary() {
       // Low Tide Radio is on two discs, and its numbering starts again on the second.
       ...(`al-${k}` === special.twoDiscs && n >= 3 ? { trackNumber: n - 2, discNumber: 2 } : { trackNumber: n + 1, discNumber: 1 }),
       ...(k === 2 && n === 1 ? { artists: [{ id: artist.id, name: artist.name }, { id: artists[2].id, name: artists[2].name }] } : {}),
+      // The file's path as Navidrome reports it. The duet has none, as a server may leave it out.
+      ...(k === 2 && n === 1 ? {} : { path: `${artist.name}/${name}/${String(n + 1).padStart(2, '0')} - ${title}.wav` }),
     }));
     tracks.push(...albumTracks);
     albums.push({ id: `al-${k}`, name, artist: artist.name, songCount: albumTracks.length, artistId: artist.id, year, genre,
@@ -134,6 +136,7 @@ const initialPlaylists = (): ServerPlaylist[] => [
   { id: playlistIds.readonly, name: 'Server Picks', comment: null, readonly: true, trackIds: ['tr-4-1', 'tr-4-2', 'tr-5-1'], changed: '2026-09-01T00:00:00Z' },
 ];
 
+export const sharingOff = 'This server does not share links. On Navidrome, the administrator turns sharing on with EnableSharing.';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const fail = (message: string) => Effect.fail(new Error(message));
 
@@ -145,6 +148,10 @@ export class FakeNavidrome {
   /** Ratings the account has given, 1 to 5, by song, record, or artist id. */
   ratings = new Map<string, number>();
   saved: SavedQueue | null = null;
+  /** Public links on the server (createShare), and whether it makes them (Navidrome's EnableSharing). */
+  shareList: Share[] = [];
+  sharing = true;
+  private sharesMade = 0;
   /** Delays (ms) taken, one per call, by the named method before it touches any state. */
   private delays = new Map<string, number[]>();
   /** Errors returned, one per call, by the named method instead of answering. */
@@ -176,6 +183,7 @@ export class FakeNavidrome {
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
     this.ratings.clear(); this.failures.clear(); this.large = false;
     this.recent = []; this.frequent = []; this.listening = [];
+    this.shareList = []; this.sharing = true; this.sharesMade = 0;
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -337,6 +345,24 @@ export class FakeNavidrome {
     nowPlaying: () => this.op('nowPlaying', [], () => Effect.succeed<NowPlayingEntry[]>(this.listening
       .filter(entry => entry.username.toLowerCase() !== account.username.toLowerCase())
       .map(entry => ({ username: entry.username, track: this.track(entry.trackId) })))),
+    // As the connector reports Navidrome with EnableSharing off (HTTP 501 from every share endpoint).
+    createShare: (ids: readonly string[], description?: string | null, expiresAt?: number | null) => this.op('createShare', [ids, description, expiresAt], () => {
+      if (!this.sharing) return fail(sharingOff);
+      const id = `sh-${++this.sharesMade}`;
+      const title = (item: string) => trackById.get(item)?.title ?? this.albums().find(a => a.id === item)?.name ?? this.playlist(item)?.name ?? item;
+      const share: Share = { id, url: `https://music.example.com/share/${id}`, description: description?.trim() || null,
+        created: new Date(this.clock.now).toISOString(), expires: expiresAt ? new Date(expiresAt).toISOString() : null,
+        lastVisited: null, visitCount: 0, entries: ids.map(item => ({ id: item, title: title(item) })) };
+      this.shareList.push(share);
+      return Effect.succeed(share);
+    }),
+    shares: () => this.op('shares', [], () => this.sharing ? Effect.succeed([...this.shareList]) : fail(sharingOff)),
+    deleteShare: (id: string) => this.op('deleteShare', [id], () => {
+      if (!this.sharing) return fail(sharingOff);
+      if (!this.shareList.some(share => share.id === id)) return fail('The server rejected the request. Check your account and server settings.');
+      this.shareList = this.shareList.filter(share => share.id !== id);
+      return Effect.void;
+    }),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
   };
 

@@ -475,3 +475,91 @@ it('reads the account\'s ratings, sets and clears them with setRating, and check
     await server.close();
   }
 });
+
+// Shares: public links. Navidrome answers the share endpoints with HTTP 501 while EnableSharing is off.
+it('creates, lists, and deletes shares, reads song paths, and says plainly when sharing is off', async () => {
+  const password = 'fixture-password';
+  let sharing = true;
+  const requests: { endpoint: string; params: URLSearchParams }[] = [];
+  const share = (id: string, extra: object = {}) => ({
+    id, url: `https://music.example.com/share/${id}`, description: 'For the drive', username: 'listener',
+    created: '2026-09-25T10:00:00Z', expires: '2026-09-26T10:00:00Z', lastVisited: '0001-01-01T00:00:00Z', visitCount: 3,
+    entry: [song('s1', { path: 'Artist/Record/01 - Song s1.flac' }), { id: 'a1', isDir: true, title: 'Record' }], ...extra,
+  });
+  const server = await listen((request, response) => {
+    const url = new URL(request.url!, 'http://localhost');
+    const params = url.searchParams;
+    const reply = (payload: object) => {
+      response.setHeader('Content-Type', 'application/json');
+      response.end(JSON.stringify({ 'subsonic-response': { status: 'ok', version: '1.16.1', type: 'navidrome', openSubsonic: true, ...payload } }));
+    };
+    const endpoint = url.pathname.replace(/^\/rest\/(\w+)\.view$/, '$1');
+    if (endpoint === 'getOpenSubsonicExtensions') return reply({ openSubsonicExtensions: [] });
+    if (params.get('u') !== 'listener' || params.get('t') !== createHash('md5').update(password + params.get('s')).digest('hex')) return reply({ status: 'failed', error: { code: 40 } });
+    requests.push({ endpoint, params });
+    if (!sharing && /Share/.test(endpoint)) { response.writeHead(501).end('This endpoint is not implemented, but may be in future releases'); return; }
+    switch (endpoint) {
+      case 'createShare':
+        if (params.getAll('id').includes('gone')) return reply({ status: 'failed', error: { code: 70, message: 'secret' } });
+        return reply({ shares: { share: [share('sh1', {
+          description: params.get('description') ?? undefined,
+          expires: params.has('expires') ? new Date(Number(params.get('expires'))).toISOString() : undefined,
+        })] } });
+      case 'getShares': return reply({ shares: { share: [share('sh1'), share('sh2', { url: 'javascript:alert(1)' }), share('sh3', { description: '', expires: undefined, visitCount: undefined, entry: undefined })] } });
+      case 'deleteShare': return reply({});
+      case 'search3': return reply({ searchResult3: { song: [song('s1', { path: 'Artist/Record/01 - Song s1.flac' }), song('s2', { path: '' })] } });
+      case 'getPlaylist': return reply({ playlist: { ...playlistEntry, entry: [song('s2', { path: 'Artist/Record/02 - Song s2.flac' }), song('s1')] } });
+      default: response.writeHead(404).end();
+    }
+  });
+  try {
+    const client = new SubsonicClient({ url: server.url, username: 'listener', password }, new Metrics());
+    const run = <A>(task: Effect.Effect<A, Error>) => Effect.runPromise(task);
+
+    // Songs carry the path the server reports, in search3 and getPlaylist alike; an empty one is none.
+    const found = await run(client.search('song'));
+    expect(found.tracks.map(track => track.path)).toEqual(['Artist/Record/01 - Song s1.flac', undefined]);
+    expect(found.tracks[1]).not.toHaveProperty('path');
+    expect((await run(client.playlist('p1'))).tracks.map(track => track.path)).toEqual(['Artist/Record/02 - Song s2.flac', undefined]);
+
+    const expires = Date.UTC(2026, 8, 26, 10);
+    expect(await run(client.createShare(['s1', 's2'], '  For the drive ', expires))).toEqual({
+      id: 'sh1', url: 'https://music.example.com/share/sh1', description: 'For the drive', created: '2026-09-25T10:00:00Z',
+      expires: '2026-09-26T10:00:00.000Z', lastVisited: '0001-01-01T00:00:00Z', visitCount: 3,
+      entries: [{ id: 's1', title: 'Song s1' }, { id: 'a1', title: 'Record' }],
+    });
+    const created = requests.find(request => request.endpoint === 'createShare')!.params;
+    expect(created.getAll('id')).toEqual(['s1', 's2']);
+    expect(created.get('description')).toBe('For the drive');
+    expect(created.get('expires')).toBe(String(expires));
+    // Without a description or expiry, neither is sent, and the server picks.
+    const plain = await run(libraryCall(client, 'createShare', [['a1'], null, null]));
+    expect(plain.value).toMatchObject({ description: null, expires: null });
+    const second = requests.filter(request => request.endpoint === 'createShare')[1].params;
+    expect([second.has('description'), second.has('expires'), second.getAll('id')]).toEqual([false, false, ['a1']]);
+    await expect(run(client.createShare(['gone']))).rejects.toThrow('Something in this share is no longer on the server. Refresh the library.');
+
+    // A link that isn't a web address is left out; missing fields are unknown.
+    const listed = (await run(libraryCall(client, 'shares', []))).value as { id: string }[];
+    expect(listed.map(item => item.id)).toEqual(['sh1', 'sh3']);
+    expect(listed[1]).toMatchObject({ description: null, expires: null, visitCount: null, entries: [] });
+    await run(libraryCall(client, 'deleteShare', ['sh1']));
+    expect(requests.filter(request => request.endpoint === 'deleteShare').map(({ params }) => params.get('id'))).toEqual(['sh1']);
+
+    // The dispatcher checks arguments before anything is sent.
+    const before = requests.length;
+    for (const args of [[[], null, null], [['s1'], 'x'.repeat(1025), null], [['s1'], null, -1], [['s1'], null, 1.5], [['s1'], 7, null], [Array(1001).fill('s1')]]) {
+      await expect(run(libraryCall(client, 'createShare', args))).rejects.toThrow('Invalid library request.');
+    }
+    await expect(run(libraryCall(client, 'deleteShare', ['']))).rejects.toThrow('Invalid library request.');
+    expect(requests.length).toBe(before);
+
+    sharing = false;
+    const off = 'This server does not share links. On Navidrome, the administrator turns sharing on with EnableSharing.';
+    await expect(run(client.createShare(['s1']))).rejects.toThrow(off);
+    await expect(run(client.shares())).rejects.toThrow(off);
+    await expect(run(client.deleteShare('sh1'))).rejects.toThrow(off);
+  } finally {
+    await server.close();
+  }
+});
