@@ -6,14 +6,17 @@
 // esbuild binary that the extension loader uses, and checks its version.
 //
 //   node scripts/smoke-runtime.mjs dist/win-unpacked          # Windows: bundled libmpv-2.dll
-//   node scripts/smoke-runtime.mjs "/opt/Squiggly Music"      # installed RPM: system libmpv
+//   node scripts/smoke-runtime.mjs "/opt/Squiggly Music"      # installed RPM or deb: system libmpv
+//   node scripts/smoke-runtime.mjs squashfs-root              # extracted AppImage: system libmpv
 //   node scripts/smoke-runtime.mjs dist/mac-arm64             # macOS: Homebrew's libmpv
 //
+// The Linux packages load the system's libmpv. Without one installed, point the loader at an
+// unpacked copy: LD_LIBRARY_PATH=.local/runtime/usr/lib64 (SQUIGGLY_LIBMPV_PATH is ignored here).
 // A macOS bundle can't run anywhere else. On another host the script only checks that its
 // native files are Mach-O binaries for the bundle's CPU, and exits.
 //
 // Options:
-//   --expect-system-libmpv  fail if the package bundles libmpv (the Linux RPM must not)
+//   --expect-system-libmpv  fail if the package bundles libmpv (Linux packages must not)
 //   --no-decode             only check that the engine starts
 //   --sample <file>[=<codec>]
 //                           also decode this file, and check mpv's audio-codec-name when
@@ -47,7 +50,12 @@ const host = [join(resources, 'app.asar.unpacked', 'out', 'main', 'player.js'), 
 const bundledLibmpv = join(runtime, 'libmpv-2.dll');
 for (const path of [node, host]) if (!existsSync(path)) throw new Error(`Missing ${path}`);
 if (windows && !existsSync(bundledLibmpv)) throw new Error(`Missing ${bundledLibmpv}`);
-if (args.includes('--expect-system-libmpv') && existsSync(bundledLibmpv)) throw new Error('The package bundles libmpv but should use the system library.');
+if (args.includes('--expect-system-libmpv')) {
+  // An AppImage keeps its extra libraries in usr/lib, which AppRun puts on the loader path.
+  const bundled = [runtime, join(resolve(appDir), 'usr', 'lib')]
+    .flatMap(dir => (existsSync(dir) ? readdirSync(dir).filter(file => /^libmpv[.-]/.test(file)).map(file => join(dir, file)) : []));
+  if (bundled.length) throw new Error(`The package bundles libmpv but should use the system library: ${bundled.join(', ')}`);
+}
 
 // The CPU a Mach-O binary is built for, from its header.
 const cpuOf = file => {

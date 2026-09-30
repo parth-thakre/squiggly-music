@@ -8,7 +8,10 @@
 // It can also check an unpacked app directory by hand:
 //   node scripts/release-notices.mjs dist/win-unpacked win32
 //   node scripts/release-notices.mjs dist/linux-unpacked linux
+//   node scripts/release-notices.mjs "deb/opt/Squiggly Music" linux   # unpacked deb or RPM
+//   node scripts/release-notices.mjs squashfs-root linux              # extracted AppImage
 //   node scripts/release-notices.mjs dist/mac-arm64 darwin
+// Run it from the repository: it reads package-lock.json and node_modules.
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -123,8 +126,18 @@ function checkNotices(appDir, platform, resources, shippedRoot, shippedLabel) {
   if (platform === 'win32') {
     // NOTICE.md and every component license of the LGPL libmpv build (build/libmpv).
     required.push(join(resources, 'runtime', 'libmpv-2.dll'), ...readdirSync('licenses/libmpv-windows').map(file => join(resources, 'licenses', 'libmpv-windows', file)));
-  } else if (existsSync(join(resources, 'runtime', 'libmpv-2.dll')) || existsSync(join(resources, 'licenses', 'libmpv-windows'))) {
-    problems.push('A non-Windows package includes the Windows libmpv build or its notices.');
+  } else {
+    if (existsSync(join(resources, 'runtime', 'libmpv-2.dll')) || existsSync(join(resources, 'licenses', 'libmpv-windows'))) {
+      problems.push('A non-Windows package includes the Windows libmpv build or its notices.');
+    }
+    // The Linux packages use the distribution's libmpv, so nothing here covers its licenses. A
+    // package that bundles one (in the runtime folder, or an AppImage's usr/lib) must add them first.
+    if (platform === 'linux') {
+      for (const dir of [join(resources, 'runtime'), join(appDir, 'usr', 'lib'), appDir]) {
+        const bundled = existsSync(dir) ? readdirSync(dir).filter(file => /^libmpv[.-]/.test(file)) : [];
+        if (bundled.length) problems.push(`A Linux package bundles ${bundled.join(', ')} in ${dir}, but no notice covers libmpv or its libraries. Add their licenses here first.`);
+      }
+    }
   }
   // macOS uses the user's Homebrew libmpv, so a bundle that carries one has a license nobody has reviewed.
   if (platform === 'darwin' && readdirSync(join(resources, 'runtime')).some(file => /^libmpv/i.test(file))) problems.push('A macOS package includes a libmpv library.');

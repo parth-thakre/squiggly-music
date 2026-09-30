@@ -13,24 +13,31 @@ Squiggly Music's own source code is released under the MIT License (see [LICENSE
 
 | Component | Version | Packages | License | Notice in the package |
 | --- | --- | --- | --- | --- |
-| Electron | 44.4.3 | Windows, Fedora, macOS | MIT | `LICENSE.electron.txt` |
-| Chromium and its third-party code, including Chromium's FFmpeg (`ffmpeg.dll` / `libffmpeg.so` / `libffmpeg.dylib`) | 152.0.7977.130 | Windows, Fedora, macOS | BSD-3-Clause, with many third-party licenses; FFmpeg: LGPL-2.1-or-later | `LICENSES.chromium.html` |
-| Node.js (audio-host runtime) | v22.23.3 | Windows, Fedora, macOS | MIT, plus the licenses of its bundled dependencies (OpenSSL, ICU, libuv, V8, and others) | `resources/runtime/LICENSE.node.txt` |
-| Koffi and its platform binary | 3.3.1 | Windows, Fedora, macOS | MIT | `resources/licenses/npm-packages.txt` |
-| esbuild and its platform binary (compiles extensions at load time) | 0.25.12 | Windows, Fedora, macOS | MIT | `resources/licenses/npm-packages.txt` |
+| Electron | 44.4.3 | Windows, macOS, Linux | MIT | `LICENSE.electron.txt` |
+| Chromium and its third-party code, including Chromium's FFmpeg (`ffmpeg.dll` / `libffmpeg.so` / `libffmpeg.dylib`) | 152.0.7977.130 | Windows, macOS, Linux | BSD-3-Clause, with many third-party licenses; FFmpeg: LGPL-2.1-or-later | `LICENSES.chromium.html` |
+| Node.js (audio-host runtime) | v22.23.3 | Windows, macOS, Linux | MIT, plus the licenses of its bundled dependencies (OpenSSL, ICU, libuv, V8, and others) | `resources/runtime/LICENSE.node.txt` |
+| Koffi and its platform binary | 3.3.1 | Windows, macOS, Linux | MIT | `resources/licenses/npm-packages.txt` |
+| esbuild and its platform binary (compiles extensions at load time) | 0.25.12 | Windows, macOS, Linux | MIT | `resources/licenses/npm-packages.txt` |
 | libmpv (`libmpv-2.dll`), built by this repository from source (`build/libmpv`): audio-only mpv with statically linked FFmpeg, libplacebo, libass, FreeType, HarfBuzz, and FriBidi | mpv 0.41.0, FFmpeg 8.1.3 (full list in `NOTICE.md`) | Windows only | LGPL-2.1-or-later as a whole (mpv `-Dgpl=false`, FFmpeg without `--enable-gpl`); the other components are LGPL-2.1-or-later, ISC, MIT, or FTL | `resources/licenses/libmpv-windows/` |
-| npm runtime packages: effect, @jellybrick/mpris-service, @jellybrick/dbus-next, fast-xml-parser and its dependencies, fast-check, pure-rand, music-metadata and its dependencies, electron-updater and its dependencies, and others | see `npm-packages.txt` | Windows, Fedora, macOS | MIT, ISC, BSD-3-Clause (ieee754), BlueOak-1.0.0 (sax), Python-2.0 (argparse) | `resources/licenses/npm-packages.txt` |
-| Renderer bundle: React, React DOM, scheduler (MIT), lucide-react (ISC) | see `npm-packages.txt` | Windows, Fedora, macOS, Android | MIT, ISC | `resources/licenses/npm-packages.txt`; Android: `assets/public/licenses/npm-packages.txt` |
-| Fonts: Familjen Grotesk, Young Serif (via @fontsource) | 5.3.0 | Windows, Fedora, macOS, Android | SIL Open Font License 1.1 | `resources/licenses/npm-packages.txt`; Android: `assets/public/licenses/npm-packages.txt` |
+| npm runtime packages: effect, @jellybrick/mpris-service, @jellybrick/dbus-next, fast-xml-parser and its dependencies, fast-check, pure-rand, music-metadata and its dependencies, electron-updater and its dependencies, and others | see `npm-packages.txt` | Windows, macOS, Linux | MIT, ISC, BSD-3-Clause (ieee754), BlueOak-1.0.0 (sax), Python-2.0 (argparse) | `resources/licenses/npm-packages.txt` |
+| Renderer bundle: React, React DOM, scheduler (MIT), lucide-react (ISC) | see `npm-packages.txt` | Windows, macOS, Linux, Android | MIT, ISC | `resources/licenses/npm-packages.txt`; Android: `assets/public/licenses/npm-packages.txt` |
+| Fonts: Familjen Grotesk, Young Serif (via @fontsource) | 5.3.0 | Windows, macOS, Linux, Android | SIL Open Font License 1.1 | `resources/licenses/npm-packages.txt`; Android: `assets/public/licenses/npm-packages.txt` |
 | effect (the connector runs in the Android app's page) | 3.22.2 | Android (and the desktop, above) | MIT | `assets/public/licenses/npm-packages.txt` |
 | Capacitor: `@capacitor/core` (in the page) and `@capacitor/android` (the native bridge and WebView host) | 8.5.2 | Android | MIT | `assets/public/licenses/npm-packages.txt` |
 | AndroidX Media3: ExoPlayer, session, datasource, extractor, decoder, and their common modules | 1.11.1 | Android | Apache-2.0 | `assets/public/licenses/android-libraries.txt`, `apache-2.0.txt` |
 | Other Android libraries: AndroidX (AppCompat, Core, Activity, Fragment, Lifecycle, Window, WebKit, Media, and others), Guava and failureaccess, the Kotlin standard library, kotlinx-coroutines, JSpecify, JetBrains annotations, Apache Cordova's Android framework (a dependency of Capacitor's) | see `android-libraries.txt` | Android | Apache-2.0 | `assets/public/licenses/android-libraries.txt`, `apache-2.0.txt` |
 | Squirrel.Mac, Mantle, and ReactiveObjC, frameworks inside Electron's macOS app | as shipped with Electron 44.4.3 | macOS | MIT (upstream, not verified here) | Not yet included |
 | electron-builder's `elevate.exe` and NSIS installer stub | electron-builder 26 | Windows | elevate: MIT (upstream jpassing/elevate, not verified); NSIS: zlib/libpng | Not yet included |
+| electron-builder's AppImage runtime and the libraries it adds in `usr/lib`: libappindicator, libindicator, libgconf-2, libnotify, libXss, libXtst. Electron links none of them; it only looks for libnotify when an app shows notifications, which Squiggly doesn't | AppImage toolset 12.0.1 | AppImage | runtime: AppImageKit, MIT, with the compression and squashfs libraries it links statically (not listed yet); per Fedora's packages of the same libraries: libindicator GPL-3.0-only, libappindicator LGPL-2.1 and LGPL-3.0, GConf LGPL-2.0-or-later, libnotify LGPL-2.1-or-later, libXss and libXtst X11-style permissive (not verified against the bundled builds) | Not yet included |
 
-The Fedora RPM does not include libmpv. It depends on Fedora's `mpv-libs` package, which
-Fedora distributes under its own terms.
+The Linux packages do not include libmpv. The RPM depends on Fedora's `mpv-libs` and the deb
+on Debian's or Ubuntu's `libmpv2` (or `libmpv1`), which the distributions ship under their own
+terms. The AppImage uses whichever libmpv the system has installed.
+
+The Flatpak manifest (`build/flatpak`, untested and not released) builds an audio-only,
+LGPL-2.1-or-later libmpv from the sources pinned in `build/libmpv/sources.json` and installs
+their license texts in `/app/share/licenses/dev.squiggly.music/libmpv`. Its FreeType, HarfBuzz,
+FriBiDi, and GnuTLS come from the Freedesktop runtime.
 
 The macOS app does not include libmpv either. It loads the copy the user installs from
 Homebrew (`brew install mpv`) or MacPorts, which they distribute under their own terms

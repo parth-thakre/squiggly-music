@@ -122,17 +122,18 @@ jobs:
           retention-days: 14
 
   linux:
-    name: Linux RPM
+    name: Linux packages
     needs: [check, ui]
     runs-on: ubuntu-24.04
-    # rpmbuild, and libcrypt.so.1 for electron-builder's bundled fpm, come from Fedora packages.
+    # rpmbuild, and libcrypt.so.1 for electron-builder's bundled fpm (RPM and deb), come from
+    # Fedora packages. binutils has ar, to unpack the deb.
     container: fedora:44
     permissions:
       contents: read
     timeout-minutes: 30
     steps:
       - name: Install system packages
-        run: dnf -y install git-core tar zstd xz rpm-build libxcrypt-compat
+        run: dnf -y install git-core tar zstd xz rpm-build libxcrypt-compat binutils
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -155,11 +156,24 @@ jobs:
         run: |
           dnf -y install ./dist/squiggly-music-*.x86_64.rpm
           "/opt/Squiggly Music/resources/runtime/node" scripts/smoke-runtime.mjs "/opt/Squiggly Music" --expect-system-libmpv
+      # The deb and the AppImage, unpacked, against the mpv-libs the RPM brought in. Neither may
+      # bundle libmpv, and each must carry its notices.
+      - name: Unpack the deb and the AppImage and smoke-test their audio runtimes
+        run: |
+          mkdir -p "$RUNNER_TEMP/deb" "$RUNNER_TEMP/appimage"
+          (cd "$RUNNER_TEMP/deb" && ar x "$GITHUB_WORKSPACE"/dist/squiggly-music_*_amd64.deb && tar -xf data.tar.xz)
+          (cd "$RUNNER_TEMP/appimage" && "$GITHUB_WORKSPACE"/dist/Squiggly-Music-*-x86_64.AppImage --appimage-extract > /dev/null)
+          for tree in "$RUNNER_TEMP/deb/opt/Squiggly Music" "$RUNNER_TEMP/appimage/squashfs-root"; do
+            "$tree/resources/runtime/node" scripts/smoke-runtime.mjs "$tree" --expect-system-libmpv
+            node scripts/release-notices.mjs "$tree" linux
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-x64
           path: |
             dist/*.rpm
+            dist/*.deb
+            dist/*.AppImage
             dist/latest-linux.yml
           if-no-files-found: error
           retention-days: 14
