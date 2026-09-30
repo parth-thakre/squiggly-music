@@ -150,6 +150,11 @@ add({
   id: 'reload-extensions', title: 'Reload extensions', category: 'App', when: () => !!window.squiggly?.extensions,
   async run() { const result = await window.squiggly!.extensions.reload(); if (!result.ok) fail(result.error); },
 });
+// Test builds with remote diagnostics only: the preload offers sendDiagnostics there.
+add({
+  id: 'send-diagnostics', title: 'Send diagnostics now', category: 'App', when: () => !!window.squiggly?.sendDiagnostics,
+  async run() { const result = await window.squiggly!.sendDiagnostics!(); if (!result.ok) fail(result.error); },
+});
 
 // One command per theme, so "Theme: Night" is a keystroke away and can be bound.
 const themeScope = registry.scope('theme');

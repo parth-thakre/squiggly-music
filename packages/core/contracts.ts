@@ -362,6 +362,9 @@ export interface DesktopBridge {
   };
   disconnect(): Promise<Result>;
   exportDiagnostics(): Promise<Result>;
+  // Test builds with remote diagnostics only (apps/desktop/main/remoteDiagnostics.ts): send
+  // everything queued now. Absent otherwise.
+  sendDiagnostics?(): Promise<Result<string>>;
 }
 
 export const emptyAudio = (): AudioPath => ({
