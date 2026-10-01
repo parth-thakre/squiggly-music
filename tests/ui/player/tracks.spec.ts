@@ -100,6 +100,15 @@ test.describe('tracks', () => {
     await expect(app.main.getByText(`${allTracks.length - 2} songs up next`)).toBeVisible();
   });
 
+  test('with a mouse, only the song\'s name plays it; its length doesn\'t', async ({ app, page }) => {
+    await app.openAlbum('Test Pressing');
+    await app.row('Short Stop').locator('.figure').click();
+    await page.waitForTimeout(300);
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveCount(0);
+    await app.rowButton(app.row('Short Stop')).click();
+    await app.expectPlaying('Short Stop');
+  });
+
   test('signs in to Navidrome again when its session has ended', async ({ app, fake }) => {
     await app.section('Tracks').click();
     await expect(app.tracks().first()).toContainText('Take 100');

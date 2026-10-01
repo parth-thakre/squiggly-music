@@ -825,7 +825,8 @@ html[data-density='compact'] { --row-height: 38px; }
 .head-cover, .morph { view-transition-name: sleeve; }
 .deck-cover { view-transition-name: deck-sleeve; animation: settle .45s cubic-bezier(.2, .8, .2, 1); }
 ::view-transition-old(root), ::view-transition-new(root) { animation-duration: .2s; }
-/* The crossfade covers the page; clicks during it (a second Back) must still reach the page. */
+/* The crossfade covers the page. Chrome still sends input during it to the document, so a press
+   ends the transition (route.ts) and the tap lands on the page. */
 ::view-transition { pointer-events: none; }
 ::view-transition-group(sleeve), ::view-transition-group(deck-sleeve) { animation-duration: .44s; animation-timing-function: cubic-bezier(.2, .8, .2, 1); }
 ::view-transition-old(sleeve), ::view-transition-new(sleeve), ::view-transition-old(deck-sleeve), ::view-transition-new(deck-sleeve) { height: 100%; object-fit: cover; }

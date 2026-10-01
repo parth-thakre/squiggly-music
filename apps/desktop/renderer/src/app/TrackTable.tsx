@@ -16,6 +16,12 @@ import './kept.css';
 // Song rows are --row-height tall (compact themes shorten them); windowing uses the same number.
 const rowHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height')) || 44;
 const WINDOWED = 120;
+// A click that came from a finger. Chrome sends clicks as pointer events that say so; a browser
+// that doesn't goes by the screen.
+const tapped = (event: ReactMouseEvent) => {
+  const type = (event.nativeEvent as Partial<PointerEvent>).pointerType;
+  return type ? type === 'touch' : matchMedia('(pointer: coarse)').matches;
+};
 
 // Rows outside the queue are known by song id and occurrence ("a", "a#2"), so a fresh array
 // holding the same songs keeps its selection, and a structural change keeps what still exists.
@@ -24,9 +30,9 @@ function occurrenceKeys(tracks: Track[]) {
   return tracks.map(track => { const n = (seen.get(track.id) ?? 0) + 1; seen.set(track.id, n); return n === 1 ? track.id : `${track.id}#${n}`; });
 }
 
-// A song list. Click plays; ctrl/cmd-click and shift-click select; right-click or long-press
-// opens the menu for the selection. Rows (or the selection) drag onto the queue and playlists
-// (drag.ts). Where the list is editable, rows drag to reorder, Alt+Up and Alt+Down move the
+// A song list. Click plays (on a touch screen, a tap anywhere on the row); ctrl/cmd-click and
+// shift-click select; right-click or long-press opens the menu for the selection. Rows (or the
+// selection) drag onto the queue and playlists (drag.ts). Where the list is editable, rows drag to reorder, Alt+Up and Alt+Down move the
 // focused or selected song, and Delete removes the selection. With `onDropItems`, records,
 // artists, and songs from elsewhere drop between rows, before the row under the pointer.
 // A heading between rows (a record's discs): it sits above the row at index `at`.
@@ -139,6 +145,13 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     if (away && keptSupported && track.source === 'navidrome' && !isKept(track.id) && !isNow) { player.showError('This song isn\'t kept on this device, and your server is out of reach.'); return; }
     if (isNow) player.toggle(); else if (onPick) onPick(index, entryIds?.[index]); else void player.play(tracks, index);
   };
+  // A tap on a touch screen plays from anywhere on the row: its length and the space around the
+  // name too, not only the name's button. The row's own buttons (the star) keep their taps, and
+  // a mouse keeps its target.
+  const rowTap = (event: ReactMouseEvent, index: number, isNow: boolean) => {
+    if (!tapped(event) || (event.target as Element).closest('button, a, input')) return;
+    click(event, index, isNow);
+  };
   const menu = (event: ReactMouseEvent, index: number) => {
     const key = keys[index];
     // A row outside the selection is only marked while its menu is open; the selection stays.
@@ -203,7 +216,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
         const row = <li key={key} data-key={key} data-index={index} className={classes || undefined}
           style={windowed ? { position: 'absolute', top: slot(index) * ROW, left: 0, right: 0 } : undefined}
-          draggable={draggable} onContextMenu={event => menu(event, index)}
+          draggable={draggable} onContextMenu={event => menu(event, index)} onClick={event => rowTap(event, index, isNow)}
           onDragStart={event => dragStart(event, index)} onDragOver={event => dragOver(event, index)}
           onDrop={event => drop(event, index)} onDragEnd={() => setDrag(null)}>
           <button type="button" className="track" onClick={event => click(event, index, isNow)}

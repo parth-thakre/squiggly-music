@@ -79,9 +79,20 @@ export function transition(update: () => void) {
     // somewhere to land. Rendering is paused inside this callback, so wait on timers, not frames.
     for (let wait = 0; wait < 10 && document.querySelector('.page .status.loading'); wait++) await new Promise(done => setTimeout(done, 25));
   });
+  moving = { view, shown: Infinity };
   // A transition interrupted by the next one is expected, not an error.
-  view.ready.catch(() => undefined); view.finished.catch(() => undefined);
+  view.ready.then(() => { if (moving?.view === view) moving.shown = performance.now() + SHOWN; }, () => undefined);
+  view.finished.catch(() => undefined).finally(() => { if (moving?.view === view) moving = null; });
 }
+// While a transition runs, the page under it can't be touched: Chrome sends every tap and click
+// to the document itself, whatever the CSS says, so a song tapped as its record arrives would not
+// play. Once the new page has mostly faded in, a touch or click ends the transition at once and
+// the gesture lands on the page. Before that, the listener is still looking at the page they
+// left (a second tap, or a page frozen while its data arrives), so the gesture goes nowhere, as
+// it did before: it must not land on whatever the new page has under the finger.
+const SHOWN = 150;
+let moving: { view: ViewTransition; shown: number } | null = null;
+addEventListener('pointerdown', () => { if (moving && performance.now() >= moving.shown) moving.view.skipTransition(); }, { capture: true, passive: true });
 
 // Returning to a place scrolls to where it was left. A page still filling in (a long list
 // measuring itself, a record still loading) may be too short at first, so keep trying for a
