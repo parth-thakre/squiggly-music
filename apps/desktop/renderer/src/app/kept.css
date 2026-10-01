@@ -33,6 +33,7 @@
 .kept-row-open:hover .row-name { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 .kept-row-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
 .kept-row .tracks { margin-top: 8px; }
+@media (max-width: 760px) { .kept-row-size { display: none; } }
 .play-action.small { font-size: calc(14.5px * var(--text)); }
 .kept-dir { overflow-wrap: anywhere; }
 .kept-limit { display: inline-flex; align-items: center; gap: 6px; color: var(--soft); }

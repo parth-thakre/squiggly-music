@@ -21,8 +21,20 @@ test('the Kept page and the notice fit a phone and pass axe', async ({ page, app
   expect(response.status()).toBe(200);
   await page.goto('/');
   await expect(app.heading).toHaveText('Kept');
-  await app.main.getByRole('button', { name: /^Test Pressing/ }).click();
+  // Short lines: the totals, one line for the server, and who and how many for each record.
+  await expect(app.main.locator('.head .byline')).toHaveText('5 songs, 5 MB of 4 GB');
+  await expect(app.main.getByRole('status').filter({ hasText: /^Server out of reach since \d/ })).toBeVisible();
+  const notice = app.main.locator('.offline-line');
+  await expect(notice.getByRole('button', { name: 'Retry' })).toBeVisible();
+  expect(await notice.evaluate(line => Math.round(line.getBoundingClientRect().height / parseFloat(getComputedStyle(line).lineHeight)))).toBe(1);
+  const pressing = app.main.getByRole('button', { name: /^Test Pressing/ });
+  // As shown: the size is left to wider screens.
+  expect(await pressing.locator('.row-sub').innerText()).toBe('Ada Brass, 5 songs');
+  expect(await app.main.getByRole('button', { name: /^Road Mix/ }).locator('.row-sub').innerText()).toBe('2 songs');
+  await pressing.click();
   await expect(app.row('Long Run')).toBeVisible();
+  // Everything here is kept, so no song carries the mark.
+  await expect(app.main.locator('ol.tracks .kept-mark')).toHaveCount(0);
   expect(await overflow(page)).toBeLessThanOrEqual(0);
   expect(await violations(page), 'Kept').toEqual([]);
   await app.section('Artists').click();

@@ -61,7 +61,7 @@ test('keep a record, play it from the device, lose the server, play from Kept, a
     await expect(app.heading).toHaveText('Kept');
     await page.getByRole('button', { name: 'Squiggly home' }).click();
     await expect(app.heading).toHaveText('Kept');
-    await expect(app.main.getByText(/^Your server is out of reach\./)).toBeVisible();
+    await expect(app.main.getByText(/^Server out of reach since /)).toBeVisible();
     await app.main.getByRole('button', { name: /^Test Pressing/ }).click();
     await app.rowButton(app.row('Tail Light')).click();
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Tail Light');

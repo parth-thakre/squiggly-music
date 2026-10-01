@@ -91,7 +91,9 @@ export function OfflineNotice({ compact = false }: { compact?: boolean }) {
   const line = reach.checking || busy ? 'Checking the server.' : failedAt ? `Still out of reach at ${clock(failedAt)}.`
     : `Out of reach${reach.since ? ` since ${clock(reach.since)}` : ''}. Squiggly checks again every 30 seconds.`;
   const retryButton = <button type="button" className="text-button" disabled={reach.checking || busy} onClick={() => void retry()}>Retry</button>;
-  if (compact) return <p className="offline-line"><span role="status" aria-live="polite">Your server is out of reach. {line}</span> {retryButton}</p>;
+  // One line: when it went, and Retry. The every-30-seconds detail stays with the full notice.
+  if (compact) return <p className="offline-line"><span role="status" aria-live="polite">{reach.checking || busy || failedAt ? line
+    : `Server out of reach${reach.since ? ` since ${clock(reach.since)}` : ''}.`}</span> {retryButton}</p>;
   const server = serverName ?? 'your server';
   return <section className="offline" aria-labelledby="offline-heading">
     <h1 id="offline-heading">Your server is out of reach</h1>
@@ -122,7 +124,7 @@ export function Kept() {
   return <>
     <header className="head"><div className="head-text">
       <h1>Kept</h1>
-      {kept && <p className="byline"><span>{containers.length === 1 ? '1 record or playlist' : `${containers.length.toLocaleString()} records and playlists`}, {plural(kept.songs, 'song')}, {formatBytes(kept.usedBytes)} of {formatLimit(Math.round(limit / MB))} used</span></p>}
+      {kept && <p className="byline"><span>{plural(kept.songs, 'song')}, {formatBytes(kept.usedBytes)} of {roomOf(limit)}</span></p>}
     </div></header>
     {away && <OfflineNotice compact />}
     {kept?.notice && <p className="note">{kept.notice}</p>}
@@ -138,6 +140,8 @@ export function Kept() {
   </>;
 }
 
+// The room for kept songs, as short as it reads: 4 GB rather than 4,096 MB.
+const roomOf = (bytes: number) => { const mb = Math.round(bytes / MB); return mb >= 1024 && mb % 1024 === 0 ? `${(mb / 1024).toLocaleString('en-US')} GB` : formatBytes(bytes); };
 const kindName: Record<KeepKind, string> = { album: 'record', playlist: 'playlist', mix: 'mix' };
 function KeptRow({ container }: { container: KeptContainer }) {
   const [open, setOpen] = useState(false);
@@ -161,14 +165,14 @@ function KeptRow({ container }: { container: KeptContainer }) {
   };
   const title = splitTitle(container.name).main;
   const count = container.present < container.total ? `${container.present} of ${plural(container.total, 'song')}` : plural(container.total, 'song');
-  const kept = new Date(container.keptAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
   return <li className="kept-row">
     <div className="kept-row-head">
       <span className="kept-sleeve"><Cover id={container.coverArt} name={container.name} size={160} />{container.present >= container.total && <KeptMark className="on-sleeve" />}</span>
       <button type="button" className="kept-row-open" aria-expanded={open} onClick={() => setOpen(v => !v)}>
         <span className="row-text">
           <span className="row-name">{title}<span className="sr-only">, {kindName[container.kind]}</span></span>
-          <span className="row-sub">{[container.artist, count, formatBytes(container.bytes), `kept ${kept}`].filter(Boolean).join(', ')}</span>
+          {/* Who and how many. The size is for wider screens; a phone has the total above. */}
+          <span className="row-sub">{[container.artist, count].filter(Boolean).join(', ')}<span className="kept-row-size">, {formatBytes(container.bytes)}</span></span>
         </span>
       </button>
       <span className="kept-row-actions">
@@ -181,7 +185,7 @@ function KeptRow({ container }: { container: KeptContainer }) {
       </span>
     </div>
     {error && <p className="note" role="alert">{error}</p>}
-    {open && (tracks ? tracks.length ? <TrackTable tracks={tracks} showAlbum={container.kind !== 'album'} /> : <Status>None of its songs are kept yet.</Status>
+    {open && (tracks ? tracks.length ? <TrackTable tracks={tracks} showAlbum={container.kind !== 'album'} keptMarks={false} /> : <Status>None of its songs are kept yet.</Status>
       : <p className="status loading">Reading the songs</p>)}
   </li>;
 }

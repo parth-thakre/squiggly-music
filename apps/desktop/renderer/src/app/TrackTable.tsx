@@ -39,7 +39,7 @@ function occurrenceKeys(tracks: Track[]) {
 export interface TrackGroup { at: number; label: string }
 const noGroups: TrackGroup[] = [];
 
-export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, onDropItems, groups = noGroups }: {
+export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, onDropItems, groups = noGroups, keptMarks = true }: {
   tracks: Track[]; album?: string; albumArtist?: string; showAlbum?: boolean; numbered?: 'position' | 'track';
   // In the queue, the entry id the click saw comes along: pass it to player.jump.
   onPick?(index: number, entryId?: string): void;
@@ -51,6 +51,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   onDropItems?(payload: DragPayload, at: number): void;
   // Headings only: rows keep one numbering of indexes, one selection, and one keyboard.
   groups?: TrackGroup[];
+  // Off where every song listed is kept (the Kept page), so the mark would say nothing.
+  keptMarks?: boolean;
 }) {
   useActiveTheme();
   const ROW = rowHeight();
@@ -232,7 +234,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
           <span className="row-rating">{track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>
           <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
           {/* Beside the button, so the row's name stays "Play <title>". */}
-          {keptSupported && <span className="kept-slot">{kept && <KeptMark />}</span>}
+          {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
           {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
           {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
             aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
