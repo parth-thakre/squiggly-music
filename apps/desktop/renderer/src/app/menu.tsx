@@ -49,15 +49,24 @@ export function openMenu(event: Pick<ReactMouseEvent, 'clientX' | 'clientY' | 'p
   const problems: string[] = [];
   const items = registry.menu.for(target, (item, error) => problems.push(failed(`The item “${item.id}”`, error)));
   setOpen({ x: event.clientX, y: event.clientY, target, levels: [{ title: titleOf(target), rows: rowsFor(items, target, problems) }], error: problems[0] ?? null, invoker });
+  openedAt = performance.now(); pressed = false;
   // On phones the menu is a sheet, so the back gesture closes it first, like the now-playing
   // sheet. (Not while that sheet is open: it already owns the back gesture.)
-  if (!inHistory && matchMedia('(max-width: 760px)').matches && !nav.overlayOpen) {
+  if (!inHistory && phoneWidth() && !nav.overlayOpen) {
     inHistory = true;
     nav.openOverlay(() => {}, () => { inHistory = false; finishClose(); closed?.(); closed = null; });
   }
 }
+const phoneWidth = () => matchMedia('(max-width: 760px)').matches;
+// The tap or click that opened the menu must not also choose from it: on a phone the sheet rises
+// under the finger, and Chrome can hand it the end of the same gesture. A pointer's click counts
+// once a press has started inside the menu, or once the menu has been up for a moment; a click
+// from the keyboard (detail 0) always counts.
+let openedAt = 0, pressed = false;
+const stray = (event: ReactMouseEvent) => event.detail > 0 && !pressed && performance.now() - openedAt < 400;
 let inHistory = false;
 let closed: (() => void) | null = null;
+let closing: Promise<void> | null = null;
 let onMenuClose: (() => void) | null = null;
 function finishClose() {
   if (!open) return;
@@ -68,10 +77,11 @@ function finishClose() {
   if (invoker?.isConnected && (!focus || focus === document.body || focus.closest('.menu-layer'))) invoker.focus({ preventScroll: true });
 }
 // Resolves once the menu is really gone, including its history entry on phones, so an action
-// that navigates runs after the back step rather than being undone by it.
+// that navigates runs after the back step rather than being undone by it. Asked again before
+// then, it waits for the same step.
 export function closeMenu(): Promise<void> {
   if (!inHistory) { finishClose(); return Promise.resolve(); }
-  return new Promise(resolve => { closed = resolve; nav.closeOverlay(); });
+  return closing ??= new Promise(resolve => { closed = () => { closing = null; resolve(); }; nav.closeOverlay(); });
 }
 const popLevel = (menu: OpenMenu) => setOpen({ ...menu, levels: menu.levels.slice(0, -1), error: null });
 
@@ -124,7 +134,7 @@ export function ContextMenu() {
   const [typing, setTyping] = useState<string | null>(null);
   // Where focus should land after the next render (an item id), if not the first item.
   const focusNext = useRef<string | null>(null);
-  const sheet = matchMedia('(max-width: 760px)').matches;
+  const sheet = phoneWidth();
   const level = menu?.levels[menu.levels.length - 1];
 
   const choose = async (at: OpenMenu, row: Row) => {
@@ -203,12 +213,18 @@ export function ContextMenu() {
         event.preventDefault(); void closeMenu();
       }
     };
-    addEventListener('keydown', onKey); addEventListener('resize', closeMenu); addEventListener('blur', closeMenu);
-    return () => { removeEventListener('keydown', onKey); removeEventListener('resize', closeMenu); removeEventListener('blur', closeMenu); };
-  }, [menu, level, typing]);
+    // A menu placed by the pointer goes when the window changes size or loses focus. A sheet
+    // sits on the bottom edge whatever the size, so it stays unless the window grows past a
+    // phone's width: on Android the window resizes for the keyboard (the menu's text fields) and
+    // as the system bars come and go, and loses focus to the system's own panels.
+    const onResize = () => { if (!sheet || !phoneWidth()) void closeMenu(); };
+    const onBlur = () => { if (!sheet) void closeMenu(); };
+    addEventListener('keydown', onKey); addEventListener('resize', onResize); addEventListener('blur', onBlur);
+    return () => { removeEventListener('keydown', onKey); removeEventListener('resize', onResize); removeEventListener('blur', onBlur); };
+  }, [menu, level, typing, sheet]);
   if (!menu || !level) return null;
 
-  return <div className="menu-layer" onPointerDown={event => { if (event.target === event.currentTarget) closeMenu(); }} onContextMenu={event => { event.preventDefault(); void closeMenu(); }}>
+  return <div className="menu-layer" onPointerDown={event => { pressed = true; if (event.target === event.currentTarget) closeMenu(); }} onContextMenu={event => { event.preventDefault(); void closeMenu(); }}>
     <div ref={box} className={`menu${sheet ? ' sheet' : ''}`} role="menu" aria-label={level.title} tabIndex={-1}
       style={sheet ? undefined : position ?? { left: menu.x, top: menu.y, visibility: 'hidden' }}>
       <p className="menu-title">{menu.levels.length > 1 && <button type="button" className="menu-back" aria-label="Back" onClick={() => { focusNext.current = level.from ?? null; popLevel(menu); }}>
@@ -225,7 +241,7 @@ export function ContextMenu() {
           if (value) void submit(menu, row, value);
         }}><input name="value" autoFocus placeholder={item.input!.placeholder} aria-label={item.input!.placeholder} autoComplete="off" /></form>;
         return <button key={item.id} type="button" role={item.checked === undefined ? 'menuitem' : 'menuitemradio'} aria-checked={item.checked} data-item={item.id} aria-haspopup={item.submenu ? 'menu' : undefined}
-          className={`menu-item${item.danger ? ' danger' : ''}${divider ? ' divided' : ''}`} onClick={() => void choose(menu, row)}>
+          className={`menu-item${item.danger ? ' danger' : ''}${divider ? ' divided' : ''}`} onClick={event => { if (!stray(event)) void choose(menu, row); }}>
           <span>{row.label}</span>
           {item.checked && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4 4 9-9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
           {item.submenu && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}

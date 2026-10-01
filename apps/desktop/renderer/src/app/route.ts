@@ -61,6 +61,8 @@ const listeners = new Set<() => void>();
 let scroller: HTMLElement | null = null;
 // A full-screen layer (the phone's now-playing sheet) that the back gesture closes first.
 let overlay: (() => void) | null = null;
+// A Back to close it is on its way.
+let leaving = false;
 const emit = () => { shown = now; listeners.forEach(listener => listener()); };
 // The scroller holds the offset of the page on screen, which during a move is `shown`, not
 // `now`; saving it under `now` would give a place the offset of the page still in view.
@@ -122,6 +124,7 @@ function restoreScroll(offset: number) {
 addEventListener('popstate', event => {
   const close = overlay;
   overlay = null;
+  leaving = false;
   const place = placeOf(event.state);
   // Not one of ours (history from before the app loaded): just close the sheet if it was open.
   if (!place) { if (close) transition(close); return; }
@@ -176,7 +179,9 @@ export const nav = {
     emit();
     transition(open);
   },
-  closeOverlay() { if (overlay) history.back(); },
+  // One step back, however often it's asked for before the step lands: the layer is still open
+  // until then, and a second Back would leave the page under it.
+  closeOverlay() { if (overlay && !leaving) { leaving = true; history.back(); } },
   get scroller() { return scroller; },
   get current(): Route { return now.route; },
 };

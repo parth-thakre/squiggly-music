@@ -318,7 +318,10 @@ img:is(.deck-cover, .head-cover) {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 10px;
   background: none; border: 0; border-radius: max(0px, calc(var(--radius) - 1px)); text-align: left; font-size: calc(14.5px * var(--text));
 }
-.menu-item:hover, .menu-item:focus-visible { background: var(--line); outline: none; }
+.menu-item:focus-visible { background: var(--line); outline: none; }
+/* Only a real pointer highlights: on a touch screen the sheet rises under the finger, and the
+   item there would look chosen. */
+@media (hover: hover) { .menu-item:hover { background: var(--line); } }
 .menu-item.danger { font-weight: 600; }
 .divided { position: relative; margin-top: 9px; }
 .divided::before { content: ''; position: absolute; left: 10px; right: 10px; top: -5px; border-top: 1px solid var(--line); }
