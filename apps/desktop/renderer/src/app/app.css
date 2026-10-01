@@ -189,7 +189,7 @@ img:is(.deck-cover, .head-cover) {
 .grid-name > span, .grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .grid-sub { display: block; font-size: calc(13px * var(--text)); color: var(--soft); line-height: 1.35; }
 /* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
-   keyboard focus. Touch screens have no hover, so there it stays hidden and a tap opens the page. */
+   keyboard focus. Touch screens have no hover, so there it always shows, a little smaller. */
 .playable { position: relative; }
 /* :is(.playable) lifts it above the card's own button rules (.grid button, .rows button), which
    would otherwise stretch it across the whole card. */
@@ -208,7 +208,12 @@ img:is(.deck-cover, .head-cover) {
 .name-row li, .names li { display: flex; align-items: center; }
 /* The name's button shrinks to its text and centres like the play button beside it. */
 :is(.name-row, .names) li.playable > button:not(.play-over) { height: auto; align-self: center; }
-@media (hover: none) { :is(.playable) > .play-over { display: none; } }
+@media (hover: none) {
+  :is(.playable) > .play-over { opacity: 1; pointer-events: auto; transform: none; }
+  .grid .playable:hover .cover, .grid .playable:hover .play-over { transform: none; }
+  .grid .play-over { left: 8px; top: calc(100cqw - 46px); }
+  .grid .play-over .disc { width: 38px; height: 38px; }
+}
 
 /* Tracks */
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }

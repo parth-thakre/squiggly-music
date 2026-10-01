@@ -35,6 +35,26 @@ test.describe('phone', () => {
     await expect(app.heading).toHaveText('Test Pressing');
   });
 
+  test('a record plays from its cover in one tap, and a tap elsewhere on the cover opens it', async ({ app, page }) => {
+    await app.section('Records').tap();
+    const card = app.main.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Play Quiet Harbor' }) });
+    // No hover on a phone, so the button is always there.
+    const play = card.getByRole('button', { name: 'Play Quiet Harbor' });
+    await expect(play).toBeVisible();
+    // It sits on the cover's bottom-left corner, and takes no room above the cover.
+    const cover = (await card.locator('.cover').boundingBox())!, button = (await play.boundingBox())!, item = (await card.boundingBox())!;
+    expect(cover.y).toBe(item.y);
+    expect(button.y + button.height).toBeLessThanOrEqual(cover.y + cover.height);
+    expect(button.y + button.height).toBeGreaterThan(cover.y + cover.height - 16);
+    await play.tap();
+    await app.expectPlaying('Opening 2');
+    // A whole record opens now playing over the page.
+    await expect(app.deck).toHaveClass(/\bopen\b/);
+    await app.deck.getByRole('button', { name: 'Hide' }).tap();
+    await card.locator('button:not(.play-over)').tap({ position: { x: 120, y: 40 } });
+    await expect(app.heading).toHaveText('Quiet Harbor');
+  });
+
   test('the sheet closes with Hide and with the back gesture', async ({ app, page }) => {
     await app.play('Test Pressing', 'Long Run');
     await app.deck.getByRole('button', { name: 'Open now playing: Long Run' }).tap();
