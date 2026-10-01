@@ -14,6 +14,7 @@ import { Credits } from './credits';
 import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseDrop, startDrag, useDropTarget, useSpringOpen } from './drag';
 import { morph, nav, useRoute } from './route';
 import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from './settings';
+import { PLAY_COUNTS_AT, type PlayCountsAt } from '../../../../../packages/core/plays';
 import { Lyrics } from './lyrics';
 import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
@@ -778,7 +779,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -789,6 +790,12 @@ export function SettingsView() {
       {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Lyrics in your files always come first. For songs without them, the song\'s title, artist, and album are sent to lrclib.net.')}
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
+      {settings.reportPlays && <label className="setting choice">
+        <span><strong>Count a play after</strong><span>How much of a song has to play before it counts in Navidrome, and on Last.fm or ListenBrainz if your server sends plays there. Skipping ahead doesn't count, and songs of 30 seconds or less never count.</span></span>
+        <select value={settings.playCountsAt} onChange={event => void updateSettings({ playCountsAt: Number(event.target.value) as PlayCountsAt })}>
+          {PLAY_COUNTS_AT.map(percent => <option key={percent} value={percent}>{percent}% of the song</option>)}
+        </select>
+      </label>}
       <QueuedPlays />
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
       <Disconnect />

@@ -306,7 +306,7 @@ function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play
   saveSoon();
 }
 // Play reporting in the browser and on Android, by time actually listened, with the desktop's
-// rule: songs of 30 seconds or less start but never finish.
+// rule: songs of 30 seconds or less start but never finish, others finish at Settings' share.
 function listened(seconds: number) {
   if (!local || !plays.track || !getSettings().reportPlays || plays.track.source !== 'navidrome') return;
   const { track, instance } = plays;
@@ -314,7 +314,7 @@ function listened(seconds: number) {
   // finished plays for later itself; the browser build can't.
   if (plays.started !== instance) { plays.started = instance; if (!state.reach.away) void api.reportPlay(track.id, 'started'); }
   plays.listened += seconds;
-  const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration));
+  const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration), getSettings().playCountsAt);
   if (plays.finished !== instance && threshold !== null && plays.listened >= threshold) { plays.finished = instance; void api.reportPlay(track.id, 'finished'); }
 }
 if (web) {

@@ -94,7 +94,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const library = useServer ? serverLibrary : new Proxy({}, {
       get: (_target, method: string) => method === 'coverUrl' ? () => '' : async () => ({ ok: true, value: method in empty ? empty[method] : [] }),
     });
-    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true, ...settingsPatch };
+    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true, ...settingsPatch };
     // Keep on this device.
     type Container = { kind: string; id: string; name: string; artist: string | null; coverArt: string | null; tracks: Track[]; keptAt: number };
     const containers = new Map<string, Container>();

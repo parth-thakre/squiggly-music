@@ -1,7 +1,10 @@
 // When a play counts, shared by the desktop main process and the browser build: a song longer
-// than 30 seconds counts once half of it has played. Last.fm's rule also counts four minutes of a
-// long song; this one doesn't, so a long mix needs half its length too.
-export const finishThreshold = (duration: number) => duration > 30 ? duration / 2 : null;
+// than 30 seconds counts once this share of it has played (Settings, half unless changed).
+// Last.fm's rule also counts four minutes of a long song; this one doesn't, so a long mix needs
+// the same share of its length.
+export const PLAY_COUNTS_AT = [25, 50, 75, 90] as const;
+export type PlayCountsAt = typeof PLAY_COUNTS_AT[number];
+export const finishThreshold = (duration: number, percent: PlayCountsAt = 50) => duration > 30 ? duration * percent / 100 : null;
 
 // Finished plays that couldn't be reported because the server was out of reach, sent in order
 // once it answers again. Now playing ('started') is never kept: it means nothing later.

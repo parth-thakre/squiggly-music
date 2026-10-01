@@ -2,6 +2,7 @@ import { Either, Schema } from 'effect';
 import type { Settings } from './contracts';
 import { DeviceSchema, IdSchema, QUEUE_LIMIT, QueuedPlaysSchema } from './validation';
 import { DEFAULT_KEPT_LIMIT_MB, KEPT_LIMIT_MB, KEPT_LIMITS } from './kept';
+import { PLAY_COUNTS_AT } from './plays';
 
 // Desktop-only request and file schemas: queue editing, radio, settings, and window state.
 // Main-process only; keep out of renderer imports like validation.ts.
@@ -26,12 +27,14 @@ export const RadioSeedSchema = Schema.Union(
 
 // How much room kept songs may take, in MB (1024 * 1024 bytes).
 function KeptLimitSchema() { return Schema.Number.pipe(Schema.int(), Schema.between(KEPT_LIMIT_MB.min, KEPT_LIMIT_MB.max)); }
+const PlayCountsAtSchema = Schema.Literal(...PLAY_COUNTS_AT);
 // A stored file may predate a setting, so missing keys take their default. A wrong type rejects the whole file.
 const setting = (fallback: boolean) => Schema.optionalWith(Schema.Boolean, { default: () => fallback });
 export const SettingsFileSchema = Schema.Struct({
   // Stock GNOME hides tray icons, so closing to the tray would strand the app there. Off on Linux.
   lyricsLookup: setting(false), exclusiveOutput: setting(false), closeToTray: setting(process.platform !== 'linux'), syncQueue: setting(true), reportPlays: setting(true),
   miniOnTop: setting(true),
+  playCountsAt: Schema.optionalWith(PlayCountsAtSchema, { default: () => 50 as const }),
   outputDevice: Schema.optionalWith(DeviceSchema, { default: () => 'auto' }),
   checkForUpdates: setting(true),
   keptLimitMb: Schema.optionalWith(KeptLimitSchema(), { default: () => DEFAULT_KEPT_LIMIT_MB }),
@@ -42,7 +45,7 @@ export const defaultSettings = (): Settings => Schema.decodeUnknownSync(Settings
 // Renderer changes: known keys only, never undefined. Decode with onExcessProperty: 'error'.
 export const SettingsPatchSchema = Schema.partialWith(Schema.Struct({
   lyricsLookup: Schema.Boolean, exclusiveOutput: Schema.Boolean, closeToTray: Schema.Boolean, syncQueue: Schema.Boolean, reportPlays: Schema.Boolean,
-  miniOnTop: Schema.Boolean, outputDevice: DeviceSchema, checkForUpdates: Schema.Boolean,
+  miniOnTop: Schema.Boolean, playCountsAt: PlayCountsAtSchema, outputDevice: DeviceSchema, checkForUpdates: Schema.Boolean,
   keptLimitMb: KeptLimitSchema(), diagnostics: Schema.Boolean,
 }), { exact: true });
 

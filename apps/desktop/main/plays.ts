@@ -1,5 +1,5 @@
 import type { PlayerSnapshot } from '../../../packages/core/contracts';
-import { finishThreshold } from '../../../packages/core/plays';
+import { finishThreshold, type PlayCountsAt } from '../../../packages/core/plays';
 
 export interface PlayEvent { trackId: string; event: 'started' | 'finished' }
 export { finishThreshold };
@@ -11,8 +11,8 @@ export class PlayTracker {
 
   reset() { this.play = null; }
 
-  // `now` is a monotonic time in milliseconds.
-  update(player: PlayerSnapshot, now: number): PlayEvent[] {
+  // `now` is a monotonic time in milliseconds. `percent` is the share of a song that counts as a play.
+  update(player: PlayerSnapshot, now: number, percent: PlayCountsAt = 50): PlayEvent[] {
     const track = player.engine === 'ready' ? player.queue[player.currentIndex] : undefined;
     // Stopping, an engine restart, a local file, or an internet radio station ends the current play.
     // A station is live, not a song the server can count.
@@ -32,7 +32,7 @@ export class PlayTracker {
     const events: PlayEvent[] = [];
     if (!player.playing) return events;
     if (!play.started) { play.started = true; events.push({ trackId: track.id, event: 'started' }); }
-    const threshold = finishThreshold(player.duration > 0 ? player.duration : track.duration ?? 0);
+    const threshold = finishThreshold(player.duration > 0 ? player.duration : track.duration ?? 0, percent);
     if (!play.finished && threshold !== null && play.played >= threshold) {
       play.finished = true; events.push({ trackId: track.id, event: 'finished' });
     }

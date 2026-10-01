@@ -290,7 +290,7 @@ function observePlayer() {
   // While the server is away the queue isn't saved, but a change is remembered and saved once it's back.
   queueSync.observe(player, connectionGeneration, !settings.value.syncQueue || server === null ? false : away() ? 'held' : true);
   sinks.observe(player, host?.pid);
-  const events = plays.update(player, performance.now());
+  const events = plays.update(player, performance.now(), settings.value.playCountsAt);
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
   // Kept files forgotten while queued go once they leave the queue.
   void keeper?.retryPending();

@@ -3,7 +3,7 @@ import type { Settings } from '../../../../../packages/core/contracts';
 
 // Desktop settings live in the main process; the browser build keeps its own in localStorage.
 // Exclusive output, the tray, and the mini player only exist on the desktop.
-const defaults: Settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: true, syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true };
+const defaults: Settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: true, syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true };
 const KEY = 'squiggly.settings';
 const desktop = window.squiggly;
 // Desktop betas with remote diagnostics built in (the preload offers sendDiagnostics only there).

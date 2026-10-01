@@ -101,7 +101,7 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
@@ -233,6 +233,21 @@ describe('play reporting', () => {
     expect(finishThreshold(30)).toBeNull();
     const tracker = new PlayTracker();
     expect(play(tracker, 30, 0, { duration: 30 }).map(event => event.event)).toEqual(['started']);
+  });
+
+  it('finishes at the share of the song chosen in Settings', () => {
+    expect(finishThreshold(200, 25)).toBe(50);
+    expect(finishThreshold(200, 90)).toBe(180);
+    expect(finishThreshold(30, 90)).toBeNull();
+    const tracker = new PlayTracker();
+    const finishedBy = (seconds: number) => {
+      const events = [];
+      for (let tick = 0; tick <= seconds * 4; tick++) events.push(...tracker.update(snapshot({ playing: true, position: tick / 4 }), tick * 250, 75));
+      return events.map(event => event.event);
+    };
+    expect(finishedBy(149)).toEqual(['started']);
+    tracker.reset();
+    expect(finishedBy(150)).toEqual(['started', 'finished']);
   });
 
   it('does not count seeks or paused time', () => {

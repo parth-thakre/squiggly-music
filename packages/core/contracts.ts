@@ -199,6 +199,7 @@ export interface Settings {
   closeToTray: boolean;       // closing the window keeps playback running in the tray
   syncQueue: boolean;         // save the queue to Navidrome and offer to resume it
   reportPlays: boolean;       // tell Navidrome what was played
+  playCountsAt: 25 | 50 | 75 | 90; // percent of a song that has to play before it counts
   miniOnTop: boolean;         // keep the mini player above other windows
   outputDevice: string;       // mpv audio-device name; 'auto' is the system default
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
