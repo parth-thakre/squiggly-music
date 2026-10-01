@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { Plugin } from 'vite';
 import { devServerCsp } from './scripts/dev-csp';
-import { diagnosticsTarget } from './scripts/diagnostics-build';
+import { DIAGNOSTICS_MARKER, diagnosticsTarget } from './scripts/diagnostics-build';
 
 // Packages unpack out/main from app.asar for the audio host, which runs under a separate
 // Node that cannot read asar. The root package.json stays inside app.asar, so the unpacked
@@ -32,7 +32,7 @@ function diagnosticsDefines() {
   const section = (readFileSync('electron-builder.yml', 'utf8').split(/^electronFuses:\s*$/m)[1] ?? '').split(/^\S/m)[0];
   const fuses = Object.fromEntries([...section.matchAll(/^ {2}(\w+):\s*(true|false)\s*$/gm)].map(([, name, value]) => [name, value === 'true']));
   const build = {
-    builtAt: new Date().toISOString(), commit: run('git', ['rev-parse', '--short', 'HEAD']),
+    marker: DIAGNOSTICS_MARKER, builtAt: new Date().toISOString(), commit: run('git', ['rev-parse', '--short', 'HEAD']),
     branch: run('git', ['rev-parse', '--abbrev-ref', 'HEAD']), dirty: Boolean(run('git', ['status', '--porcelain'])), fuses,
   };
   console.log(`Beta ${version} with diagnostics: events go to ${target.origin}${target.pathname}`);

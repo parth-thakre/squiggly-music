@@ -97,7 +97,7 @@ node scripts/smoke-runtime.mjs dist/win-unpacked   # under Wine: wine dist/win-u
 mkdir release && cp dist/*.exe dist/*.exe.blockmap dist/latest.yml dist/*.rpm dist/latest-linux.yml release/
 cp dist/android/squiggly-$(node -p "require('./package.json').version")-release.apk "release/Squiggly-Music-$(node -p "require('./package.json').version")-android.apk"
 cp .local/libmpv-windows/libmpv-windows-x64-source.tar "release/Squiggly-Music-$(node -p "require('./package.json').version")-libmpv-windows-x64-source.tar"
-node scripts/release-checksums.mjs release
+node scripts/release-checksums.mjs release   # stops if anything was built with diagnostics
 git push && gh release create "v$(node -p "require('./package.json').version")" release/* --target main --title "Squiggly Music $(node -p "require('./package.json').version")" --notes-file <notes>
 ```
 
@@ -107,18 +107,19 @@ With the workflow enabled again, pushing a `v*` tag runs `.github/workflows/rele
 
 To build without publishing, open Actions, pick Release, and choose Run workflow. The files end up in the `release-assets` artifact.
 
-## Beta builds and diagnostics
+## Diagnostics builds
 
-Betas may send diagnostics to the developer. Stable releases never do. The rules:
+Nothing published has diagnostics: no GitHub release, beta or stable, and no other download. A diagnostics build is only for the developer's own devices, copied to them directly, to debug a real install live. The rules:
 
-- A desktop build has remote diagnostics (`apps/desktop/main/remoteDiagnostics.ts`) only when `SQUIGGLY_DIAG_URL` and `SQUIGGLY_DIAG_TOKEN` are both set while it builds. The app never reads them at run time. Without them, nothing is compiled in, and the setting, the marker, and the "Send diagnostics now" command don't appear. Android and the browser build never have diagnostics.
-- Only a prerelease version (a hyphen, like `0.3.0-beta.1`) may be built with them. With either variable set and a stable version in `package.json`, `electron.vite.config.ts` stops the build: "Diagnostics are for beta builds only…" (the check is `scripts/diagnostics-build.ts`). That covers `npm run build`, `package:win`, `package:linux`, and `npm run dev`. Leaving the variables exported in a shell can't slip them into a stable release.
-- The Release workflow passes the repository secrets `SQUIGGLY_DIAG_URL` and `SQUIGGLY_DIAG_TOKEN` to the Linux and Windows builds for hyphenated `v*` tags only; stable tags and manual runs get empty values. Each of those jobs also fails before building if the variables are set for a stable version. When both secrets exist, a prerelease's notes get `.github/release-notes-beta-diagnostics.md`.
-- A beta with diagnostics says so. The window title and tray tooltip end in "Beta · sends diagnostics", and a "Beta · sends diagnostics" link under the deck opens the switch in Settings (on the connect screen it shows the switch in place). **Send diagnostics to the developer** is on by default. Off, nothing is queued, sent, or appended to the local copy, and anything waiting is dropped. On again, it carries on from there.
+- A desktop build has remote diagnostics (`apps/desktop/main/remoteDiagnostics.ts`) only when `SQUIGGLY_DIAG_URL` and `SQUIGGLY_DIAG_TOKEN` are both set while it builds. The app never reads them at run time. Without them, nothing is compiled in, and the setting, the marker, and the "Send diagnostics now" command don't appear. The browser build never has diagnostics.
+- Only a prerelease version (a hyphen, like `0.3.0-beta.1`) may be built with them. With either variable set and a stable version in `package.json`, `electron.vite.config.ts` stops the build: "Diagnostics are for beta builds only…" (the check is `scripts/diagnostics-build.ts`). That covers `npm run build`, `package:win`, `package:linux`, and `npm run dev`.
+- Every diagnostics build carries a marker (`DIAGNOSTICS_MARKER`) in its compiled code. `scripts/release-checksums.mjs`, which every release runs, looks for it in the release assets and in the unpacked builds in `dist/` (`scripts/release-clean.mjs`), and stops with the files that have it. Rebuild those without the variables.
+- The Release workflow never gets the variables, and its Linux and Windows jobs fail before building if they're set.
+- A diagnostics build says so. The window title and tray tooltip end in "Beta · sends diagnostics", and a "Beta · sends diagnostics" link under the deck opens the switch in Settings (on the connect screen it shows the switch in place). **Send diagnostics to the developer** is on by default. Off, nothing is queued, sent, or appended to the local copy, and anything waiting is dropped. On again, it carries on from there.
 - What's sent: startup facts (versions, paths, GPU), a heartbeat every 5 s, main-process and window console output and errors, the audio process's lifecycle and output, IPC failures and counts, extension changes, and updater events. Subsonic credential parameters (`u`, `t`, `s`, `p`, `apiKey`, `token`, `password`) are removed from every string, as are the signed-in password and a username of three or more characters. The saved sign-in isn't sent. The same events go to `<userData>/diagnostics/remote-YYYYMMDD.ndjson`.
-- The token is built into the app, so anyone with the beta can read it. It only stops strangers posting to the collector: use a fresh random one for each beta series, and never one used for anything else.
+- The token is built into the app, so anyone holding a diagnostics build can read it. It only stops strangers posting to the collector: use a fresh random one for each beta series, and never one used for anything else.
 
-Build a beta with diagnostics on this machine:
+Build one on this machine:
 
 ```bash
 npm version 0.3.0-beta.1 --no-git-tag-version
@@ -129,7 +130,7 @@ npm run package:win && npm run package:linux
 unset SQUIGGLY_DIAG_URL SQUIGGLY_DIAG_TOKEN
 ```
 
-The build prints `Beta 0.3.0-beta.1 with diagnostics: events go to …`. Add `.github/release-notes-beta-diagnostics.md`, with `{{VERSION}}` filled in, to the release notes. Keep the token: the collector needs it.
+The build prints `Beta 0.3.0-beta.1 with diagnostics: events go to …`. Copy the result to the device (Taildrop: `tailscale file cp <file> <device>:`), never into `release/`. Keep the token: the collector needs it.
 
 Run the collector on the machine the URL names. `pc.tail1e2a66.ts.net` is a Tailscale MagicDNS name, which resolves only inside the tailnet, so bind the collector to this machine's Tailscale address:
 

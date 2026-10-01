@@ -5,6 +5,10 @@
 
 export interface DiagnosticsTarget { url: string; token: string }
 
+// Written into every diagnostics build with its build facts, and into nothing else, so
+// scripts/release-checksums.mjs can refuse to publish one (scripts/release-clean.mjs).
+export const DIAGNOSTICS_MARKER = 'squiggly-diagnostics-build';
+
 // A prerelease has a hyphen before any build metadata: 0.3.0-beta.1 does, 0.3.0 and 0.3.0+ci-7 don't.
 export const isPrerelease = (version: string) => version.split('+')[0].includes('-');
 
