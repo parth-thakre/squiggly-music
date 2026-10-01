@@ -4,7 +4,7 @@
 .kept-mark svg { width: 15px; height: 15px; }
 .kept-mark.on-sleeve { position: absolute; right: 6px; bottom: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--ground); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
 .kept-mark.on-sleeve svg { width: 14px; height: 14px; }
-.grid li.playable > button, .rows li > button { position: relative; }
+.grid li.playable > button:not(.play-over), .rows li > button:not(.play-over) { position: relative; }
 .kept-sleeve { position: relative; flex: none; display: block; }
 .grid .kept-mark.on-sleeve { right: 8px; bottom: auto; top: calc(100cqw - 32px); }
 /* Rows: the mark sits on the 64 px sleeve's corner, though it follows the text in the markup. */
