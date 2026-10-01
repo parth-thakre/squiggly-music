@@ -227,8 +227,8 @@ describe('play reporting', () => {
     expect(play(tracker, 50, 101, {}, 101_000)).toEqual([]);
   });
 
-  it('uses four minutes for long songs and never finishes songs of 30 seconds or less', () => {
-    expect(finishThreshold(1200)).toBe(240);
+  it('needs half of every song, however long, and never finishes songs of 30 seconds or less', () => {
+    expect(finishThreshold(1200)).toBe(600);
     expect(finishThreshold(31)).toBe(15.5);
     expect(finishThreshold(30)).toBeNull();
     const tracker = new PlayTracker();
