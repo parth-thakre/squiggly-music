@@ -120,6 +120,8 @@ object Kept {
 
     /** Gets every progress report (throttled to 250 ms) while a page listens. */
     @Volatile var listener: ((JSObject) -> Unit)? = null
+    /** Called on the index thread after every change to what is kept, so Playback can use new files. */
+    @Volatile var changed: (() -> Unit)? = null
 
     /** Idempotent. Loads on the index thread; plugin calls queue behind the load. */
     @Synchronized fun init(context: Context) {
@@ -219,6 +221,11 @@ object Kept {
         val song = present[trackId] ?: return null
         val file = resolve(folder, song.file) ?: return null
         return if (file.isFile && file.length() == song.bytes) file else { check(trackId); null }
+    }
+    /** Whether a path names a file this keeps: a name the writer makes, in the folder. Any thread. */
+    fun owns(path: String): Boolean {
+        val folder = dir ?: return false
+        return resolve(folder, File(path).name)?.canonicalFile == File(path).canonicalFile
     }
     /** A kept cover's type and bytes. Any thread. */
     fun coverFor(id: String): Pair<String, ByteArray>? {
@@ -536,6 +543,7 @@ object Kept {
     private fun publish() {
         present = HashMap(songs)
         coversNow = HashMap(covers)
+        changed?.invoke()
         notifyPage()
     }
     private fun notifyPage() {

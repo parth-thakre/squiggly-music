@@ -516,6 +516,11 @@ if (web) {
 // apps/android/web/bridge.ts). It moves between songs, and takes the notification's and lock
 // screen's buttons, on its own; the page follows its reports. Sign-in works as on the desktop.
 let native: AndroidPlayback | null = null;
+// Away, a kept song that fails anyway: its file is the trouble, not the connection. The native
+// player says "network" when the file couldn't be opened, and "unplayable" when it couldn't be played.
+const keptFailed = (track: Track, error: string) => state.reach.away && keptSupported && track.source === 'navidrome' && isKept(track.id)
+  ? error === 'unplayable' ? 'This song is kept on this device, but its file can\'t be played here.' : 'This song is kept on this device, but its file couldn\'t be opened.'
+  : null;
 // Reports whose entry the page doesn't know (a queue edit still on its way) are left alone.
 function nativePlayback(playback: AndroidPlayback) {
   const before = native;
@@ -544,7 +549,8 @@ function nativePlayback(playback: AndroidPlayback) {
   if (playback.ended) { patch.playing = false; patch.buffering = false; patch.position = 0; }
   // A song that can't be played says so once.
   if (playback.error && (before?.error !== playback.error || before.playId !== playback.playId)) {
-    patch.error = isStation(track) ? stationFailed : awayError(track, 'This song could not be played here. Try another, or check the connection.');
+    patch.error = isStation(track) ? stationFailed : keptFailed(track, playback.error)
+      ?? awayError(track, 'This song could not be played here. Try another, or check the connection.');
   }
   set(patch);
 }

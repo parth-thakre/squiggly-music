@@ -551,6 +551,8 @@ export interface AndroidPlayback {
   playing: boolean; buffering: boolean; ended: boolean; position: number; duration: number;
   // The original couldn't be decoded, so the server's 320 kbps MP3 is playing instead.
   fallback: boolean;
+  // 'network' (it couldn't be fetched or opened) or 'unplayable' (anything else, such as a file
+  // that couldn't be decoded).
   error: string | null;
   // A station playing: the title its stream announces, from ExoPlayer's ICY metadata. Null when
   // it announces none.
