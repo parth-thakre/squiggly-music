@@ -157,6 +157,7 @@ export interface Settings {
   miniOnTop: boolean;         // keep the mini player above other windows
   outputDevice: string;       // mpv audio-device name; 'auto' is the system default
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
+  diagnostics: boolean;       // betas with remote diagnostics built in: send them (off: nothing sent or written)
 }
 export interface QueueApi {
   add(trackIds: string[], where: 'next' | 'end'): Promise<Result>;
@@ -362,6 +363,10 @@ export interface DesktopBridge {
   };
   disconnect(): Promise<Result>;
   exportDiagnostics(): Promise<Result>;
+  // Betas with remote diagnostics built in only (apps/desktop/main/remoteDiagnostics.ts): send
+  // everything queued now. Absent otherwise, which is how the window knows to hide the
+  // diagnostics setting, its marker, and this command.
+  sendDiagnostics?(): Promise<Result<string>>;
 }
 
 export const emptyAudio = (): AudioPath => ({

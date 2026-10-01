@@ -7,6 +7,7 @@ import { getThemes, onThemesChange, selectTheme } from '../theme';
 import { splitTitle } from '../ui';
 import { openConfigFolder } from '../config';
 import { setRating } from '../ratings';
+import { diagnosticsBuilt, getSettings } from '../settings';
 import { following, nextRepeat } from '../../../../../../packages/core/playOrder';
 import { onCommandError } from './keymap';
 import { togglePalette } from './palette-state';
@@ -149,6 +150,11 @@ add({ id: 'open-config', title: 'Open the config folder', category: 'App', when:
 add({
   id: 'reload-extensions', title: 'Reload extensions', category: 'App', when: () => !!window.squiggly?.extensions,
   async run() { const result = await window.squiggly!.extensions.reload(); if (!result.ok) fail(result.error); },
+});
+// Desktop betas with remote diagnostics built in, while their setting is on.
+add({
+  id: 'send-diagnostics', title: 'Send diagnostics now', category: 'App', when: () => diagnosticsBuilt && getSettings().diagnostics,
+  async run() { const result = await window.squiggly!.sendDiagnostics!(); if (!result.ok) fail(result.error); },
 });
 
 // One command per theme, so "Theme: Night" is a keystroke away and can be bound.

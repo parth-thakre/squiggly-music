@@ -25,12 +25,14 @@ export const SettingsFileSchema = Schema.Struct({
   miniOnTop: setting(true),
   outputDevice: Schema.optionalWith(DeviceSchema, { default: () => 'auto' }),
   checkForUpdates: setting(true),
+  // Only betas with remote diagnostics built in read it; everywhere else it does nothing.
+  diagnostics: setting(true),
 });
 export const defaultSettings = (): Settings => Schema.decodeUnknownSync(SettingsFileSchema)({});
 // Renderer changes: known keys only, never undefined. Decode with onExcessProperty: 'error'.
 export const SettingsPatchSchema = Schema.partialWith(Schema.Struct({
   lyricsLookup: Schema.Boolean, exclusiveOutput: Schema.Boolean, closeToTray: Schema.Boolean, syncQueue: Schema.Boolean, reportPlays: Schema.Boolean,
-  miniOnTop: Schema.Boolean, outputDevice: DeviceSchema, checkForUpdates: Schema.Boolean,
+  miniOnTop: Schema.Boolean, outputDevice: DeviceSchema, checkForUpdates: Schema.Boolean, diagnostics: Schema.Boolean,
 }), { exact: true });
 
 const CoordinateSchema = Schema.Number.pipe(Schema.int(), Schema.between(-100_000, 100_000));

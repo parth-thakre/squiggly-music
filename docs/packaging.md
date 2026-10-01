@@ -97,7 +97,7 @@ node scripts/smoke-runtime.mjs dist/win-unpacked   # under Wine: wine dist/win-u
 mkdir release && cp dist/*.exe dist/*.exe.blockmap dist/latest.yml dist/*.rpm dist/latest-linux.yml release/
 cp dist/android/squiggly-$(node -p "require('./package.json').version")-release.apk "release/Squiggly-Music-$(node -p "require('./package.json').version")-android.apk"
 cp .local/libmpv-windows/libmpv-windows-x64-source.tar "release/Squiggly-Music-$(node -p "require('./package.json').version")-libmpv-windows-x64-source.tar"
-node scripts/release-checksums.mjs release
+node scripts/release-checksums.mjs release   # stops if anything was built with diagnostics
 git push && gh release create "v$(node -p "require('./package.json').version")" release/* --target main --title "Squiggly Music $(node -p "require('./package.json').version")" --notes-file <notes>
 ```
 
@@ -106,6 +106,39 @@ The notes start from `.github/release-notes-header.md` with `{{VERSION}}`, `{{TA
 With the workflow enabled again, pushing a `v*` tag runs `.github/workflows/release.yml` instead. It typechecks, builds, and runs the unit tests (with real libmpv) and the Playwright interface tests. In parallel, it builds the Windows libmpv from `build/libmpv`, cached by the recipe's contents. Then it builds the Windows installer and portable exe with that libmpv and the RPM, smoke-tests each package's runtime, and stops if anything fails. Last, it writes `SHA256SUMS`, adds build provenance attestations, and publishes a GitHub release with the libmpv source bundle attached as `Squiggly-Music-<version>-libmpv-windows-x64-source.tar`. Versions with a hyphen, like `1.2.0-beta.1`, go out as prereleases.
 
 To build without publishing, open Actions, pick Release, and choose Run workflow. The files end up in the `release-assets` artifact.
+
+## Diagnostics builds
+
+Nothing published has diagnostics: no GitHub release, beta or stable, and no other download. A diagnostics build is only for the developer's own devices, copied to them directly, to debug a real install live. The rules:
+
+- A desktop build has remote diagnostics (`apps/desktop/main/remoteDiagnostics.ts`) only when `SQUIGGLY_DIAG_URL` and `SQUIGGLY_DIAG_TOKEN` are both set while it builds. The app never reads them at run time. Without them, nothing is compiled in, and the setting, the marker, and the "Send diagnostics now" command don't appear. The browser build never has diagnostics.
+- Only a prerelease version (a hyphen, like `0.3.0-beta.1`) may be built with them. With either variable set and a stable version in `package.json`, `electron.vite.config.ts` stops the build: "Diagnostics are for beta builds only…" (the check is `scripts/diagnostics-build.ts`). That covers `npm run build`, `package:win`, `package:linux`, and `npm run dev`.
+- Every diagnostics build carries a marker (`DIAGNOSTICS_MARKER`) in its compiled code. `scripts/release-checksums.mjs`, which every release runs, looks for it in the release assets and in the unpacked builds in `dist/` (`scripts/release-clean.mjs`), and stops with the files that have it. Rebuild those without the variables.
+- The Release workflow never gets the variables, and its Linux and Windows jobs fail before building if they're set.
+- A diagnostics build says so. The window title and tray tooltip end in "Beta · sends diagnostics", and a "Beta · sends diagnostics" link under the deck opens the switch in Settings (on the connect screen it shows the switch in place). **Send diagnostics to the developer** is on by default. Off, nothing is queued, sent, or appended to the local copy, and anything waiting is dropped. On again, it carries on from there.
+- What's sent: startup facts (versions, paths, GPU), a heartbeat every 5 s, main-process and window console output and errors, the audio process's lifecycle and output, IPC failures and counts, extension changes, and updater events. Subsonic credential parameters (`u`, `t`, `s`, `p`, `apiKey`, `token`, `password`) are removed from every string, as are the signed-in password and a username of three or more characters. The saved sign-in isn't sent. The same events go to `<userData>/diagnostics/remote-YYYYMMDD.ndjson`.
+- The token is built into the app, so anyone holding a diagnostics build can read it. It only stops strangers posting to the collector: use a fresh random one for each beta series, and never one used for anything else.
+
+Build one on this machine:
+
+```bash
+npm version 0.3.0-beta.1 --no-git-tag-version
+export SQUIGGLY_DIAG_URL=http://pc.tail1e2a66.ts.net:47800/ingest
+export SQUIGGLY_DIAG_TOKEN="$(node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")"
+npm ci && npm run check && npm run test:ui
+npm run package:win && npm run package:linux
+unset SQUIGGLY_DIAG_URL SQUIGGLY_DIAG_TOKEN
+```
+
+The build prints `Beta 0.3.0-beta.1 with diagnostics: events go to …`. Copy the result to the device (Taildrop: `tailscale file cp <file> <device>:`), never into `release/`. Keep the token: the collector needs it.
+
+Run the collector on the machine the URL names. `pc.tail1e2a66.ts.net` is a Tailscale MagicDNS name, which resolves only inside the tailnet, so bind the collector to this machine's Tailscale address:
+
+```bash
+node scripts/diag-collector.mjs --host "$(tailscale ip -4)" --port 47800 --token "$SQUIGGLY_DIAG_TOKEN" --out .local/diag
+```
+
+It prints one line per event, appends every event to `.local/diag/events.ndjson`, and keeps the newest heartbeat in `.local/diag/latest-heartbeat.json`. `GET /health` answers `ok`. Copies that can't reach it (off the tailnet, the name doesn't resolve, or the collector is down) fail quietly. They log nothing and show nothing, keep up to 5,000 events in memory, and try again after 2 s, doubling up to once a minute. Their local copy is still written.
 
 ## Verifying a download
 

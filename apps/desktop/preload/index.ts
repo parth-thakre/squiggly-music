@@ -110,5 +110,7 @@ const bridge: DesktopBridge = {
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
   exportDiagnostics: () => ipcRenderer.invoke('squiggly:export-diagnostics'),
+  // Only in betas with remote diagnostics built in, whose main process adds this argument.
+  ...(process.argv.includes('--squiggly-diagnostics') ? { sendDiagnostics: () => ipcRenderer.invoke('squiggly:diagnostics:send') } : {}),
 };
 contextBridge.exposeInMainWorld('squiggly', bridge);

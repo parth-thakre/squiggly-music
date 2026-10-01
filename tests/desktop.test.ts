@@ -69,11 +69,15 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, diagnostics: true });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: false }).miniOnTop).toBe(false);
+    // Diagnostics (betas that have them) start on; turned off, they stay off.
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).diagnostics).toBe(true);
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ diagnostics: false }).diagnostics).toBe(false);
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ diagnostics: 'off' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ closeToTray: 'yes' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: 'no' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: '' })).toThrow();
@@ -84,6 +88,8 @@ describe('desktop request schemas', () => {
     const patch = (value: unknown) => Schema.decodeUnknownSync(SettingsPatchSchema)(value, { onExcessProperty: 'error' });
     expect(patch({ exclusiveOutput: true })).toEqual({ exclusiveOutput: true });
     expect(patch({ miniOnTop: false })).toEqual({ miniOnTop: false });
+    expect(patch({ diagnostics: false })).toEqual({ diagnostics: false });
+    expect(() => patch({ diagnostics: 'no' })).toThrow();
     expect(() => patch({ miniOnTop: undefined })).toThrow();
     expect(patch({})).toEqual({});
     expect(() => patch({ lyricsLookup: undefined })).toThrow();

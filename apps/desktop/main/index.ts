@@ -32,6 +32,10 @@ import { isLocalCover, readLocalCover, readLocalTracks } from './localFiles';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
+import { remote } from './remoteDiagnostics';
+
+// Betas with remote diagnostics compiled in (remoteDiagnostics.ts); otherwise does nothing.
+remote.installEarly();
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
@@ -104,7 +108,7 @@ let account = new Account('', safeStorage);
 // Repeat and shuffle, as last chosen. The audio host owns them while it runs (they're in its
 // snapshots); this copy survives restarts and starts the next host with them.
 let playModes = new JsonStore('', PlayModesSchema, defaultPlayModes());
-const updates = new Updates(() => state.update, next => { state.update = next; broadcast(); }, () => settings.value.checkForUpdates);
+const updates = new Updates(() => state.update, next => { state.update = next; broadcast(); }, () => settings.value.checkForUpdates, (name, data) => remote.update(name, data));
 const plays = new PlayTracker();
 // Quit clears the session at once, but the final queue save (possibly queued behind a save
 // still in flight) belongs to the session that was current when quit began.
@@ -251,27 +255,34 @@ async function launchPlayer() {
   // and its imports are unpacked beside it (see asarUnpack in electron-builder.yml).
   const hostDirectory = directory.replace(/app\.asar(?=[\\/]|$)/, 'app.asar.unpacked');
   const packaged = app.isPackaged;
-  const child = fork(join(hostDirectory, 'player.js'), [], {
-    execPath: (!packaged && process.env.SQUIGGLY_NODE_PATH) || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node',
+  const script = join(hostDirectory, 'player.js');
+  const execPath = (!packaged && process.env.SQUIGGLY_NODE_PATH) || bundledRuntime(process.platform === 'win32' ? 'node.exe' : 'node') || 'node';
+  const libmpv = packaged ? bundledRuntime('libmpv-2.dll') : process.env.SQUIGGLY_LIBMPV_PATH;
+  // A diagnostics build pipes the host's output and forwards it; remote.hostSpawn reads both.
+  const output = remote.enabled || process.env.SQUIGGLY_SMOKE_TEST === '1' ? 'pipe' : 'ignore';
+  const child = fork(script, [], {
+    execPath,
     env: {
       // An undefined value leaves the variable out, so a packaged host never inherits these.
       // NODE_OPTIONS and NODE_PATH could load other code into it before the app's own.
-      ...process.env, SQUIGGLY_LIBMPV_PATH: packaged ? bundledRuntime('libmpv-2.dll') : process.env.SQUIGGLY_LIBMPV_PATH,
+      ...process.env, SQUIGGLY_LIBMPV_PATH: libmpv,
       ...(packaged ? { NODE_OPTIONS: undefined, NODE_PATH: undefined } : {}),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
     },
     execArgv: [], windowsHide: true,
-    stdio: ['ignore', 'ignore', process.env.SQUIGGLY_SMOKE_TEST === '1' ? 'pipe' : 'ignore', 'ipc'],
+    stdio: ['ignore', remote.enabled ? 'pipe' : 'ignore', output, 'ipc'],
   });
   if (process.env.SQUIGGLY_SMOKE_TEST === '1') child.stderr?.on('data', data => process.stderr.write(data));
+  remote.hostSpawn(child, { execPath, script, libmpv });
   host = child;
   child.on('message', (message: HostMessage) => {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
     messages++; bytes += Buffer.byteLength(JSON.stringify(message));
     if (message.type === 'snapshot') {
       state.player = { ...message.player, radio: radio.view }; hostResources = message.resources; broadcast(); observePlayer();
+      remote.hostSnapshot(message.player);
       if (message.player.engine === 'crashed') {
         // The host publishes its reason before native teardown. Enforce a bound
         // here because mpv_terminate_destroy may block inside the child.
@@ -382,6 +393,10 @@ function shellPlay() {
 // URL before replacing the account, while keeping the audio engine's volume and output device.
 function connectTo(typed: Connection, generation: number) {
   return Effect.gen(function* () {
+    // Betas with diagnostics replace the password, and a username long enough not to match
+    // everywhere, with *** in everything they send or write.
+    remote.addSecret(typed.password);
+    if (typed.username.length >= 3) remote.addSecret(typed.username);
     if (generation !== connectionGeneration || quitting) return yield* Effect.fail(new Error('Connection canceled.'));
     const resolved = yield* resolveAddress(typed);
     // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
@@ -429,8 +444,10 @@ function assertSender(event: IpcMainInvokeEvent) {
 function handle<A>(channel: string, task: (value: unknown, generation: number) => Effect.Effect<A, unknown>, lane: keyof typeof semaphores = 'audio') {
   ipcMain.handle(`squiggly:${channel}`, async (event, value): Promise<Result<A>> => {
     assertSender(event);
+    remote.ipcCall(channel);
+    const began = performance.now();
     ipcCount++;
-    if (ipcCount > 32) { ipcCount--; return { ok: false, error: 'Too many pending operations. Try again shortly.' }; }
+    if (ipcCount > 32) { ipcCount--; remote.ipcFailed(channel, 'Too many pending operations.', 0); return { ok: false, error: 'Too many pending operations. Try again shortly.' }; }
     state.diagnostics.ipcCommands++;
     const generation = connectionGeneration;
     try {
@@ -443,9 +460,16 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
         return task(value, generation);
       });
       const result = await Effect.runPromise(Effect.either(metrics.measure(`ipc.${channel}`, semaphores[lane].withPermits(1)(program))));
-      if (Either.isLeft(result)) return { ok: false, error: result.left instanceof Error ? result.left.message : 'Operation failed.' };
+      if (Either.isLeft(result)) {
+        const error = result.left instanceof Error ? result.left.message : 'Operation failed.';
+        remote.ipcFailed(channel, error, performance.now() - began);
+        return { ok: false, error };
+      }
       return { ok: true, value: result.right };
-    } catch { return { ok: false, error: 'Invalid request or unexpected desktop error.' }; }
+    } catch (error) {
+      remote.ipcFailed(channel, `Unexpected: ${error instanceof Error ? error.stack ?? error.message : String(error)}`, performance.now() - began);
+      return { ok: false, error: 'Invalid request or unexpected desktop error.' };
+    }
     finally { ipcCount--; broadcast(); }
   });
 }
@@ -569,6 +593,8 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) queueSync.reset();
+    // Betas with diagnostics: off stops sending and writing at once; on picks up again.
+    if (next.diagnostics !== previous.diagnostics) { remote.setActive(next.diagnostics); tray?.setToolTip(`Squiggly Music${remote.titleSuffix}`); }
     applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
     if (next.checkForUpdates && !previous.checkForUpdates) updates.check();
     return settings.value;
@@ -622,6 +648,14 @@ function installHandlers() {
     };
     yield* Effect.tryPromise(() => writeFile(result.filePath!, JSON.stringify(report, null, 2), { mode: 0o600 }));
   }), 'dialog');
+  // Betas with diagnostics only: the palette's "Send diagnostics now".
+  if (remote.enabled) handle('diagnostics:send', () => Effect.gen(function* () {
+    if (!remote.live) return yield* Effect.fail(new Error('Diagnostics are off. Turn on "Send diagnostics to the developer" in Settings first.'));
+    remote.event('diag.flush-requested', {});
+    const result = yield* Effect.promise(() => remote.flush(true));
+    if (result.error && result.queued) return yield* Effect.fail(new Error(`Diagnostics not sent: ${result.error}`));
+    return `Sent ${result.sent} diagnostic events.`;
+  }), 'window');
 }
 
 // Both windows load the same renderer with the same sandbox, isolation, and navigation limits.
@@ -650,11 +684,13 @@ function createWindow(mini: boolean) {
       additionalArguments: [
         ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
         ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
+        ...(remote.enabled ? ['--squiggly-diagnostics'] : []),
         `--squiggly-config=${configDirectory(app.isPackaged)}`,
       ],
     },
   });
   target.setMenuBarVisibility(false);
+  remote.watchWindow(target, mini ? 'mini' : 'main');
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   target.webContents.on('will-navigate', event => event.preventDefault());
   target.on('show', () => { if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state); });
@@ -760,7 +796,7 @@ function createTray() {
     image.addRepresentation({ scaleFactor, buffer: source.resize({ width: pixels, height: pixels, quality: 'best' }).toPNG() });
   }
   try { tray = new Tray(image); } catch { tray = null; return; }
-  tray.setToolTip('Squiggly Music');
+  tray.setToolTip(`Squiggly Music${remote.titleSuffix}`);
   tray.on('click', showMain);
   updateTray();
 }
@@ -879,10 +915,11 @@ app.whenReady().then(async () => {
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
   await playModes.load();
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
+  remote.start(userData, { snapshot: () => state, outputDevice: () => settings.value.outputDevice, exclusiveOutput: () => settings.value.exclusiveOutput }, settings.value.diagnostics);
   installHandlers(); loop.enable();
   const windowContents = () => appWindows().map(target => target.webContents);
   config = startConfigFolder({ assertSender, windows: windowContents });
-  extensions = startExtensions({ configDir: config.dir, assertSender, windows: windowContents });
+  extensions = startExtensions({ configDir: config.dir, assertSender, windows: windowContents, observe: list => remote.extensions(list) });
   protocol.handle('squiggly-art', serveCover);
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   createMainWindow();
@@ -923,7 +960,9 @@ app.whenReady().then(async () => {
     const stopped = host ? terminateHost(host) : Promise.resolve();
     config?.close();
     const closed = extensions?.close().catch(() => undefined);
-    void Promise.all([bounded, stopped, closed]).then(() => app.exit(0), () => app.exit(1));
+    // Diagnostics builds send what's left; bounded at 1.5 s inside close().
+    const reported = stopped.catch(() => undefined).then(() => remote.close());
+    void Promise.all([bounded, stopped, closed, reported]).then(() => app.exit(0), () => app.exit(1));
   });
 });
 app.on('window-all-closed', () => app.quit());

@@ -149,6 +149,14 @@ jobs:
         with:
           path: .local/downloads
           key: linux-downloads-${{ hashFiles('scripts/fetch-linux-runtime.mjs', 'scripts/fetch-common.mjs') }}
+      # Published builds never carry diagnostics (docs/packaging.md, "Diagnostics builds").
+      - name: No diagnostics in releases
+        shell: bash
+        run: |
+          if [ -n "${SQUIGGLY_DIAG_URL:-}${SQUIGGLY_DIAG_TOKEN:-}" ]; then
+            echo "::error::Releases are built without diagnostics. SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN must not be set."
+            exit 1
+          fi
       - run: npm ci
       - run: npm run package:linux
       # Installs the RPM the way users do, so dnf resolves mpv-libs from its Requires, then
@@ -193,6 +201,13 @@ jobs:
         with:
           name: libmpv-windows
           path: .local/libmpv-windows
+      - name: No diagnostics in releases
+        shell: bash
+        run: |
+          if [ -n "${SQUIGGLY_DIAG_URL:-}${SQUIGGLY_DIAG_TOKEN:-}" ]; then
+            echo "::error::Releases are built without diagnostics. SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN must not be set."
+            exit 1
+          fi
       - run: npm ci
       - run: npm run package:win
       # Runs the packaged audio host with the bundled node.exe, Koffi binary, and libmpv-2.dll,
