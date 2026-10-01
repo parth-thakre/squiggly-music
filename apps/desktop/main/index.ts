@@ -1,5 +1,5 @@
 /// <reference types="electron-vite/node" />
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
 import type { IpcMainInvokeEvent, WebContents } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -818,6 +818,9 @@ function installHandlers() {
     const ink = Schema.decodeUnknownEither(Schema.String.pipe(Schema.pattern(/^#[0-9a-f]{6}$/i)))(value);
     if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(ink)) return { ok: false, error: 'Invalid window colour.' };
     target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink.right, height: CONTROLS_HEIGHT });
+    // Windows draws a thin strip of its own frame along the left, right, and bottom edges, dark
+    // while the system is in dark mode. It follows the room instead: dark ink means a light room.
+    if (process.platform === 'win32') nativeTheme.themeSource = inkIsDark(ink.right) ? 'light' : 'dark';
     return { ok: true, value: undefined };
   });
   ipcMain.handle('squiggly:window:follow-while-hidden', (event, value) => {
@@ -894,6 +897,11 @@ function installHandlers() {
 // the top of the page (window controls overlay), tinted to the room by tintControls. macOS keeps
 // its title bar, since its window buttons would sit on the wordmark.
 const FRAMELESS = process.platform !== 'darwin';
+// Relative luminance of a #rrggbb colour, roughly: below half is dark.
+function inkIsDark(hex: string) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.2126 * r! + 0.7152 * g! + 0.0722 * b! < 0.5;
+}
 const CONTROLS_HEIGHT = 40;
 function createWindow(mini: boolean) {
   const target = new BrowserWindow({
