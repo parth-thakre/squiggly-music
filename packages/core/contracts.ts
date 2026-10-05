@@ -78,8 +78,9 @@ export interface RandomSongOptions { size: number; genre?: string; fromYear?: nu
 // The Records sorts, for tracks. Most and recently played list played tracks only, and top
 // rated (highest) rated tracks only.
 export type TrackSort = 'newest' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'frequent' | 'recent' | 'random' | 'highest';
-// sorted is false when the server can't sort tracks (only Navidrome's own API can): the page is
-// in the server's one fixed order, whatever sort was asked for. plainHttp: Navidrome could sort,
+// Navidrome's own API sorts tracks. Where it can't be used, the connector reads the library and
+// sorts it itself, up to SORT_HERE_LIMIT songs. Past that, sorted is false: the page is in the
+// server's one fixed order, whatever sort was asked for. plainHttp: Navidrome could have sorted,
 // but its API signs in with the password itself, which isn't sent over plain HTTP beyond this
 // network.
 export interface TrackPage { tracks: Track[]; sorted: boolean; plainHttp?: true }
@@ -483,8 +484,9 @@ export interface DesktopBridge {
   window: {
     toggleMini(): Promise<Result>; setAlwaysOnTop(on: boolean): Promise<Result>; isMini: boolean;
     // The main window has no title bar on Windows and Linux: the system's window buttons sit over
-    // the top of the page, and tintControls gives them the room's ink colour (#rrggbb).
-    frameless: boolean; tintControls(ink: string): Promise<Result>;
+    // the top of the page, and tintControls gives them the room's ink colour (#rrggbb). On Windows
+    // the frame's strip along the other edges takes the room's ground.
+    frameless: boolean; tintControls(ink: string, ground: string): Promise<Result>;
     // A hidden window gets no snapshots until it's shown. On, it keeps getting them: the sleep
     // timer's "after this song" asks for this while it waits, even in the tray.
     followWhileHidden(on: boolean): Promise<Result>;

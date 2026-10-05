@@ -57,8 +57,8 @@ export function App() {
   useFileDrops();
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
-  // Without a title bar, the window's own buttons take the room's ink.
-  useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
+  // Without a title bar, the window's own buttons take the room's ink, and its edges the ground.
+  useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink), asHex(palette.ground)); }, [palette.ink, palette.ground]);
   // While the server is away, coming back to the window or to the network asks it again (at most
   // every few seconds). The app never moves to another page on its own when the server goes.
   const away = usePlayer(s => s.reach.away);

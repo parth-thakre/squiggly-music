@@ -41,6 +41,7 @@ import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { KeptStore } from './keptStore';
+import { paintFrame } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
 import { startKept } from './keptBridge';
 import { remote } from './remoteDiagnostics';
@@ -812,15 +813,20 @@ function installHandlers() {
     applyMiniOnTop();
   }), 'settings');
   // The main window's buttons take the room's ink as the palette changes.
-  ipcMain.handle('squiggly:window:tint-controls', (event, value) => {
+  ipcMain.handle('squiggly:window:tint-controls', (event, value, groundValue) => {
     assertSender(event);
     const target = BrowserWindow.fromWebContents(event.sender);
-    const ink = Schema.decodeUnknownEither(Schema.String.pipe(Schema.pattern(/^#[0-9a-f]{6}$/i)))(value);
-    if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(ink)) return { ok: false, error: 'Invalid window colour.' };
-    target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink.right, height: CONTROLS_HEIGHT });
-    // Windows draws a thin strip of its own frame along the left, right, and bottom edges, dark
-    // while the system is in dark mode. It follows the room instead: dark ink means a light room.
-    if (process.platform === 'win32') nativeTheme.themeSource = inkIsDark(ink.right) ? 'light' : 'dark';
+    const colour = Schema.decodeUnknownEither(Schema.Struct({ ink: HexColour, ground: HexColour }))({ ink: value, ground: groundValue });
+    if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(colour)) return { ok: false, error: 'Invalid window colour.' };
+    const { ink, ground } = colour.right;
+    target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink, height: CONTROLS_HEIGHT });
+    // Windows draws a thin strip of its own frame along the left, right, and bottom edges. It takes
+    // the room's ground (windowFrame.ts); where Windows can't, it is at least light or dark like the
+    // room: dark ink means a light room.
+    if (process.platform === 'win32') {
+      nativeTheme.themeSource = inkIsDark(ink) ? 'light' : 'dark';
+      void paintFrame(target, ground);
+    }
     return { ok: true, value: undefined };
   });
   ipcMain.handle('squiggly:window:follow-while-hidden', (event, value) => {
@@ -897,6 +903,7 @@ function installHandlers() {
 // the top of the page (window controls overlay), tinted to the room by tintControls. macOS keeps
 // its title bar, since its window buttons would sit on the wordmark.
 const FRAMELESS = process.platform !== 'darwin';
+const HexColour = Schema.String.pipe(Schema.pattern(/^#[0-9a-f]{6}$/i));
 // Relative luminance of a #rrggbb colour, roughly: below half is dark.
 function inkIsDark(hex: string) {
   const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);

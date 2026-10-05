@@ -128,7 +128,7 @@ const bridge: DesktopBridge = {
     // The main process adds this argument only to the mini player's window.
     isMini: process.argv.includes('--squiggly-mini'),
     frameless: process.argv.includes('--squiggly-frameless'),
-    tintControls: ink => ipcRenderer.invoke('squiggly:window:tint-controls', ink),
+    tintControls: (ink, ground) => ipcRenderer.invoke('squiggly:window:tint-controls', ink, ground),
     followWhileHidden: on => ipcRenderer.invoke('squiggly:window:follow-while-hidden', on),
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
