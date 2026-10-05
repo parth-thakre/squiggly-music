@@ -447,8 +447,8 @@ export function ArtistPage({ id }: { id: string }) {
 }
 
 // Tracks -------------------------------------------------------------------------------
-// Every track, sorted as records are. Only Navidrome's own API sorts tracks: other servers list
-// them in one fixed order, and the sorts are hidden. A row plays like any song list: the tracks
+// Every track, sorted as records are. Navidrome's own API sorts them; elsewhere the connector sorts
+// them itself, up to a limit, past which they're in the server's one order and the sorts are hidden. A row plays like any song list: the tracks
 // loaded so far become the queue (as much as it holds around the one clicked).
 
 const TRACKS = 200;
@@ -494,7 +494,7 @@ export function Tracks() {
         <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
-      {tracksPlainHttp && <p className="note">Tracks are in the server's own order. Sorting them means sending your password to Navidrome, and this server isn't using HTTPS.</p>}
+      {tracksPlainHttp && <p className="note">Tracks are in the server's own order: this library is too big to sort here, and sorting it on the server means sending your password to Navidrome, which this server isn't using HTTPS for.</p>}
     </Head>
     {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
       ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.'

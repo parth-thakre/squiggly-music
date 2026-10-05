@@ -117,7 +117,8 @@ it('maps every library endpoint, writes repeated IDs, and serves cover art throu
   try {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('Missing fixture address');
-    const client = new SubsonicClient({ url: `http://127.0.0.1:${address.port}/music`, username: 'listener', password }, new Metrics());
+    // sortHereLimit 0: tracks come in the server's order, so the search3 paging below is what's checked.
+    const client = new SubsonicClient({ url: `http://127.0.0.1:${address.port}/music`, username: 'listener', password }, new Metrics(), {}, { sortHereLimit: 0 });
     const run = <A>(task: Effect.Effect<A, Error>) => Effect.runPromise(task);
     const album = { id: 'a1', name: 'Record', artist: 'Artist', songCount: 2, artistId: 'ar1', year: 1999, genre: 'Jazz', duration: 400, coverArt: 'al-a1', starred: true };
     const artist = { id: 'ar1', name: 'Artist', albumCount: 1, coverArt: 'ar-ar1', starred: false };

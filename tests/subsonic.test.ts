@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Fiber, Schema, TestClock, TestContext } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, libraryCall, localAddress, normalizeServerUrl, plainText, reachOf, resolveServerAddress, ServerError, serverUrlCandidates, Unreachable } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, type ClientOptions, libraryCall, localAddress, normalizeServerUrl, plainText, reachOf, resolveServerAddress, ServerError, serverUrlCandidates, Unreachable } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 import { stationIdOf } from '../packages/core/stations';
@@ -17,7 +17,7 @@ function serve(response: () => Response, discovery = discoveryResponse) {
   return mock;
 }
 const servePayload = (payload: object) => serve(() => Response.json(envelope(payload)));
-const client = () => new SubsonicClient(connection, new Metrics());
+const client = (options: ClientOptions = {}) => new SubsonicClient(connection, new Metrics(), {}, options);
 // An album's songs as the player gets them: public track metadata plus a private stream URL.
 const albumTracks = (subject: SubsonicClient, id: string) => subject.album(id).pipe(Effect.map(({ tracks }) => tracks.map(track => subject.playable(track))));
 const newest = (offset: number) => client().albumList('newest', offset, 48);
@@ -187,7 +187,7 @@ describe('OpenSubsonic', () => {
     const params = calls[1][1].body as URLSearchParams;
     expect(params.get('size')).toBe('48'); expect(params.get('offset')).toBe('48');
   });
-  it('pages through every track with an empty search3 query where the server is not Navidrome', async () => {
+  it('pages through every track with an empty search3 query in the server order past the sort-here limit', async () => {
     const library = Array.from({ length: 7 }, (_, i) => ({
       id: `s${i}`, title: `Song ${i}`, artist: 'A & B', suffix: 'flac', samplingRate: 96000, bitDepth: 24, coverArt: `mf-s${i}`,
       artists: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
@@ -200,7 +200,7 @@ describe('OpenSubsonic', () => {
       return Promise.resolve(Response.json(envelope({ searchResult3: offset < library.length ? { song: library.slice(offset, offset + count) } : {} })));
     });
     vi.stubGlobal('fetch', fetchMock);
-    const subject = client();
+    const subject = client({ sortHereLimit: 0 });
     const pages: string[][] = [];
     for (let offset = 0; ; offset += 3) {
       const page = await Effect.runPromise(subject.tracks('alphabeticalByName', offset, 3));
@@ -225,6 +225,9 @@ describe('OpenSubsonic', () => {
   });
   it('rejects a track page longer than asked for', async () => {
     servePayload({ searchResult3: { song: Array.from({ length: 4 }, (_, id) => ({ id: String(id), title: 's' })) } });
+    await expectRedactedFailure(client({ sortHereLimit: 0 }).tracks('newest', 0, 3));
+    // Read whole, a page of more than 500 is refused too.
+    servePayload({ searchResult3: { song: Array.from({ length: 501 }, (_, id) => ({ id: String(id), title: 's' })) } });
     await expectRedactedFailure(client().tracks('newest', 0, 3));
   });
   it('rejects an oversized album page rather than truncating it', async () => {
