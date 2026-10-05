@@ -1,5 +1,5 @@
 import { ListMusic, MessageSquareQuote, PictureInPicture2 } from 'lucide-react';
-import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
+import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
@@ -218,11 +218,11 @@ const Deck = memo(function Deck() {
   useSwipeSongs(deck, entry ?? track?.id);
   // Folding to the cover screen unmounts the deck; its open sheet's history entry goes with it.
   useEffect(() => { if (expanded) return () => nav.closeOverlay(); }, [expanded]);
+  // Nothing on the platter: the saved queue's song where there is one (the one place it's
+  // offered), else a line saying how to start. No empty sleeve.
   if (!track) return <aside className="deck" aria-label="Now playing">
-    <div className="cover cover-empty" aria-hidden="true" />
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
-      : <p className="deck-empty">Pick a record, playlist, or song to start.</p>}
-    <Resume />
+      : <Resume fallback={<p className="deck-empty">Pick a record, playlist, or song to start.</p>} />}
     {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
     <DeckLinks />
   </aside>;
@@ -338,20 +338,25 @@ function DeckLinks() {
     {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}
   </p>;
 }
-// A queue saved on the server (maybe from another device), offered once when nothing plays.
-function Resume() {
+// A queue saved on the server (maybe from another device), offered once when nothing plays: its
+// song sits on the deck as a playing one would, with Resume and Not now.
+function Resume({ fallback }: { fallback: ReactNode }) {
   const saved = usePlayer(s => s.resumable);
-  if (!saved) return null;
-  const track = saved.tracks[saved.currentIndex];
-  if (!track) return null;
+  const track = saved?.tracks[saved.currentIndex];
+  if (!saved || !track) return fallback;
   const minutes = Math.floor(saved.positionSeconds / 60), seconds = Math.floor(saved.positionSeconds % 60);
-  return <div className="resume">
-    <p>Pick up where you left off: <strong>{splitTitle(track.title).main}</strong> by {track.artist}, at {minutes}:{String(seconds).padStart(2, '0')}{saved.changedBy ? ` (from ${saved.changedBy})` : ''}.</p>
-    <p className="resume-actions">
-      <button type="button" className="play-action" onClick={() => void player.resume()}><span className="disc"><Glyph kind="play" /></span>Resume</button>
-      <button type="button" className="text-button" onClick={player.dismissResume}>Not now</button>
-    </p>
-  </div>;
+  return <>
+    <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover resume-cover" />
+    <div className="resume">
+      <p className="resume-label">Pick up where you left off</p>
+      <h2 className="deck-title">{splitTitle(track.title, track.album).main}</h2>
+      <p className="deck-sub">{track.artist}, at {minutes}:{String(seconds).padStart(2, '0')}{saved.changedBy ? `, from ${saved.changedBy}` : ''}</p>
+      <p className="resume-actions">
+        <button type="button" className="play-action" onClick={() => void player.resume()}><span className="disc"><Glyph kind="play" /></span>Resume</button>
+        <button type="button" className="text-button" onClick={player.dismissResume}>Not now</button>
+      </p>
+    </div>
+  </>;
 }
 
 function DeckError({ message }: { message: string }) {

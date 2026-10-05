@@ -105,15 +105,18 @@ test.describe('home', () => {
     await app.expectPlaying('Opening 2');
   });
 
-  test('the saved queue is offered with its song and position, and goes once resumed', async ({ app, fake }) => {
+  test('the saved queue is offered on the deck alone, with its song and position, and goes once resumed', async ({ app, fake }) => {
     fake.saved = { tracks: ['tr-1-4', 'tr-1-1', 'tr-1-5'].map(id => ({ ...trackOf(id) })), currentIndex: 1, positionSeconds: 17, changed: null, changedBy: 'phone' };
     await app.signIn({ home: true });
-    const card = shelf(app, 'Pick up where you left off');
-    await expect(card).toContainText('Long Run');
-    await expect(card).toContainText('Ada Brass, at 0:17, from phone');
-    await expect(app.main.getByRole('heading', { level: 2 }).first()).toHaveText('Pick up where you left off');
-    await card.getByRole('button', { name: 'Resume', exact: true }).click();
-    await expect(card).toHaveCount(0);
+    await expect(app.deck).toContainText('Pick up where you left off');
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
+    await expect(app.deck).toContainText('Ada Brass, at 0:17, from phone');
+    // One Resume: Home doesn't offer it again.
+    await expect(app.main.getByRole('heading', { level: 2 }).first()).toBeVisible();
+    await expect(app.main.getByRole('heading', { name: 'Pick up where you left off' })).toHaveCount(0);
+    await expect(app.page.getByRole('button', { name: 'Resume', exact: true })).toHaveCount(1);
+    await app.deck.getByRole('button', { name: 'Resume', exact: true }).click();
+    await expect(app.deck).not.toContainText('Pick up where you left off');
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
     // Resume plays from the saved position.
     await expect(app.deck.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
@@ -124,14 +127,13 @@ test.describe('home', () => {
   test('the saved queue is not offered while something plays', async ({ app, fake }) => {
     fake.saved = { tracks: [{ ...trackOf('tr-1-1') }], currentIndex: 0, positionSeconds: 5, changed: null, changedBy: null };
     await app.signIn({ home: true });
-    const card = shelf(app, 'Pick up where you left off');
-    await expect(card).toBeVisible();
+    await expect(app.deck).toContainText('Pick up where you left off');
     await sleeves(app, 'Newest').getByRole('button', { name: /^Quiet Harbor/ }).click();
     await expect(app.heading).toHaveText('Quiet Harbor');
     await app.play('Quiet Harbor', 'Opening 2');
     await app.page.goBack();
     await expect(app.heading).toHaveText('Home');
-    await expect(card).toHaveCount(0);
+    await expect(app.deck).not.toContainText('Pick up where you left off');
   });
 
   test('other accounts\' songs are listed, this account\'s left out, and read again on each visit', async ({ app, fake, page }) => {

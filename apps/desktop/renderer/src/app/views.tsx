@@ -24,7 +24,6 @@ import { ExtensionSections } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
 import { invalidate, peek } from './library';
-import { time } from './ui';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
@@ -1148,7 +1147,6 @@ const SHELF = 12;
 export function Home() {
   return <>
     <Head title="Home" />
-    <PickUp />
     <RecordShelf type="recent" title="Played lately" />
     {/* Records carry no date added, so this is the newest twelve rather than a week's worth. */}
     <RecordShelf type="newest" title="Newest" />
@@ -1160,25 +1158,6 @@ export function Home() {
 
 function SeeAll({ what, go }: { what: string; go(): void }) {
   return <button type="button" className="text-button" onClick={go}>See all<span className="sr-only"> {what}</span></button>;
-}
-
-// The queue saved on the server, the one the deck offers too. Gone once it plays, or once
-// anything else does.
-function PickUp() {
-  const saved = usePlayer(s => s.queue.length ? null : s.resumable);
-  const track = saved?.tracks[saved.currentIndex];
-  if (!saved || !track) return null;
-  return <section className="shelf-section" aria-labelledby="home-resume">
-    <h2 id="home-resume">Pick up where you left off</h2>
-    <div className="pick-up">
-      <Cover id={track.coverArt} name={track.album} size={160} />
-      <p className="row-text">
-        <span className="row-name">{splitTitle(track.title, track.album).main}</span>
-        <span className="row-sub">{track.artist}, at {time(saved.positionSeconds)}{saved.changedBy ? `, from ${saved.changedBy}` : ''}</span>
-      </p>
-      <button type="button" className="play-action" onClick={() => void player.resume()}><span className="disc"><Glyph kind="play" /></span>Resume</button>
-    </div>
-  </section>;
 }
 
 // A row of sleeves from one of the Records sorts. See all opens Records in that sort.

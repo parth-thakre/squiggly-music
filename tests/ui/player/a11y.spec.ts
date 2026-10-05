@@ -50,7 +50,7 @@ test.describe('accessibility smoke', () => {
     fake.saved = { tracks: [{ ...trackOf('tr-1-1') }], currentIndex: 0, positionSeconds: 5, changed: null, changedBy: null };
     fake.listening = [{ username: 'sam', trackId: 'tr-2-1' }];
     await app.signIn({ home: true });
-    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Pick up where you left off', 'Played lately', 'Newest', 'Most played', 'Your mixes', 'Playing elsewhere']);
+    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Played lately', 'Newest', 'Most played', 'Your mixes', 'Playing elsewhere']);
     await expect(app.main.locator('ul.grid img').first()).toBeVisible();
     expect(await violations(page), 'Home').toEqual([]);
   });

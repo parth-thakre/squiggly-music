@@ -100,7 +100,9 @@ test.describe('server-saved queue', () => {
   test('is offered once when nothing plays, and resumes playing from its song and position', async ({ app, page, fake }) => {
     fake.saved = { tracks: ['tr-1-4', 'tr-1-1', 'tr-1-5'].map(id => ({ ...trackOfId(id) })), currentIndex: 1, positionSeconds: 17, changed: null, changedBy: 'phone' };
     await app.signIn();
-    await expect(app.deck.getByText(/Pick up where you left off: Long Run by Ada Brass, at 0:17 \(from phone\)/)).toBeVisible();
+    await expect(app.deck.getByText('Pick up where you left off')).toBeVisible();
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
+    await expect(app.deck.getByText('Ada Brass, at 0:17, from phone')).toBeVisible();
     await app.deck.getByRole('button', { name: 'Resume' }).click();
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
     // Resume plays; it doesn't leave the song waiting paused.
@@ -257,7 +259,8 @@ test.describe('repeat and shuffle', () => {
     // A new visit: the route comes back from the address, the queue doesn't.
     await page.reload();
     await expect(app.heading).toHaveText('Long Player');
-    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    // Nothing plays: the deck offers the queue the play saved, or, before it's saved, a way to start.
+    await expect(app.deck.getByText(/^(Pick a record, playlist, or song to start\.|Pick up where you left off)$/)).toBeVisible();
     await app.play('Long Player', 'Take 2');
     await expect(shuffle(app)).toHaveAttribute('aria-pressed', 'true');
     await expect(repeat(app)).toHaveAccessibleName('Repeat all');
