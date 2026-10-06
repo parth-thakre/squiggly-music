@@ -106,6 +106,12 @@ let state: PlayerState = {
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
 let positionAt = performance.now();
+// A desktop seek the host hasn't reported yet. Its snapshots come four times a second, so for a
+// moment after a seek they still carry the old position; until one reports a position near the
+// seek (or SEEK_SETTLE_MS pass, a seek mpv never made) the page shows the seek's instead, so the
+// squiggle, the lyrics, and the mini player don't flick back to where the song was.
+let seeking: { seconds: number; at: number; entry: string | undefined } | null = null;
+const SEEK_SETTLE_MS = 1500;
 // The play (PlayerState.playId) last heard: playing and not buffering. A new load forgets it,
 // since Android's playId changes only once the native player reports the new entry.
 let heard: string | null = null;
@@ -210,6 +216,12 @@ if (desktop) {
       : !p.error && lastEngineError && state.error === lastEngineError ? null : state.error;
     lastEngineError = p.error;
     const track = p.queue[p.currentIndex];
+    let position = p.position;
+    if (seeking) {
+      const waited = performance.now() - seeking.at;
+      if (p.entryIds[p.currentIndex] !== seeking.entry || Math.abs(p.position - seeking.seconds) < 1.5 || waited > SEEK_SETTLE_MS) seeking = null;
+      else position = seeking.seconds + (p.playing ? waited / 1000 : 0);
+    }
     rememberOutput(p.devices);
     const { saved, canRemember, reconnecting, reconnectError } = snapshot.server;
     const reach = snapshot.server.reach ?? ONLINE;
@@ -221,7 +233,7 @@ if (desktop) {
       engine: p.engine, connected: snapshot.server.connected, serverName: snapshot.server.name, sessionId,
       queue: sameList(state.queue, p.queue, sameTrack) ? state.queue : p.queue,
       entryIds: sameList(state.entryIds, p.entryIds, Object.is) ? state.entryIds : p.entryIds, playId: p.playId ?? '',
-      index: p.currentIndex, playing: p.playing, position: p.position, duration: p.duration, buffering: p.audio.buffering,
+      index: p.currentIndex, playing: p.playing, position, duration: p.duration, buffering: p.audio.buffering,
       volume: p.volume, audio: sameFields(state.audio, p.audio) ? state.audio : p.audio,
       devices: !p.devices.length || sameList(state.devices, p.devices, sameFields) ? state.devices : p.devices, device: p.audio.requestedDevice,
       radio: p.radio?.label === state.radio?.label ? state.radio : p.radio,
@@ -902,8 +914,14 @@ export const player = {
       if (web.active.readyState >= HTMLMediaElement.HAVE_METADATA) web.active.currentTime = seconds; else plays.startAt = seconds;
       plays.lastPosition = seconds; set({ position: seconds }); positionState(); saveSoon(); return;
     }
-    // The host refuses the seek if that entry is no longer the one playing.
-    void desktop!.command({ type: 'seek', seconds, queueIndex: state.index, trackId: track.id, entryId: entryId ?? currentEntry(state) }).then(report);
+    // The host refuses the seek if that entry is no longer the one playing. Until it reports the
+    // seek, the page shows it (see seeking).
+    const entry = entryId ?? currentEntry(state);
+    seeking = { seconds, at: performance.now(), entry }; set({ position: seconds });
+    void desktop!.command({ type: 'seek', seconds, queueIndex: state.index, trackId: track.id, entryId: entry }).then(result => {
+      if (!result.ok && seeking?.seconds === seconds) seeking = null;
+      report(result);
+    });
   },
   volume(percent: number, final = false) {
     if (android) { android.player.volume(percent); set({ volume: percent }); return; }
