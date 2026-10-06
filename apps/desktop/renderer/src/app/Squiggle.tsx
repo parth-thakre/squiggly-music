@@ -143,9 +143,13 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
         onPointerDown={event => { gesture.current = { identity, cancelled: false }; event.currentTarget.setPointerCapture(event.pointerId); }}
         onKeyDown={begin}
         onChange={event => {
-          begin();
+          const value = Number(event.target.value);
+          // Outside a press or a key: assistive tech setting the value seeks at once. The change
+          // event a release sends (late on Windows, after a frame has put the position back)
+          // isn't a new gesture, which would freeze the thumb there and seek back to it on blur.
+          if (!gesture.current) { if (event.nativeEvent.type === 'input') onSeek(value, identity); return; }
           // Every input redraws the thumb and clock, playing or paused.
-          if (!gesture.current!.cancelled && gesture.current!.identity === identity) dragging.current = Number(event.target.value);
+          if (!gesture.current.cancelled && gesture.current.identity === identity) dragging.current = value;
           redraw.current();
         }}
         onPointerUp={commit} onKeyUp={commit} onBlur={commit} onPointerCancel={end} />}
