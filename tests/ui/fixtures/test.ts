@@ -4,15 +4,22 @@ import { startPreview, webPassword } from './server';
 
 export { expect };
 export { webPassword };
-export { special, playlistIds, lyricLines, wordLines, trackOf, allTracks } from './library';
+export { special, playlistIds, lyricLines, wordLines, trackOf, allTracks, stationIds, account } from './library';
 
 type Preview = Awaited<ReturnType<typeof startPreview>>;
 
 // Every worker runs its own preview server and fake account, so tests in different workers
 // never share state. Within a worker the account is reset before each test.
-export const test = base.extend<{ fake: FakeNavidrome; app: App }, { preview: Preview }>({
+// `unconfigured` is a second host, started only by the tests that ask for it, with no server and
+// no password: the page connects to its fake account from the connect screen.
+export const test = base.extend<{ fake: FakeNavidrome; app: App }, { preview: Preview; unconfigured: Preview }>({
   preview: [async ({}, use) => {
     const server = await startPreview();
+    await use(server);
+    await server.close();
+  }, { scope: 'worker' }],
+  unconfigured: [async ({}, use) => {
+    const server = await startPreview({ configured: false });
     await use(server);
     await server.close();
   }, { scope: 'worker' }],
@@ -38,11 +45,15 @@ export class App {
   rowButton(row: Locator) { return row.locator('button.track'); }
   section(name: 'Records' | 'Artists' | 'Tracks' | 'Playlists' | 'Favorites' | 'Genres') { return this.page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: true }); }
 
-  /** Signs in the way a browser does: the session cookie lands in this page's context. */
-  async signIn() {
+  /** Signs in the way a browser does: the session cookie lands in this page's context. The app
+   *  opens at Home; most specs start from Records, one place further on, unless `home` is set. */
+  async signIn({ home = false }: { home?: boolean } = {}) {
     const response = await this.page.request.post('/api/session', { data: { password: webPassword }, headers: { origin: this.url } });
     expect(response.status()).toBe(200);
     await this.page.goto('/');
+    await expect(this.heading).toHaveText('Home');
+    if (home) return;
+    await this.section('Records').click();
     await expect(this.heading).toHaveText('Records');
   }
   async openAlbum(name: string) {

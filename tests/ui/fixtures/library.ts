@@ -1,7 +1,7 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
-import type { AlbumYears, ArtistInfo, DiscTitle } from '../../../packages/core/contracts';
-import { SubsonicClient, plainText } from '../../../packages/adapter-opensubsonic/client';
+import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry, SearchOptions, Share } from '../../../packages/core/contracts';
+import { SubsonicClient, plainText, searchPages, searchResults, Unreachable } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
 import { coverPng } from './media';
@@ -68,6 +68,13 @@ export const wordLines = wordTimes.map(([start, words]) => {
 });
 
 export const playlistIds = { road: 'pl-road', readonly: 'pl-server' } as const;
+// Two internet radio stations. Their streams are endless WAV from the fixture server (server.ts,
+// /radio/<id>); the page only ever sees /api/station?id=<id>.
+export const stationIds = { harbour: 'st-1', night: 'st-2' } as const;
+const stations = [
+  { id: stationIds.harbour, name: 'Harbour FM', homePageUrl: 'https://www.harbour.example/listen' },
+  { id: stationIds.night, name: 'Night Signal', homePageUrl: null },
+];
 // The account tracks() signs in to over HTTP (see native.ts), and the plays it remembers there.
 export const account = { username: 'tester', password: 'fixture password' };
 export const seededPlays: [id: string, count: number, lastPlayed: string][] = [
@@ -99,6 +106,8 @@ function buildLibrary() {
       // Low Tide Radio is on two discs, and its numbering starts again on the second.
       ...(`al-${k}` === special.twoDiscs && n >= 3 ? { trackNumber: n - 2, discNumber: 2 } : { trackNumber: n + 1, discNumber: 1 }),
       ...(k === 2 && n === 1 ? { artists: [{ id: artist.id, name: artist.name }, { id: artists[2].id, name: artists[2].name }] } : {}),
+      // The file's path as Navidrome reports it. The duet has none, as a server may leave it out.
+      ...(k === 2 && n === 1 ? {} : { path: `${artist.name}/${name}/${String(n + 1).padStart(2, '0')} - ${title}.wav` }),
     }));
     tracks.push(...albumTracks);
     albums.push({ id: `al-${k}`, name, artist: artist.name, songCount: albumTracks.length, artistId: artist.id, year, genre,
@@ -134,6 +143,8 @@ const initialPlaylists = (): ServerPlaylist[] => [
   { id: playlistIds.readonly, name: 'Server Picks', comment: null, readonly: true, trackIds: ['tr-4-1', 'tr-4-2', 'tr-5-1'], changed: '2026-09-01T00:00:00Z' },
 ];
 
+const unanswered = 'Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.';
+export const sharingOff = 'This server does not share links. On Navidrome, the administrator turns sharing on with EnableSharing.';
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const fail = (message: string) => Effect.fail(new Error(message));
 
@@ -145,12 +156,21 @@ export class FakeNavidrome {
   /** Ratings the account has given, 1 to 5, by song, record, or artist id. */
   ratings = new Map<string, number>();
   saved: SavedQueue | null = null;
+  /** Public links on the server (createShare), and whether it makes them (Navidrome's EnableSharing). */
+  shareList: Share[] = [];
+  sharing = true;
+  private sharesMade = 0;
   /** Delays (ms) taken, one per call, by the named method before it touches any state. */
   private delays = new Map<string, number[]>();
   /** Errors returned, one per call, by the named method instead of answering. */
   private failures = new Map<string, string[]>();
   /** Adds Two Nights Live (special.twoNights) and its genre, Live, to the library. */
   large = false;
+  /** Listening history by record id, as getAlbumList2's recent and frequent list it. Empty: nothing played. */
+  recent: string[] = [];
+  frequent: string[] = [];
+  /** The server's players (getNowPlaying): whose, and the song each is on. This account's are among them. */
+  listening: { username: string; trackId: string }[] = [];
   private created = 0;
   /** The preview plugin's clock; advancing it past 30 days ends every session. */
   clock = { now: Date.UTC(2026, 8, 25) };
@@ -160,6 +180,13 @@ export class FakeNavidrome {
   logins = 0;
   sessions = new Set<string>();
   nativeQueries: URLSearchParams[] = [];
+  /** Station streams the fixture server has been asked for, by station id. */
+  stationStreams: string[] = [];
+  /** true: the server gives no answer at all. Every call fails as the connector says when a
+   *  connection is refused (Unreachable), and the audio server drops every connection. */
+  unreachable = false;
+  /** Song streams the audio server was asked for, by track id (browser playback and keeping). */
+  streamed: string[] = [];
   private issued = 0;
   private http: SubsonicClient | null = null;
 
@@ -170,6 +197,10 @@ export class FakeNavidrome {
     this.saved = null; this.delays.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
     this.ratings.clear(); this.failures.clear(); this.large = false;
+    this.recent = []; this.frequent = []; this.listening = [];
+    this.shareList = []; this.sharing = true; this.sharesMade = 0;
+    this.stationStreams = []; this.listedStations.clear();
+    this.unreachable = false; this.streamed = [];
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -191,6 +222,7 @@ export class FakeNavidrome {
   // Every method logs its call, waits out any configured delay, then answers from state as it is then.
   private op<T>(method: string, args: unknown[], run: () => Effect.Effect<T, Error>): Effect.Effect<T, Error> {
     return Effect.suspend(() => {
+      if (this.unreachable) return Effect.fail(new Unreachable(unanswered));
       this.calls.push({ method, args, at: Date.now() });
       const failure = this.failures.get(method)?.shift();
       if (failure) return fail(failure);
@@ -219,7 +251,7 @@ export class FakeNavidrome {
       else if (type === 'random') list = [...list].reverse();
       else if (type === 'starred') list = list.filter(a => a.starred);
       else if (type === 'highest') list = list.filter(a => a.userRating).sort((a, b) => b.userRating! - a.userRating!);
-      else if (type === 'frequent' || type === 'recent') list = [];
+      else if (type === 'frequent' || type === 'recent') list = (type === 'recent' ? this.recent : this.frequent).map(id => list.find(a => a.id === id)!).filter(Boolean);
       return Effect.succeed(list.slice(offset, offset + size));
     }),
     album: (id: string) => this.op('album', [id], () => {
@@ -255,13 +287,16 @@ export class FakeNavidrome {
     // The real connector, over HTTP to native.ts: Navidrome's own API, or search3 without it.
     tracks: (sort: TrackSort, offset: number, size: number, seed: string) => this.op('tracks', [sort, offset, size, seed], () =>
       (this.http ??= new SubsonicClient({ url: this.audioBase(), ...account }, new Metrics())).tracks(sort, offset, size, seed)),
-    search: (query: string) => this.op('search', [query], () => {
-      const q = query.toLowerCase();
-      return Effect.succeed({
-        artists: catalog.artists.filter(a => a.name.toLowerCase().includes(q)),
-        albums: catalog.albums.filter(a => a.name.toLowerCase().includes(q)).map(this.album),
-        tracks: catalog.tracks.filter(t => t.title.toLowerCase().includes(q)).map(t => this.track(t.id)),
-      });
+    // search3 as Navidrome answers it: each kind a page of its own, 8 artists, 16 records, and
+    // 40 songs when the counts are left out. With fake.large on, "night" finds 210 songs.
+    search: (query: string, options?: SearchOptions) => this.op('search', options ? [query, options] : [query], () => {
+      const q = query.toLowerCase(), pages = searchPages(options);
+      const page = <T,>(items: T[], offset: number, count: number) => items.slice(offset, offset + count);
+      return Effect.succeed(searchResults({
+        artists: page(catalog.artists.filter(a => a.name.toLowerCase().includes(q)), pages.artistOffset, pages.artistCount),
+        albums: page(this.albums().filter(a => a.name.toLowerCase().includes(q)), pages.albumOffset, pages.albumCount).map(this.album),
+        tracks: page(this.songs().filter(t => t.title.toLowerCase().includes(q)), pages.songOffset, pages.songCount).map(t => this.track(t.id)),
+      }, pages));
     }),
     star: (_target: StarTarget, id: string, starred: boolean) => this.op('star', [_target, id, starred], () => {
       if (starred) this.starred.add(id); else this.starred.delete(id);
@@ -310,6 +345,7 @@ export class FakeNavidrome {
       return Effect.void;
     }),
     coverArt: (id: string, _size: number) => {
+      if (this.unreachable) return Effect.fail(new Unreachable(unanswered));
       // Album art, or its disc's, as the native API names a song's art (dc-<album>:<disc>).
       const k = Number(/^(?:dc-)?al-(\d+)(?::\d+)?$/.exec(id)?.[1]);
       if (!k) return fail('Cover art is not available.');
@@ -324,8 +360,41 @@ export class FakeNavidrome {
       : { biography: null, musicBrainzId: null, lastFmUrl: null, images: { small: null, medium: null, large: null }, similar: [] })),
     songsByGenre: (genre: string, offset: number, size: number) => this.op('songsByGenre', [genre, offset, size], () =>
       Effect.succeed(this.songs().filter(t => t.genre === genre).slice(offset, offset + size).map(t => this.track(t.id)))),
+    // As the connector answers: this account's own players are left out.
+    nowPlaying: () => this.op('nowPlaying', [], () => Effect.succeed<NowPlayingEntry[]>(this.listening
+      .filter(entry => entry.username.toLowerCase() !== account.username.toLowerCase())
+      .map(entry => ({ username: entry.username, track: this.track(entry.trackId) })))),
+    // As the connector reports Navidrome with EnableSharing off (HTTP 501 from every share endpoint).
+    createShare: (ids: readonly string[], description?: string | null, expiresAt?: number | null) => this.op('createShare', [ids, description, expiresAt], () => {
+      if (!this.sharing) return fail(sharingOff);
+      const id = `sh-${++this.sharesMade}`;
+      const title = (item: string) => trackById.get(item)?.title ?? this.albums().find(a => a.id === item)?.name ?? this.playlist(item)?.name ?? item;
+      const share: Share = { id, url: `https://music.example.com/share/${id}`, description: description?.trim() || null,
+        created: new Date(this.clock.now).toISOString(), expires: expiresAt ? new Date(expiresAt).toISOString() : null,
+        lastVisited: null, visitCount: 0, entries: ids.map(item => ({ id: item, title: title(item) })) };
+      this.shareList.push(share);
+      return Effect.succeed(share);
+    }),
+    shares: () => this.op('shares', [], () => this.sharing ? Effect.succeed([...this.shareList]) : fail(sharingOff)),
+    deleteShare: (id: string) => this.op('deleteShare', [id], () => {
+      if (!this.sharing) return fail(sharingOff);
+      if (!this.shareList.some(share => share.id === id)) return fail('The server rejected the request. Check your account and server settings.');
+      this.shareList = this.shareList.filter(share => share.id !== id);
+      return Effect.void;
+    }),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
+    radioStations: () => this.op('radioStations', [], () => Effect.sync(() => {
+      this.listedStations = new Set(stations.map(station => station.id));
+      return stations.map(station => ({ ...station, streamUrl: this.stationUrl(station.id) }));
+    })),
+    stationLocation: (id: string) => this.op('stationLocation', [id], () => stations.some(station => station.id === id)
+      ? Effect.sync(() => { this.listedStations = new Set(stations.map(station => station.id)); return this.stationUrl(id); })
+      : fail('This station is no longer on the server. Refresh the stations and try again.')),
+    // As the real client: the stations the last list named, without asking the server.
+    knownStationLocation: (id: string) => this.listedStations.has(id) ? this.stationUrl(id) : null,
   };
+  private listedStations = new Set<string>();
+  private stationUrl = (id: string) => `${this.audioBase()}/radio/${encodeURIComponent(id)}`;
 
   get subsonic() { return this.client as unknown as SubsonicClient; }
 }

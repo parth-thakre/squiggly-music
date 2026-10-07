@@ -3,12 +3,13 @@ import { Effect, Either } from 'effect';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { SubsonicClient, libraryCall } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, sortHere } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import type { TrackSort } from '../packages/core/contracts';
 
 // Listing tracks: Navidrome's own API where it's there (POST /auth/login for a session token,
-// GET /api/song with it, a fresh token in every answer), search3 in the server's order where not.
+// GET /api/song with it, a fresh token in every answer); where not, the library read whole through
+// search3 and sorted here, or search3 in the server's order past the sort-here limit.
 
 const password = 'fixture-password';
 // One song as Navidrome's demo describes it through each API (trimmed), and two more that lean
@@ -48,7 +49,7 @@ const subsonics = [
   },
 ];
 
-interface Options { type?: string; nativeApi?: boolean; login?: 'ok' | 'drop' | 'html'; refuse?: boolean }
+interface Options { type?: string; nativeApi?: boolean; login?: 'ok' | 'drop' | 'html' | 'redirect'; refuse?: boolean; sortHereLimit?: number }
 const closers: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(closers.splice(0).map(close => close())); });
 
@@ -69,6 +70,7 @@ async function navidrome(options: Options = {}) {
       if (endpoint === 'getOpenSubsonicExtensions') return envelope({ openSubsonicExtensions: [] });
       if (params.get('t') !== createHash('md5').update(password + params.get('s')).digest('hex')) return envelope({ status: 'failed', error: { code: 40 } });
       if (endpoint === 'ping') return envelope({});
+      if (endpoint === 'getScanStatus') return envelope({ scanStatus: { scanning: false, count: subsonics.length } });
       if (endpoint === 'search3') return envelope({ searchResult3: { song: subsonics.slice(Number(params.get('songOffset')), Number(params.get('songOffset')) + Number(params.get('songCount'))) } });
       return json(404, {});
     }
@@ -80,6 +82,8 @@ async function navidrome(options: Options = {}) {
         state.logins.push({ body, type: request.headers['content-type'] });
         if (state.login === 'drop') { state.login = 'ok'; request.socket.destroy(); return; }
         if (state.login === 'html') { response.writeHead(200, { 'content-type': 'text/html' }); return void response.end('<html>sign in</html>'); }
+        // Cloudflare Access sends everything but /rest to its own sign-in page.
+        if (state.login === 'redirect') { response.writeHead(302, { location: 'https://team.cloudflareaccess.com/cdn-cgi/access/login/music.example.com' }); return void response.end(); }
         const sent = JSON.parse(body) as { username: string; password: string };
         if (sent.username !== 'listener' || sent.password !== password) return json(401, { error: 'Invalid username or password' });
         json(200, { id: 'u1', username: 'listener', isAdmin: false, token: issue() });
@@ -101,7 +105,7 @@ async function navidrome(options: Options = {}) {
   if (!address || typeof address === 'string') throw new Error('Missing fixture address');
   closers.push(() => { server.closeAllConnections(); return new Promise<void>(done => server.close(() => done())); });
   const metrics = new Metrics();
-  const client = new SubsonicClient({ url: `http://127.0.0.1:${address.port}/music`, username: 'listener', password }, metrics);
+  const client = new SubsonicClient({ url: `http://127.0.0.1:${address.port}/music`, username: 'listener', password }, metrics, {}, { sortHereLimit: options.sortHereLimit });
   return { state, client, metrics, expire: () => valid.clear() };
 }
 const run = <A>(task: Effect.Effect<A, Error>) => Effect.runPromise(task);
@@ -192,8 +196,25 @@ describe("Navidrome's own API", () => {
 });
 
 describe('without it', () => {
-  it('lists tracks with search3 in the server order on other servers, without signing in', async () => {
+  it('sorts tracks here on other servers, reading the library once for its pages, without signing in', async () => {
     const { state, client } = await navidrome({ type: 'gonic' });
+    const first = await run(client.tracks('alphabeticalByArtist', 0, 2, ''));
+    expect(first).toEqual({ sorted: true, tracks: [expect.objectContaining({ id: 'duet' }), expect.objectContaining({ id: 'loose' })] });
+    expect((await run(client.tracks('alphabeticalByArtist', 2, 2, ''))).tracks.map(track => track.id)).toEqual(['3KB8ZWlZgex99I9sWcgXb1']);
+    expect(state.logins).toEqual([]);
+    expect(state.subsonic).toEqual(['getOpenSubsonicExtensions', 'ping', 'getScanStatus', 'search3']);
+  });
+
+  it('keeps the server order without reading the library when its song count is past the limit', async () => {
+    const { state, client } = await navidrome({ type: 'gonic', sortHereLimit: 2 });
+    expect((await run(client.tracks('alphabeticalByArtist', 0, 2, ''))).sorted).toBe(false);
+    expect((await run(client.tracks('alphabeticalByArtist', 0, 2, ''))).sorted).toBe(false);
+    // Counted once, then remembered; each page is one search3 of its own size.
+    expect(state.subsonic).toEqual(['getOpenSubsonicExtensions', 'ping', 'getScanStatus', 'search3', 'search3']);
+  });
+
+  it('lists tracks with search3 in the server order on other servers past the sort-here limit', async () => {
+    const { state, client } = await navidrome({ type: 'gonic', sortHereLimit: 0 });
     expect(await run(client.tracks('alphabeticalByName', 0, 2, ''))).toMatchObject({ sorted: false, tracks: [{ id: '3KB8ZWlZgex99I9sWcgXb1' }, { id: 'duet' }] });
     await run(client.tracks('random', 2, 2, 'seed'));
     expect(state.logins).toEqual([]);
@@ -203,12 +224,39 @@ describe('without it', () => {
   it.each([
     ['missing, as behind a proxy that passes only /rest', { nativeApi: false }],
     ['answering its sign-in with a web page', { login: 'html' as const }],
-  ])('falls back on Navidrome with its own API %s, and stops asking', async (_, options) => {
+    ['sending its sign-in to a proxy\'s own, as Cloudflare Access does', { login: 'redirect' as const }],
+  ])('sorts here on Navidrome with its own API %s, and stops asking', async (_, options) => {
     const { state, client } = await navidrome(options);
-    expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(false);
-    expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(false);
-    expect(state.subsonic.filter(endpoint => endpoint === 'search3')).toHaveLength(2);
+    expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(true);
+    expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(true);
+    // The library was read once: the second first page came within the minute.
+    expect(state.subsonic.filter(endpoint => endpoint === 'search3')).toHaveLength(1);
     expect(state.logins.length).toBeLessThanOrEqual(1);
+  });
+
+  it('sorts here the same where a redirect arrives as itself, as the Android bridge hands it back', async () => {
+    const { state, client: local } = await navidrome({ login: 'redirect' });
+    const manual = ((input: string, init?: RequestInit) => fetch(input, { ...init, redirect: 'manual' })) as typeof fetch;
+    const client = new SubsonicClient({ url: local.baseUrl, username: 'listener', password }, new Metrics(), {}, { fetch: manual });
+    expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(true);
+    expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(true);
+    expect(state.logins).toHaveLength(1);
+  });
+
+  it('sorts here rather than send the password over plain HTTP beyond this network, and says why past the limit', async () => {
+    const { state, client: local } = await navidrome();
+    // The same Navidrome at a public name: every request still reaches the fixture.
+    const fixture = new URL(local.baseUrl);
+    const reroute = ((input: string, init?: RequestInit) => { const url = new URL(input); url.host = fixture.host; return fetch(url.href, init); }) as typeof fetch;
+    const remote = (sortHereLimit?: number) => new SubsonicClient({ url: 'http://music.example.com/music', username: 'listener', password }, new Metrics(), {}, { fetch: reroute, sortHereLimit });
+    expect(await run(remote().tracks('alphabeticalByArtist', 0, 2, ''))).not.toHaveProperty('plainHttp');
+    const past = remote(0);
+    for (const offset of [0, 2]) expect(await run(past.tracks('alphabeticalByName', offset, 2, ''))).toMatchObject({ sorted: false, plainHttp: true });
+    expect(state.logins).toEqual([]);
+    expect(state.subsonic.filter(endpoint => endpoint === 'search3')).toHaveLength(3);
+    // At its own network's address, over the same plain HTTP, it signs in and sorts.
+    expect(await run(local.tracks('alphabeticalByName', 0, 2, ''))).not.toHaveProperty('plainHttp');
+    expect(state.logins).toHaveLength(1);
   });
 
   it('fails a sign-in cut off on its way without giving up on the API', async () => {
@@ -216,5 +264,32 @@ describe('without it', () => {
     expect(await failure(client.tracks('newest', 0, 200, ''))).toBe('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.');
     expect((await run(client.tracks('newest', 0, 200, ''))).sorted).toBe(true);
     expect(state.logins).toHaveLength(2);
+  });
+});
+
+describe('sorting here', () => {
+  // Read loosely: a playCount or date of the wrong type counts as not known.
+  const songs = [
+    { id: 'b', title: 'beta', artist: 'Zed', album: 'Two', created: '2026-01-02T00:00:00Z', playCount: 4, played: '2026-09-01T00:00:00Z', userRating: 2 },
+    { id: 'a', title: 'Alpha', artist: 'amy', album: 'One', discNumber: 1, track: 2, created: '2026-03-01T00:00:00Z', playCount: 9, played: '2026-08-01T00:00:00Z' },
+    { id: 'c', title: 'Gamma 10', artist: 'Amy', album: 'One', discNumber: 1, track: 1, created: 'not a date', playCount: '7', userRating: 5 },
+    { id: 'd', title: 'gamma 9', artist: 'Bo', album: 'Three', created: '2026-02-01T00:00:00Z', userRating: 9 },
+  ] as unknown as Parameters<typeof sortHere>[0];
+  const ids = (sort: TrackSort, seed = '') => sortHere(songs, sort, seed).map(song => song.id);
+  it('sorts as Navidrome does, with played and rated tracks only where it lists only those', () => {
+    expect(ids('newest')).toEqual(['a', 'd', 'b', 'c']);
+    // Case doesn't matter, and numbers sort as text, as Navidrome's do.
+    expect(ids('alphabeticalByName')).toEqual(['a', 'b', 'c', 'd']);
+    // Artist, then record, disc, and track.
+    expect(ids('alphabeticalByArtist')).toEqual(['c', 'a', 'd', 'b']);
+    expect(ids('frequent')).toEqual(['a', 'b']);
+    expect(ids('recent')).toEqual(['b', 'a']);
+    // 9 isn't a rating.
+    expect(ids('highest')).toEqual(['c', 'b']);
+  });
+  it('shuffles the same way for the same seed, so pages follow on', () => {
+    expect(ids('random', 'one')).toEqual(ids('random', 'one'));
+    expect(ids('random', 'one').sort()).toEqual(['a', 'b', 'c', 'd']);
+    expect(new Set(['one', 'two', 'three', 'four', 'five'].map(seed => ids('random', seed).join())).size).toBeGreaterThan(1);
   });
 });

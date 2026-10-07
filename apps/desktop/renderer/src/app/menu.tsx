@@ -1,14 +1,18 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent } from 'react';
+import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
-import { api, invalidate, load, playlistEditor } from './library';
-import { current, getPlayer, player, type PlayerState } from './player';
+import { albumDetails, api, invalidate, load, playlistEditor } from './library';
+import { current, getPlayer, isAway, player, type PlayerState } from './player';
+import { forget, isContainerKept, isKept, keep, keptSupported } from './keptState';
 import { showNowPlaying } from './nowPlaying';
 import { nav } from './route';
 import { ratingOf, ratingText, setRating } from './ratings';
 import { labelOf, registry, type MenuItem, type MenuTarget } from './registry';
 import { kHz, length, plural, shuffled, splitTitle } from './ui';
+import { exportM3u } from './exports';
+import { openShare } from './share';
 
 // One menu for right-click on desktop and long-press on phones (Chrome fires contextmenu for both).
 // Every call into an item (its label, predicate, submenu, action, or text field) goes through
@@ -45,15 +49,24 @@ export function openMenu(event: Pick<ReactMouseEvent, 'clientX' | 'clientY' | 'p
   const problems: string[] = [];
   const items = registry.menu.for(target, (item, error) => problems.push(failed(`The item “${item.id}”`, error)));
   setOpen({ x: event.clientX, y: event.clientY, target, levels: [{ title: titleOf(target), rows: rowsFor(items, target, problems) }], error: problems[0] ?? null, invoker });
+  openedAt = performance.now(); pressed = false;
   // On phones the menu is a sheet, so the back gesture closes it first, like the now-playing
   // sheet. (Not while that sheet is open: it already owns the back gesture.)
-  if (!inHistory && matchMedia('(max-width: 760px)').matches && !nav.overlayOpen) {
+  if (!inHistory && phoneWidth() && !nav.overlayOpen) {
     inHistory = true;
     nav.openOverlay(() => {}, () => { inHistory = false; finishClose(); closed?.(); closed = null; });
   }
 }
+const phoneWidth = () => matchMedia('(max-width: 760px)').matches;
+// The tap or click that opened the menu must not also choose from it: on a phone the sheet rises
+// under the finger, and Chrome can hand it the end of the same gesture. A pointer's click counts
+// once a press has started inside the menu, or once the menu has been up for a moment; a click
+// from the keyboard (detail 0) always counts.
+let openedAt = 0, pressed = false;
+const stray = (event: ReactMouseEvent) => event.detail > 0 && !pressed && performance.now() - openedAt < 400;
 let inHistory = false;
 let closed: (() => void) | null = null;
+let closing: Promise<void> | null = null;
 let onMenuClose: (() => void) | null = null;
 function finishClose() {
   if (!open) return;
@@ -64,10 +77,11 @@ function finishClose() {
   if (invoker?.isConnected && (!focus || focus === document.body || focus.closest('.menu-layer'))) invoker.focus({ preventScroll: true });
 }
 // Resolves once the menu is really gone, including its history entry on phones, so an action
-// that navigates runs after the back step rather than being undone by it.
+// that navigates runs after the back step rather than being undone by it. Asked again before
+// then, it waits for the same step.
 export function closeMenu(): Promise<void> {
   if (!inHistory) { finishClose(); return Promise.resolve(); }
-  return new Promise(resolve => { closed = resolve; nav.closeOverlay(); });
+  return closing ??= new Promise(resolve => { closed = () => { closing = null; resolve(); }; nav.closeOverlay(); });
 }
 const popLevel = (menu: OpenMenu) => setOpen({ ...menu, levels: menu.levels.slice(0, -1), error: null });
 
@@ -98,12 +112,7 @@ export async function tracksOf(target: MenuTarget): Promise<Result<Track[]>> {
   }
   const artist = await load(`artist:${target.artist.id}`, () => api.artist(target.artist.id));
   if (!artist.ok) return artist;
-  // A few at a time: an artist with two hundred records shouldn't fire two hundred requests at once.
-  const albums = artist.value.albums, details: Result<{ tracks: Track[] }>[] = new Array(albums.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(6, albums.length) }, async () => {
-    while (next < albums.length) { const i = next++; details[i] = await load(`album:${albums[i].id}`, () => api.album(albums[i].id)); }
-  }));
+  const details = await albumDetails(artist.value.albums.map(album => album.id));
   const missing = details.filter(detail => !detail.ok);
   if (missing.length) {
     const first = missing[0] as Extract<Result, { ok: false }>;
@@ -120,7 +129,7 @@ export function ContextMenu() {
   const [typing, setTyping] = useState<string | null>(null);
   // Where focus should land after the next render (an item id), if not the first item.
   const focusNext = useRef<string | null>(null);
-  const sheet = matchMedia('(max-width: 760px)').matches;
+  const sheet = phoneWidth();
   const level = menu?.levels[menu.levels.length - 1];
 
   const choose = async (at: OpenMenu, row: Row) => {
@@ -162,7 +171,7 @@ export function ContextMenu() {
     const wanted = focusNext.current;
     focusNext.current = null;
     const target = (wanted && box.current?.querySelector<HTMLElement>(`[data-item="${CSS.escape(wanted)}"]`))
-      || box.current?.querySelector<HTMLElement>('[role="menuitem"]') || box.current;
+      || box.current?.querySelector<HTMLElement>('[role^="menuitem"]') || box.current;
     target?.focus({ preventScroll: true });
   }, [level, position]);
   // Leaving a text field puts focus back on its item.
@@ -181,7 +190,7 @@ export function ContextMenu() {
         if (event.key === 'Escape') { event.preventDefault(); focusNext.current = typing; setTyping(null); return; }
         if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown' && event.key !== 'Tab') return;
       }
-      const items = [...(box.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+      const items = [...(box.current?.querySelectorAll<HTMLElement>('[role^="menuitem"]') ?? [])];
       const at = items.indexOf(document.activeElement as HTMLElement);
       const focused = at >= 0 ? level?.rows?.find(row => row.item.id === items[at].dataset.item) : undefined;
       if (event.key === 'Escape' || (event.key === 'ArrowLeft' && menu.levels.length > 1)) {
@@ -199,12 +208,18 @@ export function ContextMenu() {
         event.preventDefault(); void closeMenu();
       }
     };
-    addEventListener('keydown', onKey); addEventListener('resize', closeMenu); addEventListener('blur', closeMenu);
-    return () => { removeEventListener('keydown', onKey); removeEventListener('resize', closeMenu); removeEventListener('blur', closeMenu); };
-  }, [menu, level, typing]);
+    // A menu placed by the pointer goes when the window changes size or loses focus. A sheet
+    // sits on the bottom edge whatever the size, so it stays unless the window grows past a
+    // phone's width: on Android the window resizes for the keyboard (the menu's text fields) and
+    // as the system bars come and go, and loses focus to the system's own panels.
+    const onResize = () => { if (!sheet || !phoneWidth()) void closeMenu(); };
+    const onBlur = () => { if (!sheet) void closeMenu(); };
+    addEventListener('keydown', onKey); addEventListener('resize', onResize); addEventListener('blur', onBlur);
+    return () => { removeEventListener('keydown', onKey); removeEventListener('resize', onResize); removeEventListener('blur', onBlur); };
+  }, [menu, level, typing, sheet]);
   if (!menu || !level) return null;
 
-  return <div className="menu-layer" onPointerDown={event => { if (event.target === event.currentTarget) closeMenu(); }} onContextMenu={event => { event.preventDefault(); void closeMenu(); }}>
+  return <div className="menu-layer" onPointerDown={event => { pressed = true; if (event.target === event.currentTarget) closeMenu(); }} onContextMenu={event => { event.preventDefault(); void closeMenu(); }}>
     <div ref={box} className={`menu${sheet ? ' sheet' : ''}`} role="menu" aria-label={level.title} tabIndex={-1}
       style={sheet ? undefined : position ?? { left: menu.x, top: menu.y, visibility: 'hidden' }}>
       <p className="menu-title">{menu.levels.length > 1 && <button type="button" className="menu-back" aria-label="Back" onClick={() => { focusNext.current = level.from ?? null; popLevel(menu); }}>
@@ -220,9 +235,10 @@ export function ContextMenu() {
           const value = String(new FormData(event.currentTarget).get('value') ?? '').trim();
           if (value) void submit(menu, row, value);
         }}><input name="value" autoFocus placeholder={item.input!.placeholder} aria-label={item.input!.placeholder} autoComplete="off" /></form>;
-        return <button key={item.id} type="button" role="menuitem" data-item={item.id} aria-haspopup={item.submenu ? 'menu' : undefined}
-          className={`menu-item${item.danger ? ' danger' : ''}${divider ? ' divided' : ''}`} onClick={() => void choose(menu, row)}>
+        return <button key={item.id} type="button" role={item.checked === undefined ? 'menuitem' : 'menuitemradio'} aria-checked={item.checked} data-item={item.id} aria-haspopup={item.submenu ? 'menu' : undefined}
+          className={`menu-item${item.danger ? ' danger' : ''}${divider ? ' divided' : ''}`} onClick={event => { if (!stray(event)) void choose(menu, row); }}>
           <span>{row.label}</span>
+          {item.checked && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.5 12.5l4 4 9-9" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
           {item.submenu && <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>}
         </button>;
       })}
@@ -266,14 +282,17 @@ builtin.menu({ id: 'queue', section: 0, label: 'Add to queue', when: t => !(t.ki
   run: async t => { const tracks = await songsFor(t); if (tracks) await player.add(tracks, 'end'); } });
 builtin.menu({
   id: 'radio', section: 0, label: 'Start radio',
-  when: t => t.kind === 'artist' || t.kind === 'album' || !!one(t),
+  // Radio finds songs like a song; a station isn't one. It needs the server.
+  when: t => !isAway() && (t.kind === 'artist' || t.kind === 'album' || (!!one(t) && !isStation(one(t)))),
   run: t => player.radio(t.kind === 'artist' ? { kind: 'artist', id: t.artist.id, label: t.artist.name }
     : t.kind === 'album' ? { kind: 'album', id: t.album.id, label: splitTitle(t.album.name).main }
     : { kind: 'song', track: one(t)!, label: splitTitle(one(t)!.title).main }),
 });
 
+// Stations aren't songs, so playlists and favorites can't hold them.
+const hasStation = (t: MenuTarget) => t.kind === 'tracks' && t.tracks.some(isStation);
 builtin.menu({
-  id: 'add-to-playlist', section: 1, label: 'Add to playlist',
+  id: 'add-to-playlist', section: 1, label: 'Add to playlist', when: t => !hasStation(t) && !isAway(),
   submenu: async t => {
     const create: MenuItem = { id: 'new-playlist', section: 0, label: 'New playlist', input: { placeholder: 'Name the new playlist', async submit(target, name) {
       const tracks = await tracksOf(target);
@@ -292,17 +311,35 @@ builtin.menu({
   },
 });
 
-builtin.menu({ id: 'go-album', section: 2, label: 'Go to record', when: t => !!one(t)?.albumId, run: t => nav.go({ view: 'album', id: one(t)!.albumId! }) });
+// Keep on this device (desktop and Android): a record or playlist, kept whole. Away, only
+// removing is offered.
+const keptTarget = (t: MenuTarget) => t.kind === 'album' ? { kind: 'album' as const, id: t.album.id, name: t.album.name, artist: t.album.artist, coverArt: t.album.coverArt }
+  : t.kind === 'playlist' ? { kind: 'playlist' as const, id: t.playlist.id, name: t.playlist.name, artist: null, coverArt: t.playlist.coverArt } : null;
+builtin.menu({
+  id: 'keep', section: 1,
+  label: t => { const target = keptTarget(t); return target && isContainerKept(target.kind, target.id) ? 'Remove from this device' : 'Keep on this device'; },
+  when: t => { const target = keptTarget(t); return keptSupported && !!target && (!isAway() || isContainerKept(target.kind, target.id)); },
+  async run(t) {
+    const target = keptTarget(t)!;
+    if (isContainerKept(target.kind, target.id)) { const result = await forget(target.kind, target.id); if (!result.ok) report(result.error); return; }
+    const tracks = await songsFor(t);
+    if (!tracks) return;
+    const result = await keep({ ...target, tracks: tracks.filter(track => track.source === 'navidrome') });
+    if (!result.ok) report(result.error);
+  },
+});
+
+builtin.menu({ id: 'go-album', section: 2, label: 'Go to record', when: t => !isAway() && !!one(t)?.albumId, run: t => nav.go({ view: 'album', id: one(t)!.albumId! }) });
 // A credit the server splits into several artists offers each of them (Track.artists).
 const creditedArtists = (t: MenuTarget) => (t.kind === 'album' ? t.album.artists : one(t)?.artists) ?? [];
 builtin.menu({
   id: 'go-artist', section: 2, label: 'Go to artist',
-  when: t => creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
+  when: t => !isAway() && creditedArtists(t).length < 2 && (!!one(t)?.artistId || (t.kind === 'album' && !!t.album.artistId)),
   run: t => nav.go({ view: 'artist', id: firstArtistId(t.kind === 'album' ? t.album : one(t)!)! }),
 });
 builtin.menu({
   id: 'go-artists', section: 2, label: 'Go to artist',
-  when: t => creditedArtists(t).length > 1,
+  when: t => !isAway() && creditedArtists(t).length > 1,
   submenu: t => creditedArtists(t).map(artist => ({ id: `go-artist:${artist.id}`, section: 0, label: artist.name, run: () => nav.go({ view: 'artist', id: artist.id }) })),
 });
 
@@ -313,7 +350,7 @@ builtin.menu({
     const item = t.kind === 'album' ? t.album : t.kind === 'artist' ? t.artist : null;
     return item && isStarred(item.id, item.starred) ? 'Remove from favorites' : 'Add to favorites';
   },
-  when: t => t.kind !== 'playlist',
+  when: t => t.kind !== 'playlist' && !hasStation(t) && !isAway(),
   async run(t) {
     const kind = t.kind === 'tracks' ? 'track' : t.kind === 'album' ? 'album' : 'artist';
     const items = t.kind === 'tracks' ? t.tracks : [t.kind === 'album' ? t.album : (t as Extract<MenuTarget, { kind: 'artist' }>).artist];
@@ -328,14 +365,17 @@ const ratedItems = (t: MenuTarget): { kind: 'track' | 'album' | 'artist'; items:
   t.kind === 'tracks' ? t.tracks.length && t.tracks.every(track => track.source === 'navidrome') ? { kind: 'track', items: t.tracks } : null
     : t.kind === 'album' ? { kind: 'album', items: [t.album] } : t.kind === 'artist' ? { kind: 'artist', items: [t.artist] } : null;
 builtin.menu({
-  id: 'rate', section: 3, label: 'Rate', when: t => !!ratedItems(t),
+  id: 'rate', section: 3, label: 'Rate', when: t => !!ratedItems(t) && !isAway(),
   submenu: t => {
     const { kind, items } = ratedItems(t)!;
     const ids = items.map(item => item.id);
+    const ratings = new Set(items.map(item => ratingOf(item.id, item.userRating)));
+    // The current rating is ticked when everything chosen shares it; a mixed selection ticks none.
+    const shared = ratings.size === 1 ? [...ratings][0] : undefined;
     const stars = ([1, 2, 3, 4, 5] as const).map((n): MenuItem => ({
-      id: `rate-${n}`, section: 0, label: n === 1 ? '1 star' : `${n} stars`, run: async () => { await setRating(kind, ids, n); },
+      id: `rate-${n}`, section: 0, label: n === 1 ? '1 star' : `${n} stars`, checked: shared === n, run: async () => { await setRating(kind, ids, n); },
     }));
-    const rated = items.some(item => ratingOf(item.id, item.userRating) > 0);
+    const rated = [...ratings].some(rating => rating > 0);
     return rated ? [...stars, { id: 'rate-clear', section: 1, label: 'Clear rating', run: async () => { await setRating(kind, ids, 0); } }] : stars;
   },
 });
@@ -396,6 +436,11 @@ builtin.menu({
   id: 'info', section: 6, label: 'Song details', when: t => !!one(t),
   submenu: t => {
     const track = one(t)!;
+    if (isStation(track)) {
+      const announced = current(getPlayer())?.id === track.id ? getPlayer().stationTitle : null;
+      return ['An internet radio station from your server, played as a live stream.', announced && `On now: ${announced}`]
+        .filter(Boolean).map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
+    }
     const lines = [
       [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(', ') || 'Format not reported',
       [track.duration && length(track.duration), track.year, track.genre].filter(Boolean).join(', '),
@@ -403,6 +448,9 @@ builtin.menu({
       track.source === 'navidrome' && ratingText(ratingOf(track.id, track.userRating)),
       track.source !== 'navidrome' ? 'A file on this computer.'
         : deliveryOf(track) === 'mp3-fallback' ? 'This browser couldn’t decode the original, so it is playing a 320 kbps MP3 from Navidrome instead.'
+        : deliveryOf(track) === 'device' ? 'Playing the copy kept on this device.'
+        : keptSupported && isKept(track.id) && current(getPlayer())?.id === track.id ? 'Kept on this device. This play streams from the server.'
+        : keptSupported && isKept(track.id) ? 'Kept on this device.'
         : 'Requested from Navidrome as the original file.',
     ].filter(Boolean);
     return lines.map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
@@ -423,3 +471,24 @@ export async function openSongDetails(track: Track) {
   openMenu({ clientX: anchor?.left ?? innerWidth / 2, clientY: anchor?.bottom ?? innerHeight / 3, preventDefault() {} }, target);
   if (open?.target === target) setOpen({ ...open, levels: [{ title: titleOf(target), rows }], error: problems[0] ?? null });
 }
+
+// Playlist files and public links ----------------------------------------------------------
+// An M3U of a playlist's songs (exports.ts), and a share of songs, a record, or a playlist
+// (share.tsx). Songs from this computer can't be shared: the server doesn't have them.
+builtin.menu({
+  id: 'export-m3u', section: 7, label: 'Export as M3U', when: t => t.kind === 'playlist',
+  async run(t) {
+    const tracks = await songsFor(t);
+    if (!tracks) return;
+    const error = await exportM3u(titleOf(t), tracks);
+    if (error) report(error);
+  },
+});
+builtin.menu({
+  id: 'share', section: 7, label: 'Share…',
+  when: t => !isAway() && (t.kind === 'album' || t.kind === 'playlist' || (t.kind === 'tracks' && t.tracks.length > 0 && t.tracks.every(track => track.source === 'navidrome'))),
+  run: t => openShare({
+    ids: t.kind === 'tracks' ? t.tracks.map(track => track.id) : [t.kind === 'album' ? t.album.id : (t as Extract<MenuTarget, { kind: 'playlist' }>).playlist.id],
+    title: titleOf(t),
+  }),
+});

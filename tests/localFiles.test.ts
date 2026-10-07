@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { readLocalCover, readLocalTracks } from '../apps/desktop/main/localFiles';
+import { openLocalFiles, withLocalPaths } from '../apps/desktop/main/localPaths';
+import { buildM3u, m3uEntry, NO_PATH_NOTE } from '../packages/core/m3u';
 
 let directory: string | undefined;
 afterEach(async () => { if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
@@ -20,7 +22,7 @@ function png() {
 }
 // A FLAC file's metadata and no audio: STREAMINFO (44.1 kHz, 16-bit, stereo, 10 s), Vorbis
 // comments, and a front-cover picture. Enough for tags, length, format, and the cover.
-function flac(tags: Record<string, string>, picture: Buffer) {
+function flac(tags: Record<string, string>, picture: Buffer, type = 'image/png') {
   const block = (type: number, data: Buffer, last = false) => Buffer.concat([Buffer.from([(last ? 0x80 : 0) | type, data.length >> 16, (data.length >> 8) & 255, data.length & 255]), data]);
   const info = Buffer.alloc(34);
   info.writeUInt16BE(4096, 0); info.writeUInt16BE(4096, 2);
@@ -33,7 +35,7 @@ function flac(tags: Record<string, string>, picture: Buffer) {
   const count = Buffer.alloc(4); count.writeUInt32LE(entries.length);
   const comments = Buffer.concat([text('squiggly test'), count, ...entries]);
   const be = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-  const mime = Buffer.from('image/png');
+  const mime = Buffer.from(type);
   const pictureBlock = Buffer.concat([be(3), be(mime.length), mime, be(0), be(1), be(1), be(24), be(0), be(picture.length), picture]);
   return Buffer.concat([Buffer.from('fLaC'), block(0, info), block(4, comments), block(6, pictureBlock, true)]);
 }
@@ -68,5 +70,43 @@ describe('files opened from this computer', () => {
     expect(again.coverArt).toBe(tracks[0].coverArt);
     expect(tracks[1].coverArt).not.toBe(tracks[0].coverArt);
     expect(await readLocalCover('local-unknown')).toBeNull();
+  });
+
+  it('are remembered where they are, so a playlist file names them by their own paths', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-local-'));
+    const chosen = join(directory, 'chosen.flac'), dropped = join(directory, 'Dropped Song.wav');
+    await writeFile(chosen, flac({ TITLE: 'Chosen', ARTIST: 'Ada Brass', ALBUM: 'Quiet Harbor' }, png()));
+    await writeFile(dropped, Buffer.from('not really audio'));
+    // The Open files dialog and a drop on the window both open files this way (main/index.ts).
+    const [first] = await openLocalFiles([chosen]);
+    const [second] = await openLocalFiles([dropped]);
+    expect(first.location).toBe(chosen);
+    expect(second).toMatchObject({ location: dropped, track: { title: 'Dropped Song', source: 'local' } });
+    // What the renderer sends has no local paths; one it makes up is ignored.
+    const entries = [first.track, second.track].map(m3uEntry);
+    expect(entries.map(entry => entry.path)).toEqual([null, null]);
+    const forged = { ...m3uEntry(second.track), id: 'not-opened', path: '/etc/passwd' };
+    expect(buildM3u(withLocalPaths([...entries, forged]))).toBe([
+      // The forged entry has no path, so the file says some were guessed.
+      '#EXTM3U', NO_PATH_NOTE,
+      '#EXTINF:10,Ada Brass - Chosen', chosen,
+      '#EXTINF:-1,Unknown artist - Dropped Song', dropped,
+      '#EXTINF:-1,Unknown artist - Dropped Song', 'Unknown artist/Unknown album/Dropped Song.wav',
+    ].join('\n') + '\n');
+  });
+
+  it('serve an embedded picture only under a raster image type', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-local-'));
+    const cover = png();
+    const served = async (name: string, type: string) => {
+      const path = join(directory!, name);
+      await writeFile(path, flac({ TITLE: name }, cover, type));
+      const [track] = await readLocalTracks([path]);
+      return readLocalCover(track.coverArt!);
+    };
+    expect(await served('svg.flac', 'image/svg+xml')).toBeNull();
+    expect(await served('html.flac', 'text/html')).toBeNull();
+    // A common misspelling in taggers, served under its proper name.
+    expect(await served('jpg.flac', 'image/JPG')).toEqual({ bytes: cover, contentType: 'image/jpeg' });
   });
 });

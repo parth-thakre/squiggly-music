@@ -1,6 +1,6 @@
 import { ListMusic, MessageSquareQuote, PictureInPicture2 } from 'lucide-react';
-import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent } from 'react';
-import type { Track } from '../../../../../packages/core/contracts';
+import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react';
+import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
@@ -9,14 +9,27 @@ import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
+import { isStation } from '../../../../../packages/core/stations';
+import { resampledNote } from '../../../../../packages/core/sinks';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
+import { DeckSlots } from './extensions';
 import { useSwipeSongs } from './swipe';
+import { RatingStars } from './ratings';
 import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
-import { GenrePage, Genres } from './views';
+import { GenrePage, Genres, Mixes } from './views';
+import { Home } from './views';
+import { dropFocusRequest, focusFirstResult, rememberSearch } from './searches';
+import { dropOnQueue, useDropTarget, useFileDrops, useSpringOpen } from './drag';
+import { ShareDialog } from './share';
+import { Kept, OfflineNotice } from './kept';
+import { keptCount, keptSupported, useKeptVersion } from './keptState';
+import { pageFor, serverPages } from './offline';
+import { DiagnosticsSwitch, showDiagnosticsSetting } from './views';
+import { diagnosticsBuilt, useSettings } from './settings';
 
 onMenuError(message => player.showError(message));
 
@@ -25,11 +38,9 @@ const sections: { view: 'records' | 'artists' | 'tracks' | 'playlists' | 'favori
   { view: 'playlists', label: 'Playlists' }, { view: 'favorites', label: 'Favorites' },
   { view: 'genres', label: 'Genres' },
 ];
-// Places that need the server. Without one, they offer to connect instead.
-const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre']);
 const PaletteContext = createContext(neutral);
 const sectionOf = (route: Route) => route.view === 'album' ? 'records' : route.view === 'artist' ? 'artists'
-  : route.view === 'playlist' || route.view === 'mix' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
+  : route.view === 'playlist' || route.view === 'mix' || route.view === 'mixes' || route.view === 'kept' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
 
 // App re-renders only when the connection or the playing record's sleeve changes. Position
 // snapshots reach the deck's own subscribers, never the page.
@@ -38,15 +49,27 @@ export function App() {
   const connected = usePlayer(s => s.connected);
   const access = usePlayer(s => s.access);
   const hasQueue = usePlayer(s => s.queue.length > 0);
+  // The browser's connect screen, opened from Settings over the host's configured server.
+  const choosing = usePlayer(s => s.choosingServer);
   // The room takes the colour of the record that is playing, unless the theme fixes its colours.
   const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
   useCommandKeys();
+  useFileDrops();
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
-  // Without a title bar, the window's own buttons take the room's ink.
-  useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink)); }, [palette.ink]);
+  // Without a title bar, the window's own buttons take the room's ink, and its edges the ground.
+  useEffect(() => { if (window.squiggly?.window.frameless) void window.squiggly.window.tintControls(asHex(palette.ink), asHex(palette.ground)); }, [palette.ink, palette.ground]);
+  // While the server is away, coming back to the window or to the network asks it again (at most
+  // every few seconds). The app never moves to another page on its own when the server goes.
+  const away = usePlayer(s => s.reach.away);
+  useEffect(() => {
+    if (!away) return;
+    const check = () => { if (document.visibilityState === 'visible') void player.retryServer(true); };
+    addEventListener('online', check); addEventListener('focus', check); document.addEventListener('visibilitychange', check);
+    return () => { removeEventListener('online', check); removeEventListener('focus', check); document.removeEventListener('visibilitychange', check); };
+  }, [away]);
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
-  const shell = connected || (mode === 'desktop' && hasQueue);
+  const shell = (connected && !choosing) || (mode === 'desktop' && hasQueue);
   const cover = useCoverScreen();
   return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
     {/* First, so everything clickable after it wins: Electron applies drag regions in page order,
@@ -56,10 +79,11 @@ export function App() {
       <Bar />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
-    </> : access === 'checking' ? null : mode === 'web' ? <SignIn /> : <Connect />}
+    </> : access === 'checking' ? null : mode === 'web' && access === 'sign-in' ? <SignIn /> : <Connect />}
     <ContextMenu />
     <ExtensionNotices />
     <CommandPalette />
+    <ShareDialog />
   </div></PaletteContext.Provider>;
 }
 
@@ -84,39 +108,69 @@ const Bar = memo(function Bar() {
     if (route === own.current) return;
     clearTimeout(timer.current);
     setQuery(route.view === 'search' ? route.query : '');
+    // Enter's wait for a first result ends when the search is left.
+    if (route.view !== 'search') dropFocusRequest();
   }, [route]);
   useEffect(() => () => clearTimeout(timer.current), []);
+  // On the search page a new query replaces the place and keeps its tab.
+  const search = (value: string) => {
+    const target: Route = { view: 'search', query: value, ...(route.view === 'search' && route.type ? { type: route.type } : {}) };
+    own.current = target; nav.go(target, route.view === 'search');
+  };
   const active = sectionOf(route);
   return <header className="bar">
     <div className="bar-top">
-    <span className="wordmark"><Mark />Squiggly</span>
+    {/* The wordmark goes home, as a site's logo does. */}
+    <button type="button" className="wordmark" aria-label="Squiggly home" aria-current={route.view === 'home' ? 'page' : undefined}
+      onClick={() => nav.go({ view: 'home' })}><Mark />Squiggly</button>
     {canGoBack && <button type="button" className="text-button back" onClick={() => nav.back()}>Back</button>}
     <input className="search" type="search" placeholder="Find anything" aria-label="Search your library" value={query}
       onChange={event => {
         const value = event.target.value; setQuery(value);
-        clearTimeout(timer.current);
-        const replace = route.view === 'search';
-        timer.current = setTimeout(() => {
-          if (value.trim()) { const target: Route = { view: 'search', query: value }; own.current = target; nav.go(target, replace); }
-          else if (replace) nav.back();
-        }, 250);
+        clearTimeout(timer.current); dropFocusRequest();
+        // Emptied on the search page, the field stays there and the page shows recent searches.
+        timer.current = setTimeout(() => { if (value.trim() || route.view === 'search') search(value); }, 250);
+      }}
+      onKeyDown={event => {
+        if (event.nativeEvent.isComposing) return;
+        // Enter searches at once, remembers the search, and moves to its first result.
+        if (event.key === 'Enter' && query.trim()) {
+          event.preventDefault(); clearTimeout(timer.current);
+          search(query); rememberSearch(query); focusFirstResult(query);
+        }
+        // Escape empties the field and leaves the search for the page before it.
+        if (event.key === 'Escape' && (query || route.view === 'search')) {
+          event.preventDefault(); clearTimeout(timer.current); dropFocusRequest();
+          setQuery('');
+          if (route.view === 'search') { if (canGoBack) nav.back(); else nav.go({ view: 'records' }, true); }
+        }
       }} />
     {/* Phones have no Ctrl+K; the palette opens from here. */}
     <button type="button" className="text-button bar-commands" onClick={openPalette}>Commands</button>
     </div>
     {/* On phones this row moves to the bottom of the screen, under the thumb. */}
     <nav className="sections" aria-label="Library">
-      {sections.map(s => <button key={s.view} type="button" aria-current={active === s.view ? 'page' : undefined}
-        onClick={() => nav.go({ view: s.view })}>{s.label}</button>)}
+      {sections.map(s => <SectionButton key={s.view} view={s.view} label={s.label} current={active === s.view} />)}
     </nav>
   </header>;
 });
+
+// A drag held over a section opens it, so what it carries can reach that section's pages.
+function SectionButton({ view, label, current }: { view: (typeof sections)[number]['view']; label: string; current: boolean }) {
+  const spring = useSpringOpen(() => { if (nav.current.view !== view) nav.go({ view }); });
+  return <button type="button" aria-current={current ? 'page' : undefined} onClick={() => nav.go({ view })} {...spring}>{label}</button>;
+}
 
 // Memoized with no props: only a route change (or the connection) re-renders the page.
 const View = memo(function View() {
   const route = useRoute();
   const connected = usePlayer(s => s.connected);
-  if (!connected && library.has(route.view)) return <Connect embedded />;
+  const away = usePlayer(s => s.reach.away);
+  if (!connected && serverPages.has(route.view)) return <Connect embedded />;
+  // Away: Home is what is kept, and pages that need the server say it's out of reach.
+  const page = pageFor(route, away, keptSupported);
+  if (page === 'kept') return <Kept />;
+  if (page === 'notice') return <OfflineNotice />;
   switch (route.view) {
     case 'records': return <Records />;
     case 'artists': return <Artists />;
@@ -127,7 +181,7 @@ const View = memo(function View() {
     case 'artist': return <ArtistPage key={route.id} id={route.id} />;
     case 'playlist': return <PlaylistPage key={route.id} id={route.id} />;
     case 'mix': return <MixPage key={route.id} id={route.id} />;
-    case 'search': return <Search query={route.query} />;
+    case 'search': return <Search query={route.query} type={route.type} />;
     case 'queue': return <Queue />;
     case 'lyrics': return <LyricsPage />;
     case 'settings': return <SettingsView />;
@@ -135,6 +189,9 @@ const View = memo(function View() {
     case 'extension': return <ExtensionPage key={route.id} id={route.id} />;
     case 'genres': return <Genres />;
     case 'genre': return <GenrePage key={route.name} name={route.name} />;
+    case 'home': return <Home />;
+    case 'mixes': return <Mixes />;
+    case 'kept': return <Kept />;
   }
 });
 
@@ -142,6 +199,7 @@ const View = memo(function View() {
 // and pause, errors, and radio; the position lives in DeckPosition alone.
 const Deck = memo(function Deck() {
   const track = usePlayer(current);
+  const away = usePlayer(s => s.reach.away);
   const playing = usePlayer(s => s.playing);
   // What Next plays: the first song after the last one under repeat all.
   const upNext = usePlayer(s => s.queue[following(s.index, s.queue.length, s.repeat, 'skip')] as Track | undefined);
@@ -149,6 +207,8 @@ const Deck = memo(function Deck() {
   const engine = usePlayer(s => s.engine);
   const radio = usePlayer(s => s.radio);
   const starting = usePlayer(s => s.radioStarting);
+  // A station's byline: what it says is on, when it says (see useByline).
+  const announced = usePlayer(s => s.stationTitle);
   const [expanded, setExpanded] = useState(false);
   const [sheetLyrics, setSheetLyrics] = useState(false);
   const route = useRoute();
@@ -158,11 +218,11 @@ const Deck = memo(function Deck() {
   useSwipeSongs(deck, entry ?? track?.id);
   // Folding to the cover screen unmounts the deck; its open sheet's history entry goes with it.
   useEffect(() => { if (expanded) return () => nav.closeOverlay(); }, [expanded]);
+  // Nothing on the platter: the saved queue's song where there is one (the one place it's
+  // offered), else a line saying how to start. No empty sleeve.
   if (!track) return <aside className="deck" aria-label="Now playing">
-    <div className="cover cover-empty" aria-hidden="true" />
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
-      : <p className="deck-empty">Pick a record, playlist, or song to start.</p>}
-    <Resume />
+      : <Resume fallback={<p className="deck-empty">Pick a record, playlist, or song to start.</p>} />}
     {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
     <DeckLinks />
   </aside>;
@@ -179,18 +239,21 @@ const Deck = memo(function Deck() {
         <button type="button" className="deck-hide text-button" aria-pressed={sheetLyrics} onClick={() => setSheetLyrics(v => !v)}>{sheetLyrics ? 'Sleeve' : 'Lyrics'}</button>
       </div>
       {/* Keyed by song, so a new sleeve settles in rather than snapping. */}
-      {expanded && sheetLyrics ? <Lyrics compact /> : <Cover key={track.id} id={track.coverArt} name={track.album} size={600} className="deck-cover" />}
+      {expanded && sheetLyrics ? <Lyrics compact /> : <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />}
     </div>
     <div className="deck-bottom">
       <div className="deck-text">
         <h2 className="deck-title">{name.main}</h2>
         <p className="deck-sub">
-          <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
-          {track.album && <>
-            {' on '}
-            {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
+          {isStation(track) ? announced ?? 'Internet radio' : <>
+            <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
+            {track.album && <>
+              {' on '}
+              {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
+            </>}
           </>}
         </p>
+        <DeckSlots placement="under-title" track={track} />
       </div>
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
       <Position track={track} palette={palette} />
@@ -202,21 +265,36 @@ const Deck = memo(function Deck() {
           and in a tooltip. */}
       <div className="deck-actions">
         <button type="button" className="icon-button" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /></button>
-        <button type="button" className="icon-button" aria-label="Queue" title="Queue" aria-pressed={route.view === 'queue'} onClick={() => route.view === 'queue' ? nav.back() : nav.go({ view: 'queue' })}><ListMusic aria-hidden="true" /></button>
+        <QueueToggle open={route.view === 'queue'} />
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
         <FavoriteToggle track={track} />
         <PlayModes />
       </div>
+      <DeckSlots placement="under-controls" track={track} />
       <SignalPath track={track} />
+      <DeckSlots placement="quiet-line" track={track} />
       <SleepNote />
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
+      {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
+      {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
       <DeckLinks />
     </div>
   </aside>;
 });
+
+// Records, artists, songs, and playlists dropped on it join the end of the queue. Held over it,
+// a drag opens the queue, to be dropped between its songs.
+function QueueToggle({ open }: { open: boolean }) {
+  const { over, handlers } = useDropTarget(payload => void dropOnQueue(payload));
+  const spring = useSpringOpen(() => { if (nav.current.view !== 'queue') nav.go({ view: 'queue' }); });
+  return <button type="button" className={`icon-button${over ? ' drop-over' : ''}`} aria-label="Queue" title="Queue" aria-pressed={open}
+    onClick={() => open ? nav.back() : nav.go({ view: 'queue' })} {...handlers}
+    onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); }}
+    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}><ListMusic aria-hidden="true" /></button>;
+}
 
 // A downloaded update, or a newer release for a copy that can't update itself. Shown under the
 // deck, and on the connect screen, which has no deck.
@@ -226,36 +304,59 @@ function UpdateLink() {
   if (update?.status === 'available') return <button type="button" className="quiet-link update-link" onClick={() => void window.squiggly!.updates.open()}>Squiggly {update.version} is out</button>;
   return null;
 }
+// Desktop betas with remote diagnostics built in say so, under the deck and on the connect
+// screen. Under the deck it opens the switch in Settings; the connect screen has no Settings,
+// so there it shows the switch in place.
+function BetaMarker({ inPlace = false }: { inPlace?: boolean }) {
+  const on = useSettings().diagnostics;
+  const [open, setOpen] = useState(false);
+  if (!diagnosticsBuilt) return null;
+  const label = on ? 'Beta · sends diagnostics' : 'Beta · diagnostics off';
+  if (!inPlace) return <button type="button" className="quiet-link beta-link" onClick={showDiagnosticsSetting}>{label}</button>;
+  return <div className="connect-beta">
+    <button type="button" className="quiet-link beta-link" aria-expanded={open} onClick={() => setOpen(value => !value)}>{label}</button>
+    {open && <DiagnosticsSwitch />}
+  </div>;
+}
 // Opening files from this computer lives here rather than in the header, which has to leave
 // room for the window's buttons.
 const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
 function DeckLinks() {
   const signedIn = usePlayer(s => s.access === 'signed-in');
+  // The browser's own connection; one the host was started with isn't the page's to drop.
+  const pageConnection = usePlayer(s => s.mode === 'web' && s.connected && s.pageConnection);
   const mode = usePlayer(s => s.mode);
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
     <UpdateLink />
+    <BetaMarker />
     <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
     {mode === 'desktop' && <button type="button" className="quiet-link" onClick={() => void openFiles()}>Open files</button>}
+    {pageConnection && <button type="button" className="quiet-link" onClick={() => void player.disconnect().then(result => { if (!result.ok) player.showError(result.error); })}>Disconnect</button>}
     {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}
   </p>;
 }
-// A queue saved on the server (maybe from another device), offered once when nothing plays.
-function Resume() {
+// A queue saved on the server (maybe from another device), offered once when nothing plays: its
+// song sits on the deck as a playing one would, with Resume and Not now.
+function Resume({ fallback }: { fallback: ReactNode }) {
   const saved = usePlayer(s => s.resumable);
-  if (!saved) return null;
-  const track = saved.tracks[saved.currentIndex];
-  if (!track) return null;
+  const track = saved?.tracks[saved.currentIndex];
+  if (!saved || !track) return fallback;
   const minutes = Math.floor(saved.positionSeconds / 60), seconds = Math.floor(saved.positionSeconds % 60);
-  return <div className="resume">
-    <p>Pick up where you left off: <strong>{splitTitle(track.title).main}</strong> by {track.artist}, at {minutes}:{String(seconds).padStart(2, '0')}{saved.changedBy ? ` (from ${saved.changedBy})` : ''}.</p>
-    <p className="resume-actions">
-      <button type="button" className="play-action" onClick={() => void player.resume()}><span className="disc"><Glyph kind="play" /></span>Resume</button>
-      <button type="button" className="text-button" onClick={player.dismissResume}>Not now</button>
-    </p>
-  </div>;
+  return <>
+    <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover resume-cover" />
+    <div className="resume">
+      <p className="resume-label">Pick up where you left off</p>
+      <h2 className="deck-title">{splitTitle(track.title, track.album).main}</h2>
+      <p className="deck-sub">{track.artist}, at {minutes}:{String(seconds).padStart(2, '0')}{saved.changedBy ? `, from ${saved.changedBy}` : ''}</p>
+      <p className="resume-actions">
+        <button type="button" className="play-action" onClick={() => void player.resume()}><span className="disc"><Glyph kind="play" /></span>Resume</button>
+        <button type="button" className="text-button" onClick={player.dismissResume}>Not now</button>
+      </p>
+    </div>
+  </>;
 }
 
 function DeckError({ message }: { message: string }) {
@@ -291,11 +392,22 @@ function SignalPath({ track }: { track: Track }) {
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
+  const codec = usePlayer(s => s.audio?.codec ?? null);
+  const decoderRate = usePlayer(s => s.audio?.decoderRate ?? null);
+  // Linux: the sound server resamples what mpv sends (AudioPath.sink). Nothing when it doesn't or isn't known.
+  const resampled = usePlayer(s => resampledNote(s.audio?.sink));
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
+  // A kept song is a file on this device: said only when the player really opened it.
   const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
-    volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
+    delivery === 'device' && 'Playing the copy kept on this device.',
+    volume < 100 && `Volume at ${volume}%.`, resampled, buffering && delivery !== 'device' && 'Buffering.'].filter(Boolean).join(' ');
+  // A station: a live stream, and what mpv says it decodes, if anything. The server's list says
+  // nothing about the stream, and the browser can't hear what the station says is on.
+  const decoded = [codec?.toUpperCase(), kHz(decoderRate)].filter(Boolean).join(' at ');
+  const live = mode === 'desktop' ? `A live stream${decoded ? `, which mpv decodes as ${decoded}` : ''}.`
+    : mode === 'web' ? 'A live stream, played by this browser, which can\'t tell what the station says is on.' : 'A live stream.';
   // What the file is. The Android app asks for the original file too, and plays it itself.
-  const line = [mode !== 'web' && format, notes].filter(Boolean).join('. ');
+  const line = isStation(track) ? [live, notes].filter(Boolean).join(' ') : [mode !== 'web' && format, notes].filter(Boolean).join('. ');
   return line ? <p className="signal">{line}</p> : null;
 }
 
@@ -307,17 +419,25 @@ function asHex(color: string) {
   return context.fillStyle;
 }
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
-// The desktop's and the Android app's server login. Embedded, it stands in for a library page
-// while songs from this computer play without a server.
+// The server login on every build. The desktop's main process, the Android bridge, or the
+// browser build's host keeps it. Embedded, it stands in for a library page while songs from this
+// computer play without a server.
 function Connect({ embedded = false }: { embedded?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Only plain HTTP answered the address: the sign-in, and the http:// address to use if they agree.
+  const [plainHttp, setPlainHttp] = useState<{ connection: Connection; url: string } | null>(null);
   const android = window.squigglyAndroid?.session;
-  const connect = async (connection: { url: string; username: string; password: string }) => {
-    setBusy(true); setError(null);
-    const result = await (window.squiggly ? window.squiggly.connect(connection) : android!.connect(connection));
+  const web = usePlayer(s => s.mode === 'web');
+  // Opened over the host's configured server: it stays the host's, and the page can go back to it.
+  const choosing = usePlayer(s => s.choosingServer);
+  const serverName = usePlayer(s => s.serverName);
+  const connect = async (connection: Connection) => {
+    setBusy(true); setError(null); setPlainHttp(null);
+    const result = await (window.squiggly ? window.squiggly.connect(connection) : android ? android.connect(connection) : player.connect(connection));
     setBusy(false);
     if (!result.ok) setError(result.error);
+    else if (result.value.type === 'plain-http') setPlainHttp({ connection, url: result.value.url });
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -343,25 +463,43 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
   return <Frame className="connect">
     <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
     <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
-      {canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
+      {web ? `The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.${choosing ? ` Connecting stops playback and empties the queue. The host keeps ${serverName ?? 'its own server'} for other browsers, and this page goes back to it when you disconnect.` : ''}`
+        : canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
+    <KeptAccountNote />
     {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
     {reconnectError && saved && android && <button type="button" className="text-button" disabled={busy} onClick={() => void retry()}>Try {hostOf(saved.url)} again</button>}
     <form onSubmit={submit}>
-      {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, then HTTP. */}
+      {/* Text rather than type="url", so an address without https:// is accepted; the app tries HTTPS, and asks before HTTP. */}
       <label>Server address<input name="url" type="text" inputMode="url" required placeholder="music.example.com" autoComplete="url"
         autoCapitalize="off" spellCheck={false} defaultValue={saved?.url} /></label>
       <label>Username<input name="username" required autoComplete="username" defaultValue={saved?.username} /></label>
       <label>Password<input name="password" type="password" required autoComplete="current-password" /></label>
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
+      {/* Someone on the network could have blocked HTTPS to get the password sent in the clear, so plain HTTP is never used without asking. */}
+      {plainHttp && <div className="connect-http" role="alert">
+        <p>This server isn't using HTTPS. Your password would be sent unprotected.</p>
+        <button type="button" className="text-button" disabled={busy} onClick={() => void connect({ ...plainHttp.connection, url: plainHttp.url })}>Continue</button>
+        <button type="button" className="text-button quiet" disabled={busy} onClick={() => setPlainHttp(null)}>Cancel</button>
+      </div>}
     </form>
+    {choosing && <button type="button" className="text-button" disabled={busy} onClick={() => player.chooseServer(false)}>Back to {serverName ?? 'the host\'s server'}</button>}
     {!embedded && window.squiggly && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
     {/* Navidrome's own public demo, with Creative Commons music, for trying Squiggly without a server. */}
     <p className="connect-demo">No server yet? <button type="button" className="link" disabled={busy}
       onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>, a public server of Creative Commons music that everyone shares.</p>
     {!embedded && window.squiggly && <p className="connect-update"><UpdateLink /></p>}
+    {!embedded && <BetaMarker inPlace />}
   </Frame>;
+}
+
+// Kept songs belong to one account; signing in to another forgets them.
+function KeptAccountNote() {
+  useKeptVersion();
+  const count = keptCount();
+  if (!keptSupported || !count) return null;
+  return <p className="note">Squiggly keeps songs for one account. Signing in to another server or as another user forgets the {count.toLocaleString()} {count === 1 ? 'song' : 'songs'} kept here.</p>;
 }
 
 // The browser build's door: the host keeps a Navidrome account, and its password keeps

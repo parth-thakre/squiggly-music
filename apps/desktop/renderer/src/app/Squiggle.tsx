@@ -9,25 +9,28 @@ import { time } from './ui';
 // Radians per second the wave travels, and how tall it stands while paused (1 is full height).
 const PLAYING_SPEED = 2.4, PAUSED_SPEED = 1.3, PAUSED_LIFT = .82;
 
-export function Squiggle({ label, identity, position, duration, playing, color, rest, onSeek }: {
+export function Squiggle({ label, identity, position, duration, playing, color, rest, onSeek, live = false }: {
   label: string;
   // The queue entry playing. A drag that starts on one entry never seeks another.
   identity: string;
   position: number; duration: number; playing: boolean; color: string; rest: string;
   onSeek(seconds: number, identity: string): void;
+  // A live stream (an internet radio station): no position and nothing to seek. The wave runs
+  // the whole width, with no thumb, and the clock says Live.
+  live?: boolean;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const clock = useRef<HTMLSpanElement>(null);
   const input = useRef<HTMLInputElement>(null);
-  const latest = useRef({ position, duration, playing, color, rest, at: performance.now() });
+  const latest = useRef({ position, duration, playing, color, rest, live, at: performance.now() });
   const dragging = useRef<number | null>(null);
   const gesture = useRef<{ identity: string; cancelled: boolean } | null>(null);
   const redraw = useRef(() => {});
 
   useLayoutEffect(() => {
-    latest.current = { position, duration, playing, color, rest, at: performance.now() };
+    latest.current = { position, duration, playing, color, rest, live, at: performance.now() };
     redraw.current();
-  }, [position, duration, playing, color, rest]);
+  }, [position, duration, playing, color, rest, live]);
   useEffect(() => {
     // The song changed under a drag: drop the gesture, and keep it dropped until release.
     if (gesture.current && gesture.current.identity !== identity) { gesture.current.cancelled = true; dragging.current = null; redraw.current(); }
@@ -42,10 +45,10 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     let frame = 0, timer: ReturnType<typeof setTimeout> | undefined, last = performance.now(), phase = 0, spoken = '';
     let speed = latest.current.playing ? PLAYING_SPEED : PAUSED_SPEED, lift = latest.current.playing ? 1 : PAUSED_LIFT;
     const draw = (now: number) => {
-      const { position: value, duration: length, playing: active, at, color: ink, rest: line } = latest.current;
+      const { position: value, duration: length, playing: active, at, color: ink, rest: line, live: onAir } = latest.current;
       const elapsed = active ? Math.min((now - at) / 1000, 1) : 0;
       const seconds = dragging.current ?? Math.min(length, value + elapsed);
-      if (clock.current) clock.current.textContent = time(seconds);
+      if (clock.current) clock.current.textContent = onAir ? 'Live' : time(seconds);
       if (input.current) {
         if (dragging.current === null) input.current.value = String(seconds);
         // Written only when the words change, so assistive tech isn't told sixty times a second.
@@ -64,9 +67,10 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
       // At least one small wave is always drawn, so the first seconds squiggle too. That places
       // the thumb a little ahead of the true position for the opening moments only; the clock
       // and seeking stay exact.
-      const end = Math.max(left + 22, left + (right - left) * (length > 0 ? Math.max(0, Math.min(1, seconds / length)) : 0));
+      // Live, the wave runs to the right edge and there is no rest of the song to draw.
+      const end = onAir ? right + 6 : Math.max(left + 22, left + (right - left) * (length > 0 ? Math.max(0, Math.min(1, seconds / length)) : 0));
       context.lineCap = 'round'; context.lineJoin = 'round'; context.lineWidth = 2.5;
-      context.strokeStyle = line; context.beginPath(); context.moveTo(end + 7, mid); context.lineTo(right, mid); context.stroke();
+      if (!onAir) { context.strokeStyle = line; context.beginPath(); context.moveTo(end + 7, mid); context.lineTo(right, mid); context.stroke(); }
       // The played part is always a full-height wave. On a short stretch the ends taper less and
       // the waves come closer together (unfurling to full length as the song plays), so even a
       // few seconds in shows a real squiggle rather than a flat line.
@@ -82,6 +86,7 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
         }
         context.stroke();
       }
+      if (onAir) return;
       context.fillStyle = ink;
       context.beginPath(); context.roundRect(end - 2, mid - 9, 4, 18, 2); context.fill();
     };
@@ -129,21 +134,26 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     end();
     if (started && !started.cancelled && started.identity === identity && seconds !== null) onSeek(seconds, identity);
   };
-  return <div className="squiggle">
-    <span className="squiggle-time" ref={clock} />
+  // One tree either way, so the canvas the drawing loop holds stays the one on screen.
+  return <div className={`squiggle${live ? ' live' : ''}`} {...(live ? { role: 'img', 'aria-label': label } : {})}>
+    <span className="squiggle-time" ref={clock} aria-hidden={live || undefined} />
     <div className="squiggle-rail">
       <canvas ref={canvas} aria-hidden="true" />
-      <input ref={input} type="range" min="0" max={duration || 1} step="0.1" defaultValue={position} aria-label={label}
+      {!live && <input ref={input} type="range" min="0" max={duration || 1} step="0.1" defaultValue={position} aria-label={label}
         onPointerDown={event => { gesture.current = { identity, cancelled: false }; event.currentTarget.setPointerCapture(event.pointerId); }}
         onKeyDown={begin}
         onChange={event => {
-          begin();
+          const value = Number(event.target.value);
+          // Outside a press or a key: assistive tech setting the value seeks at once. The change
+          // event a release sends (late on Windows, after a frame has put the position back)
+          // isn't a new gesture, which would freeze the thumb there and seek back to it on blur.
+          if (!gesture.current) { if (event.nativeEvent.type === 'input') onSeek(value, identity); return; }
           // Every input redraws the thumb and clock, playing or paused.
-          if (!gesture.current!.cancelled && gesture.current!.identity === identity) dragging.current = Number(event.target.value);
+          if (!gesture.current.cancelled && gesture.current.identity === identity) dragging.current = value;
           redraw.current();
         }}
-        onPointerUp={commit} onKeyUp={commit} onBlur={commit} onPointerCancel={end} />
+        onPointerUp={commit} onKeyUp={commit} onBlur={commit} onPointerCancel={end} />}
     </div>
-    <span className="squiggle-time">{time(duration)}</span>
+    <span className="squiggle-time">{live ? '' : time(duration)}</span>
   </div>;
 }

@@ -50,6 +50,9 @@ const subsonicSong = (fake: FakeNavidrome, track: Track) => ({
   coverArt: track.coverArt, track: track.trackNumber, discNumber: track.discNumber, year: track.year ?? undefined, genre: track.genre ?? undefined,
   ...(fake.starred.has(track.id) ? { starred: '2026-09-01T00:00:00Z' } : {}), ...(track.artists ? { artists: track.artists } : {}),
   ...(fake.ratings.has(track.id) ? { userRating: fake.ratings.get(track.id) } : {}),
+  // What the connector sorts by when it sorts here: Navidrome's created, playCount, and played.
+  created: new Date(added(track)).toISOString(),
+  ...(plays.has(track.id) ? { playCount: plays.get(track.id)!.count, played: plays.get(track.id)!.date } : {}),
 });
 
 /** Answers the request if it is one of these routes; false leaves it to the stream server. */

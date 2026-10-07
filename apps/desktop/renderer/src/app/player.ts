@@ -1,12 +1,17 @@
 import { useSyncExternalStore } from 'react';
-import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
+import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
-import { emptyDiagnostics } from '../../../../../packages/core/contracts';
-import { following, preceding, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
+import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
+import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
+import { OUT_OF_REACH } from '../../../../../packages/core/reach';
+import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
 import { finishThreshold } from '../../../../../packages/core/plays';
-import { onSignedOut, webSession } from '../bridge/previewLibrary';
+import { isStation, repeatFor, stationIdOf } from '../../../../../packages/core/stations';
+import { onDisconnected, onSignedOut, webReach, webSession, type WebSessionStatus } from '../bridge/previewLibrary';
+import { isKept, keptSupported } from './keptState';
 import { VolumeCommandCoalescer } from '../volumeCommands';
 import { api, resetLibraryCaches } from './library';
+import { clearSearches, searchesFor } from './searches';
 import { getSettings } from './settings';
 
 // One small store for playback. Views subscribe with selectors so the frequent position
@@ -22,6 +27,12 @@ export interface PlayerState {
   // Browser only: whether this host wants its password first. Always 'open' on the desktop;
   // on Android, 'checking' until the saved sign-in has been read.
   access: 'checking' | 'sign-in' | 'signed-in' | 'open';
+  // Browser only: the server is one this page connected to itself (not the host's configured
+  // one), so the page can disconnect from it.
+  pageConnection: boolean;
+  // Browser only: the connect screen is open over the host's configured server, to connect this
+  // page to another one instead.
+  choosingServer: boolean;
   queue: Track[];
   // One id per queue entry, parallel to `queue`. Two copies of a song are two entries.
   entryIds: string[];
@@ -30,9 +41,14 @@ export interface PlayerState {
   // load in the browser, the native player's playId on Android. '' before anything has played.
   playId: string;
   index: number; playing: boolean; position: number; duration: number; buffering: boolean;
+  // Asked to play, and nothing heard of this play yet: the stream or the output is still opening.
+  // The play button shows it and ignores presses meanwhile (player.toggle). A stall later in the
+  // song is only buffering.
+  starting: boolean;
   volume: number; audio: AudioPath | null; devices: AudioDevice[]; device: string;
   // What was asked of the server for the current song. A request, not proof of what arrived.
-  delivery: 'original-requested' | 'mp3-fallback' | null;
+  // 'device': the player opened the copy kept on this device instead.
+  delivery: 'original-requested' | 'mp3-fallback' | 'device' | null;
   error: string | null; diagnostics: Diagnostics;
   // Radio keeps the queue topped up with songs like the last one.
   radio: { label: string } | null;
@@ -47,6 +63,14 @@ export interface PlayerState {
   // Queue modes. The desktop's audio host owns them; the browser and Android keep them here, in
   // local storage (MODES below).
   repeat: RepeatMode; shuffle: boolean;
+  // An internet radio station playing: what its stream says is on (ICY), from mpv on the desktop
+  // and ExoPlayer on Android. The browser can't read it, so it stays null there, as it does
+  // whenever a station says nothing.
+  stationTitle: string | null;
+  // Whether the server answers. Away, the app shows what is kept and stops asking the server.
+  reach: Reachability;
+  // Finished plays waiting to be reported until the server is back (desktop and Android).
+  queuedPlays: number;
 }
 export type SignInState = Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
 
@@ -68,21 +92,35 @@ function storedModes(): Pick<PlayerState, 'repeat' | 'shuffle'> {
 }
 const saveModes = () => { try { localStorage.setItem(MODES, JSON.stringify({ repeat: state.repeat, shuffle: state.shuffle })); } catch { /* Kept for this visit only. */ } };
 let state: PlayerState = {
-  mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop || android ? null : 'Navidrome',
-  sessionId: null, access: desktop ? 'open' : 'checking',
-  queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
+  mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: null,
+  sessionId: null, access: desktop ? 'open' : 'checking', pageConnection: false, choosingServer: false,
+  queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, starting: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
   update: null,
   ...(local ? storedModes() : { repeat: 'off', shuffle: false }),
+  stationTitle: null,
+  reach: ONLINE, queuedPlays: 0,
 };
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
 let positionAt = performance.now();
+// A desktop seek the host hasn't reported yet. Its snapshots come four times a second, so for a
+// moment after a seek they still carry the old position; until one reports a position near the
+// seek (or SEEK_SETTLE_MS pass, a seek mpv never made) the page shows the seek's instead, so the
+// squiggle, the lyrics, and the mini player don't flick back to where the song was.
+let seeking: { seconds: number; at: number; entry: string | undefined } | null = null;
+const SEEK_SETTLE_MS = 1500;
+// The play (PlayerState.playId) last heard: playing and not buffering. A new load forgets it,
+// since Android's playId changes only once the native player reports the new entry.
+let heard: string | null = null;
 const set = (patch: Partial<PlayerState>) => {
   const before = state;
   state = { ...state, ...patch };
+  if (state.playing && !state.buffering) heard = state.playId;
+  const starting = state.buffering && state.index >= 0 && state.playId !== heard;
+  if (starting !== state.starting) state = { ...state, starting };
   if ('position' in patch || state.playing !== before.playing) positionAt = performance.now();
   // The native player gets every change to the queue, before any command that names an entry.
   if (android && state.entryIds !== before.entryIds) android.player.sync(state.queue, state.entryIds);
@@ -108,6 +146,12 @@ export function livePosition() {
 }
 
 const report = (result: Result) => { if (!result.ok) set({ error: result.error }); return result; };
+export const isAway = () => state.reach.away;
+const sameReach = (a: Reachability, b: Reachability) => a.away === b.away && a.since === b.since && a.checking === b.checking && a.checkedAt === b.checkedAt;
+// A song that can't play while the server is away says why.
+const notKeptError = 'This song isn\'t kept on this device, and your server is out of reach.';
+const awayError = (track: Track | undefined, fallback: string) =>
+  state.reach.away && keptSupported && track?.source === 'navidrome' && !isKept(track.id) ? notKeptError : fallback;
 const queueFull = (left: number) => left
   ? `The queue holds up to ${QUEUE_LIMIT.toLocaleString()} songs, so ${left.toLocaleString()} ${left === 1 ? 'song wasn\'t' : 'songs weren\'t'} added.`
   : `The queue holds up to ${QUEUE_LIMIT.toLocaleString()} songs. Remove some to add more.`;
@@ -128,24 +172,59 @@ const sameTrack = (a: Track, b: Track) => a.id === b.id && a.title === b.title &
   && a.duration === b.duration && a.coverArt === b.coverArt && a.starred === b.starred && a.sourceFormat === b.sourceFormat
   && a.sourceSampleRate === b.sourceSampleRate && a.sourceBitDepth === b.sourceBitDepth;
 const sameList = <T,>(a: readonly T[], b: readonly T[], same: (x: T, y: T) => boolean) => a === b || (a.length === b.length && a.every((x, i) => same(x, b[i])));
-function sameFields<T extends object>(a: T | null, b: T) {
+// One level down too, for small objects inside (audio.sink arrives as a fresh copy every time).
+const plainObject = (value: unknown): value is object => typeof value === 'object' && value !== null && !Array.isArray(value);
+function sameFields<T extends object>(a: T | null, b: T, nested = true): boolean {
   if (!a) return false;
   const keys = Object.keys(b) as (keyof T)[];
-  return keys.length === Object.keys(a).length && keys.every(key => a[key] === b[key]);
+  return keys.length === Object.keys(a).length && keys.every(key => {
+    const x = a[key], y = b[key];
+    return x === y || (nested && plainObject(x) && plainObject(y) && sameFields(x, y, false));
+  });
 }
+
+// The saved output's name, so Settings can still name it while it's unplugged. Kept across
+// launches, since Squiggly may start without it.
+const OUTPUT_NAME = 'squiggly.outputName';
+let outputName: AudioDevice | null = (() => {
+  try {
+    const value = JSON.parse(localStorage.getItem(OUTPUT_NAME) ?? 'null') as Partial<AudioDevice> | null;
+    return typeof value?.name === 'string' && typeof value.description === 'string' ? { name: value.name, description: value.description } : null;
+  } catch { return null; }
+})();
+function rememberOutput(devices: readonly AudioDevice[]) {
+  const saved = getSettings().outputDevice;
+  const device = saved === 'auto' ? undefined : devices.find(d => d.name === saved);
+  if (!device || (outputName?.name === device.name && outputName.description === device.description)) return;
+  outputName = { name: device.name, description: device.description };
+  try { localStorage.setItem(OUTPUT_NAME, JSON.stringify(outputName)); } catch { /* Kept for this visit only. */ }
+}
+export const outputDescription = (name: string) => outputName?.name === name ? outputName.description : null;
 
 if (desktop) {
   // An engine error shows once; dismissing it keeps it dismissed until a different one arrives.
+  // One the engine takes back goes here too (it clears its errors on the next command, and says
+  // an output came back for a few seconds).
   let lastEngineError: string | null = null;
   const apply = (snapshot: AppSnapshot) => {
     const p = snapshot.player;
     const sessionId = snapshot.server.sessionId;
     // Another server or account: nothing cached from the last one may show.
     if (sessionId !== state.sessionId) resetLibraryCaches();
-    const error = p.error && p.error !== lastEngineError ? p.error : state.error;
+    searchesFor(snapshot.server.account ?? null);
+    const error = p.error && p.error !== lastEngineError ? awayError(p.queue[p.currentIndex], p.error)
+      : !p.error && lastEngineError && state.error === lastEngineError ? null : state.error;
     lastEngineError = p.error;
     const track = p.queue[p.currentIndex];
+    let position = p.position;
+    if (seeking) {
+      const waited = performance.now() - seeking.at;
+      if (p.entryIds[p.currentIndex] !== seeking.entry || Math.abs(p.position - seeking.seconds) < 1.5 || waited > SEEK_SETTLE_MS) seeking = null;
+      else position = seeking.seconds + (p.playing ? waited / 1000 : 0);
+    }
+    rememberOutput(p.devices);
     const { saved, canRemember, reconnecting, reconnectError } = snapshot.server;
+    const reach = snapshot.server.reach ?? ONLINE;
     const signIn = state.signIn.saved?.url === saved?.url && state.signIn.saved?.username === saved?.username && state.signIn.canRemember === canRemember
       && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : { saved, canRemember, reconnecting, reconnectError };
     set({
@@ -154,16 +233,20 @@ if (desktop) {
       engine: p.engine, connected: snapshot.server.connected, serverName: snapshot.server.name, sessionId,
       queue: sameList(state.queue, p.queue, sameTrack) ? state.queue : p.queue,
       entryIds: sameList(state.entryIds, p.entryIds, Object.is) ? state.entryIds : p.entryIds, playId: p.playId ?? '',
-      index: p.currentIndex, playing: p.playing, position: p.position, duration: p.duration, buffering: p.audio.buffering,
+      index: p.currentIndex, playing: p.playing, position, duration: p.duration, buffering: p.audio.buffering,
       volume: p.volume, audio: sameFields(state.audio, p.audio) ? state.audio : p.audio,
       devices: !p.devices.length || sameList(state.devices, p.devices, sameFields) ? state.devices : p.devices, device: p.audio.requestedDevice,
       radio: p.radio?.label === state.radio?.label ? state.radio : p.radio,
       // A queue loaded some other way (a play key resumes the saved one) replaces the offer.
       resumable: p.queue.length ? null : state.resumable,
       // The desktop asks Navidrome for the original file; the host doesn't verify what came back.
-      delivery: track?.source === 'navidrome' ? 'original-requested' : null,
+      // A kept song says so only when the host really opened its file.
+      delivery: track?.source === 'navidrome' ? (p.fromDevice ? 'device' : 'original-requested') : null,
+      reach: sameReach(state.reach, reach) ? state.reach : reach,
+      queuedPlays: snapshot.server.queuedPlays ?? 0,
       error, diagnostics: snapshot.diagnostics,
       repeat: p.repeat ?? 'off', shuffle: p.shuffle ?? false,
+      stationTitle: p.stationTitle ?? null,
     });
   };
   let received = false;
@@ -175,8 +258,10 @@ if (desktop) {
 // Browser playback ----------------------------------------------------------------------
 // Two elements take turns: while one plays, the other loads the next song near the end,
 // so the change between songs is short. Streams come through the host's /api/stream,
-// which keeps the Navidrome credentials off the device.
-const stream = (id: string, mp3 = false) => `/api/stream?id=${encodeURIComponent(id)}${mp3 ? '&format=mp3' : ''}`;
+// which keeps the Navidrome credentials off the device. A station comes through /api/station,
+// which keeps its stream address on the host too.
+const stream = (track: Track, mp3 = false) => isStation(track) ? `/api/station?id=${encodeURIComponent(stationIdOf(track))}`
+  : `/api/stream?id=${encodeURIComponent(track.id)}${mp3 ? '&format=mp3' : ''}`;
 const web = local && !android ? { active: new Audio(), standby: new Audio() } : null;
 // Every real load is a new playback instance. Play reports belong to the instance, so
 // replaying a song counts again and moving an already counted entry doesn't. Shared by the
@@ -200,7 +285,7 @@ let requests = 0;
 export const playRequests = () => requests;
 
 function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = false) {
-  element.src = stream(track.id, mp3);
+  element.src = stream(track, mp3);
   element.dataset.entry = entry;
   element.dataset.mp3 = mp3 ? '1' : '';
   element.volume = state.volume / 100;
@@ -208,10 +293,12 @@ function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = f
 function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play?: boolean; startAt?: number; patch?: Partial<PlayerState> } = {}) {
   const queue = patch.queue ?? state.queue, entryIds = patch.entryIds ?? state.entryIds;
   const track = queue[index], entry = entryIds[index];
+  heard = null;
   if (android && track && entry) {
     // set() sends the queue to the native player before the load that names the entry. The new
     // play instance begins when the player reports the entry started (see nativePlayback).
-    set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false, delivery: 'original-requested' });
+    set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false,
+      delivery: isStation(track) ? null : 'original-requested', stationTitle: null });
     android.player.load(entry, { play, position: startAt });
     saveSoon();
     return;
@@ -225,19 +312,21 @@ function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play
   plays.instance++; plays.track = track; plays.lastPosition = startAt; plays.listened = 0; plays.startAt = startAt;
   if (startAt && web.active.readyState >= HTMLMediaElement.HAVE_METADATA) { web.active.currentTime = startAt; plays.startAt = 0; }
   set({ ...patch, index, position: startAt, duration: track.duration ?? 0, buffering: play, error: null, playing: false, playId: `web.${plays.instance}`,
-    delivery: web.active.dataset.mp3 ? 'mp3-fallback' : 'original-requested' });
+    delivery: isStation(track) ? null : web.active.dataset.mp3 ? 'mp3-fallback' : 'original-requested' });
   if (play) void web.active.play().catch(() => set({ playing: false, buffering: false }));
   session(track);
   saveSoon();
 }
 // Play reporting in the browser and on Android, by time actually listened, with the desktop's
-// rule: songs of 30 seconds or less start but never finish.
+// rule: songs of 30 seconds or less start but never finish, others finish at Settings' share.
 function listened(seconds: number) {
   if (!local || !plays.track || !getSettings().reportPlays || plays.track.source !== 'navidrome') return;
   const { track, instance } = plays;
-  if (plays.started !== instance) { plays.started = instance; void api.reportPlay(track.id, 'started'); }
+  // Now playing means nothing later: skipped while the server is away. The Android bridge keeps
+  // finished plays for later itself; the browser build can't.
+  if (plays.started !== instance) { plays.started = instance; if (!state.reach.away) void api.reportPlay(track.id, 'started'); }
   plays.listened += seconds;
-  const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration));
+  const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration), getSettings().playCountsAt);
   if (plays.finished !== instance && threshold !== null && plays.listened >= threshold) { plays.finished = instance; void api.reportPlay(track.id, 'finished'); }
 }
 if (web) {
@@ -259,14 +348,16 @@ if (web) {
       }
       // The song that follows, which is this one again under repeat one: the standby element
       // then holds a second copy, and the swap starts it over as quickly as a new song.
-      const upcoming = following(state.index, state.queue.length, state.repeat, 'ended');
+      const upcoming = following(state.index, state.queue.length, repeatFor(state.repeat, current(state)), 'ended');
       const next = state.queue[upcoming], nextEntry = state.entryIds[upcoming];
-      if (next && nextEntry && web.standby.dataset.entry !== nextEntry && element.duration - position < 25) { prepare(web.standby, next, nextEntry); web.standby.load(); }
+      // A station waits for its turn: loaded early, it would start its stream early and fall behind.
+      if (next && nextEntry && !isStation(next) && web.standby.dataset.entry !== nextEntry && element.duration - position < 25) { prepare(web.standby, next, nextEntry); web.standby.load(); }
       if (Math.floor(position) % 5 === 0) positionState();
     });
     element.addEventListener('ended', () => {
       if (!mine()) return;
-      const next = following(state.index, state.queue.length, state.repeat, 'ended');
+      // A station's stream only ends when it drops; repeat one doesn't dial it again.
+      const next = following(state.index, state.queue.length, repeatFor(state.repeat, current(state)), 'ended');
       if (next >= 0) webLoad(next);
       else set({ playing: false, position: 0 });
     });
@@ -280,14 +371,14 @@ if (web) {
       void (network ? Promise.resolve(true) : stillSignedIn()).then(signedIn => {
         if (!signedIn || instance !== plays.instance || !mine() || !track) return;
         // Some originals (ALAC, DSD) are beyond the browser; ask the server for a 320 kbps MP3 once.
-        if (!network && !element.dataset.mp3) {
+        if (!network && !element.dataset.mp3 && !isStation(track)) {
           plays.startAt = plays.lastPosition;
           prepare(element, track, element.dataset.entry!, true);
           set({ delivery: 'mp3-fallback' });
           if (wanted && paused === pauses) void element.play().catch(() => undefined);
           return;
         }
-        set({ playing: false, buffering: false, error: 'This song could not be played here. Try another, or check the connection.' });
+        set({ playing: false, buffering: false, error: isStation(track) ? stationFailed : awayError(track, 'This song could not be played here. Try another, or check the connection.') });
       });
     });
   }
@@ -295,10 +386,11 @@ if (web) {
   setInterval(() => { if (!web.active.paused) saveSoon(); }, 30000);
   addEventListener('pagehide', () => saveNow());
 }
+const stationFailed = 'This station could not be played here. It may be off the air, or its stream may be in a format this player can\'t play.';
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 function saveSoon() { if (local) { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 3000); } }
 function saveNow() {
-  if (!local || !state.connected || !getSettings().syncQueue || !state.queue.length || state.index < 0) return;
+  if (!local || !state.connected || state.reach.away || !getSettings().syncQueue || !state.queue.length || state.index < 0) return;
   // The queue never holds more than the server keeps, so the saved index is the playing song's own.
   if (state.queue.length > QUEUE_LIMIT || state.queue.some(t => t.source !== 'navidrome')) return;
   void api.saveQueue(state.queue.map(t => t.id), state.index, (web ? plays.startAt || web.active.currentTime : livePosition()) || 0);
@@ -352,31 +444,82 @@ if (web && 'mediaSession' in navigator) {
 }
 
 // Browser sign-in -----------------------------------------------------------------------
-// The host may protect its Navidrome account with a password. Until it's given, the browser
-// shows only the sign-in screen; any 401 from /api (an expired or ended session) returns there.
+// The host may protect itself with a password. Until it's given, the browser shows only the
+// sign-in screen; any 401 from /api (an expired or ended session) returns there.
 // An unreachable host reads as signed out; signing in then says it couldn't be reached.
-async function checkAccess() {
-  const status = await webSession.status();
-  if (status.required && !status.signedIn) { set({ access: 'sign-in', connected: false }); return; }
-  set({ access: status.required ? 'signed-in' : 'open', connected: true });
-  void offerResume();
+// Past that, the host needs a server: one this page connects to (the connect screen), or one
+// from the host's environment. Without either the page shows the connect screen.
+// Recent searches belong to the account the page uses: the host's configured server, or the
+// page's own connection, as the host names it. Without a server there is none. The host doesn't
+// say which username a connection uses, so connecting from the page always starts with none.
+const webAccount = (status: { connected: boolean; serverName: string | null; pageConnection: boolean }) =>
+  status.connected ? `web\n${status.pageConnection ? 'page' : 'host'}\n${status.serverName ?? ''}` : null;
+function allowed(status: WebSessionStatus) {
+  // Signed out while the page was away: the searches go too.
+  if (status.required && !status.signedIn) { clearSearches(); signedOut(); return; }
+  // The queue's songs belong to the server they came from. When the host now has another one for
+  // this page (its own connection is gone and the host's configured server stands in, say), they
+  // don't carry over to it.
+  if ((state.connected || state.queue.length > 0) && !sameServer(status)) disconnected();
+  searchesFor(webAccount(status));
+  const was = state.connected;
+  set({
+    access: status.required ? 'signed-in' : 'open', connected: status.connected, serverName: status.serverName,
+    pageConnection: status.pageConnection,
+  });
+  if (status.connected && !was) void offerResume();
 }
+const checkAccess = async () => allowed(await webSession.status());
+// The host names a server the same way each time it's asked. Another name, or the page's own
+// connection where the configured server was (or the reverse), is another account.
+const sameServer = (status: WebSessionStatus) => status.connected && status.serverName === state.serverName && status.pageConnection === state.pageConnection;
 function signedOut() {
   if (!web || state.access === 'sign-in') return;
+  // A sign-out from any tab makes the host forget this page's own connection, and an expired
+  // session may be followed by someone else's, so its queue goes now. The host's configured
+  // server is the same account after signing in again, so its queue waits, paused.
+  if (state.pageConnection) disconnected();
   web.active.pause();
   resetLibraryCaches();
-  set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null });
+  searchesFor(null);
+  set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null, choosingServer: false });
 }
+// Disconnected, or the host forgot the connection (it restarted): playback stops and the queue
+// empties, since its songs belong to that server. A queue saved there is offered again after
+// connecting to it.
+function disconnected() {
+  if (!web) return;
+  station++; requests++;
+  for (const element of [web.active, web.standby]) { element.pause(); element.dataset.entry = ''; element.removeAttribute('src'); element.load(); }
+  plays.track = null;
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+  webReach.leave();
+  resetLibraryCaches();
+  // The account is gone with its server, and its searches with it.
+  searchesFor(null);
+  set({
+    connected: false, pageConnection: false, serverName: null, choosingServer: false, queue: [], entryIds: [], index: -1,
+    playing: false, buffering: false, position: 0, duration: 0, radio: null, radioStarting: null, resumable: null, delivery: null, error: null,
+  });
+}
+// Checked when a stream fails, since media elements can't report a lost session or connection.
+// A server that is gone, or another one in its place (the host forgot this page's connection
+// and offers its configured server), stops playback and empties the queue as a disconnect does:
+// the song is never asked for again from an account it didn't come from.
 async function stillSignedIn() {
-  if (state.access !== 'signed-in') return true;
+  if (state.access !== 'signed-in' && state.access !== 'open') return true;
   const status = await webSession.status();
   if (status.required && !status.signedIn) { signedOut(); return false; }
+  if (!sameServer(status)) { disconnected(); allowed(status); return false; }
   return true;
 }
 if (web) {
   // Library calls report a lost session (expired, or ended from another tab) through the bridge.
   // Media and artwork can't report one; playback errors check the session instead (stillSignedIn).
   onSignedOut(signedOut);
+  // A call the host had no server for: back to the connect screen, unless the host has a
+  // configured server to fall back on.
+  onDisconnected(() => { if (!state.connected) return; disconnected(); void checkAccess(); });
   void checkAccess();
 }
 
@@ -385,6 +528,11 @@ if (web) {
 // apps/android/web/bridge.ts). It moves between songs, and takes the notification's and lock
 // screen's buttons, on its own; the page follows its reports. Sign-in works as on the desktop.
 let native: AndroidPlayback | null = null;
+// Away, a kept song that fails anyway: its file is the trouble, not the connection. The native
+// player says "network" when the file couldn't be opened, and "unplayable" when it couldn't be played.
+const keptFailed = (track: Track, error: string) => state.reach.away && keptSupported && track.source === 'navidrome' && isKept(track.id)
+  ? error === 'unplayable' ? 'This song is kept on this device, but its file can\'t be played here.' : 'This song is kept on this device, but its file couldn\'t be opened.'
+  : null;
 // Reports whose entry the page doesn't know (a queue edit still on its way) are left alone.
 function nativePlayback(playback: AndroidPlayback) {
   const before = native;
@@ -394,8 +542,9 @@ function nativePlayback(playback: AndroidPlayback) {
   const track = state.queue[index];
   const patch: Partial<PlayerState> = {
     index, playing: playback.playing, buffering: playback.buffering,
-    delivery: playback.fallback ? 'mp3-fallback' : 'original-requested',
+    delivery: isStation(track) ? null : playback.fallback ? 'mp3-fallback' : playback.local ? 'device' : 'original-requested',
     duration: playback.duration > 0 ? playback.duration : track.duration ?? 0,
+    stationTitle: isStation(track) ? playback.stationTitle ?? null : null,
   };
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
@@ -412,7 +561,8 @@ function nativePlayback(playback: AndroidPlayback) {
   if (playback.ended) { patch.playing = false; patch.buffering = false; patch.position = 0; }
   // A song that can't be played says so once.
   if (playback.error && (before?.error !== playback.error || before.playId !== playback.playId)) {
-    patch.error = 'This song could not be played here. Try another, or check the connection.';
+    patch.error = isStation(track) ? stationFailed : keptFailed(track, playback.error)
+      ?? awayError(track, 'This song could not be played here. Try another, or check the connection.');
   }
   set(patch);
 }
@@ -420,12 +570,24 @@ function nativeSession(next: AndroidSession) {
   const was = state.connected;
   // Another server or account: nothing cached from the last one may show.
   if (next.sessionId !== state.sessionId) resetLibraryCaches();
+  searchesFor(next.account);
   const { saved, canRemember, reconnecting, reconnectError } = next.signIn;
   const signIn = state.signIn.saved?.url === saved?.url && state.signIn.saved?.username === saved?.username && state.signIn.canRemember === canRemember
     && state.signIn.reconnecting === reconnecting && state.signIn.reconnectError === reconnectError ? state.signIn : next.signIn;
-  set({ access: next.ready ? 'open' : 'checking', connected: next.connected, serverName: next.serverName, sessionId: next.sessionId, signIn });
+  const reach = next.reach ?? ONLINE;
+  const before = state.reach;
+  set({ access: next.ready ? 'open' : 'checking', connected: next.connected, serverName: next.serverName, sessionId: next.sessionId, signIn,
+    reach: sameReach(state.reach, reach) ? state.reach : reach, queuedPlays: next.queuedPlays ?? 0 });
   if (next.connected && !was) void offerResume();
+  else reachChanged(before, state.reach);
 }
+// The page keeps the queue in the browser and on Android: when the server is back, a queue that
+// changed meanwhile is saved, and an empty one is offered the saved queue.
+function reachChanged(before: Reachability, after: Reachability) {
+  if (!local || !before.away || after.away) return;
+  if (!state.queue.length) void offerResume(); else saveSoon();
+}
+if (web) webReach.subscribe(next => { const before = state.reach; set({ reach: next }); reachChanged(before, next); });
 if (android) {
   android.player.subscribe(nativePlayback);
   android.player.onReset(() => {
@@ -448,19 +610,21 @@ if (android) {
 
 // A queue saved on the server is offered once, when nothing is playing yet.
 async function offerResume() {
-  if (!getSettings().syncQueue || state.queue.length) return;
+  if (!getSettings().syncQueue || state.queue.length || state.reach.away) return;
   const saved = await api.savedQueue();
   if (saved.ok && saved.value?.tracks.length && !state.queue.length) set({ resumable: saved.value });
 }
 if (desktop) { const stop = subscribe(() => { if (state.connected) { stop(); setTimeout(() => void offerResume(), 400); } }); }
 
 async function startStation(seed: RadioStart) {
+  if (state.reach.away) { set({ error: 'Radio needs your server.' }); return; }
   if (desktop) {
     report(await desktop.radio.start(seed.kind === 'song' ? { kind: 'song', trackId: seed.track.id, label: seed.label } : seed));
     return;
   }
   const mine = ++station;
   let start: Track | undefined;
+  if (seed.kind === 'song' && isStation(seed.track)) { set({ error: 'Radio starts from a song, record, or artist, not from a station.' }); return; }
   if (seed.kind === 'song') start = seed.track;
   else if (seed.kind === 'artist') { const top = await api.topSongs(seed.id, 5); start = top.ok ? top.value[0] : undefined; }
   else { const album = await api.album(seed.id); start = album.ok ? album.value.tracks[0] : undefined; }
@@ -489,9 +653,21 @@ export const optimisticVolume = volumeCommands;
 
 export type RadioStart = { kind: 'song'; track: Track; label: string } | { kind: 'album' | 'artist'; id: string; label: string };
 
+// Away, only kept songs play. Null, after saying so, when none of these are kept.
+function playableNow(tracks: Track[], start: number): { items: Track[]; start: number } | null {
+  if (!state.reach.away || !keptSupported) return { items: tracks, start };
+  const chosen = keptOnly(tracks, start, track => track.source !== 'navidrome' || isKept(track.id));
+  if (!chosen) set({ error: KEPT_MESSAGES.notKept });
+  return chosen;
+}
+
 export const player = {
-  async play(tracks: Track[], start: number, radio: PlayerState['radio'] = null) {
-    if (!tracks.length) return;
+  // Resolves true once the queue was replaced, false when it wasn't (the error is shown).
+  async play(tracks: Track[], start: number, radio: PlayerState['radio'] = null): Promise<boolean> {
+    if (!tracks.length) return false;
+    const playable = playableNow(tracks, start);
+    if (!playable) return false;
+    ({ items: tracks, start } = playable);
     requests++;
     let chosen = queueWindow(tracks, start);
     // With shuffle on, a list plays from the chosen song with the rest in random order. Radio
@@ -502,8 +678,8 @@ export const player = {
       chosen = { items: order.map(i => chosen.items[i]), start: chosen.start };
     }
     set({ error: null, resumable: null });
-    if (local) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return; }
-    report(await desktop!.playTracks(chosen.items.map(track => track.id), chosen.start));
+    if (local) { station++; webLoad(chosen.start, { patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio } }); return true; }
+    return report(await desktop!.playTracks(chosen.items.map(track => track.id), chosen.start)).ok;
   },
   // Plays the seed, then songs like it, and keeps adding more as the queue runs low.
   // Artist and record radio start from one of their songs: asking the server for songs like
@@ -515,6 +691,14 @@ export const player = {
     try { await startStation(seed); } finally { if (state.radioStarting === seed.label) set({ radioStarting: null }); }
   },
   showError(message: string) { set({ error: message }); },
+  // Asks the server again while it is out of reach. passive: a check the page made on its own
+  // (focus, the network coming back), skipped when one was just made.
+  async retryServer(passive = false): Promise<Result> {
+    if (desktop) return desktop.retryServer ? desktop.retryServer(passive) : { ok: true, value: undefined };
+    if (android) return android.session.retry ? android.session.retry(passive) : { ok: true, value: undefined };
+    const outcome = await webReach.retry(passive);
+    return !outcome || outcome.kind !== 'unreachable' || !state.reach.away ? { ok: true, value: undefined } : { ok: false, error: OUT_OF_REACH, unreachable: true };
+  },
   stopRadio() {
     if (desktop) { void desktop.radio.stop().then(report); return; }
     station++; set({ radio: null });
@@ -527,36 +711,76 @@ export const player = {
     if (desktop) { report(await desktop.resumeQueue()); return; }
     const chosen = queueWindow(saved.tracks, saved.currentIndex);
     station++;
-    webLoad(chosen.start, { play: false, startAt: saved.positionSeconds, patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio: null } });
+    webLoad(chosen.start, { play: true, startAt: saved.positionSeconds, patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio: null } });
   },
   dismissResume() { set({ resumable: null }); },
 
   // Browser sign-in -----------------------------------------------------------------------
   async signIn(password: string): Promise<Result> {
     const result = await webSession.signIn(password);
-    if (result.ok) { set({ access: 'signed-in', connected: true, error: null }); void offerResume(); }
+    if (result.ok) { set({ error: null }); await checkAccess(); }
     return result;
   },
+  // The browser's connect screen. The login goes to the host once and stays there.
+  async connect(connection: Connection): Promise<Result<ConnectOutcome>> {
+    const result = await webSession.connect(connection);
+    if (!result.ok) return result;
+    // Only plain HTTP answered: nothing changed, and the connect screen asks first.
+    if ('type' in result.value) return { ok: true, value: result.value };
+    // A queue from the server before (the host's configured one, say) doesn't carry over.
+    disconnected();
+    // A new connection may be another account on the same server, so the last one's searches go,
+    // even those stored before this page load knew of an account.
+    clearSearches();
+    searchesFor(webAccount({ connected: true, pageConnection: true, serverName: result.value.serverName }));
+    set({ connected: true, pageConnection: true, serverName: result.value.serverName, error: null });
+    void offerResume();
+    return { ok: true, value: { type: 'connected' } };
+  },
+  async disconnect(): Promise<Result> {
+    const result = await webSession.disconnect();
+    if (!result.ok) return result;
+    disconnected();
+    // The host may still have its own server to fall back on.
+    await checkAccess();
+    return result;
+  },
+  // Browser: opens the connect screen over the host's configured server, or closes it again.
+  chooseServer(on: boolean) { if (web) set({ choosingServer: on && state.connected && !state.pageConnection }); },
   async signOut() {
-    // A successful sign-out also arrives through onSignedOut; signedOut() runs once either way.
+    // A successful sign-out also arrives through onSignedOut; signedOut() runs once either way,
+    // and drops this page's own connection with its queue (the host forgets it with the session).
     const result = await webSession.signOut();
     if (result.ok) signedOut(); else set({ error: result.error });
   },
 
   // Queue editing ------------------------------------------------------------------------
-  async add(tracks: Track[], where: 'next' | 'end') {
-    if (!tracks.length) return;
-    if (state.index < 0) { await player.play(tracks, 0); if (tracks.length > QUEUE_LIMIT) set({ error: queueFull(tracks.length - QUEUE_LIMIT) }); return; }
+  // A number inserts before the song at that index (a drop onto the queue). Resolves to how
+  // many songs joined the queue: fewer when it filled up, 0 when none could (the error is shown).
+  async add(tracks: Track[], where: 'next' | 'end' | number): Promise<number> {
+    if (!tracks.length) return 0;
+    const playable = playableNow(tracks, 0);
+    if (!playable) return 0;
+    tracks = playable.items;
+    if (state.index < 0) {
+      if (!await player.play(tracks, 0)) return 0;
+      if (tracks.length > QUEUE_LIMIT) set({ error: queueFull(tracks.length - QUEUE_LIMIT) });
+      return Math.min(tracks.length, QUEUE_LIMIT);
+    }
     const adding = tracks.slice(0, Math.max(0, QUEUE_LIMIT - state.queue.length));
-    if (!adding.length) { set({ error: queueFull(0) }); return; }
+    if (!adding.length) { set({ error: queueFull(0) }); return 0; }
     const left = tracks.length - adding.length;
     if (local) {
-      const at = where === 'next' ? state.index + 1 : state.queue.length;
+      const at = where === 'next' ? state.index + 1 : where === 'end' ? state.queue.length : Math.max(0, Math.min(where, state.queue.length));
       const queue = [...state.queue], entryIds = [...state.entryIds];
       queue.splice(at, 0, ...adding); entryIds.splice(at, 0, ...mint(adding.length));
-      set({ queue, entryIds, error: left ? queueFull(left) : state.error }); saveSoon(); return;
+      // Songs put before the playing one push it down; it keeps playing.
+      const index = at <= state.index ? state.index + adding.length : state.index;
+      set({ queue, entryIds, index, error: left ? queueFull(left) : state.error }); saveSoon(); return adding.length;
     }
-    if (report(await desktop!.queue.add(adding.map(t => t.id), where)).ok && left) set({ error: queueFull(left) });
+    if (!report(await desktop!.queue.add(adding.map(t => t.id), where)).ok) return 0;
+    if (left) set({ error: queueFull(left) });
+    return adding.length;
   },
   async move(from: number, to: number) {
     if (from === to || from < 0 || to < 0 || from >= state.queue.length || to >= state.queue.length) return;
@@ -589,7 +813,11 @@ export const player = {
     report(await desktop!.queue.clear());
   },
 
+  // Play or pause, from the play button, a song's row, the space bar. While a song is starting
+  // it does nothing: it's already on its way, and a press in that silence is nearly always meant
+  // as play, so pausing would leave it paused by surprise. pause() still stops it.
   toggle() {
+    if (state.starting) return;
     if (android) {
       if (state.index < 0) return;
       // A song that already ended starts over as a new play, as in the browser.
@@ -645,7 +873,9 @@ export const player = {
   previous() {
     if (local) {
       const previous = preceding(state.index, state.queue.length, state.repeat);
-      if ((web ? web.active.currentTime : livePosition()) > 3 || previous < 0) player.seek(0); else webLoad(previous);
+      // A station has no start to go back to: Previous only moves back in the queue.
+      if (!isStation(current(state)) && ((web ? web.active.currentTime : livePosition()) > RESTART_AFTER || previous < 0)) player.seek(0);
+      else if (previous >= 0) webLoad(previous);
       return;
     }
     void desktop!.command({ type: 'previous' }).then(report);
@@ -674,7 +904,8 @@ export const player = {
   // `entryId`, when given, is the entry the gesture started on; another entry is never seeked.
   seek(seconds: number, entryId?: string) {
     const track = current(state);
-    if (!track || (entryId !== undefined && entryId !== currentEntry(state))) return;
+    // A station is live: there is no position to seek to.
+    if (!track || isStation(track) || (entryId !== undefined && entryId !== currentEntry(state))) return;
     if (android) {
       android.player.seek(currentEntry(state)!, seconds);
       plays.lastPosition = seconds; set({ position: seconds }); saveSoon(); return;
@@ -683,8 +914,14 @@ export const player = {
       if (web.active.readyState >= HTMLMediaElement.HAVE_METADATA) web.active.currentTime = seconds; else plays.startAt = seconds;
       plays.lastPosition = seconds; set({ position: seconds }); positionState(); saveSoon(); return;
     }
-    // The host refuses the seek if that entry is no longer the one playing.
-    void desktop!.command({ type: 'seek', seconds, queueIndex: state.index, trackId: track.id, entryId: entryId ?? currentEntry(state) }).then(report);
+    // The host refuses the seek if that entry is no longer the one playing. Until it reports the
+    // seek, the page shows it (see seeking).
+    const entry = entryId ?? currentEntry(state);
+    seeking = { seconds, at: performance.now(), entry }; set({ position: seconds });
+    void desktop!.command({ type: 'seek', seconds, queueIndex: state.index, trackId: track.id, entryId: entry }).then(result => {
+      if (!result.ok && seeking?.seconds === seconds) seeking = null;
+      report(result);
+    });
   },
   volume(percent: number, final = false) {
     if (android) { android.player.volume(percent); set({ volume: percent }); return; }

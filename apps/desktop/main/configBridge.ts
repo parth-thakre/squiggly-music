@@ -1,10 +1,10 @@
-import { ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { app, ipcMain, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { ConfigFolder, configDirectory } from './config';
 
 // Connects the config folder (keybindings.json and themes/) to the windows: two IPC handlers,
 // and a push on the squiggly:config channel whenever what the files contain changes.
 export function startConfigFolder(deps: { assertSender(event: IpcMainInvokeEvent): void; windows(): WebContents[] }) {
-  const dir = configDirectory();
+  const dir = configDirectory(app.isPackaged);
   const config = new ConfigFolder(dir);
   // Handlers exist before the window loads; their answers wait for the first read.
   const ready = (async () => {

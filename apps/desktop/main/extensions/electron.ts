@@ -1,7 +1,7 @@
 import { app, clipboard, ipcMain, protocol, shell, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Result } from '../../../../packages/core/contracts';
+import type { ExtensionInfo, Result } from '../../../../packages/core/contracts';
 import { errorText, EXTENSION_SCHEME, ExtensionManager } from './manager';
 
 // Connects the extension manager to Electron: IPC for the window, and the squiggly-ext://
@@ -15,23 +15,28 @@ export const extensionScheme = {
 } as const;
 
 // esbuild runs a native binary, which can't be spawned from inside app.asar. Packaged builds
-// unpack it (electron-builder asarUnpack) and point esbuild at the unpacked copy.
+// unpack it (electron-builder asarUnpack) and point esbuild at the unpacked copy, never at a
+// binary the environment names.
 function useUnpackedEsbuild() {
-  if (!app.isPackaged || process.env.ESBUILD_BINARY_PATH) return;
+  if (!app.isPackaged) return;
   const binary = process.platform === 'win32' ? 'esbuild.exe' : join('bin', 'esbuild');
   const path = join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '@esbuild', `${process.platform}-${process.arch}`, binary);
-  if (existsSync(path)) process.env.ESBUILD_BINARY_PATH = path;
+  if (existsSync(path)) process.env.ESBUILD_BINARY_PATH = path; else delete process.env.ESBUILD_BINARY_PATH;
 }
 
 const text = (value: unknown, limit = 256) => typeof value === 'string' && value.length > 0 && value.length <= limit ? value : null;
 const invalid: Result = { ok: false, error: 'Invalid request.' };
 
-export function startExtensions(deps: { configDir: string; assertSender(event: IpcMainInvokeEvent): void; windows(): WebContents[] }) {
+// observe: every list the window gets (diagnostics builds report load errors and on/off changes).
+export function startExtensions(deps: { configDir: string; assertSender(event: IpcMainInvokeEvent): void; windows(): WebContents[]; observe?(list: ExtensionInfo[]): void }) {
   useUnpackedEsbuild();
   const manager = new ExtensionManager({ configDir: deps.configDir, trash: path => shell.trashItem(path) });
   // Handlers exist before the window loads; their answers wait for the first compile.
   const ready = (async () => {
-    manager.subscribe(list => { for (const target of deps.windows()) if (!target.isDestroyed()) target.send('squiggly:extensions', list); });
+    manager.subscribe(list => {
+      try { deps.observe?.(list); } catch { /* Diagnostics never stop the window's update. */ }
+      for (const target of deps.windows()) if (!target.isDestroyed()) target.send('squiggly:extensions', list);
+    });
     try { await manager.start(); } catch (error) { console.error('Extensions unavailable:', errorText(error)); }
   })();
 

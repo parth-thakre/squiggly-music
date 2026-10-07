@@ -1,12 +1,14 @@
 import { resetLibraryCaches } from '../library';
 import { createPlaylist } from '../menu';
-import { current, getPlayer, optimisticVolume, player } from '../player';
+import { current, getPlayer, isAway, optimisticVolume, player } from '../player';
+import { keptSupported } from '../keptState';
 import { registry, type Command } from '../registry';
 import { nav, type Route } from '../route';
 import { getThemes, onThemesChange, selectTheme } from '../theme';
 import { splitTitle } from '../ui';
 import { openConfigFolder } from '../config';
 import { setRating } from '../ratings';
+import { diagnosticsBuilt, getSettings } from '../settings';
 import { following, nextRepeat } from '../../../../../../packages/core/playOrder';
 import { onCommandError } from './keymap';
 import { togglePalette } from './palette-state';
@@ -51,7 +53,7 @@ add({
 });
 // Ratings for the playing song, which must be from the server. setRating shows its own failures.
 // Ctrl+1 to Ctrl+5 work in the search field too, as Ctrl+Right does: Ctrl chords are commands there.
-const playingOnServer = () => getPlayer().connected && current(getPlayer())?.source === 'navidrome';
+const playingOnServer = () => getPlayer().connected && !isAway() && current(getPlayer())?.source === 'navidrome';
 for (const n of [1, 2, 3, 4, 5] as const) add({
   id: `rate-${n}`, title: `Rate the playing song ${n === 1 ? '1 star' : `${n} stars`}`, category: 'Playback', keys: [`ctrl+${n}`],
   when: playingOnServer, run: async () => { await setRating('track', [current(getPlayer())!.id], n); },
@@ -77,31 +79,48 @@ const places: [id: string, title: string, route: Route, key: string][] = [
   ['lyrics', 'Go to lyrics', { view: 'lyrics' }, 'g l'],
   ['settings', 'Go to settings', { view: 'settings' }, 'g s'],
   ['genres', 'Go to genres', { view: 'genres' }, 'g g'],
+  ['home', 'Go to home', { view: 'home' }, 'g h'],
+  ['mixes', 'Go to mixes', { view: 'mixes' }, 'g m'],
+  ['kept', 'Go to kept songs', { view: 'kept' }, 'g k'],
 ];
-for (const [id, title, route, key] of places) add({ id: `go-${id}`, title, category: 'Go to', keys: id === 'settings' ? [key, 'ctrl+,'] : [key], run: () => nav.go(route) });
+// Kept songs only where songs can be kept (the desktop and Android).
+for (const [id, title, route, key] of places) add({ id: `go-${id}`, title, category: 'Go to', keys: id === 'settings' ? [key, 'ctrl+,'] : [key], ...(id === 'kept' ? { when: () => keptSupported } : {}), run: () => nav.go(route) });
 add({ id: 'back', title: 'Back', category: 'Go to', keys: ['alt+left'], run: () => nav.back() });
 add({ id: 'forward', title: 'Forward', category: 'Go to', keys: ['alt+right'], run: () => history.forward() });
 add({
   id: 'search', title: 'Search the library', category: 'Go to', keys: ['/'],
   when: () => !!document.querySelector('.search'),
-  run: () => { const field = document.querySelector<HTMLInputElement>('.search'); field?.focus(); field?.select(); },
+  // From another page it opens Search, which lists recent searches until you type.
+  run: () => {
+    if (nav.current.view !== 'search') nav.go({ view: 'search', query: '' });
+    const field = document.querySelector<HTMLInputElement>('.search'); field?.focus(); field?.select();
+  },
 });
 
 // Queue
 add({ id: 'clear-up-next', title: 'Clear up next', category: 'Queue', when: () => getPlayer().queue.length - getPlayer().index - 1 > 0, run: () => player.clear() });
 add({
   id: 'save-queue', title: 'Save the queue as a playlist', category: 'Queue',
-  when: () => getPlayer().connected && getPlayer().queue.some(t => t.source === 'navidrome'),
+  when: () => getPlayer().connected && !isAway() && getPlayer().queue.some(t => t.source === 'navidrome'),
   async run() {
     const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
     fail(await createPlaylist(`Queue, ${date}`, getPlayer().queue.filter(t => t.source === 'navidrome').map(t => t.id)));
+  },
+});
+// Every song in the queue, files from this computer too (the desktop writes their paths).
+import { exportM3u } from '../exports';
+add({
+  id: 'export-queue', title: 'Export the queue as M3U', category: 'Queue', when: () => getPlayer().queue.length > 0,
+  async run() {
+    const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
+    fail(await exportM3u(`Queue, ${date}`, getPlayer().queue));
   },
 });
 
 // Radio
 add({
   id: 'radio-start', title: 'Start radio from this song', category: 'Radio',
-  when: () => getPlayer().connected && current(getPlayer())?.source === 'navidrome',
+  when: () => getPlayer().connected && !isAway() && current(getPlayer())?.source === 'navidrome',
   run: () => { const track = current(getPlayer())!; return player.radio({ kind: 'song', track, label: splitTitle(track.title).main }); },
 });
 add({ id: 'radio-stop', title: 'Stop radio', category: 'Radio', when: () => !!getPlayer().radio, run: () => player.stopRadio() });
@@ -116,7 +135,7 @@ const playingSong = () => { const track = current(getPlayer()); return getPlayer
 const playingArtist = () => { const track = playingSong(); return track && firstArtistId(track); };
 add({
   id: 'favorite-current', title: 'Add or remove the playing song from favorites', category: 'Now playing', keys: ['f'],
-  when: () => !!playingSong(),
+  when: () => !!playingSong() && !isAway(),
   async run() {
     const track = playingSong()!;
     const result = await setStarred('track', [track.id], !isStarred(track.id, track.starred));
@@ -142,13 +161,22 @@ add({
 add({ id: 'now-playing', title: 'Open now playing', category: 'View', when: () => phone() && playing() && !!shell.openNowPlaying, run: () => shell.openNowPlaying?.() });
 
 // Library
-add({ id: 'refresh', title: 'Refresh the library', category: 'Library', when: () => getPlayer().connected, run: () => resetLibraryCaches() });
+add({ id: 'refresh', title: 'Refresh the library', category: 'Library', when: () => getPlayer().connected && !isAway(), run: () => resetLibraryCaches() });
 
 // App
+// Signing out of the browser build is one keystroke; disconnecting the desktop or the phone forgets
+// the saved sign-in, so that goes to Settings, where the button says what it does.
+add({ id: 'sign-out', title: 'Sign out', category: 'App', when: () => getPlayer().access === 'signed-in', run: () => player.signOut() });
+add({ id: 'disconnect', title: 'Disconnect from the server', category: 'App', when: () => getPlayer().mode !== 'web' && getPlayer().connected, run: () => nav.go({ view: 'settings' }) });
 add({ id: 'open-config', title: 'Open the config folder', category: 'App', when: () => !!window.squiggly?.config, run: async () => fail(await openConfigFolder()) });
 add({
   id: 'reload-extensions', title: 'Reload extensions', category: 'App', when: () => !!window.squiggly?.extensions,
   async run() { const result = await window.squiggly!.extensions.reload(); if (!result.ok) fail(result.error); },
+});
+// Desktop betas with remote diagnostics built in, while their setting is on.
+add({
+  id: 'send-diagnostics', title: 'Send diagnostics now', category: 'App', when: () => diagnosticsBuilt && getSettings().diagnostics,
+  async run() { const result = await window.squiggly!.sendDiagnostics!(); if (!result.ok) fail(result.error); },
 });
 
 // One command per theme, so "Theme: Night" is a keystroke away and can be bound.

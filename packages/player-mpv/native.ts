@@ -1,5 +1,6 @@
 import koffi from 'koffi';
 import type { AudioDevice, AudioPath } from '../core/contracts';
+import { libmpvCandidates, libmpvMissing } from './libraries';
 
 // All FFI calls run in the dedicated player process. No audio samples enter JS.
 // Uses libmpv's public client API, not an mpv executable or a browser audio element.
@@ -10,6 +11,13 @@ const EndFile = koffi.struct('squiggly_mpv_end_file', {
   // This prefix is also safe on client API 1.107, before playlist fields existed.
   reason: 'int', error: 'int',
 });
+// Client API 1.108 (mpv 0.33, the same version as stop keep-playlist) added the id of the
+// playlist entry that ended.
+const EndFileEntry = koffi.struct('squiggly_mpv_end_file_entry', {
+  reason: 'int', error: 'int', playlist_entry_id: 'int64_t',
+});
+// MPV_ERROR_AO_INIT_FAILED: the audio output wouldn't open (a device unplugged, or in a bad state).
+const AO_INIT_FAILED = -14;
 
 export class NativePlayer {
   readonly clientApiVersion: string | null;
@@ -27,15 +35,12 @@ export class NativePlayer {
   private destroy;
 
   constructor(libraryPath?: string) {
-    const candidates = libraryPath ? [libraryPath] : process.platform === 'win32'
-      ? ['mpv-2.dll', 'libmpv-2.dll'] : process.platform === 'darwin'
-        ? ['libmpv.2.dylib', '/opt/homebrew/lib/libmpv.2.dylib', '/usr/local/lib/libmpv.2.dylib']
-        : ['libmpv.so.2', 'libmpv.so.1'];
+    const candidates = libmpvCandidates(process.platform, libraryPath);
     let library: ReturnType<typeof koffi.load> | undefined;
     for (const candidate of candidates) {
       try { library = koffi.load(candidate); break; } catch { /* Try the next platform path. */ }
     }
-    if (!library) throw new Error('libmpv could not be loaded. Install the libmpv runtime or set SQUIGGLY_LIBMPV_PATH, then restart the audio engine.');
+    if (!library) throw new Error(libmpvMissing(process.platform, libraryPath));
     this.library = library;
     this.clientApiVersion = null;
     this.supportsStopKeepPlaylist = false;
@@ -60,19 +65,29 @@ export class NativePlayer {
     if (!this.handle) throw new Error('libmpv could not create a player.');
     try {
       // Ignore user mpv configuration so no hidden DSP or scripts change the path.
+      // access-references=no: a local file, a kept song included, is trusted, so a playlist, EDL, or
+      // cue sheet inside one could open any other file on this computer. Songs never need to.
       // Gapless: 'weak' keeps the output open from one song to the next while their formats
       // match (an album, usually), and reopens it in the new format when they don't. ('yes'
       // would hold the first song's format and resample the rest.) prefetch-playlist opens the
-      // next song's stream before this one ends, so a network fetch doesn't open a gap.
+      // next song's stream before this one ends, so a network fetch doesn't open a gap. The host
+      // turns it off while a station is queued (host.ts, followPrefetch).
+      // Stream URLs carry the Subsonic token, and mpv leaves tls-verify off by default, so HTTPS
+      // certificates are checked (FFmpeg uses the system's CAs: Schannel on Windows, GnuTLS or
+      // OpenSSL trust on Linux). access-references=no also keeps a playlist or reference inside a
+      // stream from sending mpv to other URLs or paths.
       const options: Record<string, string> = {
-        config: 'no', 'load-scripts': 'no', terminal: 'no', video: 'no',
+        config: 'no', 'load-scripts': 'no', 'access-references': 'no', terminal: 'no', video: 'no',
         idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'weak', 'prefetch-playlist': 'yes',
         replaygain: 'no', volume: '100', 'volume-max': '100',
-        'audio-display': 'no',
+        'audio-display': 'no', 'tls-verify': 'yes',
       };
       for (const [name, value] of Object.entries(options)) {
         if (this.option(this.handle, name, value) < 0) throw new Error(`libmpv rejected required option: ${name}`);
       }
+      // No youtube-dl lookups for URLs. The option exists only in builds with Lua, so a build
+      // without it (the Windows one) rejects the name and has no ytdl hook to turn off.
+      this.option(this.handle, 'ytdl', 'no');
       // Only the smoke test may request a null output. Never used as an app fallback.
       if (process.env.SQUIGGLY_TEST_NULL_AUDIO === '1') {
         this.option(this.handle, 'ao', 'null');
@@ -108,25 +123,31 @@ export class NativePlayer {
     if (this.commandNative(this.handle, [...args, null]) < 0) throw new Error(`Audio engine rejected ${args[0]}.`);
   }
   // starts: entries mpv began loading (start-file). seeks: seeks mpv carried out, the host's own
-  // and loop-file's, which goes back to the start of a repeating song by seeking.
-  drainEvents(): { error: string | null; shutdown: boolean; starts: number; seeks: number } {
+  // and loop-file's, which goes back to the start of a repeating song by seeking. outputFailed:
+  // the first entry that ended because the audio output wouldn't open, by mpv's playlist entry id
+  // (null before client API 1.108).
+  drainEvents(): { error: string | null; shutdown: boolean; starts: number; seeks: number; outputFailed: { entry: number | null } | null } {
     let error: string | null = null;
     let starts = 0, seeks = 0;
+    let outputFailed: { entry: number | null } | null = null;
     // Limit work per tick even if a backend floods its event queue.
     for (let i = 0; i < 100; i++) {
       const pointer = this.waitEvent(this.handle, 0);
       if (!pointer) break;
       const event = koffi.decode(pointer, MpvEvent) as { event_id: number; data: unknown };
       if (event.event_id === 0) break;
-      if (event.event_id === 1) return { error, shutdown: true, starts, seeks };
+      if (event.event_id === 1) return { error, shutdown: true, starts, seeks, outputFailed };
       if (event.event_id === 6) starts++;
       if (event.event_id === 20) seeks++;
       if (event.event_id === 7 && event.data) {
-        const end = koffi.decode(event.data, EndFile) as { reason: number; error: number };
+        const end = koffi.decode(event.data, this.supportsStopKeepPlaylist ? EndFileEntry : EndFile) as { reason: number; error: number; playlist_entry_id?: number | bigint };
         if (end.reason === 4) error = `Playback failed in libmpv (code ${end.error}). Check the file, server connection, and output device.`;
+        if (end.reason === 4 && end.error === AO_INIT_FAILED && !outputFailed) {
+          outputFailed = { entry: end.playlist_entry_id === undefined ? null : Number(end.playlist_entry_id) };
+        }
       }
     }
-    return { error, shutdown: false, starts, seeks };
+    return { error, shutdown: false, starts, seeks, outputFailed };
   }
   devices(): AudioDevice[] {
     const count = Math.min(this.number('audio-device-list/count') ?? 0, 128);
@@ -154,6 +175,8 @@ export class NativePlayer {
       bufferSeconds: this.number('demuxer-cache-duration'),
       streamBytesPerSecond: this.number('cache-speed'),
       buffering: this.property('paused-for-cache') === 'yes',
+      // The sound server's view of the sink. The main process asks the server and fills it in.
+      sink: null,
     };
   }
   close() {

@@ -1,0 +1,42 @@
+/* Keep on this device: the mark, the Keep control, the Kept page, and the offline notice.
+   --accent marks only; text stays in ink and soft (see the contrast rule in docs/ui-handoff.md). */
+.kept-mark { display: inline-grid; place-items: center; flex: none; width: 18px; height: 18px; color: var(--accent); }
+.kept-mark svg { width: 15px; height: 15px; }
+.kept-mark.on-sleeve { position: absolute; right: 6px; bottom: 6px; width: 24px; height: 24px; border-radius: 50%; background: var(--ground); box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+.kept-mark.on-sleeve svg { width: 14px; height: 14px; }
+.grid li.playable > button:not(.play-over), .rows li > button:not(.play-over) { position: relative; }
+.kept-sleeve { position: relative; flex: none; display: block; }
+.grid .kept-mark.on-sleeve { right: 8px; bottom: auto; top: calc(100cqw - 32px); }
+/* Rows: the mark sits on the 64 px sleeve's corner, though it follows the text in the markup. */
+.rows li > button > .kept-mark.on-sleeve { left: 44px; right: auto; top: 52px; bottom: auto; }
+.tracks .kept-slot { flex: none; display: grid; place-items: center; width: 22px; }
+
+.keep { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; }
+.keep-button { display: inline-flex; align-items: center; gap: 6px; }
+.keep-button .kept-mark { width: 17px; height: 17px; }
+.keep-progress { font-size: calc(14.5px * var(--text)); color: var(--ink); font-variant-numeric: tabular-nums; }
+.keep-note { flex-basis: 100%; font-size: calc(14px * var(--text)); color: var(--ink); max-width: 60ch; }
+.keep-confirm { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 18px; font-size: calc(14.5px * var(--text)); }
+
+.offline { max-width: 60ch; padding: 20px 0; }
+.offline h1 { margin: 0 0 12px; font: var(--display-weight) calc(34px * var(--display-size))/1.1 var(--font-display); }
+.offline p { margin: 0 0 8px; }
+.offline-status { color: var(--soft); font-size: calc(14px * var(--text)); }
+.offline-line { margin: 0 0 18px; font-size: calc(14px * var(--text)); color: var(--soft); }
+.offline-line .text-button { margin-left: 8px; }
+
+.kept-rows { margin: 0; padding: 0; list-style: none; max-width: 980px; }
+.kept-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.kept-row-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.kept-row .kept-sleeve .cover { width: 64px; height: 64px; }
+.kept-row-open { flex: 1 1 220px; min-width: 0; padding: 0; background: none; border: 0; text-align: left; }
+.kept-row-open:hover .row-name { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
+.kept-row-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; }
+.kept-row .tracks { margin-top: 8px; }
+@media (max-width: 760px) { .kept-row-size { display: none; } }
+.play-action.small { font-size: calc(14.5px * var(--text)); }
+.kept-dir { overflow-wrap: anywhere; }
+.kept-limit { display: inline-flex; align-items: center; gap: 6px; color: var(--soft); }
+.kept-limit input { width: 9ch; padding: 4px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--ink); font-size: calc(14.5px * var(--text)); }
+.kept-limit input:focus-visible { outline: none; border-bottom-color: var(--ink); }
+.tracks li.unavailable .track, .tracks li.unavailable .track * { color: var(--soft); }

@@ -115,6 +115,9 @@ function contextOf(target: EventTarget | null): Context | 'menu' | 'owned' {
 
 let pending: string[] = [];
 let timer: ReturnType<typeof setTimeout> | undefined;
+// Which commands keys may run in this window. The mini player narrows it (see startKeymap).
+let allowed: (id: string) => boolean = () => true;
+const usable = (id: string) => allowed(id) && registry.commands.available(id);
 const resetChord = () => { pending = []; clearTimeout(timer); };
 
 function onKeyDown(event: KeyboardEvent) {
@@ -130,7 +133,7 @@ function onKeyDown(event: KeyboardEvent) {
     return;
   }
   if (!allowedIn(context, stroke)) { resetChord(); return; }
-  const result = match(state.keymap, pending, id, registry.commands.available);
+  const result = match(state.keymap, pending, id, usable);
   clearTimeout(timer);
   pending = result.pending;
   if (pending.length) timer = setTimeout(resetChord, 1500);
@@ -140,13 +143,19 @@ function onKeyDown(event: KeyboardEvent) {
   if (event.repeat && !registry.commands.get(result.run)?.repeat) return;
   void runCommand(result.run);
 }
-// The mouse's back and forward buttons.
+// The mouse's back and forward buttons, where nothing else acts on them: the desktop window and
+// the Android app have no browser around them. In a browser the browser steps the history itself,
+// and acting here too would step it twice.
+const noBrowser = () => 'squiggly' in window || 'squigglyAndroid' in window;
 function onMouseUp(event: MouseEvent) {
-  if (event.button === 3) void runCommand('builtin:back');
-  else if (event.button === 4) void runCommand('builtin:forward');
+  if (!noBrowser()) return;
+  const id = event.button === 3 ? 'builtin:back' : event.button === 4 ? 'builtin:forward' : null;
+  if (id && allowed(id)) void runCommand(id);
 }
 
-export function startKeymap(): () => void {
+// `only` limits the keys to some commands, for a window without the whole app in it.
+export function startKeymap(only: (id: string) => boolean = () => true): () => void {
+  allowed = only;
   addEventListener('keydown', onKeyDown); addEventListener('mouseup', onMouseUp);
-  return () => { removeEventListener('keydown', onKeyDown); removeEventListener('mouseup', onMouseUp); resetChord(); };
+  return () => { removeEventListener('keydown', onKeyDown); removeEventListener('mouseup', onMouseUp); resetChord(); allowed = () => true; };
 }

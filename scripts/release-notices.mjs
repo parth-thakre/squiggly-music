@@ -2,12 +2,17 @@
 // resources/licenses/npm-packages.txt with the license text of every production npm
 // package in the app (read from resources/app.asar), then checks that each third-party notice the package must carry
 // is present. Any missing notice, unreviewed license, or unlisted shipped package fails
-// the build.
+// the build. On macOS the Electron and Chromium notices are checked in the bundle's
+// resources/licenses, where the afterExtract hook below copies them.
 //
 // It can also check an unpacked app directory by hand:
 //   node scripts/release-notices.mjs dist/win-unpacked win32
 //   node scripts/release-notices.mjs dist/linux-unpacked linux
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+//   node scripts/release-notices.mjs "deb/opt/Squiggly Music" linux   # unpacked deb or RPM
+//   node scripts/release-notices.mjs squashfs-root linux              # extracted AppImage
+//   node scripts/release-notices.mjs dist/mac-arm64 darwin
+// Run it from the repository: it reads package-lock.json and node_modules.
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -49,8 +54,17 @@ function licenseText(dir, name) {
   return null;
 }
 
+// Where a build keeps its resources. Windows and Linux put them beside the executable. A macOS
+// build is a folder holding one <name>.app, and the resources sit inside it.
+export function resourcesDirectory(appDir, platform) {
+  if (platform !== 'darwin') return join(appDir, 'resources');
+  const bundles = readdirSync(appDir).filter(name => name.endsWith('.app'));
+  if (bundles.length !== 1) throw new Error(`Expected one .app bundle in ${appDir}, found ${bundles.length}.`);
+  return join(appDir, bundles[0], 'Contents', 'Resources');
+}
+
 export function writeNotices(appDir, platform) {
-  const resources = join(appDir, 'resources');
+  const resources = resourcesDirectory(appDir, platform);
   // Packages ship the app in resources/app.asar. Inspect a temporary extraction of it
   // (extractAll also reads the app.asar.unpacked files).
   const archive = join(resources, 'app.asar');
@@ -104,14 +118,30 @@ function checkNotices(appDir, platform, resources, shippedRoot, shippedLabel) {
     if (!inLock && !production.has(shippedIds.get(key))) problems.push(`${key} (${shippedIds.get(key)}) ships in the app but is not a production dependency in package-lock.json`);
   }
 
-  const required = ['LICENSE.electron.txt', 'LICENSES.chromium.html', 'resources/runtime/LICENSE.node.txt', 'resources/licenses/THIRD-PARTY-NOTICES.md'];
+  // Electron's and Chromium's notices sit beside the executable on Windows and Linux. electron-builder
+  // deletes them from a macOS build, so afterExtract puts copies in resources/licenses.
+  const electronNotices = platform === 'darwin' ? [join(resources, 'licenses', 'LICENSE.electron.txt'), join(resources, 'licenses', 'LICENSES.chromium.html')]
+    : [join(appDir, 'LICENSE.electron.txt'), join(appDir, 'LICENSES.chromium.html')];
+  const required = [...electronNotices, join(resources, 'runtime', 'LICENSE.node.txt'), join(resources, 'licenses', 'THIRD-PARTY-NOTICES.md')];
   if (platform === 'win32') {
     // NOTICE.md and every component license of the LGPL libmpv build (build/libmpv).
-    required.push('resources/runtime/libmpv-2.dll', ...readdirSync('licenses/libmpv-windows').map(file => `resources/licenses/libmpv-windows/${file}`));
-  } else if (existsSync(join(resources, 'runtime', 'libmpv-2.dll')) || existsSync(join(resources, 'licenses', 'libmpv-windows'))) {
-    problems.push('A non-Windows package includes the Windows libmpv build or its notices.');
+    required.push(join(resources, 'runtime', 'libmpv-2.dll'), ...readdirSync('licenses/libmpv-windows').map(file => join(resources, 'licenses', 'libmpv-windows', file)));
+  } else {
+    if (existsSync(join(resources, 'runtime', 'libmpv-2.dll')) || existsSync(join(resources, 'licenses', 'libmpv-windows'))) {
+      problems.push('A non-Windows package includes the Windows libmpv build or its notices.');
+    }
+    // The Linux packages use the distribution's libmpv, so nothing here covers its licenses. A
+    // package that bundles one (in the runtime folder, or an AppImage's usr/lib) must add them first.
+    if (platform === 'linux') {
+      for (const dir of [join(resources, 'runtime'), join(appDir, 'usr', 'lib'), appDir]) {
+        const bundled = existsSync(dir) ? readdirSync(dir).filter(file => /^libmpv[.-]/.test(file)) : [];
+        if (bundled.length) problems.push(`A Linux package bundles ${bundled.join(', ')} in ${dir}, but no notice covers libmpv or its libraries. Add their licenses here first.`);
+      }
+    }
   }
-  for (const file of required) if (!existsSync(join(appDir, file))) problems.push(`Missing ${file}`);
+  // macOS uses the user's Homebrew libmpv, so a bundle that carries one has a license nobody has reviewed.
+  if (platform === 'darwin' && readdirSync(join(resources, 'runtime')).some(file => /^libmpv/i.test(file))) problems.push('A macOS package includes a libmpv library.');
+  for (const file of required) if (!existsSync(file)) problems.push(`Missing ${file.slice(appDir.length + 1)}`);
   if (problems.length) throw new Error(`Third-party notice check failed:\n- ${problems.join('\n- ')}`);
 
   entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -131,13 +161,22 @@ function checkNotices(appDir, platform, resources, shippedRoot, shippedLabel) {
   if (unlicensedText.length) console.warn(`No license file shipped by: ${unlicensedText.join(', ')} (declared license recorded instead).`);
 }
 
+// macOS only: electron-builder deletes Electron's LICENSE and LICENSES.chromium.html from the
+// app it builds. Keep them from the Electron download, inside the bundle, before it does.
+export async function afterExtract(context) {
+  if (context.electronPlatformName !== 'darwin') return;
+  const licenses = join(context.appOutDir, 'Electron.app', 'Contents', 'Resources', 'licenses');
+  mkdirSync(licenses, { recursive: true });
+  copyFileSync(join(context.appOutDir, 'LICENSE'), join(licenses, 'LICENSE.electron.txt'));
+  copyFileSync(join(context.appOutDir, 'LICENSES.chromium.html'), join(licenses, 'LICENSES.chromium.html'));
+}
+
 export default async function afterPack(context) {
-  if (context.electronPlatformName === 'darwin') throw new Error('Notice checks do not support macOS bundles yet.');
   writeNotices(context.appOutDir, context.electronPlatformName);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {
   const [appDir, platform] = process.argv.slice(2);
-  if (!appDir || !['win32', 'linux'].includes(platform)) throw new Error('Usage: node scripts/release-notices.mjs <unpacked app dir> <win32|linux>');
+  if (!appDir || !['win32', 'linux', 'darwin'].includes(platform)) throw new Error('Usage: node scripts/release-notices.mjs <unpacked app dir> <win32|linux|darwin>');
   writeNotices(resolve(appDir), platform);
 }

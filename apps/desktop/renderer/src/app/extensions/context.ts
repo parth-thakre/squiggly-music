@@ -11,8 +11,11 @@ import { showNotice } from './notices';
 import { addPage, openExtensionPage } from './pages';
 
 // Builds the ExtensionContext a renderer entry receives. Everything registered through it is
-// tracked and undone by dispose(): commands and menu items through the extension's registry
-// scope, pages, themes, and styles through their own disposers.
+// tracked and undone by dispose(): commands, menu items, deck slots, and sections through the
+// extension's registry scope, pages, themes, and styles through their own disposers.
+//
+// The main window and the mini player each run their own copy of every extension, so activate()
+// runs once per window; ctx.window says which.
 
 const views = new WeakMap<AppPlayerState, PlayerState>();
 // The public view of the player store, cached per store state so selectors see stable objects.
@@ -36,12 +39,13 @@ function onPlayer(listener: () => void): Dispose {
   return bridge.subscribe(() => listener());
 }
 async function command(type: 'play' | 'pause') {
-  if (!bridge) { if ((type === 'play') !== getPlayer().playing) player.toggle(); return; }
+  // Pause stops a song still starting too, which toggle leaves alone.
+  if (!bridge) { if (type === 'pause') player.pause(); else if (!getPlayer().playing) player.toggle(); return; }
   const result = await bridge.command({ type });
   if (!result.ok) throw new Error(result.error);
 }
 
-// Settings live in this window's local storage, one key per extension.
+// Settings live in local storage, which both windows share, one key per extension.
 const SETTINGS_LIMIT = 256 * 1024;
 export const settingsKey = (id: string) => `squiggly.extension.${id}`;
 function storedSettings(id: string): Record<string, unknown> {
@@ -49,6 +53,12 @@ function storedSettings(id: string): Record<string, unknown> {
     const value: unknown = JSON.parse(localStorage.getItem(settingsKey(id)) ?? '{}');
     return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   } catch { return {}; }
+}
+// Both windows write the same key, so a change is made to what is stored now, not to this
+// window's copy, and one window at a time: a lock per extension, shared by every window.
+function exclusive<T>(id: string, change: () => T): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  return locks ? locks.request(settingsKey(id), change) : Promise.resolve().then(change);
 }
 
 export interface Activation {
@@ -73,15 +83,25 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
 
   let values = storedSettings(info.id);
   const settingsListeners = new Set<(values: Readonly<Record<string, unknown>>) => void>();
+  // The other window saved a setting: both windows share local storage, and each keeps its own copy.
+  if (typeof addEventListener === 'function') {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== settingsKey(info.id)) return;
+      values = storedSettings(info.id);
+      settingsListeners.forEach(listener => listener(values));
+    };
+    addEventListener('storage', onStorage);
+    track(() => removeEventListener('storage', onStorage));
+  }
   const settings: SettingsStore = {
     get: <T,>(key: string, fallback: T) => (Object.hasOwn(values, key) ? values[key] : fallback) as T,
-    async set(key, value) {
-      const text = JSON.stringify({ ...values, [key]: value });
+    set: (key, value) => exclusive(info.id, () => {
+      const text = JSON.stringify({ ...storedSettings(info.id), [key]: value });
       if (text.length > SETTINGS_LIMIT) throw new Error('Settings are limited to 256 KB per extension.');
       localStorage.setItem(settingsKey(info.id), text);
       values = JSON.parse(text) as Record<string, unknown>;
       settingsListeners.forEach(listener => listener(values));
-    },
+    }),
     all: () => values,
     subscribe(listener) { settingsListeners.add(listener); return track(() => settingsListeners.delete(listener)); },
   };
@@ -90,6 +110,7 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
 
   const ctx: ExtensionContext = {
     id: info.id, version: info.version, apiVersion: API_VERSION,
+    window: bridge?.window?.isMini ? 'mini' : 'main',
     commands: {
       // A failing run is reported where it was started (the palette, a key, a menu).
       register(entry) { alive(); return track(scope.command({ ...entry, category: entry.category ?? info.name })); },
@@ -101,6 +122,7 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
       },
     },
     menus: { register(item) { alive(); return track(scope.menu(menuItem(item))); } },
+    deck: { register(slot) { alive(); return track(scope.deck(slot)); } },
     player: {
       get: () => playerView(getPlayer()),
       subscribe(listener) { return track(onPlayer(() => listener(playerView(getPlayer())))); },
@@ -110,8 +132,8 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
       },
       use: selector => usePlayer(state => selector(playerView(state))),
       current: () => current(getPlayer()) ?? null,
-      play: (tracks, startIndex = 0) => player.play(tracks, startIndex),
-      add: (tracks, where) => player.add(tracks, where),
+      play: async (tracks, startIndex = 0) => { await player.play(tracks, startIndex); },
+      add: async (tracks, where) => { await player.add(tracks, where); },
       radio: seed => player.radio(seed),
       toggle: () => player.toggle(),
       pause: () => command('pause'),
@@ -127,6 +149,7 @@ export function createContext(info: Pick<ExtensionInfo, 'id' | 'name' | 'version
       back: () => nav.back(),
       registerPage(page) { alive(); const added = addPage(info.id, page); return { id: added.id, dispose: track(added.dispose) }; },
       openPage: id => openExtensionPage(id),
+      registerSection(section) { alive(); return track(scope.section(section)); },
     },
     themes: { register(theme) { alive(); return track(registerTheme(theme, info.id)); } },
     styles: {

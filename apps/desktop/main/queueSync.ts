@@ -1,8 +1,9 @@
 import type { PlayerSnapshot } from '../../../packages/core/contracts';
 
 export interface SavedState { trackIds: string[]; currentIndex: number; positionSeconds: number }
-// Only a queue made entirely of server tracks is saved. Local files have no server identity,
-// and saving the server tracks alone would misplace the current index.
+// Only a queue made entirely of server tracks is saved. Local files have no server identity, a
+// station is no song the server's play queue can hold, and saving the server tracks alone would
+// misplace the current index.
 export function savedState(player: PlayerSnapshot): SavedState | null {
   if (player.engine !== 'ready' || !player.queue.length || player.queue.some(track => track.source !== 'navidrome')) return null;
   const current = player.currentIndex;
@@ -31,17 +32,24 @@ export class QueueSync {
   constructor(private save: (state: SavedState, generation: number) => Promise<void>, private debounceMs = 3000, private intervalMs = 30_000) {}
 
   // `generation` is the server session the snapshot belongs to; the save callback rejects stale ones.
-  observe(player: PlayerSnapshot, generation: number, enabled: boolean) {
-    if (!enabled) { this.cancel(); this.previous = null; this.latest = null; return; }
+  // 'held': the server is out of reach. Nothing is saved, but changes are still noticed, and the
+  // first snapshot after the hold saves once if the queue changed meanwhile.
+  observe(player: PlayerSnapshot, generation: number, mode: boolean | 'held') {
+    if (!mode) { this.cancel(); this.previous = null; this.latest = null; this.changedWhileHeld = false; return; }
     const now = Date.now();
     this.lastAttempt ??= now;
     const ids = player.queue.map(track => track.id).join('\n');
     const previous = this.previous;
     this.previous = { ids, index: player.currentIndex, playing: player.playing };
     this.latest = { state: savedState(player), generation };
-    if (previous && (previous.ids !== ids || previous.index !== player.currentIndex || (previous.playing && !player.playing))) this.schedule();
+    const changed = !!previous && (previous.ids !== ids || previous.index !== player.currentIndex || (previous.playing && !player.playing));
+    // A save that was waiting when the hold began is owed too.
+    if (mode === 'held') { if (changed || this.timer) this.changedWhileHeld = true; this.cancel(); return; }
+    if (this.changedWhileHeld) { this.changedWhileHeld = false; this.schedule(); return; }
+    if (changed) this.schedule();
     else if (player.playing && !this.timer && now - this.lastAttempt >= this.intervalMs) void this.saveLatest();
   }
+  private changedWhileHeld = false;
   // After loading a saved queue, its own state need not be written back.
   markSaved(state: SavedState, holdMs = 12_000) {
     this.epoch++;
@@ -50,7 +58,7 @@ export class QueueSync {
   }
   // Saves the latest state now. Resolves when that save settles; callers bound the wait.
   flush(): Promise<void> { this.cancel(); return this.saveLatest(); }
-  reset() { this.epoch++; this.cancel(); this.previous = null; this.latest = null; this.wanted = null; this.saved = null; this.hold = null; }
+  reset() { this.epoch++; this.cancel(); this.previous = null; this.latest = null; this.wanted = null; this.saved = null; this.hold = null; this.changedWhileHeld = false; }
 
   private skip(state: SavedState) {
     const id = identity(state);

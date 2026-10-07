@@ -1,0 +1,11 @@
+{
+  "name": "deck-note",
+  "version": "1.0.0",
+  "description": "The playing song's year, on the deck's quiet line.",
+  "private": true,
+  "type": "module",
+  "squiggly": {
+    "displayName": "Deck note",
+    "renderer": "src/index.tsx"
+  }
+}

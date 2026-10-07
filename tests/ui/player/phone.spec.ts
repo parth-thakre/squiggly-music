@@ -35,6 +35,26 @@ test.describe('phone', () => {
     await expect(app.heading).toHaveText('Test Pressing');
   });
 
+  test('a record plays from its cover in one tap, and a tap elsewhere on the cover opens it', async ({ app, page }) => {
+    await app.section('Records').tap();
+    const card = app.main.getByRole('listitem').filter({ has: page.getByRole('button', { name: 'Play Quiet Harbor' }) });
+    // No hover on a phone, so the button is always there.
+    const play = card.getByRole('button', { name: 'Play Quiet Harbor' });
+    await expect(play).toBeVisible();
+    // It sits on the cover's bottom-left corner, and takes no room above the cover.
+    const cover = (await card.locator('.cover').boundingBox())!, button = (await play.boundingBox())!, item = (await card.boundingBox())!;
+    expect(cover.y).toBe(item.y);
+    expect(button.y + button.height).toBeLessThanOrEqual(cover.y + cover.height);
+    expect(button.y + button.height).toBeGreaterThan(cover.y + cover.height - 16);
+    await play.tap();
+    await app.expectPlaying('Opening 2');
+    // A whole record opens now playing over the page.
+    await expect(app.deck).toHaveClass(/\bopen\b/);
+    await app.deck.getByRole('button', { name: 'Hide' }).tap();
+    await card.locator('button:not(.play-over)').tap({ position: { x: 120, y: 40 } });
+    await expect(app.heading).toHaveText('Quiet Harbor');
+  });
+
   test('the sheet closes with Hide and with the back gesture', async ({ app, page }) => {
     await app.play('Test Pressing', 'Long Run');
     await app.deck.getByRole('button', { name: 'Open now playing: Long Run' }).tap();
@@ -65,6 +85,84 @@ test.describe('phone', () => {
     await app.menu.getByRole('menuitem', { name: 'Add to queue' }).tap();
     await expect(app.menu).toBeHidden();
     await app.expectPlaying('Short Stop');
+  });
+});
+
+test.describe("a record's More", () => {
+  test.beforeEach(async ({ app, page }) => {
+    await app.signIn();
+    await app.openAlbum('Test Pressing');
+    // Once the record has finished sliding in: until then a tap goes nowhere (route.ts).
+    await expect.poll(() => page.evaluate(() => document.getAnimations().some(animation => (animation.effect as KeyframeEffect | null)?.pseudoElement?.startsWith('::view-transition')))).toBe(false);
+  });
+
+  test('opens a sheet without moving the page or choosing what rose under the finger', async ({ app, page }) => {
+    const more = app.main.getByRole('button', { name: 'More', exact: true });
+    const box = (await more.boundingBox())!;
+    const x = box.x + box.width / 2, y = box.y + box.height / 2;
+    const scroll = await app.main.evaluate(main => main.scrollTop);
+    await page.touchscreen.tap(x, y);
+    // The end of the opening gesture, landing on the item that rose under the finger as Chrome
+    // can send it, chooses nothing.
+    const stray = await page.evaluate(async ([x, y]) => {
+      for (let i = 0; i < 20 && !document.querySelector('.menu [role^="menuitem"]'); i++) await new Promise(done => setTimeout(done, 10));
+      const item = [...document.querySelectorAll<HTMLElement>('.menu [role^="menuitem"]')].find(element => {
+        const r = element.getBoundingClientRect();
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      });
+      item?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, clientX: x, clientY: y }));
+      return item?.textContent ?? null;
+    }, [x, y]);
+    expect(stray).not.toBeNull();
+    await page.waitForTimeout(300);
+    await expect(app.menu).toBeVisible();
+    await expect(app.menu).toHaveClass(/\bsheet\b/);
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveCount(0);
+    expect(await app.main.evaluate(main => main.scrollTop)).toBe(scroll);
+    // Nor is that item highlighted as if chosen (once the sheet has settled: while it rises, the
+    // page reports the document under every point).
+    await expect.poll(() => page.evaluate(([x, y]) => {
+      const item = document.elementFromPoint(x, y)?.closest('[role^="menuitem"]');
+      return item ? getComputedStyle(item).backgroundColor : null;
+    }, [x, y])).toBe('rgba(0, 0, 0, 0)');
+    // A real tap on an item still chooses it.
+    await app.menu.getByRole('menuitem', { name: 'Play all', exact: true }).tap();
+    await expect(app.menu).toBeHidden();
+    await app.expectPlaying('Long Run');
+  });
+
+  test('stays open as the window resizes for system bars and the keyboard, and Back closes only the sheet', async ({ app, page }) => {
+    await app.main.getByRole('button', { name: 'More', exact: true }).tap();
+    await expect(app.menu).toBeVisible();
+    // Android resizes the window as bars come and go, sometimes several times in a row.
+    await page.evaluate(() => { for (let i = 0; i < 3; i++) dispatchEvent(new Event('resize')); dispatchEvent(new Event('blur')); });
+    await page.waitForTimeout(300);
+    await expect(app.menu).toBeVisible();
+    await expect(app.heading).toHaveText('Test Pressing');
+    // Naming a new playlist brings up the keyboard, which shortens the window.
+    await app.menu.getByRole('menuitem', { name: 'Add to playlist' }).tap();
+    await app.menu.getByRole('menuitem', { name: 'New playlist' }).tap();
+    await expect(app.menu.getByRole('textbox')).toBeFocused();
+    await page.setViewportSize({ width: 412, height: 480 });
+    await page.waitForTimeout(300);
+    await expect(app.menu.getByRole('textbox')).toBeVisible();
+    await page.setViewportSize({ width: 412, height: 860 });
+    // Back closes the sheet and leaves the record; the next Back leaves the record.
+    await page.goBack();
+    await expect(app.menu).toBeHidden();
+    await expect(app.heading).toHaveText('Test Pressing');
+    await page.goBack();
+    await expect(app.heading).toHaveText('Records');
+  });
+
+  test('closes when the window grows past a phone\'s width, taking one step back', async ({ app, page }) => {
+    await app.main.getByRole('button', { name: 'More', exact: true }).tap();
+    await expect(app.menu).toBeVisible();
+    await page.setViewportSize({ width: 1000, height: 860 });
+    await expect(app.menu).toBeHidden();
+    await expect(app.heading).toHaveText('Test Pressing');
+    await page.goBack();
+    await expect(app.heading).toHaveText('Records');
   });
 });
 

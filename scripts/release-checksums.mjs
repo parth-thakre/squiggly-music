@@ -1,11 +1,13 @@
 // Writes SHA256SUMS for the release assets in a directory (default: dist/).
 // The output uses the `sha256sum -c` format, so users can verify downloads with:
 //   sha256sum --ignore-missing -c SHA256SUMS
-// CI runs the same script on the collected release assets.
+// CI runs the same script on the collected release assets. First it stops if any of them, or
+// the unpacked builds in dist/ they came from, was built with diagnostics (release-clean.mjs).
 //   node scripts/release-checksums.mjs [directory]
 import { createHash } from 'node:crypto';
 import { createReadStream, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { findDiagnostics } from './release-clean.mjs';
 
 const directory = resolve(process.argv[2] ?? 'dist');
 // electron-builder bookkeeping, not release assets.
@@ -15,6 +17,8 @@ const files = readdirSync(directory)
   .filter(name => !ignored.has(name) && !name.startsWith('.') && statSync(join(directory, name)).isFile())
   .sort();
 if (files.length === 0) throw new Error(`No release assets found in ${directory}`);
+const diagnostics = findDiagnostics([...new Set([directory, resolve('dist')])]);
+if (diagnostics.length) throw new Error(`These were built with diagnostics, which never go into a release. Rebuild without SQUIGGLY_DIAG_URL and SQUIGGLY_DIAG_TOKEN:\n${diagnostics.join('\n')}`);
 
 function sha256(path) {
   return new Promise((resolveHash, reject) => {

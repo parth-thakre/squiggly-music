@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Effect, Either, Schema } from 'effect';
+import { Effect, Either, Fiber, Schema, TestClock, TestContext } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, type ClientOptions, libraryCall, localAddress, normalizeServerUrl, plainText, reachOf, resolveServerAddress, ServerError, serverUrlCandidates, Unreachable } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
+import { stationIdOf } from '../packages/core/stations';
 
 afterEach(() => vi.unstubAllGlobals());
 const connection = { url: 'https://music.example.com/navidrome/', username: 'listener', password: 'do-not-export' };
@@ -16,7 +17,7 @@ function serve(response: () => Response, discovery = discoveryResponse) {
   return mock;
 }
 const servePayload = (payload: object) => serve(() => Response.json(envelope(payload)));
-const client = () => new SubsonicClient(connection, new Metrics());
+const client = (options: ClientOptions = {}) => new SubsonicClient(connection, new Metrics(), {}, options);
 // An album's songs as the player gets them: public track metadata plus a private stream URL.
 const albumTracks = (subject: SubsonicClient, id: string) => subject.album(id).pipe(Effect.map(({ tracks }) => tracks.map(track => subject.playable(track))));
 const newest = (offset: number) => client().albumList('newest', offset, 48);
@@ -43,22 +44,54 @@ describe('server address', () => {
     serve(() => new Response('<html>not navidrome</html>', { headers: { 'content-type': 'text/html' } }));
     expect(Either.isLeft(await Effect.runPromise(Effect.either(client().probe())))).toBe(true);
   });
-  it('signs in over HTTPS, then HTTP, whichever answers first, and uses a typed scheme as given', async () => {
+  // Each probe goes to fetch. `https` is how HTTPS fails (the cause code of a Node fetch error),
+  // or 'answers'; plain HTTP answers when `http` is true.
+  const resolveWith = (https: string, http: boolean) => {
     const probed: string[] = [];
-    const answering = (answers: string) => vi.fn((input: string) => {
-      probed.push(new URL(input).origin);
-      return input.startsWith(answers) ? Promise.resolve(Response.json({ 'subsonic-response': { status: 'ok' } })) : Promise.reject(new TypeError('refused'));
-    });
-    vi.stubGlobal('fetch', answering('http://'));
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      const url = new URL(input);
+      probed.push(url.origin);
+      for (const secret of ['u', 't', 's', 'p']) expect(url.searchParams.has(secret)).toBe(false);
+      const answers = url.protocol === 'https:' ? https === 'answers' : http;
+      return answers ? Promise.resolve(Response.json({ 'subsonic-response': { status: 'ok' } }))
+        : Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('secret-marker'), { code: url.protocol === 'https:' ? https : 'ECONNREFUSED' }) }));
+    }));
     const make = (candidate: typeof connection) => new SubsonicClient(candidate, new Metrics());
-    const typed = { ...connection, url: 'music.example.com' };
-    await expect(Effect.runPromise(resolveServerAddress(typed, make))).resolves.toEqual({ ...typed, url: 'http://music.example.com' });
-    expect(probed).toEqual(['https://music.example.com', 'http://music.example.com']);
+    return { probed, resolve: (typed: typeof connection) => Effect.runPromise(resolveServerAddress(typed, make)) };
+  };
+  const typed = { ...connection, url: ' music.example.com ' };
+  it('signs in over HTTPS when it answers, and uses a typed scheme as given without asking', async () => {
+    const { probed, resolve } = resolveWith('answers', true);
+    await expect(resolve(typed)).resolves.toEqual({ type: 'ready', connection: { ...typed, url: 'https://music.example.com' } });
+    expect(probed).toEqual(['https://music.example.com']);
     probed.length = 0;
-    await expect(Effect.runPromise(resolveServerAddress(connection, make))).resolves.toBe(connection);
+    const plain = { ...connection, url: 'http://music.example.com' };
+    await expect(resolve(plain)).resolves.toEqual({ type: 'ready', connection: plain });
+    await expect(resolve(connection)).resolves.toEqual({ type: 'ready', connection });
     expect(probed).toEqual([]);
-    vi.stubGlobal('fetch', answering('nothing'));
-    await expect(Effect.runPromise(resolveServerAddress(typed, make))).rejects.toThrow('No Navidrome server answered at music.example.com over HTTPS or HTTP');
+  });
+  it.each([['refused', 'ECONNREFUSED'], ['not speaking TLS on its port', 'ERR_SSL_WRONG_VERSION_NUMBER']])(
+    'only offers plain HTTP, never signing in there, when HTTPS is %s', async (_, code) => {
+      const { probed, resolve } = resolveWith(code, true);
+      await expect(resolve(typed)).resolves.toEqual({ type: 'plain-http', url: 'http://music.example.com' });
+      expect(probed).toEqual(['https://music.example.com', 'http://music.example.com']);
+    });
+  it.each(['DEPTH_ZERO_SELF_SIGNED_CERT', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_UNTRUSTED'])(
+    'refuses a server whose certificate fails (%s), without trying plain HTTP', async code => {
+      const { probed, resolve } = resolveWith(code, true);
+      const failure = await resolve(typed).catch((error: Error) => error.message);
+      expect(failure).toMatch(/^This server's HTTPS certificate isn't trusted/);
+      expect(failure).not.toContain('secret-marker');
+      expect(probed).toEqual(['https://music.example.com']);
+    });
+  it('says so when neither answers', async () => {
+    await expect(resolveWith('ECONNREFUSED', false).resolve(typed)).rejects.toThrow('No Navidrome server answered at music.example.com over HTTPS or HTTP');
+  });
+  it('tells this computer and its own network from the rest by address', () => {
+    for (const url of ['http://localhost:4533', 'http://127.0.0.1', 'http://10.0.0.5', 'http://172.16.0.1', 'http://172.31.255.255', 'http://192.168.1.20:4533/music',
+      'http://169.254.10.1', 'http://[::1]:4533', 'http://[fd12:3456::1]', 'http://[fe80::1]', 'http://[::ffff:192.168.1.2]', 'http://nas.localhost']) expect(localAddress(url), url).toBe(true);
+    for (const url of ['http://music.example.com', 'http://172.32.0.1', 'http://8.8.8.8', 'http://192.169.0.1', 'http://100.64.0.1', 'http://[2001:db8::1]', 'http://[::ffff:8.8.8.8]', 'http://nas.local'])
+      expect(localAddress(url), url).toBe(false);
   });
   it('sends every request through a fetch it was given instead of the global one', async () => {
     const global = serve(() => Response.json(envelope({})));
@@ -154,7 +187,7 @@ describe('OpenSubsonic', () => {
     const params = calls[1][1].body as URLSearchParams;
     expect(params.get('size')).toBe('48'); expect(params.get('offset')).toBe('48');
   });
-  it('pages through every track with an empty search3 query where the server is not Navidrome', async () => {
+  it('pages through every track with an empty search3 query in the server order past the sort-here limit', async () => {
     const library = Array.from({ length: 7 }, (_, i) => ({
       id: `s${i}`, title: `Song ${i}`, artist: 'A & B', suffix: 'flac', samplingRate: 96000, bitDepth: 24, coverArt: `mf-s${i}`,
       artists: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
@@ -167,7 +200,7 @@ describe('OpenSubsonic', () => {
       return Promise.resolve(Response.json(envelope({ searchResult3: offset < library.length ? { song: library.slice(offset, offset + count) } : {} })));
     });
     vi.stubGlobal('fetch', fetchMock);
-    const subject = client();
+    const subject = client({ sortHereLimit: 0 });
     const pages: string[][] = [];
     for (let offset = 0; ; offset += 3) {
       const page = await Effect.runPromise(subject.tracks('alphabeticalByName', offset, 3));
@@ -192,6 +225,9 @@ describe('OpenSubsonic', () => {
   });
   it('rejects a track page longer than asked for', async () => {
     servePayload({ searchResult3: { song: Array.from({ length: 4 }, (_, id) => ({ id: String(id), title: 's' })) } });
+    await expectRedactedFailure(client({ sortHereLimit: 0 }).tracks('newest', 0, 3));
+    // Read whole, a page of more than 500 is refused too.
+    servePayload({ searchResult3: { song: Array.from({ length: 501 }, (_, id) => ({ id: String(id), title: 's' })) } });
     await expectRedactedFailure(client().tracks('newest', 0, 3));
   });
   it('rejects an oversized album page rather than truncating it', async () => {
@@ -398,12 +434,43 @@ describe('OpenSubsonic', () => {
   it('accepts empty library sections and maps unknown values to null', async () => {
     servePayload({ starred2: {}, searchResult3: {}, genres: {}, playlists: {}, artists: {}, randomSongs: {} });
     expect(await Effect.runPromise(client().starred())).toEqual({ artists: [], albums: [], tracks: [] });
-    expect(await Effect.runPromise(client().search('q'))).toEqual({ artists: [], albums: [], tracks: [] });
+    expect(await Effect.runPromise(client().search('q'))).toEqual({ artists: [], albums: [], tracks: [], capped: { artists: false, albums: false, tracks: false } });
     for (const task of [client().genres(), client().playlists(), client().artists(), client().randomSongs({ size: 10 })] as Effect.Effect<unknown[], Error>[]) expect(await Effect.runPromise(task)).toEqual([]);
     servePayload({ album: { id: 'a', name: 'a', artistId: '', coverArt: '', genre: '', year: 0, song: [{ id: 's', title: 's', albumId: '', discNumber: 0 }] } });
     const detail = await Effect.runPromise(client().album('a'));
     expect(detail.album).toEqual({ id: 'a', name: 'a', artist: 'Unknown artist', songCount: 1, artistId: null, year: null, genre: null, duration: null, coverArt: null, starred: false });
     expect(detail.tracks[0]).toMatchObject({ album: 'a', albumId: null, discNumber: null, coverArt: null, starred: false });
+  });
+  it('asks search3 for the counts and offsets given, and says which kinds came back full', async () => {
+    const song = (id: number) => ({ id: `s${id}`, title: 's' });
+    const fetchMock = serve(() => Response.json(envelope({ searchResult3: { artist: [{ id: 'a', name: 'a' }], song: Array.from({ length: 100 }, (_, i) => song(i)) } })));
+    const sent = () => [...(fetchMock.mock.calls.at(-1)![1].body as URLSearchParams)].filter(([key]) => /Count|Offset|query/.test(key));
+    // The songs tab's second page: the other kinds are skipped, and anything the server sends for them anyway is dropped.
+    const page = await Effect.runPromise(client().search('night', { artistCount: 0, albumCount: 0, songCount: 100, songOffset: 100 }));
+    expect(sent()).toEqual([['query', 'night'], ['artistCount', '0'], ['albumCount', '0'], ['songCount', '100'], ['songOffset', '100']]);
+    expect(page.artists).toEqual([]);
+    expect(page.tracks.map(track => track.id)).toEqual(Array.from({ length: 100 }, (_, i) => `s${i}`));
+    expect(page.capped).toEqual({ artists: false, albums: false, tracks: true });
+    // Left out, the counts are the usual 8, 16, and 40, from the top; out-of-range values are clamped.
+    servePayload({ searchResult3: { artist: Array.from({ length: 8 }, (_, i) => ({ id: `a${i}`, name: 'a' })), song: [song(1)] } });
+    const all = await Effect.runPromise(client().search('q'));
+    expect(all.capped).toEqual({ artists: true, albums: false, tracks: false });
+    const mock = serve(() => Response.json(envelope({ searchResult3: {} })));
+    await Effect.runPromise(client().search('q', { artistCount: 500, artistOffset: -4, albumOffset: 32, songCount: 2.4 }));
+    expect([...(mock.mock.calls.at(-1)![1].body as URLSearchParams)].filter(([key]) => /Count|Offset/.test(key)))
+      .toEqual([['artistCount', '200'], ['albumCount', '16'], ['songCount', '2'], ['albumOffset', '32']]);
+    // A page larger than asked is refused, as other lists are.
+    servePayload({ searchResult3: { album: Array.from({ length: 3 }, (_, i) => ({ id: `al${i}`, name: 'a' })) } });
+    await expectRedactedFailure(client().search('q', { albumCount: 2 }));
+  });
+  it('bounds search options: counts 0 to 200, offsets 0 to 1,000,000, and a bare query still works', () => {
+    const decode = (value: unknown) => Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.search)(value));
+    expect(decode(['night'])).toBe(true);
+    expect(decode(['night', {}])).toBe(true);
+    expect(decode(['night', { songCount: 200, songOffset: 1_000_000, artistCount: 0, albumCount: 0 }])).toBe(true);
+    for (const options of [{ songCount: 201 }, { songCount: -1 }, { albumOffset: 1_000_001 }, { artistOffset: -1 }, { songCount: 1.5 }, { songCount: '10' }, null])
+      expect(decode(['night', options])).toBe(false);
+    expect(decode(['night', {}, 'extra'])).toBe(false);
   });
   it('validates library IPC arguments and play-tracks selections', () => {
     const decode = <A, I>(schema: Schema.Schema<A, I>, value: unknown) => Either.isRight(Schema.decodeUnknownEither(schema)(value));
@@ -586,5 +653,193 @@ describe('artist information, genres, years and discs', () => {
     expect(decode(LibraryRequestSchemas.artistInfo, [''])).toBe(false);
     expect(decode(LibraryRequestSchemas.songsByGenre, ['Rock', 0, 200])).toBe(true);
     for (const value of [['', 0, 200], ['Rock', -1, 200], ['Rock', 0, 0], ['Rock', 0, 501], ['x'.repeat(257), 0, 200]]) expect(decode(LibraryRequestSchemas.songsByGenre, value)).toBe(false);
+  });
+});
+
+describe('playing elsewhere', () => {
+  it('lists other accounts\' songs and leaves this account\'s own players out', async () => {
+    const mock = servePayload({ nowPlaying: { entry: [
+      { id: 's1', title: 'Blue in Green', artist: 'Miles Davis', album: 'Kind of Blue', albumId: 'al1', coverArt: 'al1', username: 'sam', minutesAgo: 0, playerId: 1, playerName: 'Feishin' },
+      // This account, in any case, on any player.
+      { id: 's2', title: 'So What', artist: 'Miles Davis', username: 'Listener', minutesAgo: 2, playerId: 2 },
+      { id: 's2', title: 'So What', artist: 'Miles Davis', username: 'listener', minutesAgo: 1, playerId: 3 },
+      // The same song on two of someone's players is one entry.
+      { id: 's3', title: 'Naima', username: 'robin', playerId: 4 },
+      { id: 's3', title: 'Naima', username: 'robin', playerId: 5 },
+      // Nobody's: left out rather than shown under an empty name.
+      { id: 's4', title: 'Nobody', username: ' ' },
+      { id: 's5', title: 'Unnamed' },
+    ] } });
+    const entries = await Effect.runPromise(client().nowPlaying());
+    expect(entries.map(entry => [entry.username, entry.track.id, entry.track.title, entry.track.artist])).toEqual([
+      ['sam', 's1', 'Blue in Green', 'Miles Davis'], ['robin', 's3', 'Naima', 'Unknown artist'],
+    ]);
+    expect(entries[0].track).toMatchObject({ album: 'Kind of Blue', albumId: 'al1', coverArt: 'al1', source: 'navidrome' });
+    expect(mock.mock.calls.map(([url]) => new URL(url).pathname.split('/').pop())).toContain('getNowPlaying.view');
+  });
+  it('is empty when nobody is listening, and fails on a malformed answer', async () => {
+    servePayload({ nowPlaying: {} });
+    expect(await Effect.runPromise(client().nowPlaying())).toEqual([]);
+    servePayload({});
+    expect(await Effect.runPromise(client().nowPlaying())).toEqual([]);
+    servePayload({ nowPlaying: { entry: [{ title: 'No id', username: 'sam' }] } });
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(client().nowPlaying())))).toBe(true);
+  });
+  it('takes no arguments', () => {
+    const decode = (value: unknown) => Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.nowPlaying)(value));
+    expect(decode([])).toBe(true);
+    expect(decode(['sam'])).toBe(false);
+  });
+});
+
+describe('internet radio stations', () => {
+  const stations = { internetRadioStations: { internetRadioStation: [
+    { id: 'st1', name: ' Jazz FM ', streamUrl: 'https://stream.example/jazz?token=private', homePageUrl: 'https://jazz.example/' },
+    { id: 'st2', name: '', streamUrl: ' http://stream.example/talk ', homepageUrl: 'javascript:alert(1)' },
+    { id: 'st3', name: 'A file', streamUrl: 'file:///etc/passwd', homePageUrl: 'https://file.example/' },
+    { id: 'st4', name: 'No stream' },
+    { id: 'st1', name: 'The same id again', streamUrl: 'https://stream.example/other' },
+  ] } };
+  it('reads stations with http(s) streams only, and keeps home pages that are web addresses', async () => {
+    const mock = servePayload(stations);
+    expect(await Effect.runPromise(client().radioStations())).toEqual([
+      { id: 'st1', name: 'Jazz FM', streamUrl: 'https://stream.example/jazz?token=private', homePageUrl: 'https://jazz.example/' },
+      { id: 'st2', name: 'Untitled station', streamUrl: 'http://stream.example/talk', homePageUrl: null },
+    ]);
+    expect(new URL(mock.mock.calls[1][0]).pathname).toBe('/navidrome/rest/getInternetRadioStations.view');
+    servePayload({ internetRadioStations: {} });
+    expect(await Effect.runPromise(client().radioStations())).toEqual([]);
+    servePayload({ internetRadioStations: { internetRadioStation: [{ name: 'No id', streamUrl: 'https://stream.example/x' }] } });
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(client().radioStations())))).toBe(true);
+  });
+  it('gives the library stations without their stream addresses, and the tracks that queue them', async () => {
+    servePayload(stations);
+    const { value, tracks } = await Effect.runPromise(libraryCall(client(), 'radioStations', []));
+    expect(value).toEqual([{ id: 'st1', name: 'Jazz FM', homePageUrl: 'https://jazz.example/' }, { id: 'st2', name: 'Untitled station', homePageUrl: null }]);
+    expect(JSON.stringify(value)).not.toContain('stream.example');
+    expect(tracks).toEqual([
+      { id: 'station:st1', title: 'Jazz FM', artist: '', album: '', duration: null, source: 'station', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null, albumId: null, artistId: null, coverArt: null },
+      expect.objectContaining({ id: 'station:st2', title: 'Untitled station', source: 'station' }),
+    ]);
+    expect(Either.isLeft(await Effect.runPromise(Effect.either(libraryCall(client(), 'radioStations', ['extra']))))).toBe(true);
+  });
+  it('gives a station a track id no song can have, even where the server numbers both from 1', async () => {
+    // Airsonic numbers songs and stations apart; the desktop knows every track by its id alone.
+    servePayload(albumPayload({ id: '1', title: 'Song one' }));
+    const song = (await Effect.runPromise(libraryCall(client(), 'album', ['a']))).tracks[0];
+    servePayload({ internetRadioStations: { internetRadioStation: [
+      { id: '1', name: 'Station one', streamUrl: 'https://stream.example/one' },
+      { id: 'x'.repeat(249), name: 'Too long to queue', streamUrl: 'https://stream.example/long' },
+      { id: 'x'.repeat(248), name: 'Just fits', streamUrl: 'https://stream.example/fits' },
+    ] } });
+    const { value, tracks } = await Effect.runPromise(libraryCall(client(), 'radioStations', []));
+    expect(song.id).toBe('1');
+    expect((value as { name: string }[]).map(station => station.name)).toEqual(['Station one', 'Just fits']);
+    expect(tracks.map(track => track.id)).not.toContain(song.id);
+    // The server's own id comes back for the stream, and the track ids pass the play request's checks.
+    expect(tracks.map(stationIdOf)).toEqual(['1', 'x'.repeat(248)]);
+    expect(Either.isRight(Schema.decodeUnknownEither(PlayTracksSchema)([tracks.map(track => track.id), 0]))).toBe(true);
+  });
+  it('finds a station stream in the last list, asks again for one it hasn\'t seen, and fails plainly for a missing one', async () => {
+    const mock = servePayload(stations);
+    const subject = client();
+    expect(subject.knownStationLocation('st2')).toBeNull();
+    // Nothing listed yet: the list is read.
+    expect(await Effect.runPromise(subject.stationLocation('st2'))).toBe('http://stream.example/talk');
+    const asked = mock.mock.calls.length;
+    expect(await Effect.runPromise(subject.stationLocation('st1'))).toBe('https://stream.example/jazz?token=private');
+    expect(mock.mock.calls.length).toBe(asked);
+    expect(subject.knownStationLocation('st1')).toBe('https://stream.example/jazz?token=private');
+    const missing = await Effect.runPromise(Effect.either(subject.stationLocation('st3')));
+    expect(Either.isLeft(missing) && missing.left.message).toBe('This station is no longer on the server. Refresh the stations and try again.');
+    expect(mock.mock.calls.length).toBe(asked + 1);
+  });
+});
+
+describe('no answer, or an answer that refused', () => {
+  const failure = async (task: Effect.Effect<unknown, Error>) => {
+    const result = await Effect.runPromise(Effect.either(task));
+    if (Either.isRight(result)) throw new Error('Expected a failure.');
+    return result.left;
+  };
+  it('calls a refused connection unreachable, with the same words as before', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }))));
+    const error = await failure(client().ping());
+    expect(error).toBeInstanceOf(Unreachable);
+    expect(reachOf(error)).toBe('unreachable');
+    expect(error.message).toBe('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.');
+  });
+  it('treats a gateway saying the server is down as no answer, and other statuses as answers', async () => {
+    for (const status of [502, 503, 504]) {
+      serve(() => new Response('down', { status }));
+      const error = await failure(client().ping());
+      expect(reachOf(error)).toBe('unreachable');
+      expect(error.message).toBe(`Server returned HTTP ${status}. Check the server address and reverse proxy settings.`);
+    }
+    for (const status of [401, 404, 500]) {
+      serve(() => new Response('no', { status }));
+      expect(reachOf(await failure(client().ping()))).toBe('refused');
+    }
+    serve(() => Response.json({ 'subsonic-response': { status: 'failed', error: { code: 40 } } }));
+    expect(reachOf(await failure(client().ping()))).toBe('refused');
+    serve(() => new Response('not json'));
+    expect(reachOf(await failure(client().ping()))).toBe('refused');
+  });
+  it('calls a redirect refused, since something answered', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') }))));
+    const error = await failure(client().ping());
+    expect(reachOf(error)).toBe('refused');
+    expect(error).toBeInstanceOf(ServerError);
+  });
+  it('calls a body that stops arriving unreachable', async () => {
+    serve(() => new Response(new ReadableStream({ pull(controller) { controller.error(new Error('socket hang up')); } })));
+    expect(reachOf(await failure(client().ping()))).toBe('unreachable');
+  });
+  it('calls the 15 second timeout unreachable, with the same words as before', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => new URL(url).pathname.endsWith('/getOpenSubsonicExtensions.view') ? Promise.resolve(discoveryResponse())
+      : new Promise((_resolve, reject) => options.signal!.addEventListener('abort', () => reject(new Error('aborted'))))));
+    const error = await Effect.runPromise(Effect.gen(function* () {
+      const fiber = yield* Effect.fork(Effect.flip(client().ping()));
+      yield* Effect.promise(() => new Promise(resolve => setTimeout(resolve, 20)));
+      yield* TestClock.adjust('15 seconds');
+      return yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(TestContext.TestContext)));
+    expect(reachOf(error)).toBe('unreachable');
+    expect(error.message).toBe('The server did not respond within 15 seconds. Check your connection and try again.');
+  });
+  it('reads a song\'s size only when the server sends one', async () => {
+    servePayload(albumPayload({ id: 's', title: 's', size: 31_457_280 }));
+    expect((await Effect.runPromise(client().album('a'))).tracks[0].size).toBe(31_457_280);
+    servePayload(albumPayload({ id: 's', title: 's' }));
+    expect('size' in (await Effect.runPromise(client().album('a'))).tracks[0]).toBe(false);
+    servePayload(albumPayload({ id: 's', title: 's', size: 0 }));
+    expect('size' in (await Effect.runPromise(client().album('a'))).tracks[0]).toBe(false);
+  });
+  it('reports a finished play at the time it finished', async () => {
+    const mock = servePayload({});
+    await Effect.runPromise(client().reportPlay('s1', 'finished', 1_700_000_000_000));
+    const body = mock.mock.calls.at(-1)![1].body as URLSearchParams;
+    expect(body.get('time')).toBe('1700000000000');
+    expect(body.get('submission')).toBe('true');
+    await Effect.runPromise(client().reportPlay('s1', 'started'));
+    expect((mock.mock.calls.at(-1)![1].body as URLSearchParams).has('time')).toBe(false);
+  });
+  it('fetches the original for keeping, and refuses an error sent as a 200 without naming the address', async () => {
+    serve(() => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/flac' } }));
+    const response = await client().original('s1', new AbortController().signal);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    const mock = serve(() => Response.json({ 'subsonic-response': { status: 'failed', error: { code: 70, message: 'secret-marker' } } }));
+    const refused = await client().original('s1', new AbortController().signal).catch((error: Error) => error);
+    expect(refused).toBeInstanceOf(ServerError);
+    expect(reachOf(refused)).toBe('refused');
+    const sent = new URL(mock.mock.calls.at(-1)![0]);
+    expect(sent.searchParams.get('format')).toBe('raw');
+    for (const secret of ['secret-marker', sent.searchParams.get('t')!, 'music.example.com', connection.username]) expect(String((refused as Error).message)).not.toContain(secret);
+    serve(() => new Response('<html/>', { headers: { 'content-type': 'text/html' } }));
+    await expect(client().original('s1', new AbortController().signal)).rejects.toThrow('The server sent an error instead of the song.');
+    serve(() => new Response('down', { status: 503 }));
+    expect(reachOf(await client().original('s1', new AbortController().signal).catch(error => error))).toBe('unreachable');
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))));
+    expect(reachOf(await client().original('s1', new AbortController().signal).catch(error => error))).toBe('unreachable');
   });
 });

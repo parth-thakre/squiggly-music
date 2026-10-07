@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { readdir, readFile } from 'node:fs/promises';
-import { basename, dirname, extname, join } from 'node:path';
+import { readdir, readFile, stat } from 'node:fs/promises';
+import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { parseFile, selectCover } from 'music-metadata';
 import type { Track } from '../../../packages/core/contracts';
+import { coverTypes } from '../../../packages/adapter-opensubsonic/client';
 
 // Files opened from this computer. Their title, artist, album, length, and format come from the
 // file's own tags (music-metadata reads them without decoding any audio); the file name stands in
@@ -11,6 +12,9 @@ import type { Track } from '../../../packages/core/contracts';
 // each one is gets remembered, under an opaque id that the squiggly-art protocol serves.
 const FOLDER_IMAGE = /^(cover|folder|front|album|albumart)\.(jpe?g|png|webp)$/i;
 const IMAGE_TYPES: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp' };
+// The files Open files offers, and the only ones a drop onto the window opens.
+export const AUDIO_EXTENSIONS = ['flac', 'wav', 'aiff', 'aif', 'alac', 'm4a', 'mp3', 'ogg', 'opus', 'aac', 'dsf', 'dff'] as const;
+const AUDIO = new Set<string>(AUDIO_EXTENSIONS);
 // Covers for up to twice a full queue; the oldest are forgotten first.
 const COVERS = 2000;
 
@@ -73,6 +77,18 @@ async function readOne(path: string, folders: Map<string, Promise<string | null>
   return track;
 }
 
+// Paths dropped on the window, checked before anything is read: absolute, an audio extension,
+// and a regular file. Folders are left out (this module reads files; it doesn't walk folders),
+// as is anything else, and counted as skipped. Order is kept.
+export async function checkAudioPaths(paths: readonly string[]): Promise<{ files: string[]; skipped: number }> {
+  const ok = await Promise.all(paths.map(async path => {
+    if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0') || !AUDIO.has(extname(path).slice(1).toLowerCase())) return false;
+    try { return (await stat(path)).isFile(); } catch { return false; }
+  }));
+  const files = paths.filter((_, i) => ok[i]);
+  return { files, skipped: paths.length - files.length };
+}
+
 // Reads a batch of files a few at a time, keeping their order.
 export async function readLocalTracks(paths: readonly string[]): Promise<Track[]> {
   const folders = new Map<string, Promise<string | null>>();
@@ -94,6 +110,12 @@ export async function readLocalCover(id: string): Promise<{ bytes: Buffer; conte
       return contentType ? { bytes: await readFile(source.path), contentType } : null;
     }
     const picture = selectCover((await parseFile(source.path)).common.picture);
-    return picture ? { bytes: Buffer.from(picture.data), contentType: picture.format.includes('/') ? picture.format : `image/${picture.format}` } : null;
+    if (!picture) return null;
+    // The type is whatever the tag says. Only a raster image type is served (the list the server's
+    // covers are held to), so a tag can't make the renderer read the bytes as SVG or HTML.
+    const format = picture.format.trim().toLowerCase();
+    const type = format.includes('/') ? format : `image/${format}`;
+    const contentType = type === 'image/jpg' ? 'image/jpeg' : type;
+    return coverTypes.has(contentType) ? { bytes: Buffer.from(picture.data), contentType } : null;
   } catch { return null; }
 }

@@ -1,5 +1,5 @@
-import { contextBridge, ipcRenderer } from 'electron';
-import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, KeptApi, KeptProgress, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
@@ -14,7 +14,7 @@ const library: LibraryApi = {
   starred: () => call('starred'),
   randomSongs: options => call('randomSongs', options),
   tracks: (sort, offset, size, seed) => call('tracks', sort, offset, size, seed),
-  search: query => call('search', query),
+  search: (query, options) => call('search', query, ...(options ? [options] : [])),
   star: (target, id, starred) => call('star', target, id, starred),
   createPlaylist: (name, trackIds) => call('createPlaylist', name, trackIds),
   addToPlaylist: (playlistId, trackIds) => call('addToPlaylist', playlistId, trackIds),
@@ -34,6 +34,11 @@ const library: LibraryApi = {
   coverUrl: (coverArt, size) => `squiggly-art://cover/${encodeURIComponent(String(coverArt))}?size=${Math.min(1200, Math.max(32, Math.round(Number(size)) || 300))}`,
   artistInfo: artistId => call('artistInfo', artistId),
   songsByGenre: (genre, offset, size) => call('songsByGenre', genre, offset, size),
+  nowPlaying: () => call('nowPlaying'),
+  createShare: (ids, description, expiresAt) => call('createShare', ids, description ?? null, expiresAt ?? null),
+  shares: () => call('shares'),
+  deleteShare: id => call('deleteShare', id),
+  radioStations: () => call('radioStations'),
 };
 // Push channels from the main process, as subscribe functions.
 function listen<T>(channel: string, listener: (value: T) => void) {
@@ -68,6 +73,19 @@ const updates: UpdatesApi = {
   install: () => ipcRenderer.invoke('squiggly:update:install'),
   open: () => ipcRenderer.invoke('squiggly:update:open'),
 };
+// Songs kept on this computer. Songs go by id; the main process looks the tracks up itself and
+// never sends a path back.
+const kept: KeptApi = {
+  state: () => ipcRenderer.invoke('squiggly:kept:state'),
+  present: () => ipcRenderer.invoke('squiggly:kept:present'),
+  container: (kind, id) => ipcRenderer.invoke('squiggly:kept:container', [kind, id]),
+  subscribe: listener => listen<KeptProgress>('squiggly:kept', listener),
+  keep: ({ kind, id, name, artist, coverArt, tracks }) => ipcRenderer.invoke('squiggly:kept:keep', { kind, id, name, artist, coverArt, trackIds: tracks.map(track => track.id) }),
+  cancel: (kind, id) => ipcRenderer.invoke('squiggly:kept:cancel', [kind, id]),
+  forget: (kind, id) => ipcRenderer.invoke('squiggly:kept:forget', [kind, id]),
+  forgetAll: () => ipcRenderer.invoke('squiggly:kept:forget-all'),
+  openDir: () => ipcRenderer.invoke('squiggly:kept:open-dir'),
+};
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
@@ -77,6 +95,11 @@ const bridge: DesktopBridge = {
   },
   command: command => ipcRenderer.invoke('squiggly:command', command),
   openFiles: () => ipcRenderer.invoke('squiggly:open-files'),
+  // Files dropped on the window. Their paths are looked up here and go straight to the main
+  // process, which checks them; the page never sees one. A File that isn't on disk (one the page
+  // made) has no path, and is sent as '' so the main process counts it among those left out.
+  openDropped: (files, mode) => ipcRenderer.invoke('squiggly:open-paths', [
+    (Array.isArray(files) ? files : []).map(file => { try { return webUtils.getPathForFile(file); } catch { return ''; } }), mode]),
   connect: connection => ipcRenderer.invoke('squiggly:connect', connection),
   playTracks: (trackIds, startIndex) => ipcRenderer.invoke('squiggly:play-tracks', [trackIds, startIndex]),
   resumeQueue: () => ipcRenderer.invoke('squiggly:resume-queue'),
@@ -105,10 +128,15 @@ const bridge: DesktopBridge = {
     // The main process adds this argument only to the mini player's window.
     isMini: process.argv.includes('--squiggly-mini'),
     frameless: process.argv.includes('--squiggly-frameless'),
-    tintControls: ink => ipcRenderer.invoke('squiggly:window:tint-controls', ink),
+    tintControls: (ink, ground) => ipcRenderer.invoke('squiggly:window:tint-controls', ink, ground),
     followWhileHidden: on => ipcRenderer.invoke('squiggly:window:follow-while-hidden', on),
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
   exportDiagnostics: () => ipcRenderer.invoke('squiggly:export-diagnostics'),
+  saveM3u: (name, entries) => ipcRenderer.invoke('squiggly:save-m3u', [name, entries]),
+  kept,
+  retryServer: passive => ipcRenderer.invoke('squiggly:retry-server', passive === true),
+  // Only in betas with remote diagnostics built in, whose main process adds this argument.
+  ...(process.argv.includes('--squiggly-diagnostics') ? { sendDiagnostics: () => ipcRenderer.invoke('squiggly:diagnostics:send') } : {}),
 };
 contextBridge.exposeInMainWorld('squiggly', bridge);

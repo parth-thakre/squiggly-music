@@ -18,6 +18,10 @@ export function following(index: number, length: number, repeat: RepeatMode, rea
 }
 
 // The index before `index`, or -1 at the front. Under repeat all the first song's previous is the last.
+// Past this many seconds into a song, Previous starts it again rather than going back a song, in
+// every build: the browser and Android's page (player.ts), the desktop's audio host, and Android's
+// notification (Media3's own default is the same three seconds).
+export const RESTART_AFTER = 3;
 export function preceding(index: number, length: number, repeat: RepeatMode): number {
   if (index < 0 || index >= length) return -1;
   if (index > 0) return index - 1;

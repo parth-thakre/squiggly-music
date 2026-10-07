@@ -1,6 +1,33 @@
-import { expect, test, webPassword } from '../fixtures/test';
+import type { Page } from '@playwright/test';
+import { account, App, expect, test, webPassword } from '../fixtures/test';
+import { installDesktopBridge } from '../fixtures/desktop';
 
 const day = 24 * 60 * 60 * 1000;
+
+// The browser player's two audio elements never join the document, so the page keeps every one
+// it makes where the test can read them. Call before the page loads.
+async function audioElements(page: Page) {
+  await page.addInitScript(() => {
+    const made: HTMLAudioElement[] = [];
+    Object.assign(window, { squigglyTestAudio: made });
+    const Native = window.Audio;
+    window.Audio = class extends Native { constructor(src?: string) { super(src); made.push(this); } };
+  });
+  return () => page.evaluate(() => (window as unknown as { squigglyTestAudio: HTMLAudioElement[] }).squigglyTestAudio
+    .map(audio => ({ paused: audio.paused, src: audio.getAttribute('src') })));
+}
+const silent = [{ paused: true, src: null }, { paused: true, src: null }];
+
+// On the host started with its own server: Settings opens the connect screen over it.
+async function connectToAnother(app: App, address: string) {
+  await app.openSettings();
+  await app.main.getByRole('button', { name: 'Connect to another server' }).click();
+  await app.page.getByLabel('Server address').fill(address);
+  await app.page.getByLabel('Username').fill(account.username);
+  await app.page.getByLabel('Password').fill(account.password);
+  await app.page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+}
 
 test.describe('sign-in', () => {
   test('a wrong password is refused with a message and the field is cleared', async ({ app, page }) => {
@@ -18,7 +45,7 @@ test.describe('sign-in', () => {
     await page.goto('/');
     await app.signInPassword.fill(webPassword);
     await app.signInPassword.press('Enter');
-    await expect(app.heading).toHaveText('Records');
+    await expect(app.heading).toHaveText('Home');
     await expect(app.main.getByRole('button', { name: /^Test Pressing/ })).toBeVisible();
 
     await app.deck.getByRole('button', { name: 'Sign out' }).click();
@@ -45,5 +72,180 @@ test.describe('sign-in', () => {
     await app.section('Artists').click();
     await expect(app.heading).toHaveText('Artists');
     await expect(app.main.getByRole('button', { name: /^Ada Brass/ })).toBeVisible();
+  });
+});
+
+test.describe('connect', () => {
+  test('a host with no server of its own asks for one, and Disconnect in Settings goes back to asking', async ({ page, unconfigured }) => {
+    unconfigured.fake.reset();
+    const app = new App(page, unconfigured.url);
+    const audio = await audioElements(page);
+    await page.goto(unconfigured.url);
+    // The same connect screen as the desktop and Android, saying what the host keeps.
+    await expect(page.getByRole('heading', { name: 'Squiggly', level: 1 })).toBeVisible();
+    await expect(page.getByText('The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.')).toBeVisible();
+    await expect(page.getByRole('button', { name: "Try Navidrome's demo" })).toBeVisible();
+    expect((await page.request.post(`${app.url}/api/playlists`, { data: [], headers: { origin: app.url } })).status()).toBe(503);
+
+    // Typed without http://, as on the desktop: the host tries HTTPS, then asks before HTTP.
+    await page.getByLabel('Server address').fill(unconfigured.navidrome);
+    await page.getByLabel('Username').fill(account.username);
+    await page.getByLabel('Password').fill('not the password');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await expect(page.getByRole('alert')).toContainText('This server isn\'t using HTTPS. Your password would be sent unprotected.');
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('alert')).toHaveText('Could not connect. Check the address, username, and password.');
+    await page.getByLabel('Password').fill(account.password);
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    await expect(app.heading).toHaveText('Home');
+    await app.play('Test Pressing', 'Long Run');
+    const playing = await audio();
+    expect(playing).toHaveLength(2);
+    expect(playing).toContainEqual({ paused: false, src: expect.stringMatching(/^\/api\/stream\?id=/) });
+    // The connection is the page's to drop, from the deck and from Settings.
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
+    await expect(app.deck.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
+    await app.openSettings();
+    await expect(app.main.getByText(`Connected to Navidrome (http://${unconfigured.navidrome}). Disconnecting stops playback, empties the queue, and goes back to the connect screen`)).toBeVisible();
+    await app.main.getByRole('button', { name: 'Disconnect', exact: true }).click();
+
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    await expect(app.deck).toHaveCount(0);
+    expect(await audio()).toEqual(silent);
+    // The host forgot it too.
+    await page.reload();
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    expect((await page.request.post(`${app.url}/api/playlists`, { data: [], headers: { origin: app.url } })).status()).toBe(503);
+  });
+
+  test('a connection the host forgot (a restart, say) returns the page to the connect screen', async ({ page, unconfigured }) => {
+    unconfigured.fake.reset();
+    const app = new App(page, unconfigured.url);
+    await page.goto(unconfigured.url);
+    await page.getByLabel('Server address').fill(`http://${unconfigured.navidrome}`);
+    await page.getByLabel('Username').fill(account.username);
+    await page.getByLabel('Password').fill(account.password);
+    await page.getByLabel('Password').press('Enter');
+    await expect(app.heading).toHaveText('Home');
+    // The host drops it behind the page's back; the next library call finds nothing there.
+    expect((await page.request.post(`${app.url}/api/disconnect`, { data: {}, headers: { origin: app.url } })).status()).toBe(200);
+    // Home's shelves may still be asking for their songs, and any such call finds the host has
+    // forgotten the page; if none is on its way, going somewhere makes one.
+    const artists = app.section('Artists');
+    // The page may go back to the connect screen under the click; a short wait is enough to tell.
+    if (await artists.isVisible()) await artists.click({ timeout: 1500 }).catch(() => undefined);
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    await expect(app.deck).toHaveCount(0);
+  });
+});
+
+test.describe('another server on a host with its own', () => {
+  test('Settings connects the page to another server, and disconnecting goes back to the host\'s', async ({ app, page, preview }) => {
+    await app.signIn({ home: true });
+    await app.openSettings();
+    // The host's own server isn't the page's to drop.
+    await expect(app.main.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    await app.main.getByRole('button', { name: 'Connect to another server' }).click();
+    await expect(page.getByLabel('Server address')).toBeVisible();
+    await expect(page.getByText('The host keeps its own server for other browsers, and this page goes back to it when you disconnect.')).toBeVisible();
+    // Going back leaves the page on the host's server.
+    await page.getByRole('button', { name: /^Back to / }).click();
+    await expect(app.heading).toHaveText('Settings');
+
+    await connectToAnother(app, `http://${preview.navidrome}`);
+    await expect(app.heading).toHaveText('Settings');
+    await expect(app.main.getByText(`Connected to Navidrome (http://${preview.navidrome}).`)).toBeVisible();
+    await app.main.getByRole('button', { name: 'Disconnect', exact: true }).click();
+    // Back on the host's own server, not the connect screen.
+    await expect(app.main.getByRole('button', { name: 'Connect to another server' })).toBeVisible();
+    await expect(page.getByLabel('Server address')).toHaveCount(0);
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+  });
+
+  test('a stream that finds the page\'s connection forgotten empties the queue instead of playing it from the host\'s server', async ({ app, page, preview }) => {
+    const audio = await audioElements(page);
+    await app.signIn({ home: true });
+    await connectToAnother(app, `http://${preview.navidrome}`);
+    await app.play('Test Pressing', 'Long Run');
+    const streams: string[] = [];
+    page.on('request', request => { if (request.url().includes('/api/stream')) streams.push(request.url()); });
+    // The host forgets the connection behind the page's back (as after a restart, the browser
+    // still has its cookie), and the next song is the first to ask.
+    const kept = (await page.context().cookies()).filter(cookie => cookie.name === 'squiggly-connection');
+    expect(kept).toHaveLength(1);
+    expect((await page.request.post(`${app.url}/api/disconnect`, { data: {}, headers: { origin: app.url } })).status()).toBe(200);
+    await page.context().addCookies(kept);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+
+    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    await expect(app.deck.getByRole('alert')).toHaveCount(0);
+    expect(await audio()).toEqual(silent);
+    expect(streams.length).toBeGreaterThan(0);
+    expect(streams.filter(url => url.includes('format=mp3'))).toEqual([]);
+    await app.openSettings();
+    await expect(app.main.getByRole('button', { name: 'Connect to another server' })).toBeVisible();
+  });
+
+  test('a sign-out from another tab drops the page\'s own connection and its queue at once', async ({ app, page, preview }) => {
+    const audio = await audioElements(page);
+    await app.signIn({ home: true });
+    await connectToAnother(app, `http://${preview.navidrome}`);
+    await app.play('Test Pressing', 'Long Run');
+    // Another tab signs out: the host forgets the session and this browser's connection.
+    expect((await page.request.delete(`${app.url}/api/session`, { headers: { origin: app.url } })).status()).toBe(200);
+    // The next library call finds the session gone.
+    await app.section('Artists').click();
+    await expect(app.signInPassword).toBeVisible();
+    expect(await audio()).toEqual(silent);
+
+    // Whoever signs in next is on the host's own server, with nothing from the connection before.
+    await app.signInPassword.fill(webPassword);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
+    expect(await audio()).toEqual(silent);
+  });
+});
+
+// The desktop and Android connect screen, through a stand-in for the preload bridge (fixtures/desktop.ts).
+test.describe('connecting to a server without HTTPS', () => {
+  const calls = (page: Page) => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls);
+  const typeSignIn = async (page: Page) => {
+    await page.getByLabel('Server address').fill('music.example.com');
+    await page.getByLabel('Username').fill('ana');
+    await page.getByLabel('Password').fill('secret');
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  };
+
+  test('asks before plain HTTP, and connects there only on Continue', async ({ page }) => {
+    await installDesktopBridge(page, { connected: false, connect: {
+      'music.example.com': { ok: true, value: { type: 'plain-http', url: 'http://music.example.com' } },
+      'http://music.example.com': { ok: true, value: { type: 'connected' } },
+    } });
+    await page.goto('/');
+    await typeSignIn(page);
+    await expect(page.getByRole('alert')).toContainText('This server isn\'t using HTTPS. Your password would be sent unprotected.');
+    // Cancel sends nothing more.
+    await page.getByRole('button', { name: 'Cancel' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(await calls(page)).toEqual(['connect:music.example.com:ana']);
+
+    await page.getByRole('button', { name: 'Connect', exact: true }).click();
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+    expect(await calls(page)).toEqual(['connect:music.example.com:ana', 'connect:music.example.com:ana', 'connect:http://music.example.com:ana']);
+  });
+
+  test('an untrusted certificate is an error, with no way on over plain HTTP', async ({ page }) => {
+    const refused = 'This server\'s HTTPS certificate isn\'t trusted (it may be self-signed, expired, or for another address), so Squiggly won\'t connect to it. Check the address, or fix the certificate on the server.';
+    await installDesktopBridge(page, { connected: false, connect: { 'music.example.com': { ok: false, error: refused } } });
+    await page.goto('/');
+    await typeSignIn(page);
+    await expect(page.getByRole('alert')).toHaveText(refused);
+    await expect(page.getByRole('button', { name: 'Continue' })).toHaveCount(0);
   });
 });

@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect, Either, Schema } from 'effect';
 import { emptyPlayer, type PlayerSnapshot, type Track } from '../packages/core/contracts';
+import { OpenPathsSchema } from '../packages/core/desktopValidation';
+import { checkAudioPaths } from '../apps/desktop/main/localFiles';
+import { KeepRequestSchema, KeptIdSchema } from '../packages/core/desktopValidation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
@@ -16,6 +19,7 @@ import { JsonStore } from '../apps/desktop/main/store';
 import { Account, type Encryption } from '../apps/desktop/main/account';
 import { finishThreshold, PlayTracker } from '../apps/desktop/main/plays';
 import { QueueSync, savedState, type SavedState } from '../apps/desktop/main/queueSync';
+import { SavedQueueCopy } from '../apps/desktop/main/savedQueue';
 
 let directory: string | undefined;
 afterEach(async () => {
@@ -39,6 +43,9 @@ describe('desktop request schemas', () => {
     expect(() => add([[], 'end'])).toThrow();
     expect(() => add([['a'], 'first'])).toThrow();
     expect(() => add([Array(1001).fill('a'), 'end'])).toThrow();
+    // A drop onto the queue inserts before an entry.
+    expect(add([['a'], 3])).toEqual([['a'], 3]);
+    for (const bad of [-1, 1000, 1.5, '3']) expect(() => add([['a'], bad])).toThrow();
     const move = Schema.decodeUnknownSync(QueueMoveSchema);
     expect(move([0, 999])).toEqual([0, 999]);
     for (const bad of [[-1, 0], [0, 1000], [0.5, 1], ['1', 2]]) expect(() => move(bad)).toThrow();
@@ -58,6 +65,31 @@ describe('desktop request schemas', () => {
     expect(Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.saveQueue)([Array(1001).fill('a'), 0, 0]))).toBe(false);
   });
 
+  it('takes dropped files as paths and a play or queue choice, up to a full queue', () => {
+    const open = Schema.decodeUnknownSync(OpenPathsSchema);
+    expect(open([['/music/a.flac'], 'play'])).toEqual([['/music/a.flac'], 'play']);
+    expect(open([['/music/a.flac', '/music/b.mp3'], 'queue'])).toEqual([['/music/a.flac', '/music/b.mp3'], 'queue']);
+    // '' is a dropped File with no path on disk, sent so the main process counts it as left out.
+    expect(open([['', '/music/a.flac'], 'queue'])).toEqual([['', '/music/a.flac'], 'queue']);
+    for (const bad of [[[], 'play'], [['/a.flac'], 'next'], [[1], 'play'], [['/'.repeat(4097)], 'play'],
+      [Array(QUEUE_LIMIT + 1).fill('/a.flac'), 'play'], ['/a.flac', 'play'], [['/a.flac']]]) {
+      expect(() => open(bad)).toThrow();
+    }
+  });
+
+  it('opens only dropped regular files with an audio extension, as Open files allows, and never folders', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-drop-'));
+    const song = join(directory, 'Song.FLAC'), other = join(directory, 'b.mp3');
+    await writeFile(song, 'x'); await writeFile(other, 'x');
+    await writeFile(join(directory, 'notes.txt'), 'x');
+    const folder = await mkdtemp(join(directory, 'Album.flac-'));
+    const disguised = join(directory, 'folder.flac');
+    await mkdir(disguised);
+    const checked = await checkAudioPaths([song, join(directory, 'notes.txt'), folder, disguised, 'relative/c.flac', join(directory, 'missing.flac'), `${song}\0.flac`, '', other]);
+    expect(checked).toEqual({ files: [song, other], skipped: 7 });
+    expect(await checkAudioPaths([folder])).toEqual({ files: [], skipped: 1 });
+  });
+
   it('accepts song, album, and artist radio seeds only', () => {
     const seed = Schema.decodeUnknownSync(RadioSeedSchema);
     expect(seed({ kind: 'song', trackId: 's1', label: 'Song' })).toEqual({ kind: 'song', trackId: 's1', label: 'Song' });
@@ -69,26 +101,56 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: false }).miniOnTop).toBe(false);
+    // Diagnostics (betas that have them) start on; turned off, they stay off.
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).diagnostics).toBe(true);
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ diagnostics: false }).diagnostics).toBe(false);
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ diagnostics: 'off' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ closeToTray: 'yes' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: 'no' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: '' })).toThrow();
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: 'alsa/default\u0000' })).toThrow();
   });
 
   it('accepts only known, defined setting changes', () => {
     const patch = (value: unknown) => Schema.decodeUnknownSync(SettingsPatchSchema)(value, { onExcessProperty: 'error' });
     expect(patch({ exclusiveOutput: true })).toEqual({ exclusiveOutput: true });
     expect(patch({ miniOnTop: false })).toEqual({ miniOnTop: false });
+    expect(patch({ diagnostics: false })).toEqual({ diagnostics: false });
+    expect(() => patch({ diagnostics: 'no' })).toThrow();
     expect(() => patch({ miniOnTop: undefined })).toThrow();
     expect(patch({})).toEqual({});
     expect(() => patch({ lyricsLookup: undefined })).toThrow();
     expect(() => patch({ lyricsLookup: 1 })).toThrow();
     expect(() => patch({ password: 'x' })).toThrow();
     expect(() => patch(null)).toThrow();
+  });
+});
+
+describe('keeping songs: settings and requests', () => {
+  it('bounds the room for kept songs, 64 MB to 1 TB, 4,096 MB unless set', () => {
+    const patch = (value: unknown) => Schema.decodeUnknownSync(SettingsPatchSchema)(value, { onExcessProperty: 'error' });
+    expect(patch({ keptLimitMb: 4096 })).toEqual({ keptLimitMb: 4096 });
+    for (const bad of [10, 2e6, 100.5, '4096', null]) expect(() => patch({ keptLimitMb: bad })).toThrow();
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({}).keptLimitMb).toBe(4096);
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ keptLimitMb: 64 }).keptLimitMb).toBe(64);
+    expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ keptLimitMb: 63 })).toThrow();
+  });
+  it('takes a keep request by track id, bounded, with duplicates dropped in order', () => {
+    const decode = (value: unknown) => Schema.decodeUnknownSync(KeepRequestSchema)(value, { onExcessProperty: 'error' });
+    const request = { kind: 'album', id: 'al-1', name: 'Test Pressing', artist: 'Ada Brass', coverArt: 'al-1', trackIds: ['a', 'b', 'a', 'c'] };
+    expect(decode(request)).toEqual({ ...request, trackIds: ['a', 'b', 'c'] });
+    expect(decode({ ...request, kind: 'mix', artist: null, coverArt: null, trackIds: Array.from({ length: 5000 }, (_, i) => `t${i}`) }).trackIds).toHaveLength(5000);
+    for (const bad of [{ trackIds: [] }, { trackIds: Array.from({ length: 5001 }, (_, i) => `t${i}`) }, { kind: 'artist' }, { name: '' }, { name: 'x'.repeat(257) },
+      { coverArt: '' }, { id: 'x'.repeat(257) }, { trackIds: [''] }, { tracks: [] }, { path: '/etc/passwd' }]) {
+      expect(() => decode({ ...request, ...bad })).toThrow();
+    }
+    expect(Schema.decodeUnknownSync(KeptIdSchema)(['playlist', 'pl-1'])).toEqual(['playlist', 'pl-1']);
+    expect(() => Schema.decodeUnknownSync(KeptIdSchema)(['song', 'x'])).toThrow();
   });
 });
 
@@ -104,6 +166,19 @@ describe('validated JSON files', () => {
     expect(await load()).toEqual(defaultSettings());
     await writeFile(path, JSON.stringify({ lyricsLookup: true, padding: 'x'.repeat(70_000) }));
     expect(await load()).toEqual(defaultSettings());
+  });
+
+  it('takes a larger bound and compact output when asked, and keeps its defaults otherwise', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-store-'));
+    const path = join(directory, 'plays.json');
+    const Big = Schema.Struct({ padding: Schema.String });
+    await writeFile(path, JSON.stringify({ padding: 'x'.repeat(70_000) }));
+    expect((await new JsonStore(path, Big, { padding: '' }).load()).padding).toBe('');
+    expect((await new JsonStore(path, Big, { padding: '' }, { maxBytes: 256 * 1024 }).load()).padding).toHaveLength(70_000);
+    await new JsonStore(path, Big, { padding: '' }, { compact: true }).save({ padding: 'y' });
+    expect(await readFile(path, 'utf8')).toBe('{"padding":"y"}\n');
+    await new JsonStore(path, Big, { padding: '' }).save({ padding: 'z' });
+    expect(await readFile(path, 'utf8')).toBe('{\n  "padding": "z"\n}\n');
   });
 
   it('writes atomically with private permissions and reads back what it wrote', async () => {
@@ -152,12 +227,27 @@ describe('play reporting', () => {
     expect(play(tracker, 50, 101, {}, 101_000)).toEqual([]);
   });
 
-  it('uses four minutes for long songs and never finishes songs of 30 seconds or less', () => {
-    expect(finishThreshold(1200)).toBe(240);
+  it('needs half of every song, however long, and never finishes songs of 30 seconds or less', () => {
+    expect(finishThreshold(1200)).toBe(600);
     expect(finishThreshold(31)).toBe(15.5);
     expect(finishThreshold(30)).toBeNull();
     const tracker = new PlayTracker();
     expect(play(tracker, 30, 0, { duration: 30 }).map(event => event.event)).toEqual(['started']);
+  });
+
+  it('finishes at the share of the song chosen in Settings', () => {
+    expect(finishThreshold(200, 25)).toBe(50);
+    expect(finishThreshold(200, 90)).toBe(180);
+    expect(finishThreshold(30, 90)).toBeNull();
+    const tracker = new PlayTracker();
+    const finishedBy = (seconds: number) => {
+      const events = [];
+      for (let tick = 0; tick <= seconds * 4; tick++) events.push(...tracker.update(snapshot({ playing: true, position: tick / 4 }), tick * 250, 75));
+      return events.map(event => event.event);
+    };
+    expect(finishedBy(149)).toEqual(['started']);
+    tracker.reset();
+    expect(finishedBy(150)).toEqual(['started', 'finished']);
   });
 
   it('does not count seeks or paused time', () => {
@@ -168,6 +258,14 @@ describe('play reporting', () => {
     // Paused snapshots advance neither time nor events.
     for (let tick = 0; tick < 400; tick++) expect(tracker.update(snapshot({ playing: false, position: 170 }), 31_000 + tick * 250)).toEqual([]);
     expect(play(tracker, 71, 170, {}, 131_000).map(event => event.event)).toEqual(['finished']);
+  });
+
+  it('never reports an internet radio station, however long it plays', () => {
+    const tracker = new PlayTracker();
+    const station = track('st1', 'station', null);
+    expect(play(tracker, 600, 0, { queue: [station], duration: 0, playId: 'p1' })).toEqual([]);
+    // After it, a song is reported as usual.
+    expect(play(tracker, 1, 0, { queue: [station, track('a')], currentIndex: 1, playId: 'p2' }, 600_250)).toEqual([{ trackId: 'a', event: 'started' }]);
   });
 
   it('never reports local files and waits for playback to start', () => {
@@ -219,6 +317,20 @@ describe('queue sync', () => {
     expect(savedState(snapshot({ queue: [track('a'), track('l', 'local')] }))).toBeNull();
     expect(savedState(snapshot({ queue: [] }))).toBeNull();
     expect(savedState(snapshot({ currentIndex: -1, position: 50 }))).toEqual({ trackIds: ['a', 'b'], currentIndex: 0, positionSeconds: 0 });
+  });
+
+  it('never saves a queue holding an internet radio station', async () => {
+    const station = track('st1', 'station', null);
+    expect(savedState(snapshot({ queue: [track('a'), station] }))).toBeNull();
+    expect(savedState(snapshot({ queue: [station], duration: 0 }))).toBeNull();
+    vi.useFakeTimers();
+    const { queue, saves } = sync();
+    queue.observe(snapshot({ playing: true, queue: [station, track('a')] }), 1, true);
+    queue.observe(snapshot({ playing: true, queue: [station, track('a')], currentIndex: 1 }), 1, true);
+    queue.observe(snapshot({ playing: false, queue: [station, track('a')], currentIndex: 1 }), 1, true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await queue.flush();
+    expect(saves).toEqual([]);
   });
 
   it('debounces track changes, pauses, and queue edits into one save', async () => {
@@ -376,6 +488,82 @@ describe('queue sync', () => {
   });
 });
 
+describe('queue sync while the server is away', () => {
+  it('saves nothing while held, then once if the queue changed meanwhile', async () => {
+    vi.useFakeTimers();
+    const saves: SavedState[] = [];
+    const queue = new QueueSync(async state => { saves.push(state); });
+    queue.observe(snapshot({ playing: true }), 1, true);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, 'held');
+    queue.observe(snapshot({ playing: false, currentIndex: 1 }), 1, 'held');
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(saves).toEqual([]);
+    queue.observe(snapshot({ playing: false, currentIndex: 1 }), 1, true);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(saves).toEqual([{ trackIds: ['a', 'b'], currentIndex: 1, positionSeconds: 0 }]);
+  });
+  it('saves nothing after a hold in which nothing changed', async () => {
+    vi.useFakeTimers();
+    const saves: SavedState[] = [];
+    const queue = new QueueSync(async state => { saves.push(state); });
+    queue.observe(snapshot({ playing: false }), 1, true);
+    queue.observe(snapshot({ playing: false }), 1, 'held');
+    queue.observe(snapshot({ playing: false }), 1, true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(saves).toEqual([]);
+  });
+  it('holds a save already scheduled when the hold begins, and makes it after', async () => {
+    vi.useFakeTimers();
+    const saves: SavedState[] = [];
+    const queue = new QueueSync(async state => { saves.push(state); });
+    queue.observe(snapshot({ playing: true }), 1, true);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, true);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, 'held');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(saves).toEqual([]);
+    queue.observe(snapshot({ playing: true, currentIndex: 1 }), 1, true);
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(saves).toHaveLength(1);
+  });
+});
+
+describe('the saved queue read at launch', () => {
+  const saved = (positionSeconds: number) => ({ tracks: [{ id: 's1', title: 'One', artist: 'A', album: 'R', duration: 200, source: 'navidrome' as const,
+    sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null }], currentIndex: 0, positionSeconds, changed: null, changedBy: null });
+
+  it('serves Resume once, for the same session, while under 30 seconds old', () => {
+    let now = 0;
+    const copies = new SavedQueueCopy<string>(30_000, () => now);
+    copies.reading('session')(saved(17));
+    now = 29_000;
+    expect(copies.take('other session')).toBeNull();
+    copies.reading('session')(saved(17));
+    expect(copies.take('session')?.positionSeconds).toBe(17);
+    // Once: a second Resume asks the server.
+    expect(copies.take('session')).toBeNull();
+    copies.reading('session')(saved(17));
+    now += 30_000;
+    expect(copies.take('session')).toBeNull();
+  });
+
+  it('forgets the copy when the queue is saved, even from a read still on its way', () => {
+    let now = 0;
+    const copies = new SavedQueueCopy<string>(30_000, () => now);
+    copies.reading('session')(saved(17));
+    copies.clear();
+    expect(copies.take('session')).toBeNull();
+    // Asked before the save, answered after: the answer may describe the queue before it.
+    const keep = copies.reading('session');
+    copies.clear();
+    keep(saved(17));
+    expect(copies.take('session')).toBeNull();
+    // A newer answer of nothing saved replaces an older copy.
+    copies.reading('session')(saved(17));
+    copies.reading('session')(null);
+    expect(copies.take('session')).toBeNull();
+  });
+});
+
 describe('MPRIS media controls', () => {
   async function mpris() {
     class FakePlayer extends EventEmitter {
@@ -412,6 +600,15 @@ describe('MPRIS media controls', () => {
     expect(controls.raise).toHaveBeenCalled();
     service.emit('volume', 1.7);
     expect(controls.volume).toHaveBeenCalledWith(100);
+  });
+
+  it('names its desktop entry after the Flatpak when it runs in one', async () => {
+    try {
+      vi.stubEnv('FLATPAK_ID', '');
+      expect((await mpris()).service.options).toMatchObject({ name: 'squiggly', desktopEntry: 'squiggly-music' });
+      vi.resetModules(); vi.stubEnv('FLATPAK_ID', 'dev.squiggly.music');
+      expect((await mpris()).service.options).toMatchObject({ desktopEntry: 'dev.squiggly.music' });
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('maps Seek and SetPosition to the current track only, and signals jumps', async () => {
@@ -700,6 +897,21 @@ describe('saved sign-in', () => {
     const after = new Account(path, encryption(), 'linux');
     await after.load();
     expect(after.saved).toBeNull();
+  });
+
+  it('forgets a first sign-in that is still being written', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-account-'));
+    const path = join(directory, 'account.json');
+    const account = new Account(path, encryption(), 'linux');
+    const saving = account.remember(connection);
+    // The store's value changes only once the write and rename finish, so nothing looks saved yet.
+    expect(account.saved).toBeNull();
+    await Promise.all([saving, account.forget()]);
+    expect(account.saved).toBeNull();
+    const later = new Account(path, encryption(), 'linux');
+    await later.load();
+    expect(later.saved).toBeNull();
+    expect(later.connection()).toBeNull();
   });
 
   it('saves nothing without real encryption, and drops a password that no longer decrypts', async () => {

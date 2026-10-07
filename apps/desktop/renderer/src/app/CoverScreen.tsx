@@ -9,7 +9,7 @@ import type { Palette } from './palette';
 import { current, currentEntry, player, usePlayer } from './player';
 import { nav } from './route';
 import { useSwipeSongs } from './swipe';
-import { Position, TransportButtons } from './transport';
+import { PlayButton, Position, TransportButtons, useByline } from './transport';
 import { Cover, Glyph, plural, splitTitle, time, Wave } from './ui';
 
 // The Galaxy Z Flip's cover screen (Flex Window), in place of the phone layout: what's playing,
@@ -44,12 +44,13 @@ function Playing({ track, palette, show }: { track: Track; palette: Palette; sho
   const stage = useRef<HTMLDivElement>(null);
   useSwipeSongs(stage, entry ?? track.id);
   const name = splitTitle(track.title, track.album).main;
+  const byline = useByline(track);
   return <>
     <div className="flip-stage" ref={stage}>
       <Cover key={track.id} id={track.coverArt} name={track.album} size={400} className="flip-sleeve" />
       <div className="flip-text">
         <h1 className="flip-title" title={name}>{name}</h1>
-        <p className="flip-artist" title={track.artist}>{track.artist}</p>
+        <p className="flip-artist" title={byline}>{byline}</p>
         {error && <p className="flip-error" role="alert">{error} <button type="button" className="link" onClick={player.dismissError}>Dismiss</button></p>}
       </div>
       <div className="flip-panels">
@@ -68,7 +69,7 @@ function Shelf({ back = false }: { back?: boolean }) {
   return <div className={`flip-shelf${back ? ' flip-back-shelf' : ''}`}>
     {back ? <>
       <button type="button" className="flip-back" onClick={() => nav.closeOverlay()}><ChevronLeft aria-hidden="true" />Back</button>
-      <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={player.toggle}><Glyph kind={playing ? 'pause' : 'play'} /></button>
+      <PlayButton playing={playing} />
     </> : <TransportButtons playing={playing} />}
   </div>;
 }
@@ -106,7 +107,7 @@ function QueuePanel() {
 
 // Nothing playing: pick up the saved queue, play a record played lately, or shuffle everything.
 function Idle() {
-  const saved = usePlayer(s => s.resumable);
+  const saved = usePlayer(s => s.reach.away ? null : s.resumable);
   const starting = usePlayer(s => s.radioStarting);
   const error = usePlayer(s => s.error);
   const [busy, setBusy] = useState(false);
@@ -138,10 +139,12 @@ function Idle() {
 }
 
 // Records played lately, or the newest on a server with no history yet. A tap plays one.
+// Away, the server isn't asked: the shelf stays empty.
 function Lately() {
-  const recent = useResource<Album[]>('albums:recent:0:8', () => api.albums('recent', 0, 8));
+  const away = usePlayer(s => s.reach.away);
+  const recent = useResource<Album[]>(away ? null : 'albums:recent:0:8', () => api.albums('recent', 0, 8));
   const empty = recent?.ok && !recent.value.length;
-  const newest = useResource<Album[]>(empty ? 'albums:newest:0:8' : null, () => api.albums('newest', 0, 8));
+  const newest = useResource<Album[]>(empty && !away ? 'albums:newest:0:8' : null, () => api.albums('newest', 0, 8));
   const albums: Result<Album[]> | undefined = empty ? newest : recent;
   if (!albums?.ok || !albums.value.length) return null;
   return <ul className="flip-lately" aria-label={empty ? 'Newest records' : 'Played lately'}>

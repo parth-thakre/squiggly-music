@@ -2,6 +2,7 @@ import { Repeat, Repeat1, Shuffle, Star } from 'lucide-react';
 import { useLayoutEffect, type CSSProperties } from 'react';
 import { nextRepeat } from '../../../../../packages/core/playOrder';
 import type { Track } from '../../../../../packages/core/contracts';
+import { isStation } from '../../../../../packages/core/stations';
 import type { Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
 import { Squiggle } from './Squiggle';
@@ -36,9 +37,21 @@ export function useRoomPalette(coverArt: string | null | undefined): Palette {
 export function TransportButtons({ playing }: { playing: boolean }) {
   return <>
     <button type="button" className="glyph" aria-label="Previous" onClick={player.previous}><Glyph kind="prev" /></button>
-    <button type="button" className="play" aria-label={playing ? 'Pause' : 'Play'} onClick={player.toggle}><Glyph kind={playing ? 'pause' : 'play'} /></button>
+    <PlayButton playing={playing} />
     <button type="button" className="glyph" aria-label="Next" onClick={player.next}><Glyph kind="next" /></button>
   </>;
+}
+
+// Play or pause. While a song is starting (PlayerState.starting) it says so, with a ring turning
+// around a dimmed play mark, and a press does nothing: pause isn't offered before anything plays.
+// It stays focusable, so focus doesn't jump when the song starts.
+export function PlayButton({ playing }: { playing: boolean }) {
+  const starting = usePlayer(s => s.starting);
+  return <button type="button" className={`play${starting ? ' starting' : ''}`} aria-label={starting ? 'Starting' : playing ? 'Pause' : 'Play'}
+    aria-disabled={starting || undefined} title={starting ? 'Starting…' : undefined} onClick={player.toggle}>
+    <Glyph kind={playing && !starting ? 'pause' : 'play'} />
+    {starting && <span className="starting-ring" aria-hidden="true" />}
+  </button>;
 }
 
 // Shuffle and repeat, as icon toggles like the deck's others. Repeat goes off, all, one: pressed
@@ -61,8 +74,18 @@ export function Position({ track, palette }: { track: Track; palette: Palette })
   const duration = usePlayer(s => s.duration);
   const playing = usePlayer(s => s.playing);
   const entry = usePlayer(currentEntry);
-  return <Squiggle label={`Position in ${track.title}`} identity={entry ?? track.id} position={position} duration={duration || (track.duration ?? 0)} playing={playing}
-    color={palette.accent} rest={alpha(palette.ink, .22)} onSeek={player.seek} />;
+  // A station is live: the squiggle says so, and there is nothing to seek.
+  const live = isStation(track);
+  return <Squiggle label={live ? `${track.title}, live. There is no position to seek to.` : `Position in ${track.title}`} identity={entry ?? track.id}
+    position={position} duration={duration || (track.duration ?? 0)} playing={playing}
+    color={palette.accent} rest={alpha(palette.ink, .22)} onSeek={player.seek} live={live} />;
+}
+
+// The line under the title: the artist, or for a station, what it says is on. When it says nothing
+// (and the browser can't hear it say anything), it's just internet radio.
+export function useByline(track: Track | undefined) {
+  const announced = usePlayer(s => s.stationTitle);
+  return !track ? '' : isStation(track) ? announced ?? 'Internet radio' : track.artist;
 }
 
 // The playing song's star, beside the deck's Lyrics, Queue, and Mini player toggles. It shares

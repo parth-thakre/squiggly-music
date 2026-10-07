@@ -19,11 +19,11 @@ test.describe('menus', () => {
     await page.keyboard.press('ArrowUp');
     await expect(item('Play next')).toBeFocused();
     await page.keyboard.press('End');
-    await expect(item('Song details')).toBeFocused();
+    await expect(item('Share…')).toBeFocused();
     await page.keyboard.press('ArrowDown');
     await expect(item('Play')).toBeFocused();
     await page.keyboard.press('ArrowUp');
-    await expect(item('Song details')).toBeFocused();
+    await expect(item('Share…')).toBeFocused();
 
     await page.keyboard.press('Escape');
     await expect(app.menu).toBeHidden();
@@ -36,6 +36,10 @@ test.describe('menus', () => {
     await app.openMenuOn(invoker);
     await expect(app.menu.getByRole('menuitem', { name: 'Play all' })).toBeFocused();
     await page.keyboard.press('End');
+    await expect(app.menu.getByRole('menuitem', { name: 'Share…' })).toBeFocused();
+    await page.keyboard.press('ArrowUp');
+    await expect(app.menu.getByRole('menuitem', { name: 'Export as M3U' })).toBeFocused();
+    await page.keyboard.press('ArrowUp');
     await expect(app.menu.getByRole('menuitem', { name: 'Delete playlist' })).toBeFocused();
     await page.keyboard.press('ArrowUp');
     const rename = app.menu.getByRole('menuitem', { name: 'Rename', exact: true });
@@ -154,10 +158,10 @@ test.describe('ratings', () => {
     await app.openMenuOn(row);
     await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
     await expect(app.menu).toHaveAccessibleName('Rate');
-    await expect(app.menu.getByRole('menuitem', { name: '1 star', exact: true })).toBeVisible();
+    await expect(app.menu.getByRole('menuitemradio', { name: '1 star', exact: true })).toBeVisible();
     // Nothing to clear yet.
     await expect(app.menu.getByRole('menuitem', { name: 'Clear rating' })).toHaveCount(0);
-    await app.menu.getByRole('menuitem', { name: '4 stars', exact: true }).click();
+    await app.menu.getByRole('menuitemradio', { name: '4 stars', exact: true }).click();
     await expect(app.menu).toBeHidden();
     await expect.poll(() => fake.ratings.get('tr-1-5')).toBe(4);
     expect(fake.callsTo('rate').map(call => call.args)).toEqual([['tr-1-5', 4]]);
@@ -179,9 +183,15 @@ test.describe('ratings', () => {
     await app.openAlbum('Quiet Harbor');
     await app.main.getByRole('button', { name: 'More', exact: true }).click();
     await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
-    await app.menu.getByRole('menuitem', { name: '3 stars', exact: true }).click();
-    await expect(app.main.getByRole('img', { name: 'Rated 3 of 5' })).toBeVisible();
+    await app.menu.getByRole('menuitemradio', { name: '3 stars', exact: true }).click();
+    await expect(app.main.getByRole('radiogroup', { name: 'Rating for Quiet Harbor' }).getByRole('radio', { name: '3 stars' })).toBeChecked();
     await expect.poll(() => fake.ratings.get('al-2')).toBe(3);
+    // The menu ticks the rating it has.
+    await app.main.getByRole('button', { name: 'More', exact: true }).click();
+    await app.menu.getByRole('menuitem', { name: 'Rate', exact: true }).click();
+    await expect(app.menu.getByRole('menuitemradio', { name: '3 stars' })).toHaveAttribute('aria-checked', 'true');
+    await expect(app.menu.getByRole('menuitemradio', { name: '4 stars' })).toHaveAttribute('aria-checked', 'false');
+    await app.page.keyboard.press('Escape'); await app.page.keyboard.press('Escape');
 
     await app.section('Records').click();
     await app.main.getByRole('group', { name: 'Sort records' }).getByRole('button', { name: 'Top rated' }).click();
@@ -199,6 +209,67 @@ test.describe('ratings', () => {
     await app.page.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
     await expect(records).toHaveCount(0);
+  });
+
+  test('the stars on a record set its rating, and clicking the current one clears it', async ({ app, fake }) => {
+    await app.openAlbum('Quiet Harbor');
+    const stars = app.main.getByRole('radiogroup', { name: 'Rating for Quiet Harbor' });
+    await expect(stars.getByRole('radio', { checked: true })).toHaveCount(0);
+    await stars.getByRole('radio', { name: '4 stars' }).click();
+    await expect(stars.getByRole('radio', { name: '4 stars' })).toBeChecked();
+    await expect.poll(() => fake.ratings.get('al-2')).toBe(4);
+    await stars.getByRole('radio', { name: '4 stars' }).click();
+    await expect.poll(() => fake.ratings.has('al-2')).toBe(false);
+    await expect(stars.getByRole('radio', { checked: true })).toHaveCount(0);
+    expect(fake.callsTo('rate').map(call => call.args)).toEqual([['al-2', 4], ['al-2', 0]]);
+  });
+
+  test('the stars on an artist work from the keyboard', async ({ app, page, fake }) => {
+    await app.openAlbum('Quiet Harbor');
+    await app.main.locator('.byline').getByRole('button', { name: 'Bell Tower', exact: true }).click();
+    await expect(app.heading).toHaveText('Bell Tower');
+    const stars = app.main.getByRole('radiogroup', { name: 'Rating for Bell Tower' });
+    await stars.getByRole('radio', { name: '1 star' }).focus();
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await expect(stars.getByRole('radio', { name: '2 stars' })).toBeChecked();
+    await expect(stars.getByRole('radio', { name: '2 stars' })).toBeFocused();
+    await page.keyboard.press('End');
+    await expect.poll(() => fake.ratings.get('ar-2')).toBe(5);
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => fake.ratings.has('ar-2')).toBe(false);
+    await expect(stars.getByRole('radio', { name: '1 star' })).toBeFocused();
+  });
+
+  test('a song is rated from its row, and the deck rates the playing song', async ({ app, page, fake }) => {
+    await app.play('Quiet Harbor', 'Opening 2');
+    const row = app.row('Late Call 2').getByRole('radiogroup', { name: 'Rating for Late Call 2' });
+    await row.getByRole('radio', { name: '3 stars' }).click();
+    await expect.poll(() => fake.ratings.get('tr-2-4')).toBe(3);
+    await expect(row.getByRole('radio', { name: '3 stars' })).toBeChecked();
+
+    const deck = page.getByRole('complementary', { name: 'Now playing' }).getByRole('radiogroup', { name: 'Rating for Opening 2' });
+    await deck.getByRole('radio', { name: '5 stars' }).click();
+    await expect.poll(() => fake.ratings.get('tr-2-1')).toBe(5);
+    // The playing song's row shows what the deck set.
+    await expect(app.row('Opening 2').getByRole('radio', { name: '5 stars' })).toBeChecked();
+  });
+
+  test('Delete on the stars in a queue row clears the rating and leaves the queue alone', async ({ app, page, fake }) => {
+    await app.play('Quiet Harbor', 'Opening 2');
+    await page.getByRole('button', { name: 'Queue', exact: true }).click();
+    await expect(app.heading).toHaveText('Queue');
+    const songs = app.main.getByRole('list').first().locator('li[data-key]');
+    await expect(songs).toHaveCount(5);
+    const stars = app.row('Middle Distance 2').getByRole('radiogroup', { name: 'Rating for Middle Distance 2' });
+    await stars.getByRole('radio', { name: '4 stars' }).click();
+    await expect.poll(() => fake.ratings.get('tr-2-3')).toBe(4);
+    // Selected, so the list itself would take Delete as "remove".
+    await app.row('Middle Distance 2').getByRole('button', { name: 'Play Middle Distance 2', exact: true }).click({ modifiers: ['ControlOrMeta'] });
+    await stars.getByRole('radio', { name: '4 stars' }).focus();
+    await page.keyboard.press('Delete');
+    await expect.poll(() => fake.ratings.has('tr-2-3')).toBe(false);
+    await expect(songs).toHaveCount(5);
   });
 
   test('a record cleared from its menu leaves Top rated while the list is showing', async ({ app, fake }) => {

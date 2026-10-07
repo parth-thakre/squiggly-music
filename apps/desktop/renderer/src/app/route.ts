@@ -8,11 +8,18 @@ export type Route =
   | { view: 'records'; sort?: AlbumListType; decade?: number } | { view: 'artists' } | { view: 'tracks'; sort?: TrackSort } | { view: 'playlists' } | { view: 'favorites' }
   | { view: 'album'; id: string } | { view: 'artist'; id: string }
   | { view: 'playlist'; id: string } | { view: 'mix'; id: string }
-  | { view: 'search'; query: string } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' }
+  // Search's tab (All when left out) is part of the place too, replaced in place like a sort.
+  | { view: 'search'; query: string; type?: 'artists' | 'albums' | 'songs' } | { view: 'queue' } | { view: 'lyrics' } | { view: 'settings' } | { view: 'diagnostics' }
   // A page an extension added; id is the page's namespaced id.
   | { view: 'extension'; id: string }
   // Every genre, and one genre's songs.
-  | { view: 'genres' } | { view: 'genre'; name: string };
+  | { view: 'genres' } | { view: 'genre'; name: string }
+  // Where the app opens: what's lately played, new, and playing elsewhere.
+  | { view: 'home' }
+  // Every automatic playlist, grouped.
+  | { view: 'mixes' }
+  // Records, playlists, and mixes kept on this device.
+  | { view: 'kept' };
 
 // Navigation rides on the browser's own history, so a phone's back gesture (and Forward)
 // steps through the app instead of leaving it. Each history entry carries its route, a
@@ -20,7 +27,7 @@ export type Route =
 // however long the session runs; the app itself only remembers the current place and the
 // scroll offsets of the most recent places.
 interface Place { id: string; depth: number; route: Route; overlay?: boolean }
-const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre']);
+const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre', 'home', 'mixes', 'kept']);
 function placeOf(state: unknown): Place | null {
   const s = state as { squiggly?: unknown; depth?: unknown; route?: { view?: unknown }; overlay?: unknown } | null;
   if (!s || typeof s.squiggly !== 'string' || typeof s.depth !== 'number' || !views.has(String(s.route?.view))) return null;
@@ -41,16 +48,25 @@ const remember = (id: string, offset: number) => {
   while (scrolls.size > SCROLLS) scrolls.delete(scrolls.keys().next().value!);
 };
 
-// A reload keeps the browser's history, so pick up the place it was showing.
-let now: Place = placeOf(history.state) ?? { id: nextId(), depth: 0, route: { view: 'records' } };
+// A reload keeps the browser's history, so pick up the place it was showing. A fresh start opens Home.
+let now: Place = placeOf(history.state) ?? { id: nextId(), depth: 0, route: { view: 'home' } };
 now = { ...now, overlay: false };
 history.replaceState(stateOf(now), '');
 
+// `now` is where the history is, changed the moment a move is decided, so a Back that lands
+// while the last move is still animating counts from the right place. `shown` is what the
+// page draws; it catches up when the move's transition renders.
+let shown: Place = now;
 const listeners = new Set<() => void>();
 let scroller: HTMLElement | null = null;
 // A full-screen layer (the phone's now-playing sheet) that the back gesture closes first.
 let overlay: (() => void) | null = null;
-const emit = () => listeners.forEach(listener => listener());
+// A Back to close it is on its way.
+let leaving = false;
+const emit = () => { shown = now; listeners.forEach(listener => listener()); };
+// The scroller holds the offset of the page on screen, which during a move is `shown`, not
+// `now`; saving it under `now` would give a place the offset of the page still in view.
+const keepScroll = () => { if (!shown.overlay) remember(shown.id, scroller?.scrollTop ?? 0); };
 
 // Moving between places animates with the browser's View Transitions: the sleeve you touched
 // travels to where it lands, everything else crossfades. Skipped for reduced motion.
@@ -65,9 +81,20 @@ export function transition(update: () => void) {
     // somewhere to land. Rendering is paused inside this callback, so wait on timers, not frames.
     for (let wait = 0; wait < 10 && document.querySelector('.page .status.loading'); wait++) await new Promise(done => setTimeout(done, 25));
   });
+  moving = { view, shown: Infinity };
   // A transition interrupted by the next one is expected, not an error.
-  view.ready.catch(() => undefined); view.finished.catch(() => undefined);
+  view.ready.then(() => { if (moving?.view === view) moving.shown = performance.now() + SHOWN; }, () => undefined);
+  view.finished.catch(() => undefined).finally(() => { if (moving?.view === view) moving = null; });
 }
+// While a transition runs, the page under it can't be touched: Chrome sends every tap and click
+// to the document itself, whatever the CSS says, so a song tapped as its record arrives would not
+// play. Once the new page has mostly faded in, a touch or click ends the transition at once and
+// the gesture lands on the page. Before that, the listener is still looking at the page they
+// left (a second tap, or a page frozen while its data arrives), so the gesture goes nowhere, as
+// it did before: it must not land on whatever the new page has under the finger.
+const SHOWN = 150;
+let moving: { view: ViewTransition; shown: number } | null = null;
+addEventListener('pointerdown', () => { if (moving && performance.now() >= moving.shown) moving.view.skipTransition(); }, { capture: true, passive: true });
 
 // Returning to a place scrolls to where it was left. A page still filling in (a long list
 // measuring itself, a record still loading) may be too short at first, so keep trying for a
@@ -97,15 +124,19 @@ function restoreScroll(offset: number) {
 addEventListener('popstate', event => {
   const close = overlay;
   overlay = null;
+  leaving = false;
   const place = placeOf(event.state);
   // Not one of ours (history from before the app loaded): just close the sheet if it was open.
   if (!place) { if (close) transition(close); return; }
-  if (!now.overlay) remember(now.id, scroller?.scrollTop ?? 0);
+  stopRestoring?.();
+  keepScroll();
   // Closing the sheet, or stepping onto a sheet's old entry: the page itself stays put.
   if (same(place.route, now.route)) { now = { ...place, route: now.route }; emit(); if (close) transition(close); return; }
+  now = place;
   transition(() => {
     close?.();
-    now = place;
+    // A later move has already taken over; its own transition draws it.
+    if (now.id !== place.id) return;
     emit();
     restoreScroll(scrolls.get(place.id) ?? 0);
   });
@@ -122,35 +153,41 @@ export const nav = {
       return;
     }
     stopRestoring?.();
-    if (!now.overlay) remember(now.id, scroller?.scrollTop ?? 0);
-    const change = () => {
+    keepScroll();
+    // The history moves at once, before any animation, so a Back pressed during the move goes
+    // back from here and not from the place before it.
+    const replacing = replace || close !== null;
+    const place: Place = { id: nextId(), depth: replacing ? now.depth : now.depth + 1, route };
+    now = place;
+    if (replacing) history.replaceState(stateOf(place), ''); else history.pushState(stateOf(place), '');
+    const draw = () => {
       close?.();
-      const replacing = replace || close !== null;
-      now = { id: nextId(), depth: replacing ? now.depth : now.depth + 1, route };
-      if (replacing) history.replaceState(stateOf(now), ''); else history.pushState(stateOf(now), '');
+      if (now.id !== place.id) return;
       emit();
       scroller?.scrollTo(0, 0);
     };
     // Typing in search and changing a sort replace in place; they shouldn't animate on every change.
-    if (replace) change(); else transition(change);
+    if (replace) draw(); else transition(draw);
   },
   back() { if (overlay || now.depth > 0) history.back(); },
   get overlayOpen() { return overlay !== null; },
   openOverlay(open: () => void, close: () => void) {
     overlay = close;
-    remember(now.id, scroller?.scrollTop ?? 0);
+    keepScroll();
     now = { id: nextId(), depth: now.depth + 1, route: now.route, overlay: true };
     history.pushState(stateOf(now), '');
     emit();
     transition(open);
   },
-  closeOverlay() { if (overlay) history.back(); },
+  // One step back, however often it's asked for before the step lands: the layer is still open
+  // until then, and a second Back would leave the page under it.
+  closeOverlay() { if (overlay && !leaving) { leaving = true; history.back(); } },
   get scroller() { return scroller; },
   get current(): Route { return now.route; },
 };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export function useRoute() {
-  return useSyncExternalStore(subscribe, () => now.route);
+  return useSyncExternalStore(subscribe, () => shown.route);
 }
 // A sheet's entry sits one above the page it covers; Back from the page itself is what counts.
-export const useCanGoBack = () => useSyncExternalStore(subscribe, () => (now.overlay ? now.depth - 1 : now.depth) > 0);
+export const useCanGoBack = () => useSyncExternalStore(subscribe, () => (shown.overlay ? shown.depth - 1 : shown.depth) > 0);

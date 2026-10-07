@@ -2,18 +2,27 @@ package dev.squiggly.music
 
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Metadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.datasource.DataSourceException
+import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.FileDataSource
+import androidx.media3.datasource.TransferListener
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import org.json.JSONArray
@@ -29,7 +38,9 @@ import org.json.JSONObject
  * Everything here runs on the main thread, which is the player's application thread.
  */
 object Playback {
-    private class Entry(val url: String, val fallbackUrl: String, val track: String)
+    // live: an internet radio station, a stream with no end, no fallback, and no repeat one.
+    // local: the item plays the song's kept file (Kept.kt) rather than its stream.
+    private class Entry(val trackId: String, val url: String, val fallbackUrl: String, val track: String, val live: Boolean, var local: Boolean)
 
     lateinit var player: ExoPlayer
         private set
@@ -41,10 +52,19 @@ object Playback {
     private val entries = HashMap<String, Entry>()
     // Entries playing the server's MP3 because the original couldn't be decoded.
     private val fallbacks = HashSet<String>()
+    // Entries whose kept file couldn't be read, now streaming instead. Once per entry.
+    private val localFailed = HashSet<String>()
+    // Entries whose kept file couldn't be decoded. If the MP3 then fails too, that is what's said,
+    // not that the network failed: away from the server, the MP3 never comes.
+    private val undecodable = HashSet<String>()
     private var lastSeq = 0
     private var playId = 0
     private var current: String? = null
     private var error: String? = null
+    // What the station playing says is on (its ICY StreamTitle), or null.
+    private var stationTitle: String? = null
+    // The page's repeat mode. ExoPlayer's own is this, except repeat one is off while a station plays.
+    private var repeatMode = "off"
 
     /** Receives every state report while a page is listening. */
     var listener: ((JSObject) -> Unit)? = null
@@ -58,7 +78,8 @@ object Playback {
             .setConnectTimeoutMs(15000)
             .setReadTimeoutMs(30000)
         player = ExoPlayer.Builder(app)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(DefaultDataSource.Factory(app, http)))
+            // The server's streams, and Kept's own files. Nothing else on the phone is opened.
+            .setMediaSourceFactory(DefaultMediaSourceFactory(sources(http)))
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MUSIC).build(), true)
             // Headphones unplugged: pause, as every phone player does.
             .setHandleAudioBecomingNoisy(true)
@@ -68,8 +89,18 @@ object Playback {
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
                 // A song repeating (repeat one, or repeat all with one song) starts over: a new play.
-                if (item?.mediaId != current || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) { current = item?.mediaId; playId++; error = null }
+                if (item?.mediaId != current || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) { current = item?.mediaId; playId++; error = null; stationTitle = null }
+                applyRepeat()
                 sleepIfPlayOver()
+                report()
+            }
+            // A station's stream announces what's on (ICY). ExoPlayer reads it as the audio plays.
+            override fun onMetadata(metadata: Metadata) {
+                if (!isLive(player.currentMediaItem?.mediaId)) return
+                for (i in 0 until metadata.length()) {
+                    val entry = metadata.get(i)
+                    if (entry is IcyInfo) stationTitle = entry.title?.replace(Regex("\\s+"), " ")?.trim()?.take(500)?.takeIf { it.isNotEmpty() }
+                }
                 report()
             }
             override fun onEvents(player: Player, events: Player.Events) {
@@ -80,6 +111,8 @@ object Playback {
             }
             override fun onPlayerError(failure: PlaybackException) = recover(failure)
         })
+        // Many changes come at once while a record is being kept: look once they settle.
+        Kept.changed = { main.removeCallbacks(keptChanged); main.postDelayed(keptChanged, 500) }
     }
 
     /** Starts (or keeps) the service that shows the notification and holds the foreground. */
@@ -98,14 +131,14 @@ object Playback {
                 when (op.getString("type")) {
                     "replace" -> {
                         player.playWhenReady = false
-                        entries.clear(); fallbacks.clear(); error = null
+                        entries.clear(); fallbacks.clear(); localFailed.clear(); undecodable.clear(); error = null
                         player.setMediaItems(items(op.getJSONArray("items")), true)
                         if (player.mediaItemCount == 0) player.stop()
                     }
                     "remove" -> {
                         val from = op.getInt("from").coerceIn(0, player.mediaItemCount)
                         val to = (from + op.getInt("count")).coerceIn(from, player.mediaItemCount)
-                        for (index in from until to) player.getMediaItemAt(index).mediaId.let { entries.remove(it); fallbacks.remove(it) }
+                        for (index in from until to) player.getMediaItemAt(index).mediaId.let { entries.remove(it); fallbacks.remove(it); localFailed.remove(it); undecodable.remove(it) }
                         player.removeMediaItems(from, to)
                     }
                     "insert" -> player.addMediaItems(op.getInt("at").coerceIn(0, player.mediaItemCount), items(op.getJSONArray("items")))
@@ -126,8 +159,9 @@ object Playback {
         val index = ids().indexOf(id)
         if (index < 0) return report()
         // Loading an entry starts a new play, even when it's the entry already loaded.
-        current = id; playId++; error = null
+        current = id; playId++; error = null; stationTitle = null
         if (play) ensureService(app)
+        useKept(index)
         player.seekTo(index, (position * 1000).toLong().coerceAtLeast(0))
         player.playWhenReady = play
         sleepIfPlayOver()
@@ -137,6 +171,8 @@ object Playback {
 
     fun play() {
         ensureService(app)
+        // The entry loaded may have been added before its song was kept (a tap on the song playing).
+        if (player.mediaItemCount > 0 && useKept(player.currentMediaItemIndex)) error = null
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
         player.play()
     }
@@ -157,12 +193,22 @@ object Playback {
      * which reorders its queue and sends the moves, so ExoPlayer's own shuffle is never turned on.
      */
     fun repeat(mode: String) {
-        player.repeatMode = when (mode) {
+        repeatMode = mode
+        applyRepeat()
+    }
+
+    // A live stream has no end to start again from: under repeat one, a station that drops would
+    // only be dialled again forever. So repeat one is off while a station plays.
+    private fun applyRepeat() {
+        val mode = when (repeatMode) {
             "all" -> Player.REPEAT_MODE_ALL
-            "one" -> Player.REPEAT_MODE_ONE
+            "one" -> if (isLive(player.currentMediaItem?.mediaId)) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
+        if (player.repeatMode != mode) player.repeatMode = mode
     }
+
+    private fun isLive(id: String?) = id?.let { entries[it]?.live } == true
 
     // The sleep timer. The page keeps its own and tells the player too, so it still pauses after
     // the app is swiped away: the page and its timers go, and the player plays on. The deadline
@@ -214,6 +260,9 @@ object Playback {
             .put("duration", if (duration == C.TIME_UNSET) 0.0 else duration / 1000.0)
             .put("fallback", player.currentMediaItem?.mediaId?.let { it in fallbacks } == true)
             .put("error", error ?: JSONObject.NULL)
+            .put("stationTitle", stationTitle ?: JSONObject.NULL)
+            // A kept file, and the player really has the file open, not the stream.
+            .put("local", player.currentMediaItem?.let { item -> entries[item.mediaId]?.local == true && item.localConfiguration?.uri?.scheme == "file" } == true)
     }
 
     // Reports coalesce: one per turn of the main loop, however many player events arrived.
@@ -242,8 +291,27 @@ object Playback {
         val id = item?.mediaId
         val entry = id?.let { entries[it] }
         val format = failure.errorCode / 1000 == 3 || failure.errorCode / 1000 == 4
-        if (item != null && id != null && entry != null && format && id !in fallbacks) {
+        // A stream that failed, for a song kept since its entry was added: play the file instead.
+        if (entry != null && !entry.local && failure.errorCode / 1000 == 2 && useKept(player.currentMediaItemIndex)) {
+            player.prepare()
+            return report()
+        }
+        // A kept file that can't be read (gone, or unreadable): stream the song instead, once.
+        if (item != null && id != null && entry != null && entry.local && failure.errorCode / 1000 == 2 && id !in localFailed) {
+            localFailed += id
+            entry.local = false
+            val index = player.currentMediaItemIndex
+            val position = player.currentPosition
+            player.replaceMediaItem(index, item.buildUpon().setUri(entry.url).build())
+            player.seekTo(index, position)
+            player.prepare()
+            Kept.check(entry.trackId)
+            return report()
+        }
+        if (item != null && id != null && entry != null && !entry.live && format && id !in fallbacks) {
             fallbacks += id
+            if (entry.local) undecodable += id
+            entry.local = false
             val index = player.currentMediaItemIndex
             val position = player.currentPosition
             player.replaceMediaItem(index, item.buildUpon().setUri(entry.fallbackUrl).build())
@@ -251,22 +319,66 @@ object Playback {
             player.prepare()
             return report()
         }
-        error = if (failure.errorCode / 1000 == 2) "network" else "unplayable"
+        error = if (failure.errorCode / 1000 == 2 && id !in undecodable) "network" else "unplayable"
         report()
+    }
+
+    /**
+     * Moves the entry at this index from its stream to its song's kept file, when Kept has one.
+     * The file is the one Kept keeps for that id, never an address the page sent. Not for a file
+     * that already failed to open, or a song whose original couldn't be decoded. The entry loaded
+     * carries on from the same place.
+     */
+    private fun useKept(index: Int): Boolean {
+        if (index !in 0 until player.mediaItemCount) return false
+        val item = player.getMediaItemAt(index)
+        val id = item.mediaId
+        val entry = entries[id] ?: return false
+        if (entry.local || entry.live || entry.trackId.isEmpty() || id in localFailed || id in fallbacks) return false
+        val file = Kept.fileFor(entry.trackId) ?: return false
+        entry.local = true
+        val loaded = index == player.currentMediaItemIndex
+        val position = player.currentPosition
+        player.replaceMediaItem(index, item.buildUpon().setUri(Uri.fromFile(file)).build())
+        if (loaded) player.seekTo(index, position)
+        return true
+    }
+
+    // Something was kept or forgotten: entries added before their songs were kept move to the
+    // files. Not the entry playing, which would stutter; if its stream fails, recover moves it.
+    private val keptChanged = Runnable {
+        val playing = player.playWhenReady && (player.playbackState == Player.STATE_READY || player.playbackState == Player.STATE_BUFFERING)
+        for (index in 0 until player.mediaItemCount) if (!playing || index != player.currentMediaItemIndex) useKept(index)
     }
 
     private fun ids() = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
 
+    // The player opens kept files too (sources), but only Kept names those. The page's addresses
+    // are always the server's, so anything else is a malformed operation. An empty address is a
+    // station the server no longer lists (bridge.ts): it names nothing, so that one entry fails
+    // when it's reached instead of the whole edit being refused.
+    private fun stream(address: String): String {
+        if (address.isEmpty()) return address
+        val scheme = Uri.parse(address).scheme?.lowercase()
+        require(scheme == "http" || scheme == "https") { "Not a stream address." }
+        return address
+    }
+
     private fun items(list: JSONArray): List<MediaItem> = (0 until list.length()).map { i ->
         val item = list.getJSONObject(i)
         val id = item.getString("id")
-        val entry = Entry(item.getString("url"), item.getString("fallbackUrl"), item.getString("track"))
+        val live = item.optBoolean("live", false)
+        val trackId = item.optString("trackId", "")
+        // A kept song plays from its file, online or not; the stream stays as the fallback.
+        // The file is the one Kept keeps for that id, never an address the page sent.
+        val file = if (live || trackId.isEmpty()) null else Kept.fileFor(trackId)
+        val entry = Entry(trackId, stream(item.getString("url")), stream(item.getString("fallbackUrl")), item.getString("track"), live, file != null)
         entries[id] = entry
         val coverArt = item.optNullableString("coverArt")
         val duration = if (item.isNull("duration")) null else item.optDouble("duration")
         MediaItem.Builder()
             .setMediaId(id)
-            .setUri(entry.url)
+            .setUri(file?.let { Uri.fromFile(it) } ?: Uri.parse(entry.url))
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(item.optString("title"))
@@ -274,7 +386,7 @@ object Playback {
                     .setAlbumTitle(item.optNullableString("album"))
                     .setArtworkUri(coverArt?.let { CoverProxy.artworkUri(it) })
                     .setDurationMs(duration?.takeIf { it.isFinite() && it > 0 }?.let { (it * 1000).toLong() })
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                    .setMediaType(if (entry.live) MediaMetadata.MEDIA_TYPE_RADIO_STATION else MediaMetadata.MEDIA_TYPE_MUSIC)
                     .setIsPlayable(true)
                     .setIsBrowsable(false)
                     .build(),
@@ -283,4 +395,41 @@ object Playback {
     }
 
     private fun JSONObject.optNullableString(name: String): String? = if (isNull(name)) null else optString(name).takeIf { it.isNotEmpty() }
+
+    // HTTP alone can't open a file: address (it fails as a read error), so kept files would only
+    // ever stream. This opens http and https over HTTP, and file: only for a file in Kept's folder
+    // with a name Kept writes. content:, asset:, data: and any other file are refused.
+    @OptIn(UnstableApi::class)
+    private fun sources(http: DataSource.Factory) = DataSource.Factory { Sources(http.createDataSource()) }
+
+    @OptIn(UnstableApi::class)
+    private class Sources(private val http: DataSource) : DataSource {
+        private val file = FileDataSource()
+        private var opened: DataSource? = null
+
+        override fun addTransferListener(transferListener: TransferListener) {
+            http.addTransferListener(transferListener)
+            file.addTransferListener(transferListener)
+        }
+
+        override fun open(dataSpec: DataSpec): Long {
+            val uri = dataSpec.uri
+            val source = when (uri.scheme?.lowercase()) {
+                "http", "https" -> http
+                "file" -> file.takeIf { uri.path?.let(Kept::owns) == true }
+                else -> null
+            } ?: throw DataSourceException(PlaybackException.ERROR_CODE_IO_NO_PERMISSION)
+            opened = source
+            return source.open(dataSpec)
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int = checkNotNull(opened).read(buffer, offset, length)
+        override fun getUri(): Uri? = opened?.uri
+        override fun getResponseHeaders(): Map<String, List<String>> = opened?.responseHeaders ?: emptyMap()
+        override fun close() {
+            val source = opened
+            opened = null
+            source?.close()
+        }
+    }
 }

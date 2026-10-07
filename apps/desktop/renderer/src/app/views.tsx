@@ -1,22 +1,36 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
+import type { RadioStation } from '../../../../../packages/core/contracts';
+import { stationTrack } from '../../../../../packages/core/stations';
+import { sinkSentence } from '../../../../../packages/core/sinks';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
-import { current, player, playRequests, usePlayer } from './player';
+import { current, outputDescription, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
 import { Credits } from './credits';
+import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseDrop, startDrag, useDropTarget, useSpringOpen } from './drag';
 import { morph, nav, useRoute } from './route';
-import { updateSettings, useSettings, useSettingsError } from './settings';
+import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from './settings';
+import { PLAY_COUNTS_AT, type PlayCountsAt } from '../../../../../packages/core/plays';
 import { Lyrics } from './lyrics';
 import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
+import { ExtensionSections } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
-import { RatingMarks } from './ratings';
+import { RatingStars } from './ratings';
+import { invalidate, peek } from './library';
+import type { MouseEvent as ReactMouseEvent } from 'react';
+import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
+import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
+import { exportM3u } from './exports';
+import { SharesSettings } from './share';
+import { ContainerMark, KeepButton, KeptSection, KeptSettings } from './kept';
+import { keptSupported } from './keptState';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -88,6 +102,9 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
 interface Paged<T> { items: T[]; count: number; done: boolean; busy: boolean; error: string | null; seed: number; keys: string[] }
 const paged = new Map<string, Paged<{ id: string }>>();
 const dropped = new Set<() => void>();
+// A page can land after the list that asked for it was left and shown again (a search tab
+// switched away from and back), so every list showing it redraws, not only the one that asked.
+const landed = new Set<(list: string) => void>();
 onLibraryReset(() => paged.clear());
 // A list with a page the library has since invalidated is read again from the top: at once if
 // it's on screen, otherwise when it's next shown. A new rating drops Top rated this way.
@@ -98,12 +115,14 @@ onInvalidate(prefix => {
 });
 // Genres can number thousands, so only the few genre lists visited last are kept, the others
 // dropped oldest first. Records and Tracks keep theirs.
+// Searches' tabs are bounded the same way.
 const GENRE_LISTS = 8;
 function touchPaged(list: string) {
-  if (!list.startsWith('genre:')) return;
+  const kind = ['genre:', 'search:'].find(prefix => list.startsWith(prefix));
+  if (!kind) return;
   const p = paged.get(list);
   if (p) { paged.delete(list); paged.set(list, p); }
-  const genres = [...paged.keys()].filter(key => key.startsWith('genre:'));
+  const genres = [...paged.keys()].filter(key => key.startsWith(kind));
   for (const key of genres.slice(0, Math.max(0, genres.length - GENRE_LISTS))) paged.delete(key);
 }
 type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
@@ -128,12 +147,13 @@ function usePaged<T extends { id: string }>(list: string, size: number, request:
         page.items = [...page.items, ...result.value.filter(item => !seen.has(item.id))];
         if (result.value.length < size || once) page.done = true;
       }
-      redraw(v => v + 1);
+      landed.forEach(listener => listener(list));
     });
     redraw(v => v + 1);
   }, [list]);
   useEffect(() => { touchPaged(list); const p = paged.get(list); if (!p || (!p.items.length && !p.done && !p.busy)) more(); }, [more, session]);
   useEffect(() => { const listener = () => { if (!paged.has(list)) more(); }; dropped.add(listener); return () => { dropped.delete(listener); }; }, [more]);
+  useEffect(() => { const listener = (changed: string) => { if (changed === list) redraw(v => v + 1); }; landed.add(listener); return () => { landed.delete(listener); }; }, [list]);
   const p = paged.get(list) as Paged<T> | undefined;
   return { items: p?.items ?? none as T[], done: p?.done ?? false, error: p?.error ?? null, more };
 }
@@ -231,14 +251,18 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
   const offsets = useMemo(() => active ? Array.from({ length: rows + 1 }, (_, i) => i * active.stride) : [0], [active, rows]);
   const [first, last] = useVisibleRows(list, offsets);
   const shown = active ? albums.slice(first * active.columns, last * active.columns) : windowed ? albums.slice(0, WINDOWED) : albums;
+  const drags = canDrag();
   return <ul ref={list} className="grid" style={active ? { paddingTop: first * active.stride, paddingBottom: (rows - last) * active.stride } : undefined}>
     {shown.map(album => <li key={album.id} className="playable">
       <PlayOver label={splitTitle(album.name).main} play={() => playTarget({ kind: 'album', album })} />
       <button type="button" onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
-        onContextMenu={event => openMenu(event, { kind: 'album', album })}>
+        onContextMenu={event => openMenu(event, { kind: 'album', album })}
+        draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
         <span className="grid-name">{album.id === nowAlbum && <Wave playing={playing} />}<span>{splitTitle(album.name).main}</span></span>
         <span className="grid-sub">{album.artist}</span>
+        {/* After the name, so the card's accessible name still starts with the record's. */}
+        <ContainerMark kind="album" id={album.id} />
       </button>
     </li>)}
   </ul>;
@@ -264,11 +288,12 @@ export function AlbumPage({ id }: { id: string }) {
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
       <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
-        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingMarks id={album.id} rating={album.userRating} /></p>
+        <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingStars target="album" id={album.id} rating={album.userRating} name={album.name} /></p>
         <Actions tracks={tracks}>
           <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
           <MoreButton target={{ kind: 'album', album }} />
+          <KeepButton kind="album" id={album.id} name={album.name} artist={album.artist} coverArt={album.coverArt} tracks={tracks} />
         </Actions>
       </Head>
       <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" groups={discGroups(tracks, discTitles)} />
@@ -281,6 +306,14 @@ function StarButton({ target, id, starred, name }: { target: 'album' | 'artist';
   const on = isStarred(id, starred);
   return <button type="button" className={`text-button star-text${on ? ' on' : ''}`} aria-pressed={on} onClick={() => void setStarred(target, [id], !on)}>
     <Glyph kind={on ? 'starred' : 'star'} />{on ? 'In favorites' : 'Add to favorites'}<span className="sr-only"> {name}</span></button>;
+}
+// A playlist file of these songs (exports.ts). Errors show under the page's heading.
+function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
+  const [error, setError] = useState<string | null>(null);
+  return <>
+    <button type="button" className="text-button" disabled={!tracks.length} onClick={async () => { setError(await exportM3u(name, tracks)); }}>Export as M3U</button>
+    {error && <p className="note" role="alert">{error}</p>}
+  </>;
 }
 // The same menu as right-click, for people who don't right-click (and for touch).
 function MoreButton({ target }: { target: Parameters<typeof openMenu>[1] }) {
@@ -347,6 +380,7 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
   }, [groups, shape]);
   const [first, last] = useVisibleRows(list, offsets);
   const total = offsets[offsets.length - 1];
+  const drags = canDrag();
   const jump = (letter: string) => {
     const scroller = nav.scroller, element = list.current, at = starts.get(letter);
     if (!scroller || !element || at === undefined) return;
@@ -363,7 +397,8 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
           style={{ gridTemplateColumns: `repeat(${shape!.columns}, minmax(0, 1fr))` }}>
           {row.artists.map(artist => <li key={artist.id} className="playable">
             <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
-              onContextMenu={event => openMenu(event, { kind: 'artist', artist })}>
+              onContextMenu={event => openMenu(event, { kind: 'artist', artist })}
+              draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
               <span className="artist-name">{artist.name}</span> <span>{artist.albumCount}</span>
             </button>
             <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
@@ -391,7 +426,7 @@ export function ArtistPage({ id }: { id: string }) {
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
     <Head title={artist.name}>
-      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingMarks id={artist.id} rating={artist.userRating} /></p>
+      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play
@@ -411,14 +446,16 @@ export function ArtistPage({ id }: { id: string }) {
 }
 
 // Tracks -------------------------------------------------------------------------------
-// Every track, sorted as records are. Only Navidrome's own API sorts tracks: other servers list
-// them in one fixed order, and the sorts are hidden. A row plays like any song list: the tracks
+// Every track, sorted as records are. Navidrome's own API sorts them; elsewhere the connector sorts
+// them itself, up to a limit, past which they're in the server's one order and the sorts are hidden. A row plays like any song list: the tracks
 // loaded so far become the queue (as much as it holds around the one clicked).
 
 const TRACKS = 200;
-// Whether the server sorts tracks, once a page has said, so the sorts don't blink on each visit.
+// Whether the server sorts tracks, once a page has said, so the sorts don't blink on each visit,
+// and whether that's only because it's Navidrome over plain HTTP (TrackPage.plainHttp).
 let tracksSorted: boolean | null = null;
-onLibraryReset(() => { tracksSorted = null; });
+let tracksPlainHttp = false;
+onLibraryReset(() => { tracksSorted = null; tracksPlainHttp = false; });
 
 export function Tracks() {
   const route = useRoute();
@@ -427,7 +464,7 @@ export function Tracks() {
     `tracks:${sort}:${offset}:${TRACKS}${sort === 'random' ? `:${seed}` : ''}`,
     () => api.tracks(sort, offset, TRACKS, sort === 'random' ? String(seed) : '').then((result): Result<Track[]> => {
       if (!result.ok) return result;
-      tracksSorted = result.value.sorted;
+      tracksSorted = result.value.sorted; tracksPlainHttp = !!result.value.plainHttp;
       return { ok: true, value: result.value.tracks };
     }),
   ]);
@@ -456,6 +493,7 @@ export function Tracks() {
         <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
+      {tracksPlainHttp && <p className="note">Tracks are in the server's own order: this library is too big to sort here, and sorting it on the server means sending your password to Navidrome, which this server isn't using HTTPS for.</p>}
     </Head>
     {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
       ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.'
@@ -474,6 +512,7 @@ function playlistNote(playlist: Playlist) {
   return null;
 }
 
+const PLAYLIST_MIXES = 8;
 export function Playlists() {
   const playlists = useResource('playlists', () => api.playlists());
   const genres = useResource('genres', () => api.genres());
@@ -486,24 +525,15 @@ export function Playlists() {
     <section className="shelf-section" aria-labelledby="yours">
       <div className="section-head"><h2 id="yours">Yours</h2><NewPlaylist /></div>
       <Pending result={playlists} waiting="Loading playlists">{list => list.length ? <ul className="rows">
-        {list.map(playlist => <li key={playlist.id} className="playable">
-          <PlayOver label={splitTitle(playlist.name).main} play={() => playTarget({ kind: 'playlist', playlist })} />
-          <button type="button" onClick={event => { travel(playlist.id, event.currentTarget); nav.go({ view: 'playlist', id: playlist.id }); }}
-            onContextMenu={event => openMenu(event, { kind: 'playlist', playlist })}>
-            <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
-            <span className="row-text">
-              <span className="row-name">{splitTitle(playlist.name).main}</span>
-              <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{playlistNote(playlist) && `. ${playlistNote(playlist)}`}</span>
-            </span>
-          </button>
-        </li>)}
+        {list.map(playlist => <PlaylistRow key={playlist.id} playlist={playlist} />)}
       </ul> : <Status>No playlists yet. Start one here, or save an automatic playlist below.</Status>}</Pending>
     </section>
     <section className="shelf-section" aria-labelledby="automatic">
-      <h2 id="automatic">Automatic</h2>
+      <div className="section-head"><h2 id="automatic">Automatic</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
       <p className="section-note">Drawn from your library each session. Save one to keep it as it is.</p>
       <ul className="rows">
-        {mixes.map(mix => <li key={mix.id} className="playable">
+        {/* The first few; the Mixes page has them all. */}
+        {mixes.slice(0, PLAYLIST_MIXES).map(mix =><li key={mix.id} className="playable">
           <PlayOver label={mix.name} play={async () => {
             const drawn = await mixTracks(mix);
             if (drawn.ok && drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
@@ -515,7 +545,39 @@ export function Playlists() {
         </li>)}
       </ul>
     </section>
+    <KeptSection />
+    <Stations />
+    <ExtensionSections />
   </>;
+}
+
+// A playlist on the Playlists page. It drags (its songs), and records, artists, songs, and other
+// playlists drop onto it to be added at the end; held over it, a drag opens it, to be dropped
+// between its songs. One the server manages refuses, saying why.
+function PlaylistRow({ playlist }: { playlist: Playlist }) {
+  const note = playlistNote(playlist);
+  // Not onto itself.
+  const notItself = () => { const drag = activeDrag(); return !(drag?.payload.kind === 'playlist' && drag.payload.ids.includes(playlist.id)); };
+  const { over, handlers } = useDropTarget(payload => void dropOnPlaylist(playlist, payload, note), { enabled: !playlist.readonly, accepts: notItself });
+  const spring = useSpringOpen(() => nav.go({ view: 'playlist', id: playlist.id }), () => !playlist.readonly && notItself());
+  // The server's own playlists refuse: no outline, a pointer that says no, and the reason.
+  const refuse = (event: DragEvent<HTMLElement>) => { if (playlist.readonly && carriesItems(event.dataTransfer)) refuseDrop(playlist, note); };
+  return <li className={`playable${over ? ' drop-over' : ''}`} {...handlers}
+    onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); refuse(event); }}
+    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}
+    onDrop={event => { handlers.onDrop(event); refuse(event); }}>
+    <PlayOver label={splitTitle(playlist.name).main} play={() => playTarget({ kind: 'playlist', playlist })} />
+    <button type="button" onClick={event => { travel(playlist.id, event.currentTarget); nav.go({ view: 'playlist', id: playlist.id }); }}
+      onContextMenu={event => openMenu(event, { kind: 'playlist', playlist })}
+      draggable={canDrag()} onDragStart={event => startDrag(event, { kind: 'playlist', playlist })}>
+      <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
+      <span className="row-text">
+        <span className="row-name">{splitTitle(playlist.name).main}</span>
+        <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{note && `. ${note}`}</span>
+      </span>
+      <ContainerMark kind="playlist" id={playlist.id} />
+    </button>
+  </li>;
 }
 
 function NewPlaylist() {
@@ -577,7 +639,9 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
   const renameButton = useRef<HTMLButtonElement>(null);
   const editable = !playlist.readonly;
   const stopRenaming = () => { setRenaming(false); requestAnimationFrame(() => renameButton.current?.focus()); };
-  return <>
+  // Records, artists, and songs dropped on the page join the end; onto the list, before that song.
+  const drop = useDropTarget(payload => void dropOnPlaylist(playlist, payload, null), { enabled: editable });
+  return <div className={`drop-area${drop.over ? ' drop-over' : ''}`} {...drop.handlers}>
     <Head title={playlist.name} cover={<Cover id={playlist.coverArt} name={playlist.name} size={600} className="head-cover" />}>
       {renaming && <form className="inline-form" onSubmit={event => {
         event.preventDefault();
@@ -597,15 +661,18 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
       <Actions tracks={tracks}>
         {editable && !renaming && <button ref={renameButton} type="button" className="text-button" onClick={() => setRenaming(true)}>Rename</button>}
         <MoreButton target={{ kind: 'playlist', playlist }} />
+        <ExportButton name={playlist.name} tracks={tracks} />
+        {!view.saving && <KeepButton kind="playlist" id={playlist.id} name={playlist.name} coverArt={playlist.coverArt} tracks={tracks} />}
       </Actions>
       {editable && tracks.length > 1 && <p className="note hint">Drag songs to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>}
       {view.error && <p className="note" role="alert">{view.error}</p>}
     </Head>
     {tracks.length ? <TrackTable tracks={tracks} showAlbum playlist={playlist}
       onMove={editable ? (from, to) => void editor.move(from, to) : undefined}
-      onRemove={editable ? indexes => void editor.removeAt(indexes) : undefined} />
+      onRemove={editable ? indexes => void editor.removeAt(indexes) : undefined}
+      onDropItems={editable ? (payload, at) => void dropOnPlaylist(playlist, payload, null, at) : undefined} />
       : <Status>This playlist is empty. Right-click any song and choose Add to playlist.</Status>}
-  </>;
+  </div>;
 }
 
 export function MixPage({ id }: { id: string }) {
@@ -632,6 +699,7 @@ export function MixPage({ id }: { id: string }) {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
           setSaved(await createPlaylist(`${mix.name}, ${date}`, tracks!.map(t => t.id)));
         }}>Save as playlist</button>
+        {tracks && <KeepButton kind="mix" id={mix.id} name={mix.name} tracks={tracks} />}
       </Actions>
       {saved && <p className="note">{saved}</p>}
     </Head>
@@ -658,25 +726,12 @@ export function Favorites() {
 }
 
 function ArtistNames({ artists }: { artists: Artist[] }) {
+  const drags = canDrag();
   return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
-    <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}>{artist.name} <span>{artist.albumCount}</span></button>
+    <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
+      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name} <span>{artist.albumCount}</span></button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
-}
-
-export function Search({ query }: { query: string }) {
-  const result = useResource(query.trim() ? `search:${query.trim().toLowerCase()}` : null, () => api.search(query.trim()));
-  if (!query.trim()) return <Status>Type an artist, record, or song.</Status>;
-  return <>
-    <Head title={`“${query.trim()}”`} />
-    <Pending result={result} waiting="Searching">{({ artists, albums, tracks }) => !artists.length && !albums.length && !tracks.length
-      ? <Status>Nothing matches “{query.trim()}”. Check the spelling or try fewer words.</Status>
-      : <>
-        {tracks.length > 0 && <section className="shelf-section"><h2>Songs</h2><TrackTable tracks={tracks} showAlbum /></section>}
-        {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
-        {artists.length > 0 && <section className="shelf-section"><h2>Artists</h2><ArtistNames artists={artists} /></section>}
-      </>}</Pending>
-  </>;
 }
 
 export function Queue() {
@@ -686,11 +741,15 @@ export function Queue() {
   const repeat = usePlayer(s => s.repeat);
   const shuffle = usePlayer(s => s.shuffle);
   const [saved, setSaved] = useState<string | null>(null);
-  if (!queue.length) return <><Head title="Queue" /><Status>Nothing queued. Play a record, playlist, or song, or right-click one and choose Add to queue.</Status></>;
+  // Records, artists, songs, and playlists dropped on the page join the end of the queue; onto
+  // the list, before that song.
+  const drop = useDropTarget(payload => void dropOnQueue(payload));
+  const area = `drop-area${drop.over ? ' drop-over' : ''}`;
+  if (!queue.length) return <div className={area} {...drop.handlers}><Head title="Queue" /><Status>Nothing queued. Play a record, playlist, or song, or right-click one and choose Add to queue.</Status></div>;
   const upcoming = queue.length - index - 1;
   const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
   const modes = shuffle ? (repeats ? `Shuffled, and ${repeats}.` : 'Shuffled.') : repeats && `${repeats[0].toUpperCase()}${repeats.slice(1)}.`;
-  return <>
+  return <div className={area} {...drop.handlers}>
     <Head title="Queue">
       <p className="byline"><span>{upcoming > 0 ? `${plural(upcoming, 'song')} up next, ${length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}` : 'This is the last song.'}</span>
         {modes && <>{upcoming > 0 ? '. ' : ' '}<span>{modes}</span></>}</p>
@@ -705,8 +764,9 @@ export function Queue() {
       {saved && <p className="note" role="alert">{saved}</p>}
       <p className="note hint">Drag to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>
     </Head>
-    <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)} />
-  </>;
+    <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
+      onDropItems={(payload, at) => void dropOnQueue(payload, at)} />
+  </div>;
 }
 
 export function LyricsPage() {
@@ -718,7 +778,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -729,29 +789,47 @@ export function SettingsView() {
       {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Lyrics in your files always come first. For songs without them, the song\'s title, artist, and album are sent to lrclib.net.')}
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
+      {settings.reportPlays && <label className="setting choice">
+        <span><strong>Count a play after</strong><span>How much of a song has to play before it counts in Navidrome, and on Last.fm or ListenBrainz if your server sends plays there. Skipping ahead doesn't count, and songs of 30 seconds or less never count.</span></span>
+        <select value={settings.playCountsAt} onChange={event => void updateSettings({ playCountsAt: Number(event.target.value) as PlayCountsAt })}>
+          {PLAY_COUNTS_AT.map(percent => <option key={percent} value={percent}>{percent}% of the song</option>)}
+        </select>
+      </label>}
+      <QueuedPlays />
       {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
-      {mode !== 'web' && <Disconnect />}
+      <Disconnect />
+      {mode === 'web' && <SignOut />}
+      {keptSupported && <KeptSettings />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
-          <span><strong>Output</strong><span>Where Squiggly plays. If this device isn't connected when Squiggly starts, it uses the system default.</span></span>
+          <span><strong>Output</strong><span>Where Squiggly plays. While this device is disconnected, Squiggly plays through the system default, and goes back to it when it returns.</span></span>
           <select value={settings.outputDevice} onChange={event => void updateSettings({ outputDevice: event.target.value })}>
-            {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${settings.outputDevice} (not connected)`}</option>}
+            {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${outputDescription(settings.outputDevice) ?? settings.outputDevice} (disconnected)`}</option>}
             {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
           </select>
         </label>
-        {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows supports this; many Linux setups ignore it.')}
+        {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows and macOS support this; many Linux setups ignore it.')}
         <UpdateSettings />
         <h2>Window</h2>
         {row('closeToTray', 'Keep playing when the window closes', 'Closing the window leaves Squiggly in the tray. Quit from the tray menu.')}
         {row('miniOnTop', 'Keep the mini player on top', 'The mini player stays above other windows.')}
+        {diagnosticsBuilt && <><h2>Diagnostics</h2><DiagnosticsSwitch /></>}
       </>}
       {error && <p className="note" role="alert">{error}</p>}
       <ThemeSettings />
       <KeySettings />
       {mode === 'desktop' && <ExtensionsSettings />}
+      <SharesSettings />
     </section>
   </>;
+}
+
+// Finished plays waiting while the server was out of reach (desktop and Android).
+function QueuedPlays() {
+  const count = usePlayer(s => s.queuedPlays);
+  if (!count) return null;
+  return <p className="note">{count === 1 ? '1 play is' : `${count.toLocaleString()} plays are`} waiting to be reported. They are sent when your server is back.</p>;
 }
 
 // Updates from GitHub releases (apps/desktop/main/updates.ts). Development builds have none.
@@ -786,21 +864,82 @@ function UpdateSettings() {
   </>;
 }
 
-// Desktop and Android; the browser build signs out from the deck. The desktop's main process
-// (or the Android bridge) forgets the server and stops playback, and the app returns to the
-// connect screen.
+// Desktop betas with remote diagnostics built in (apps/desktop/main/remoteDiagnostics.ts). Off,
+// the main process sends and writes nothing until it's turned on again. The beta marker
+// (App.tsx) opens Settings here with the switch focused.
+let focusDiagnostics = false;
+const diagnosticsFocus = new Set<() => void>();
+export function showDiagnosticsSetting() {
+  focusDiagnostics = true;
+  nav.go({ view: 'settings' });
+  // Already on Settings: the switch is there to take focus now.
+  diagnosticsFocus.forEach(take => take());
+}
+export function DiagnosticsSwitch() {
+  const settings = useSettings();
+  const input = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const take = () => {
+      if (!focusDiagnostics || !input.current) return;
+      focusDiagnostics = false;
+      input.current.scrollIntoView({ block: 'center' });
+      input.current.focus({ preventScroll: true });
+    };
+    take();
+    diagnosticsFocus.add(take);
+    return () => { diagnosticsFocus.delete(take); };
+  }, []);
+  return <label className="setting">
+    <input ref={input} type="checkbox" checked={settings.diagnostics} onChange={event => void updateSettings({ diagnostics: event.target.checked })} />
+    <span><strong>Send diagnostics to the developer</strong><span>This beta sends errors, logs, and what the audio engine is doing, and keeps a copy in its data folder. Never passwords, tokens, usernames, or server addresses with their sign-in parameters.</span></span>
+  </label>;
+}
+
+// The browser build: the page's own sign-in, when the host asks for a password. Without one the
+// page is open to whoever can reach it, and there is nothing here to sign out of.
+function SignOut() {
+  const access = usePlayer(s => s.access);
+  const serverName = usePlayer(s => s.serverName);
+  const pageConnection = usePlayer(s => s.pageConnection);
+  const [busy, setBusy] = useState(false);
+  if (access !== 'signed-in' && access !== 'open') return null;
+  // Disconnect above covers a server this page connected to itself.
+  if (access === 'open' && pageConnection) return null;
+  return <div className="setting-action">
+    <p><strong>Sign out</strong>
+      <span>{access === 'signed-in'
+        ? `This page is signed in with its own password; the ${serverName ?? 'server'} account stays with the host. Signing out asks for the page's password again.`
+        : `This page has no password of its own: whoever can open it uses the host's ${serverName ?? 'server'} account. There is nothing to sign out of here.`}</span></p>
+    {access === 'signed-in' && <button type="button" className="text-button" disabled={busy} onClick={async () => { setBusy(true); await player.signOut(); setBusy(false); }}>
+      {busy ? 'Signing out' : 'Sign out'}</button>}
+  </div>;
+}
+// The desktop's main process, the Android bridge, or (in the browser) the host forgets the
+// server and stops playback, and the app returns to the connect screen. In the browser only a
+// server the page connected to itself can be dropped; the host's configured one stays, and the
+// page can open the connect screen over it instead.
 function Disconnect() {
   const serverName = usePlayer(s => s.serverName);
   const connected = usePlayer(s => s.connected);
+  const web = usePlayer(s => s.mode === 'web');
+  const pageConnection = usePlayer(s => s.pageConnection);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   if (!connected) return null;
+  // The host's configured server isn't the page's to drop, but the page can use another instead.
+  if (web && !pageConnection) return <div className="setting-action">
+    <p><strong>Connect to another server</strong>
+      <span>This page uses the host's own server, {serverName ?? 'your server'}. You can connect it to another Navidrome server instead. That stops playback and empties the queue; the host keeps its own server for other browsers, and this page goes back to it when you disconnect.</span></p>
+    <button type="button" className="text-button" onClick={() => player.chooseServer(true)}>Connect to another server</button>
+  </div>;
   return <div className="setting-action">
     <p><strong>Disconnect or switch server</strong>
-      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. It also forgets the saved sign-in, so have your password ready.</span></p>
+      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. {web
+        ? 'The host that serves this page forgets the password too, so have it ready.'
+        : `It also forgets the saved sign-in, so have your password ready.${keptSupported ? ' It also forgets everything kept on this device.' : ''}`}</span></p>
     <button type="button" className="text-button" disabled={busy} onClick={async () => {
       setBusy(true); setError(null);
-      const result = await (window.squiggly ?? window.squigglyAndroid!.session).disconnect();
+      const result = await (web ? player : (window.squiggly ?? window.squigglyAndroid!.session)).disconnect();
       setBusy(false);
       if (!result.ok) setError(result.error);
     }}>{busy ? 'Disconnecting' : 'Disconnect'}</button>
@@ -828,9 +967,11 @@ export function DiagnosticsView() {
       <tr><th>Total memory</th><td>{diagnostics.processes.reduce((sum, p) => sum + p.memoryMB, 0).toFixed(0)} MB</td><td /></tr>
       <tr><th>Main thread delay</th><td>{diagnostics.eventLoopDelayMs.toFixed(1)} ms</td><td /></tr>
       <tr><th>Audio host messages</th><td>{diagnostics.playerMessagesPerSecond.toFixed(1)} per second</td><td /></tr>
-      {/* What mpv decoded into and handed to the system. The system mixer's final format isn't reported. */}
+      {/* What mpv decoded into and handed to the system, and on Linux what the sound server says it
+          runs the sink at. What the DAC receives isn't reported. */}
       {audio?.decoderFormat && <tr><th>Decoded</th><td>{[audio.decoderFormat, kHz(audio.decoderRate)].filter(Boolean).join(' · ')}</td><td /></tr>}
       {audio?.outputBackend && <tr><th>Handed to</th><td>{[audio.outputBackend, kHz(audio.outputRate), audio.outputFormat].filter(Boolean).join(' · ')}</td><td /></tr>}
+      {audio?.sink && <tr><th>Sink</th><td>{audio.sink.name}</td><td>{sinkSentence(audio.sink, audio.outputRate)}</td></tr>}
     </tbody></table>
   </>;
 }
@@ -994,4 +1135,303 @@ export function GenrePage({ name }: { name: string }) {
     {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
     <div ref={sentinel} className="sentinel" />
   </>;
+}
+
+// Home ---------------------------------------------------------------------------------------------
+// Where the app opens. Each shelf loads on its own, so a slow answer holds up only the shelves
+// that need it: Your mixes waits for Most played's list, which says whether there is history. A
+// shelf stays hidden while it loads and when it has nothing to show. A shelf holds twelve at
+// most, and a mix's tile draws its songs only once it scrolls into view, from the same cached
+// draw the Playlists and Mixes pages use, so opening Home asks the server for little.
+const SHELF = 12;
+export function Home() {
+  return <>
+    <Head title="Home" />
+    <RecordShelf type="recent" title="Played lately" />
+    {/* Records carry no date added, so this is the newest twelve rather than a week's worth. */}
+    <RecordShelf type="newest" title="Newest" />
+    <RecordShelf type="frequent" title="Most played" />
+    <HomeMixes />
+    <Elsewhere />
+  </>;
+}
+
+function SeeAll({ what, go }: { what: string; go(): void }) {
+  return <button type="button" className="text-button" onClick={go}>See all<span className="sr-only"> {what}</span></button>;
+}
+
+// A row of sleeves from one of the Records sorts. See all opens Records in that sort.
+function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; title: string }) {
+  const result = useResource(`albums:${type}:0:${SHELF}`, () => api.albums(type, 0, SHELF));
+  if (!result || (result.ok && !result.value.length)) return null;
+  const id = `home-${type}`;
+  return <section className="shelf-section home-shelf" aria-labelledby={id}>
+    <div className="section-head">
+      <h2 id={id}>{title}</h2>
+      {result.ok && <SeeAll what={title.toLowerCase()} go={() => nav.go(type === 'newest' ? { view: 'records' } : { view: 'records', sort: type })} />}
+    </div>
+    {result.ok ? <AlbumGrid albums={result.value} /> : <Status>{result.error}</Status>}
+  </section>;
+}
+
+// The automatic playlists, as the Playlists page lists them. The decades appear once something
+// has found them (Records' Decade, the Playlists page, or Mixes): looking for them takes nine requests.
+function HomeMixes() {
+  const genres = useResource('genres', () => api.genres());
+  // The same list as Most played, so it costs nothing more.
+  const history = useResource(`albums:frequent:0:${SHELF}`, () => api.albums('frequent', 0, SHELF));
+  // Wait for both, so the row doesn't reshuffle as they arrive.
+  if (!genres || !history) return null;
+  const decades = peek<number[]>('decades');
+  const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0).slice(0, SHELF);
+  return <section className="shelf-section home-shelf" aria-labelledby="home-mixes">
+    <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
+    <ul className="grid">
+      {mixes.map(mix => <li key={mix.id} className="playable">
+        <PlayOver label={mix.name} play={() => playMix(mix)} />
+        <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
+          <MixTile mix={mix} travels={mix.id === morph.id} />
+          <span className="grid-name"><span>{mix.name}</span></span>
+          <span className="grid-sub">{mix.description}</span>
+        </button>
+      </li>)}
+    </ul>
+  </section>;
+}
+
+// Other accounts on this server and what they're playing. Read afresh on each visit.
+function Elsewhere() {
+  const result = useResource('nowPlaying', () => api.nowPlaying());
+  useEffect(() => () => invalidate('nowPlaying'), []);
+  if (!result?.ok || !result.value.length) return null;
+  return <section className="shelf-section" aria-labelledby="home-elsewhere">
+    <h2 id="home-elsewhere">Playing elsewhere</h2>
+    <ul className="elsewhere">
+      {result.value.slice(0, SHELF).map(({ username, track }) => <li key={`${username}/${track.id}`}>
+        <span className="elsewhere-user">{username}</span>{' · '}
+        {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.title, track.album).main}</button>
+          : splitTitle(track.title, track.album).main} by {track.artist}
+      </li>)}
+    </ul>
+  </section>;
+}
+
+// Search -----------------------------------------------------------------------------------------
+// All shows a few of each kind, as many as search3 gives by default (8 artists, 16 records, 40
+// songs). A kind that came back full may have more, and offers "See all": its own tab, which
+// lists that kind alone, a page at a time as the list nears its end. Subsonic doesn't say how
+// many there are, so neither does the link. The tab is part of the route, replaced in place like
+// a sort, so Back returns to it and leaves the search rather than stepping through tabs.
+type SearchType = 'artists' | 'albums' | 'songs';
+const searchTabs: { type: SearchType | undefined; label: string }[] = [
+  { type: undefined, label: 'All' }, { type: 'artists', label: 'Artists' }, { type: 'albums', label: 'Records' }, { type: 'songs', label: 'Songs' },
+];
+const searchTypeOf = (value: unknown): SearchType | undefined => value === 'artists' || value === 'albums' || value === 'songs' ? value : undefined;
+const showSearch = (query: string, type: SearchType | undefined) => nav.go({ view: 'search', query, ...(type ? { type } : {}) }, true);
+// A tab's page: songs 100 at a time, records as Records pages them. The other kinds are skipped.
+const SEARCH_PAGES: Record<SearchType, number> = { artists: 100, albums: PAGE, songs: 100 };
+const skipped = { artistCount: 0, albumCount: 0, songCount: 0 };
+const searchPage = (type: SearchType, offset: number, size: number): SearchOptions => type === 'artists' ? { ...skipped, artistCount: size, artistOffset: offset }
+  : type === 'albums' ? { ...skipped, albumCount: size, albumOffset: offset } : { ...skipped, songCount: size, songOffset: offset };
+// What Enter in the search field focuses: the first song, record, or artist, in page order.
+const FIRST_RESULT = '.tracks .track, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
+// Long lists render only the rows near the viewport, so the first one on the page may not be the
+// list's first: a song row knows its index, and a record grid pads the rows above the window.
+const listStart = (result: HTMLElement) => {
+  const item = result.closest('li'), list = item?.parentElement;
+  if (!item || !list) return false;
+  return item.dataset.index !== undefined ? item.dataset.index === '0' : !parseFloat(list.style.paddingTop || '0');
+};
+
+export function Search({ query, type }: { query: string; type?: SearchType }) {
+  const text = query.trim();
+  const kind = searchTypeOf(type);
+  const results = useRef<HTMLDivElement>(null);
+  // Enter in the field: focus the first result once it's there. A search that found nothing (or
+  // failed) drops the request, so it can't pull focus out of the field later.
+  useEffect(() => {
+    const element = results.current;
+    if (!element) return;
+    const attempt = () => {
+      if (!focusWaiting(text)) return;
+      const first = element.querySelector<HTMLElement>(FIRST_RESULT);
+      if (first && listStart(first)) { dropFocusRequest(); first.focus(); return; }
+      // A long list scrolled down: back to the top, and focus once the first rows are drawn.
+      if (first) { nav.scroller?.scrollTo(0, 0); return; }
+      if (element.querySelector('.status:not(.loading)')) dropFocusRequest();
+    };
+    attempt();
+    const stop = onFocusFirstResult(attempt);
+    const observer = new MutationObserver(attempt);
+    observer.observe(element, { childList: true, subtree: true });
+    return () => { stop(); observer.disconnect(); };
+  }, [text, kind]);
+  // Opening or playing something a search found makes it one worth remembering.
+  const used = (event: ReactMouseEvent) => { if ((event.target as Element).closest('button, a')) rememberSearch(text); };
+  if (!text) return <>
+    <Head title="Search" />
+    <Status>Type an artist, record, or song.</Status>
+    <RecentSearches type={kind} />
+  </>;
+  return <>
+    <Head title={`“${text}”`}>
+      <div className="choices" role="group" aria-label="Show">
+        {searchTabs.map(tab => <button key={tab.label} type="button" aria-pressed={tab.type === kind} onClick={() => showSearch(query, tab.type)}>{tab.label}</button>)}
+      </div>
+    </Head>
+    <div ref={results} className="search-results" onClickCapture={used} onContextMenuCapture={used}>
+      {kind === 'songs' ? <SearchPages<Track> key={`songs:${text.toLowerCase()}`} query={text} type="songs" pick={found => found.tracks} none="No songs match">
+        {tracks => <TrackTable tracks={tracks} showAlbum />}</SearchPages>
+        : kind === 'albums' ? <SearchPages<Album> key={`albums:${text.toLowerCase()}`} query={text} type="albums" pick={found => found.albums} none="No records match">
+          {albums => <AlbumGrid albums={albums} />}</SearchPages>
+        : kind === 'artists' ? <SearchPages<Artist> key={`artists:${text.toLowerCase()}`} query={text} type="artists" pick={found => found.artists} none="No artists match">
+          {artists => <ArtistNames artists={artists} />}</SearchPages>
+        : <SearchAll query={text} />}
+    </div>
+  </>;
+}
+
+function SearchAll({ query }: { query: string }) {
+  const result = useResource(`search:${query.toLowerCase()}`, () => api.search(query));
+  return <Pending result={result} waiting="Searching">{({ artists, albums, tracks, capped }) => !artists.length && !albums.length && !tracks.length
+    ? <Status>Nothing matches “{query}”. Check the spelling or try fewer words.</Status>
+    : <>
+      {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks}><TrackTable tracks={tracks} showAlbum /></SearchGroup>}
+      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums}><AlbumGrid albums={albums} /></SearchGroup>}
+      {artists.length > 0 && <SearchGroup title="Artists" query={query} type="artists" more={capped.artists}><ArtistNames artists={artists} /></SearchGroup>}
+    </>}</Pending>;
+}
+function SearchGroup({ title, query, type, more, children }: { title: string; query: string; type: SearchType; more: boolean; children: ReactNode }) {
+  return <section className="shelf-section">
+    <div className="section-head">
+      <h2>{title}</h2>
+      {more && <button type="button" className="link see-all" onClick={() => showSearch(query, type)}>See all<span className="sr-only"> {title.toLowerCase()}</span></button>}
+    </div>
+    {children}
+  </section>;
+}
+// One kind, a page at a time, as Tracks and Records load theirs.
+function SearchPages<T extends { id: string }>({ query, type, pick, none, children }: {
+  query: string; type: SearchType; pick(found: SearchResults): T[]; none: string; children(items: T[]): ReactNode;
+}) {
+  const size = SEARCH_PAGES[type], name = `${type}:${query.toLowerCase()}`;
+  const pages = usePaged<T>(`search:${name}`, size, offset => [`searchPage:${name}:${offset}:${size}`,
+    () => api.search(query, searchPage(type, offset, size)).then((result): Result<T[]> => result.ok ? { ok: true, value: pick(result.value) } : result)]);
+  const sentinel = useMore(pages.more, pages.items.length);
+  return <>
+    {pages.items.length ? children(pages.items) : pages.done ? <Status>{none} “{query}”. Check the spelling, or look under All.</Status>
+      : pages.error ? <Status>{pages.error}</Status> : <p className="status loading">Searching</p>}
+    {pages.error && pages.items.length > 0 && <Status>{pages.error}</Status>}
+    <div ref={sentinel} className="sentinel" />
+  </>;
+}
+
+// Recent searches, under the empty field. Choosing one searches it again, on the tab last shown.
+function RecentSearches({ type }: { type: SearchType | undefined }) {
+  const recent = useRecentSearches();
+  if (!recent.length) return null;
+  return <section className="shelf-section" aria-labelledby="recent-searches">
+    <div className="section-head">
+      <h2 id="recent-searches">Recent searches</h2>
+      <button type="button" className="text-button quiet" onClick={() => { clearSearches(); document.querySelector<HTMLInputElement>('.search')?.focus(); }}>
+        Clear<span className="sr-only"> recent searches</span></button>
+    </div>
+    <ul className="similar recent-searches">{recent.map(query => <li key={query}>
+      <button type="button" className="link" onClick={() => { rememberSearch(query); showSearch(query, type); }}>{query}</button>
+    </li>)}</ul>
+  </section>;
+}
+
+// Stations -----------------------------------------------------------------------------
+// The server's internet radio stations, on the Playlists page below the automatic playlists.
+// A station plays as a live stream: its stream address stays with the host, and the queue holds
+// it like a song (stationTrack). The app opens no outside pages, so a station's home page shows
+// as its host name, as text.
+
+const homeHost = (url: string | null) => { if (!url) return null; try { return new URL(url).host.replace(/^www\./, ''); } catch { return null; } };
+async function playStation(station: RadioStation) {
+  await player.play([stationTrack(station)], 0);
+  showNowPlaying();
+}
+function Stations() {
+  const stations = useResource('radioStations', () => api.radioStations());
+  return <section className="shelf-section" aria-labelledby="stations">
+    <h2 id="stations">Stations</h2>
+    <p className="section-note">Internet radio from your server. Stations play live, so there is nothing to skip through.</p>
+    <Pending result={stations} waiting="Loading stations">{list => list.length ? <ul className="rows">
+      {list.map(station => <li key={station.id} className="playable">
+        <PlayOver label={station.name} play={() => playStation(station)} />
+        <button type="button" onClick={() => void playStation(station)}
+          onContextMenu={event => openMenu(event, { kind: 'tracks', tracks: [stationTrack(station)] })}>
+          <Cover id={null} name={station.name} size={160} />
+          <span className="row-text">
+            <span className="row-name">{station.name}</span>
+            <span className="row-sub">{homeHost(station.homePageUrl) ?? 'Live stream'}</span>
+          </span>
+        </button>
+      </li>)}
+    </ul> : <Status>Your server has no internet radio stations. Navidrome's administrators can add them.</Status>}</Pending>
+  </section>;
+}
+
+// Mixes ------------------------------------------------------------------------------------------
+// Every automatic playlist the library can build, grouped by what it draws from. The two every
+// library has come first; the groups after them are hidden when they have nothing, and show the
+// error when their lookup failed, since a failure says nothing about what's there. This is the
+// page for the decades, so it looks for them (nine small requests, kept under the same key the
+// Playlists page and Records' Decade use), and their group appears once they're found.
+const historyMixes = new Set(['repeat', 'lately']);
+export function Mixes() {
+  const genres = useResource('genres', () => api.genres());
+  const history = useResource('albums:frequent:0:1', () => api.albums('frequent', 0, 1));
+  const decades = useResource('decades', libraryDecades);
+  // Wait for the genres and the history, so the groups don't shift as they arrive. The decades
+  // come last on the page, so they join whenever they're ready.
+  if (!genres || !history) return <>
+    <MixesHead />
+    <p className="status loading">Gathering mixes</p>
+  </>;
+  const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0);
+  const played = mixes.filter(mix => historyMixes.has(mix.id));
+  const byGenre = mixes.filter(mix => mix.id.startsWith('genre:'));
+  const byDecade = mixes.filter(mix => mix.id.startsWith('decade:'));
+  const always = mixes.filter(mix => !played.includes(mix) && !byGenre.includes(mix) && !byDecade.includes(mix));
+  return <>
+    <MixesHead />
+    <div className="shelf-section"><MixGrid mixes={always} /></div>
+    {!history.ok ? <MixGroup id="mixes-played" title="From what you play"><Status>{history.error}</Status></MixGroup>
+      : played.length > 0 && <MixGroup id="mixes-played" title="From what you play"><MixGrid mixes={played} /></MixGroup>}
+    {!genres.ok ? <MixGroup id="mixes-genre" title="By genre"><Status>{genres.error}</Status></MixGroup>
+      : byGenre.length > 0 && <MixGroup id="mixes-genre" title="By genre"><MixGrid mixes={byGenre} /></MixGroup>}
+    {decades && !decades.ok ? <MixGroup id="mixes-decade" title="By decade"><Status>{decades.error}</Status></MixGroup>
+      : byDecade.length > 0 && <MixGroup id="mixes-decade" title="By decade"><MixGrid mixes={byDecade} /></MixGroup>}
+  </>;
+}
+function MixesHead() {
+  return <Head title="Mixes"><p className="byline"><span>Playlists Squiggly builds from your library. They change as it does.</span></p></Head>;
+}
+function MixGroup({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return <section className="shelf-section" aria-labelledby={id}><h2 id={id}>{title}</h2>{children}</section>;
+}
+// Plays a tile's mix from its draw. If something else started playing while the draw was on its
+// way, that stays, as with Tracks' Shuffle.
+async function playMix(mix: Mix) {
+  const asked = playRequests();
+  const drawn = await mixTracks(mix);
+  if (playRequests() !== asked) return;
+  if (!drawn.ok) player.showError(drawn.error);
+  else if (drawn.value.length) { await player.play(drawn.value, 0); showNowPlaying(); }
+}
+// Each tile plays from its button and opens its mix, as on the Playlists page.
+function MixGrid({ mixes }: { mixes: Mix[] }) {
+  return <ul className="grid">
+    {mixes.map(mix => <li key={mix.id} className="playable">
+      <PlayOver label={mix.name} play={() => playMix(mix)} />
+      <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
+        <MixTile mix={mix} travels={mix.id === morph.id} />
+        <span className="grid-name"><span>{mix.name}</span></span>
+        <span className="grid-sub">{mix.description}</span>
+      </button>
+    </li>)}
+  </ul>;
 }

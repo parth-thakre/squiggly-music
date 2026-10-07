@@ -36,7 +36,7 @@ describe('key parsing', () => {
     expect(error(42)).toMatch(/empty/);
     expect(error('ctrl')).toMatch(/no key after its modifiers/);
     expect(error('hyper+k')).toMatch(/“hyper” in “hyper\+k” isn't a modifier/);
-    // There is no macOS build, so there is no "mod" or "cmd".
+    // Keys are written with ctrl, alt, shift, and meta on every platform, macOS included, so there is no "mod" or "cmd".
     expect(error('mod+k')).toMatch(/isn't a modifier/);
     expect(error('ctrl+kk')).toMatch(/isn't a key/);
     expect(error('shift+/')).toMatch(/“\?” rather than “shift\+\/”/);
@@ -156,14 +156,17 @@ describe('the playing song’s keys', () => {
   // The real built-in registrations from commands/builtin.ts, so a default key given to any
   // other command shows up here. builtin.ts reaches the page when it loads; this is enough of one.
   let builtins: ReturnType<typeof registry.commands.all> = [];
+  const listeners = new Map<string, (event: unknown) => void>();
+  const historyBack = vi.fn();
   beforeAll(async () => {
     const stored = new Map<string, string>();
     const on = () => {};
     vi.stubGlobal('window', globalThis);
     vi.stubGlobal('localStorage', { getItem: (key: string) => stored.get(key) ?? null, setItem: (key: string, value: string) => stored.set(key, value), removeItem: (key: string) => stored.delete(key) });
     vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener: on, removeEventListener: on }));
-    vi.stubGlobal('addEventListener', on);
-    vi.stubGlobal('history', { state: null, replaceState: on, pushState: on });
+    vi.stubGlobal('addEventListener', (type: string, handler: (event: unknown) => void) => { listeners.set(type, handler); });
+    vi.stubGlobal('removeEventListener', on);
+    vi.stubGlobal('history', { state: null, replaceState: on, pushState: on, back: historyBack });
     vi.stubGlobal('document', { hidden: true, addEventListener: on, documentElement: { style: { setProperty: on }, dataset: {} } });
     vi.stubGlobal('Audio', class { addEventListener = on; pause = on; });
     await import('../apps/desktop/renderer/src/app/commands/builtin');
@@ -189,6 +192,24 @@ describe('the playing song’s keys', () => {
     expect(allowedIn('button', stroke('f'))).toBe(true);
     // Nothing playing: F falls through to the page.
     expect(match(keymap, [], 'f', id => id !== 'builtin:favorite-current').consumed).toBe(false);
+  });
+  it('the mouse’s back button steps back only where no browser does', async () => {
+    const { startKeymap } = await import('../apps/desktop/renderer/src/app/commands/keymap');
+    const { nav } = await import('../apps/desktop/renderer/src/app/route');
+    const stop = startKeymap();
+    const mouseUp = listeners.get('mouseup')!;
+    nav.go({ view: 'artists' });
+    const tick = () => new Promise(done => setTimeout(done, 0));
+    // The browser build: the browser itself goes back on the button, so the page must not.
+    delete (globalThis as { squiggly?: unknown }).squiggly;
+    mouseUp({ button: 3 }); await tick();
+    expect(historyBack).not.toHaveBeenCalled();
+    // The desktop window: nothing else acts on the button.
+    (globalThis as { squiggly?: unknown }).squiggly = {};
+    mouseUp({ button: 3 }); await tick();
+    expect(historyBack).toHaveBeenCalledTimes(1);
+    delete (globalThis as { squiggly?: unknown }).squiggly;
+    stop();
   });
   it('G then . goes where the deck’s credit links first', async () => {
     const { firstArtistId } = await import('../apps/desktop/renderer/src/app/credits');

@@ -1,7 +1,7 @@
 import { allTracks, expect, test, type App } from '../fixtures/test';
 
 // Tracks: every track on the server, sorted as records are, a page at a time, played like any
-// other song list. Sorting comes from Navidrome's own API; without it the sorts are hidden.
+// other song list. Sorting comes from Navidrome's own API; without it the app sorts them itself.
 const sorts = (app: App) => app.main.getByRole('group', { name: 'Sort tracks' });
 async function sortBy(app: App, label: string) {
   await sorts(app).getByRole('button', { name: label, exact: true }).click();
@@ -100,6 +100,15 @@ test.describe('tracks', () => {
     await expect(app.main.getByText(`${allTracks.length - 2} songs up next`)).toBeVisible();
   });
 
+  test('with a mouse, only the song\'s name plays it; its length doesn\'t', async ({ app, page }) => {
+    await app.openAlbum('Test Pressing');
+    await app.row('Short Stop').locator('.figure').click();
+    await page.waitForTimeout(300);
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveCount(0);
+    await app.rowButton(app.row('Short Stop')).click();
+    await app.expectPlaying('Short Stop');
+  });
+
   test('signs in to Navidrome again when its session has ended', async ({ app, fake }) => {
     await app.section('Tracks').click();
     await expect(app.tracks().first()).toContainText('Take 100');
@@ -109,18 +118,42 @@ test.describe('tracks', () => {
     expect(fake.logins).toBe(2);
   });
 
-  test('without Navidrome\'s own API, tracks come in the server\'s order and the sorts are hidden', async ({ app, fake, page }) => {
+  test('without Navidrome\'s own API, the app sorts the tracks itself, the same way', async ({ app, fake, page }) => {
     fake.nativeApi = false;
     await app.section('Tracks').click();
-    await expect(app.tracks().first()).toContainText('Long Run');
-    expect(await first(app, 3)).toEqual(['Long Run', 'Lyric Line', 'Short Stop']);
-    await expect(sorts(app)).toHaveCount(0);
-    await expect(app.main.getByRole('button', { name: 'Shuffle', exact: true })).toBeVisible();
+    await expect(sorts(app).getByRole('button', { name: 'Newest' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(app.tracks().first()).toContainText('Take 100');
+    expect(await first(app, 3)).toEqual(['Take 100', 'Take 99', 'Take 98']);
+    await sortBy(app, 'A to Z');
+    await expect(app.tracks().first()).toContainText('Coda 11');
+    expect(await first(app, 4)).toEqual(['Coda 11', 'Coda 14', 'Coda 17', 'Coda 2']);
+    await sortBy(app, 'By artist');
+    await expect(app.tracks().first()).toContainText('Opening 13');
+    expect(await first(app, 6)).toEqual(['Opening 13', 'Second Wind 13', 'Middle Distance 13', 'Late Call 13', 'Take 1', 'Take 2']);
+    await sortBy(app, 'Most played');
+    await expect(app.tracks()).toHaveCount(3);
+    expect(await app.titles()).toEqual(['Second Wind 3', 'Opening 5', 'Opening 2']);
+    await sortBy(app, 'Recently played');
+    await expect(app.tracks().first()).toContainText('Opening 5');
+    expect(await app.titles()).toEqual(['Opening 5', 'Opening 2', 'Second Wind 3']);
     expect(fake.logins).toBe(0);
-    await app.rowButton(app.row('Lyric Line')).click();
-    await app.expectPlaying('Lyric Line');
+    await app.rowButton(app.row('Opening 5')).click();
+    await app.expectPlaying('Opening 5');
     await page.goBack();
     await expect(app.heading).toHaveText('Records');
+  });
+
+  test('over plain HTTP beyond this network, says why tracks come in the server\'s order', async ({ app, page }) => {
+    // The connector's answer for such a server (tests/tracks.test.ts), put on the fixture's pages.
+    await page.route('**/api/tracks', async route => {
+      const response = await route.fetch();
+      const body = await response.json() as { ok: boolean; value?: object };
+      await route.fulfill({ response, json: body.ok ? { ...body, value: { ...body.value, sorted: false, plainHttp: true } } : body });
+    });
+    await app.section('Tracks').click();
+    await expect(app.tracks().first()).toBeVisible();
+    await expect(sorts(app)).toHaveCount(0);
+    await expect(app.main.getByText('this library is too big to sort here, and sorting it on the server means sending your password to Navidrome', { exact: false })).toBeVisible();
   });
 
   test('says so while the first page loads, and Shuffle draws from the whole library', async ({ app, fake }) => {
@@ -130,7 +163,8 @@ test.describe('tracks', () => {
     await expect(app.tracks().first()).toContainText('Take 100');
 
     await app.main.getByRole('button', { name: 'Shuffle', exact: true }).click();
-    await expect.poll(() => fake.callsTo('randomSongs').map(call => call.args)).toEqual([[{ size: 500 }]]);
+    // Home's mix tiles draw a few random songs each on sign-in; the library-wide draw is the one asking for 500.
+    await expect.poll(() => fake.callsTo('randomSongs').map(call => call.args).filter(([draw]) => (draw as { size: number }).size === 500)).toEqual([[{ size: 500 }]]);
     await expect(app.deck.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   });
 

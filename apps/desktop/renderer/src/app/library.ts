@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { LibraryApi, Playlist, Result, Track } from '../../../../../packages/core/contracts';
+import { isStation } from '../../../../../packages/core/stations';
 import { previewLibrary } from '../bridge/previewLibrary';
 
 // The desktop's preload bridge, the Android app's bridge (apps/android/web/bridge.ts), or the browser build's host.
@@ -25,6 +26,19 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>): Promise<
   while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); }
   return entry as Promise<Result<T>>;
 }
+// Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
+// would otherwise ask for dozens at once (the desktop refuses past 32 requests in flight, and the
+// server has its own limits). A record already read comes from load's cache without waiting.
+const ALBUMS_AT_ONCE = 6;
+let albumsReading = 0;
+const albumWaiting: (() => void)[] = [];
+async function albumSlot<T>(task: () => Promise<T>) {
+  // A finished read hands its slot straight to the next waiting one, so none slips in between.
+  if (albumsReading < ALBUMS_AT_ONCE) albumsReading++; else await new Promise<void>(resolve => albumWaiting.push(resolve));
+  try { return await task(); } finally { const next = albumWaiting.shift(); if (next) next(); else albumsReading--; }
+}
+export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)));
+export const albumDetails = (ids: readonly string[]) => Promise.all(ids.map(albumDetail));
 export function invalidate(prefix: string) {
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); listeners.forEach(listener => listener(key)); }
   invalidations.forEach(listener => listener(prefix));
@@ -57,7 +71,13 @@ export function useResource<T>(key: string | null, loader: () => Promise<Result<
   const [version, setVersion] = useState(0);
   useEffect(() => {
     if (!key) return;
-    const listener = (changed: string) => { if (changed === key || changed === '*') { setValue(null); setVersion(v => v + 1); } };
+    // A changed item keeps showing until its fresh answer arrives, so a page doesn't blank and
+    // lose its focus and scroll each time it's rated or favorited. A new session shows nothing
+    // of the old one.
+    const listener = (changed: string) => {
+      if (changed === '*') setValue(null);
+      if (changed === key || changed === '*') setVersion(v => v + 1);
+    };
     listeners.add(listener);
     let live = true;
     void load(key, loader).then(result => { if (live) setValue({ key, result }); });
@@ -78,7 +98,9 @@ export function useResource<T>(key: string | null, loader: () => Promise<Result<
 
 export interface Entry { key: string; track: Track }
 export type PlaylistEdit =
-  | { kind: 'add'; entries: Entry[] }
+  // Without `after`, the songs go at the end. With it (a drop into the list), they follow that
+  // entry (null for the top), or land at `to` when that entry is gone.
+  | { kind: 'add'; entries: Entry[]; after?: string | null; to?: number }
   | { kind: 'remove'; keys: string[] }
   // `after` is the entry the song should follow (null for the top); `to` is the fallback
   // position when that entry is gone.
@@ -86,6 +108,9 @@ export type PlaylistEdit =
   | { kind: 'rename'; name: string }
   | { kind: 'delete' };
 interface Confirmed { playlist: Playlist; entries: Entry[] }
+// Where dropped songs go: after an entry (null for the top), or at `to` when that entry is gone.
+// null: at the end.
+export type Place = { after: string | null; to: number } | null;
 export interface PlaylistView {
   playlist: Playlist | null; tracks: Track[]; entries: Entry[];
   // Loading until the first read from the server; its error if that failed.
@@ -100,7 +125,12 @@ const entryOf = (track: Track): Entry => ({ key: `e${++keys}`, track });
 
 export function applyEdit(state: Confirmed, edit: PlaylistEdit | { kind: 'sync' }): Confirmed {
   switch (edit.kind) {
-    case 'add': return { ...state, entries: [...state.entries, ...edit.entries] };
+    case 'add': {
+      if (edit.after === undefined) return { ...state, entries: [...state.entries, ...edit.entries] };
+      const anchor = edit.after === null ? -1 : state.entries.findIndex(e => e.key === edit.after);
+      const at = edit.after === null ? 0 : anchor >= 0 ? anchor + 1 : Math.min(edit.to ?? state.entries.length, state.entries.length);
+      return { ...state, entries: [...state.entries.slice(0, at), ...edit.entries, ...state.entries.slice(at)] };
+    }
     case 'remove': { const drop = new Set(edit.keys); return { ...state, entries: state.entries.filter(e => !drop.has(e.key)) }; }
     case 'move': {
       const moving = state.entries.find(e => e.key === edit.key);
@@ -140,7 +170,23 @@ export class PlaylistEditor {
 
   // Read the playlist from the server, in turn with any edits already queued.
   sync() { if (!this.tasks.some(task => task.edit.kind === 'sync')) void this.enqueue({ kind: 'sync' }); }
-  add(tracks: Track[]) { return this.enqueue({ kind: 'add', entries: tracks.map(entryOf) }); }
+  // The place before the song at `at` of the list as shown, held as the entry it follows, so
+  // edits made before the songs arrive (a drop waiting on the server) don't move it. Without
+  // `at`, or past the end, the end.
+  place(at?: number): Place {
+    const entries = this.view.entries;
+    if (at === undefined || at >= entries.length) return null;
+    const to = Math.max(0, at);
+    return { after: to === 0 ? null : entries[to - 1].key, to };
+  }
+  // `at`: an index of the list as shown (see place), or a place taken earlier. A playlist holds
+  // songs, so tracks that include a station (dragged from the queue, say) are refused whole,
+  // before anything is sent.
+  add(tracks: Track[], at?: number | Place) {
+    if (tracks.some(isStation)) return Promise.resolve<Result>({ ok: false, error: 'Playlists hold songs, not radio stations.' });
+    const place = at === undefined || typeof at === 'number' ? this.place(at) : at;
+    return this.enqueue(place ? { kind: 'add', entries: tracks.map(entryOf), ...place } : { kind: 'add', entries: tracks.map(entryOf) });
+  }
   rename(name: string) { return this.enqueue({ kind: 'rename', name }); }
   delete() { return this.enqueue({ kind: 'delete' }); }
   // Indexes refer to the list as shown (this.snapshot.tracks). `expect` guards against a list
@@ -203,8 +249,10 @@ export class PlaylistEditor {
       return read;
     }
     let request: Promise<Result> | null;
+    // What a refused edit still changed on the server: songs appended, then not put in place.
+    let landed = null as PlaylistEdit | null;
     switch (edit.kind) {
-      case 'add': request = this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id)); break;
+      case 'add': request = this.addTo(base, edit, () => { landed = { kind: 'add', entries: edit.entries }; }); break;
       case 'rename': request = this.source.updatePlaylist(this.id, { name: edit.name }); break;
       case 'delete': request = this.source.deletePlaylist(this.id); break;
       case 'remove': {
@@ -228,14 +276,25 @@ export class PlaylistEditor {
     const result = await request;
     invalidate(`playlist:${this.id}`); invalidate('playlists');
     if (edit.kind === 'delete') { if (result.ok) this.deleted = true; return result; }
-    // Read back what the server now holds. Until then (or if that fails) trust the edit's own effect.
+    // Read back what the server now holds. Until then (or if that fails) trust the edit's own
+    // effect. Songs that landed keep their keys, so edits queued for them still find them.
     if (base) {
-      const expected = result.ok ? applyEdit(base, edit) : base;
+      const expected = result.ok ? applyEdit(base, edit) : landed ? applyEdit(base, landed) : base;
       const read = await this.read(expected.entries);
       if (!read.ok) this.confirmed = expected;
       if (result.ok && !read.ok) return { ok: false, error: `Saved, but the playlist could not be read back. ${read.error}` };
     }
     return result;
+  }
+  // The server only appends, so songs placed inside the list are appended, then the whole list
+  // is written in the new order, built from the server's confirmed list as a move is.
+  // `appended` is told when the songs are on the server, at the end, whatever happens next.
+  private async addTo(base: Confirmed | null, edit: Extract<PlaylistEdit, { kind: 'add' }>, appended: () => void): Promise<Result> {
+    const added = await this.source.addToPlaylist(this.id, edit.entries.map(e => e.track.id));
+    if (!added.ok || edit.after === undefined || !base) return added;
+    appended();
+    const placed = await this.source.reorderPlaylist(this.id, applyEdit(base, edit).entries.map(e => e.track.id));
+    return placed.ok ? placed : { ok: false, error: `The songs were added at the end. ${placed.error}` };
   }
   private compute(): PlaylistView {
     let state = this.confirmed;
