@@ -47,5 +47,7 @@ export class Account {
     const password = this.encryption.encryptString(connection.password).toString('base64');
     await this.store.save({ url: connection.url, username: connection.username, password });
   }
-  async forget() { if (this.store.value) await this.store.save(null); }
+  // Always writes, even when nothing is saved yet: the store's value only changes once a write
+  // finishes, so a first sign-in still being written would otherwise land after this.
+  async forget() { await this.store.save(null); }
 }

@@ -5,6 +5,9 @@ export const IdSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength
 // One queue bound everywhere: play requests, edits, saved queues, and the audio host (player-mpv/queue.ts).
 export const QUEUE_LIMIT = 1000;
 const QueueIndexSchema = Schema.Number.pipe(Schema.int(), Schema.between(0, QUEUE_LIMIT - 1));
+// An mpv audio-device name. This bounds the text only; main and the audio host accept a name
+// only when the engine lists it (listedDevice in contracts.ts).
+export const DeviceSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024), Schema.pattern(/^\P{Cc}+$/u));
 export const CommandSchema = Schema.Union(
   Schema.Struct({ type: Schema.Literal('play', 'pause', 'stop', 'next', 'previous', 'restart') }),
   Schema.Struct({
@@ -16,7 +19,7 @@ export const CommandSchema = Schema.Union(
     entryId: Schema.optional(IdSchema),
   }),
   Schema.Struct({ type: Schema.Literal('volume'), percent: Schema.Number.pipe(Schema.finite(), Schema.between(0, 100)) }),
-  Schema.Struct({ type: Schema.Literal('device'), id: Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024)) }),
+  Schema.Struct({ type: Schema.Literal('device'), id: DeviceSchema }),
   // Queue modes (PlayerSnapshot.repeat and .shuffle). Shuffle on reorders the songs after the current one.
   Schema.Struct({ type: Schema.Literal('repeat'), mode: Schema.Literal('off', 'all', 'one') }),
   Schema.Struct({ type: Schema.Literal('shuffle'), on: Schema.Boolean }),

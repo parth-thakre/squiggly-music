@@ -22,7 +22,7 @@ function png() {
 }
 // A FLAC file's metadata and no audio: STREAMINFO (44.1 kHz, 16-bit, stereo, 10 s), Vorbis
 // comments, and a front-cover picture. Enough for tags, length, format, and the cover.
-function flac(tags: Record<string, string>, picture: Buffer) {
+function flac(tags: Record<string, string>, picture: Buffer, type = 'image/png') {
   const block = (type: number, data: Buffer, last = false) => Buffer.concat([Buffer.from([(last ? 0x80 : 0) | type, data.length >> 16, (data.length >> 8) & 255, data.length & 255]), data]);
   const info = Buffer.alloc(34);
   info.writeUInt16BE(4096, 0); info.writeUInt16BE(4096, 2);
@@ -35,7 +35,7 @@ function flac(tags: Record<string, string>, picture: Buffer) {
   const count = Buffer.alloc(4); count.writeUInt32LE(entries.length);
   const comments = Buffer.concat([text('squiggly test'), count, ...entries]);
   const be = (n: number) => { const b = Buffer.alloc(4); b.writeUInt32BE(n); return b; };
-  const mime = Buffer.from('image/png');
+  const mime = Buffer.from(type);
   const pictureBlock = Buffer.concat([be(3), be(mime.length), mime, be(0), be(1), be(1), be(24), be(0), be(picture.length), picture]);
   return Buffer.concat([Buffer.from('fLaC'), block(0, info), block(4, comments), block(6, pictureBlock, true)]);
 }
@@ -93,5 +93,20 @@ describe('files opened from this computer', () => {
       '#EXTINF:-1,Unknown artist - Dropped Song', dropped,
       '#EXTINF:-1,Unknown artist - Dropped Song', 'Unknown artist/Unknown album/Dropped Song.wav',
     ].join('\n') + '\n');
+  });
+
+  it('serve an embedded picture only under a raster image type', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-local-'));
+    const cover = png();
+    const served = async (name: string, type: string) => {
+      const path = join(directory!, name);
+      await writeFile(path, flac({ TITLE: name }, cover, type));
+      const [track] = await readLocalTracks([path]);
+      return readLocalCover(track.coverArt!);
+    };
+    expect(await served('svg.flac', 'image/svg+xml')).toBeNull();
+    expect(await served('html.flac', 'text/html')).toBeNull();
+    // A common misspelling in taggers, served under its proper name.
+    expect(await served('jpg.flac', 'image/JPG')).toEqual({ bytes: cover, contentType: 'image/jpeg' });
   });
 });

@@ -12,6 +12,7 @@
 }
 .extension-actions { margin: 6px 0 0 36px; gap: 8px 18px; }
 .extension .note { margin-left: 36px; }
+.extension .extension-new { color: var(--accent-text); }
 .text-button.danger { color: var(--accent-text); }
 .extension-page { min-height: 40vh; }
 .extension-notices { position: fixed; right: 18px; bottom: 18px; z-index: 40; display: grid; gap: 8px; max-width: min(420px, calc(100vw - 36px)); pointer-events: none; }

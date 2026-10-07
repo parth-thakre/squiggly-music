@@ -451,9 +451,11 @@ export function ArtistPage({ id }: { id: string }) {
 // loaded so far become the queue (as much as it holds around the one clicked).
 
 const TRACKS = 200;
-// Whether the server sorts tracks, once a page has said, so the sorts don't blink on each visit.
+// Whether the server sorts tracks, once a page has said, so the sorts don't blink on each visit,
+// and whether that's only because it's Navidrome over plain HTTP (TrackPage.plainHttp).
 let tracksSorted: boolean | null = null;
-onLibraryReset(() => { tracksSorted = null; });
+let tracksPlainHttp = false;
+onLibraryReset(() => { tracksSorted = null; tracksPlainHttp = false; });
 
 export function Tracks() {
   const route = useRoute();
@@ -462,7 +464,7 @@ export function Tracks() {
     `tracks:${sort}:${offset}:${TRACKS}${sort === 'random' ? `:${seed}` : ''}`,
     () => api.tracks(sort, offset, TRACKS, sort === 'random' ? String(seed) : '').then((result): Result<Track[]> => {
       if (!result.ok) return result;
-      tracksSorted = result.value.sorted;
+      tracksSorted = result.value.sorted; tracksPlainHttp = !!result.value.plainHttp;
       return { ok: true, value: result.value.tracks };
     }),
   ]);
@@ -491,6 +493,7 @@ export function Tracks() {
         <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
+      {tracksPlainHttp && <p className="note">Tracks are in the server's own order. Sorting them means sending your password to Navidrome, and this server isn't using HTTPS.</p>}
     </Head>
     {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
       ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.'

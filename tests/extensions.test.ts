@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { compileEntry } from '../apps/desktop/main/extensions/compile';
@@ -51,6 +51,23 @@ describe('manifests', () => {
     expect(await readManifest(join(examples, 'library-stats'))).toMatchObject({ ok: true, value: { id: 'library-stats', name: 'Library stats', version: '1.0.0' } });
     expect(extensionId('@me/stats')).toEqual({ ok: true, value: 'me.stats' });
   });
+
+  it('reserves the app\'s own owner names', () => {
+    for (const name of ['builtin', 'user', 'Builtin', '@user']) expect(extensionId(name)).toMatchObject({ ok: false, error: expect.stringMatching(/the app uses for itself/) });
+    expect(extensionId('builtin-extras')).toEqual({ ok: true, value: 'builtin-extras' });
+  });
+
+  it('refuses an entry that links out of the folder, and a folder that is a link', async () => {
+    const root = await tempDir();
+    const dir = join(root, 'ext');
+    await mkdir(dir);
+    await writeFile(join(root, 'outside.ts'), 'export default 1;');
+    await symlink(join(root, 'outside.ts'), join(dir, 'index.ts'));
+    await writeFile(join(dir, 'package.json'), JSON.stringify({ name: 'linked', squiggly: { renderer: 'index.ts' } }));
+    expect(await readManifest(dir)).toMatchObject({ ok: false, error: expect.stringMatching(/inside the extension's folder/) });
+    await symlink(join(examples, 'sleep-timer'), join(root, 'linked-folder'));
+    expect(await readManifest(join(root, 'linked-folder'))).toMatchObject({ ok: false, error: expect.stringMatching(/link to another folder/) });
+  });
 });
 
 describe('compiling', () => {
@@ -83,6 +100,43 @@ describe('compiling', () => {
     await writeFile(join(dir, 'index.ts'), 'import { renderToString } from "react-dom/server";\nexport default renderToString;');
     await expect(compileEntry(join(dir, 'index.ts'), dir)).rejects.toThrow(/react-dom\/server.*isn't available/);
   });
+
+  it('reads only files inside the extension\'s folder, links followed', async () => {
+    const root = await tempDir();
+    const dir = join(root, 'ext');
+    await mkdir(join(dir, 'node_modules', 'inside'), { recursive: true });
+    await mkdir(join(root, 'node_modules', 'leak'), { recursive: true });
+    await writeFile(join(root, 'secret.txt'), 'the secret');
+    await writeFile(join(root, 'node_modules', 'leak', 'index.js'), 'export default "the secret";');
+    await writeFile(join(dir, 'node_modules', 'inside', 'index.js'), 'export default "fine";');
+    const compile = async (source: string) => { await writeFile(join(dir, 'index.ts'), source); return compileEntry(join(dir, 'index.ts'), dir); };
+    const outside = /index\.ts:1:\d+: .*is outside the extension's folder/;
+
+    // Its own node_modules is fine.
+    expect((await compile('import dep from "inside";\nexport default dep;')).code).toContain('fine');
+    await expect(compile('import text from "../secret.txt";\nexport default text;')).rejects.toThrow(outside);
+    await expect(compile(`import text from ${JSON.stringify(join(root, 'secret.txt'))};\nexport default text;`)).rejects.toThrow(outside);
+    // A glob import, which esbuild expands without asking the resolver.
+    await expect(compile('const name = String(Math.random());\nexport default () => import(`../${name}.txt`);')).rejects.toThrow(/is outside the extension's folder/);
+    // A package found by walking up past the folder.
+    await expect(compile('import leak from "leak";\nexport default leak;')).rejects.toThrow(outside);
+    // A link inside the folder that points out of it.
+    await symlink(join(root, 'secret.txt'), join(dir, 'link.txt'));
+    await expect(compile('import text from "./link.txt";\nexport default text;')).rejects.toThrow(outside);
+    await symlink(join(root, 'node_modules', 'leak'), join(dir, 'node_modules', 'linked'));
+    await expect(compile('import leak from "linked";\nexport default leak;')).rejects.toThrow(outside);
+    // A folder that is itself a link.
+    await symlink(join(examples, 'sleep-timer'), join(root, 'linked-folder'));
+    await expect(compileEntry(join(root, 'linked-folder', 'src/index.ts'), join(root, 'linked-folder'))).rejects.toThrow(/is outside the extension's folder/);
+  });
+
+  it('still compiles every example', async () => {
+    for (const name of ['library-stats', 'now-playing-clipboard', 'sleep-timer']) {
+      const manifest = await readManifest(join(examples, name));
+      if (!manifest.ok) throw new Error(manifest.error);
+      expect((await compileEntry(manifest.value.renderer, join(examples, name))).code).toContain('__squigglyHost');
+    }
+  });
 });
 
 // A manager with real folders and real esbuild. The trash is a folder beside the config folder.
@@ -114,7 +168,7 @@ describe('extension manager', () => {
 
     // Turning it off is saved, and withdraws the module.
     expect(await manager.setEnabled('library-stats', false)).toEqual({ ok: true, value: undefined });
-    expect(JSON.parse(await readFile(join(configDir, 'extensions.json'), 'utf8'))).toEqual({ disabled: ['library-stats'] });
+    expect(JSON.parse(await readFile(join(configDir, 'extensions.json'), 'utf8'))).toEqual({ version: 2, enabled: [], disabled: ['library-stats'] });
     expect(manager.list().find(info => info.id === 'library-stats')).toMatchObject({ enabled: false, rendererUrl: null });
     expect(manager.rendererModule(stats.rendererUrl!)).toBeNull();
     await manager.setEnabled('library-stats', true);
@@ -160,6 +214,55 @@ describe('extension manager', () => {
     await cp(join(examples, 'now-playing-clipboard'), join(configDir, 'extensions', 'now-playing-clipboard'), { recursive: true });
     await until(() => manager.list().length === 2);
     expect(seen.length).toBeGreaterThan(1);
+    expect(manager.list().find(info => info.id === 'now-playing-clipboard')).toMatchObject({ enabled: false, isNew: true, rendererUrl: null });
+  });
+
+  it('keeps extensions that were already there on, and starts new ones off until turned on', async () => {
+    const { manager, configDir } = await managerFor();
+    const extensions = join(configDir, 'extensions');
+    await cp(join(examples, 'library-stats'), join(extensions, 'library-stats'), { recursive: true });
+    await cp(join(examples, 'sleep-timer'), join(extensions, 'sleep-timer'), { recursive: true });
+    // An extensions.json from before: only what was turned off.
+    await writeFile(join(configDir, 'extensions.json'), JSON.stringify({ disabled: ['sleep-timer'] }));
+    await manager.start();
+    const info = (id: string) => manager.list().find(extension => extension.id === id);
+    expect(info('library-stats')).toMatchObject({ enabled: true, isNew: false, rendererUrl: expect.stringMatching(/^squiggly-ext:/) });
+    expect(info('sleep-timer')).toMatchObject({ enabled: false, isNew: false });
+    expect(JSON.parse(await readFile(join(configDir, 'extensions.json'), 'utf8'))).toEqual({ version: 2, enabled: ['library-stats'], disabled: ['sleep-timer'] });
+
+    // A folder that shows up later is found, but doesn't run.
+    await cp(join(examples, 'now-playing-clipboard'), join(extensions, 'now-playing-clipboard'), { recursive: true });
+    await manager.reload();
+    expect(info('now-playing-clipboard')).toMatchObject({ enabled: false, isNew: true, rendererUrl: null, error: null });
+    expect(manager.rendererModule('squiggly-ext://now-playing-clipboard/0000000000000000.js')).toBeNull();
+    await manager.setEnabled('now-playing-clipboard', true);
+    expect(info('now-playing-clipboard')).toMatchObject({ enabled: true, isNew: false, rendererUrl: expect.stringMatching(/^squiggly-ext:/) });
+
+    // The migration runs once: a folder added before the next start stays off too.
+    await manager.close();
+    await cp(join(examples, 'sleep-timer'), join(extensions, 'sleep-timer-2'), { recursive: true });
+    await writeFile(join(extensions, 'sleep-timer-2', 'package.json'), JSON.stringify({ name: 'sleep-timer-2', squiggly: { renderer: 'src/index.ts' } }));
+    const again = new ExtensionManager({ configDir, watch: false });
+    managers.push(again);
+    await again.start();
+    expect(again.list().filter(extension => extension.enabled).map(extension => extension.id).sort()).toEqual(['library-stats', 'now-playing-clipboard']);
+    expect(again.list().find(extension => extension.id === 'sleep-timer-2')).toMatchObject({ enabled: false, isNew: true });
+  });
+
+  it('starts every extension off on a fresh config folder with no extensions yet', async () => {
+    const { manager, configDir } = await managerFor();
+    await manager.start();
+    await cp(join(examples, 'sleep-timer'), join(configDir, 'extensions', 'sleep-timer'), { recursive: true });
+    await manager.reload();
+    expect(manager.list()[0]).toMatchObject({ id: 'sleep-timer', enabled: false, isNew: true });
+  });
+
+  it('shows a linked extension folder with an error and doesn\'t load it', async () => {
+    const { manager, configDir } = await managerFor();
+    await mkdir(join(configDir, 'extensions'), { recursive: true });
+    await symlink(join(examples, 'sleep-timer'), join(configDir, 'extensions', 'sleep-timer'));
+    await manager.start();
+    expect(manager.list()[0]).toMatchObject({ id: 'sleep-timer', rendererUrl: null, error: expect.stringMatching(/link to another folder/) });
   });
 });
 

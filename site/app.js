@@ -78,7 +78,8 @@
     Object.keys(PATTERNS).forEach(function (key) {
       var asset = null;
       for (var i = 0; i < assets.length; i++) if (PATTERNS[key].test(assets[i].name)) { asset = assets[i]; break; }
-      if (!asset) return;
+      // Only a github.com link replaces the release page; anything else stays as it is.
+      if (!asset || !/^https:\/\/github\.com\//.test(String(asset.browser_download_url))) return;
       var links = doc.querySelectorAll('[data-asset="' + key + '"]');
       for (var j = 0; j < links.length; j++) links[j].href = asset.browser_download_url;
       // Only the data-file element changes. What the file needs sits beside it and stays.

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Effect, Either, Fiber, Schema, TestClock, TestContext } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, libraryCall, normalizeServerUrl, plainText, reachOf, resolveServerAddress, ServerError, serverUrlCandidates, Unreachable } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, localAddress, normalizeServerUrl, plainText, reachOf, resolveServerAddress, ServerError, serverUrlCandidates, Unreachable } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 import { stationIdOf } from '../packages/core/stations';
@@ -44,22 +44,54 @@ describe('server address', () => {
     serve(() => new Response('<html>not navidrome</html>', { headers: { 'content-type': 'text/html' } }));
     expect(Either.isLeft(await Effect.runPromise(Effect.either(client().probe())))).toBe(true);
   });
-  it('signs in over HTTPS, then HTTP, whichever answers first, and uses a typed scheme as given', async () => {
+  // Each probe goes to fetch. `https` is how HTTPS fails (the cause code of a Node fetch error),
+  // or 'answers'; plain HTTP answers when `http` is true.
+  const resolveWith = (https: string, http: boolean) => {
     const probed: string[] = [];
-    const answering = (answers: string) => vi.fn((input: string) => {
-      probed.push(new URL(input).origin);
-      return input.startsWith(answers) ? Promise.resolve(Response.json({ 'subsonic-response': { status: 'ok' } })) : Promise.reject(new TypeError('refused'));
-    });
-    vi.stubGlobal('fetch', answering('http://'));
+    vi.stubGlobal('fetch', vi.fn((input: string) => {
+      const url = new URL(input);
+      probed.push(url.origin);
+      for (const secret of ['u', 't', 's', 'p']) expect(url.searchParams.has(secret)).toBe(false);
+      const answers = url.protocol === 'https:' ? https === 'answers' : http;
+      return answers ? Promise.resolve(Response.json({ 'subsonic-response': { status: 'ok' } }))
+        : Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('secret-marker'), { code: url.protocol === 'https:' ? https : 'ECONNREFUSED' }) }));
+    }));
     const make = (candidate: typeof connection) => new SubsonicClient(candidate, new Metrics());
-    const typed = { ...connection, url: 'music.example.com' };
-    await expect(Effect.runPromise(resolveServerAddress(typed, make))).resolves.toEqual({ ...typed, url: 'http://music.example.com' });
-    expect(probed).toEqual(['https://music.example.com', 'http://music.example.com']);
+    return { probed, resolve: (typed: typeof connection) => Effect.runPromise(resolveServerAddress(typed, make)) };
+  };
+  const typed = { ...connection, url: ' music.example.com ' };
+  it('signs in over HTTPS when it answers, and uses a typed scheme as given without asking', async () => {
+    const { probed, resolve } = resolveWith('answers', true);
+    await expect(resolve(typed)).resolves.toEqual({ type: 'ready', connection: { ...typed, url: 'https://music.example.com' } });
+    expect(probed).toEqual(['https://music.example.com']);
     probed.length = 0;
-    await expect(Effect.runPromise(resolveServerAddress(connection, make))).resolves.toBe(connection);
+    const plain = { ...connection, url: 'http://music.example.com' };
+    await expect(resolve(plain)).resolves.toEqual({ type: 'ready', connection: plain });
+    await expect(resolve(connection)).resolves.toEqual({ type: 'ready', connection });
     expect(probed).toEqual([]);
-    vi.stubGlobal('fetch', answering('nothing'));
-    await expect(Effect.runPromise(resolveServerAddress(typed, make))).rejects.toThrow('No Navidrome server answered at music.example.com over HTTPS or HTTP');
+  });
+  it.each([['refused', 'ECONNREFUSED'], ['not speaking TLS on its port', 'ERR_SSL_WRONG_VERSION_NUMBER']])(
+    'only offers plain HTTP, never signing in there, when HTTPS is %s', async (_, code) => {
+      const { probed, resolve } = resolveWith(code, true);
+      await expect(resolve(typed)).resolves.toEqual({ type: 'plain-http', url: 'http://music.example.com' });
+      expect(probed).toEqual(['https://music.example.com', 'http://music.example.com']);
+    });
+  it.each(['DEPTH_ZERO_SELF_SIGNED_CERT', 'CERT_HAS_EXPIRED', 'ERR_TLS_CERT_ALTNAME_INVALID', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_UNTRUSTED'])(
+    'refuses a server whose certificate fails (%s), without trying plain HTTP', async code => {
+      const { probed, resolve } = resolveWith(code, true);
+      const failure = await resolve(typed).catch((error: Error) => error.message);
+      expect(failure).toMatch(/^This server's HTTPS certificate isn't trusted/);
+      expect(failure).not.toContain('secret-marker');
+      expect(probed).toEqual(['https://music.example.com']);
+    });
+  it('says so when neither answers', async () => {
+    await expect(resolveWith('ECONNREFUSED', false).resolve(typed)).rejects.toThrow('No Navidrome server answered at music.example.com over HTTPS or HTTP');
+  });
+  it('tells this computer and its own network from the rest by address', () => {
+    for (const url of ['http://localhost:4533', 'http://127.0.0.1', 'http://10.0.0.5', 'http://172.16.0.1', 'http://172.31.255.255', 'http://192.168.1.20:4533/music',
+      'http://169.254.10.1', 'http://[::1]:4533', 'http://[fd12:3456::1]', 'http://[fe80::1]', 'http://[::ffff:192.168.1.2]', 'http://nas.localhost']) expect(localAddress(url), url).toBe(true);
+    for (const url of ['http://music.example.com', 'http://172.32.0.1', 'http://8.8.8.8', 'http://192.169.0.1', 'http://100.64.0.1', 'http://[2001:db8::1]', 'http://[::ffff:8.8.8.8]', 'http://nas.local'])
+      expect(localAddress(url), url).toBe(false);
   });
   it('sends every request through a fetch it was given instead of the global one', async () => {
     const global = serve(() => Response.json(envelope({})));

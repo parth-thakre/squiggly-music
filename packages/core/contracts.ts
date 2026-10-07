@@ -79,8 +79,10 @@ export interface RandomSongOptions { size: number; genre?: string; fromYear?: nu
 // rated (highest) rated tracks only.
 export type TrackSort = 'newest' | 'alphabeticalByName' | 'alphabeticalByArtist' | 'frequent' | 'recent' | 'random' | 'highest';
 // sorted is false when the server can't sort tracks (only Navidrome's own API can): the page is
-// in the server's one fixed order, whatever sort was asked for.
-export interface TrackPage { tracks: Track[]; sorted: boolean }
+// in the server's one fixed order, whatever sort was asked for. plainHttp: Navidrome could sort,
+// but its API signs in with the password itself, which isn't sent over plain HTTP beyond this
+// network.
+export interface TrackPage { tracks: Track[]; sorted: boolean; plainHttp?: true }
 export type StarTarget = 'track' | 'album' | 'artist';
 // A rating from one to five stars; 0 clears it.
 export type Rating = 0 | 1 | 2 | 3 | 4 | 5;
@@ -239,6 +241,9 @@ export interface AudioSink {
   channels: number | null;
   resampling: boolean | null;
 }
+// 'auto' or an output the engine listed. An mpv device string can name an ALSA plugin, and the
+// file plugin runs commands, so no other name may reach audio-device.
+export const listedDevice = (name: string, devices: readonly AudioDevice[]) => name === 'auto' || devices.some(d => d.name === name);
 export interface AudioPath {
   codec: string | null;
   decoderRate: number | null;
@@ -349,6 +354,10 @@ export interface ServerState {
 // A failure carries `unreachable` when no answer came at all (the connection failed, the request
 // timed out, or a gateway said the server is down), as opposed to an answer that refused.
 export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string; unreachable?: true };
+// What connecting did. plain-http: the address was typed without a scheme and only plain HTTP
+// answered, so nothing was signed in. Connecting again to `url` (http:// written out) does,
+// once the person has agreed to send the password unprotected.
+export type ConnectOutcome = { type: 'connected' } | { type: 'plain-http'; url: string };
 
 // Whether the server is out of reach. away: the app shows what is kept and stops asking the
 // server; since: when that began (epoch ms); checking: a probe is on its way; checkedAt: the last
@@ -407,6 +416,8 @@ export interface ExtensionInfo {
   // The extension's folder name inside <config>/extensions.
   folder: string;
   enabled: boolean;
+  // Found in the folder but never turned on or off. It stays off until the user turns it on.
+  isNew: boolean;
   // A squiggly-ext:// URL for the compiled renderer entry, while the extension is on and compiles.
   rendererUrl: string | null;
   // package.json or compile problems, in plain words.
@@ -452,7 +463,7 @@ export interface DesktopBridge {
   // and counted in `skipped`. More than a full queue is refused. 'play' replaces the queue;
   // 'queue' adds to the end when something is loaded.
   openDropped(files: File[], mode: 'play' | 'queue'): Promise<Result<{ opened: number; skipped: number }>>;
-  connect(connection: Connection): Promise<Result>;
+  connect(connection: Connection): Promise<Result<ConnectOutcome>>;
   // Replaces the queue with library tracks the main process has already seen, then plays from startIndex.
   playTracks(trackIds: string[], startIndex: number): Promise<Result>;
   // Resumes a queue saved on the server (from this or another device) at its song and position.
@@ -549,8 +560,9 @@ export interface AndroidBridge {
   session: {
     get(): AndroidSession;
     subscribe(listener: (session: AndroidSession) => void): () => void;
-    // Tries HTTPS, then HTTP, for an address without a scheme; saves the sign-in when it can.
-    connect(connection: Connection): Promise<Result>;
+    // Tries HTTPS, then HTTP (see ConnectOutcome), for an address without a scheme; saves the
+    // sign-in when it can.
+    connect(connection: Connection): Promise<Result<ConnectOutcome>>;
     // Tries the saved sign-in again, after it failed at launch (offline, say).
     reconnect(): Promise<Result>;
     // Stops playback, empties the native queue, and forgets the saved sign-in.

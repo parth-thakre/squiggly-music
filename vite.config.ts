@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { androidNotices } from './scripts/android-notices';
+import { devServerCsp } from './scripts/dev-csp';
 import { navidromePreview } from './scripts/navidrome-preview';
 
 // The Android app's page (`vite build --mode android`, see docs/android.md): the same renderer
@@ -18,10 +19,10 @@ const androidEntry: Plugin = {
 // listen on 127.0.0.1 unless `--host` says otherwise; see that file before exposing them.
 const allowedHosts = [hostname(), ...(process.env.SQUIGGLY_PREVIEW_HOST ? [process.env.SQUIGGLY_PREVIEW_HOST] : [])];
 export default defineConfig(({ mode }) => mode === 'android' ? {
-  root: 'apps/desktop/renderer', plugins: [react(), androidEntry, androidNotices()],
+  root: 'apps/desktop/renderer', plugins: [react(), androidEntry, androidNotices(), devServerCsp()],
   build: { outDir: resolve('out/android-web'), emptyOutDir: true },
 } : {
-  root: 'apps/desktop/renderer', plugins: [react(), navidromePreview()],
+  root: 'apps/desktop/renderer', plugins: [react(), navidromePreview(), devServerCsp()],
   build: { outDir: resolve('out/web'), emptyOutDir: true },
   preview: { host: '127.0.0.1', allowedHosts },
   server: { host: '127.0.0.1', allowedHosts },

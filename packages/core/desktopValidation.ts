@@ -1,6 +1,6 @@
 import { Either, Schema } from 'effect';
 import type { Settings } from './contracts';
-import { IdSchema, QUEUE_LIMIT, QueuedPlaysSchema } from './validation';
+import { DeviceSchema, IdSchema, QUEUE_LIMIT, QueuedPlaysSchema } from './validation';
 import { DEFAULT_KEPT_LIMIT_MB, KEPT_LIMIT_MB, KEPT_LIMITS } from './kept';
 
 // Desktop-only request and file schemas: queue editing, radio, settings, and window state.
@@ -24,8 +24,6 @@ export const RadioSeedSchema = Schema.Union(
   Schema.Struct({ kind: Schema.Literal('album', 'artist'), id: IdSchema, label: LabelSchema }),
 );
 
-// An mpv audio-device name, as listed by the engine.
-const DeviceSchema = Schema.String.pipe(Schema.minLength(1), Schema.maxLength(1024));
 // How much room kept songs may take, in MB (1024 * 1024 bytes).
 function KeptLimitSchema() { return Schema.Number.pipe(Schema.int(), Schema.between(KEPT_LIMIT_MB.min, KEPT_LIMIT_MB.max)); }
 // A stored file may predate a setting, so missing keys take their default. A wrong type rejects the whole file.

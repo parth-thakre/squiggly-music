@@ -1,4 +1,4 @@
-import type { Connection, LibraryApi, Reachability, Result } from '../../../../../packages/core/contracts';
+import type { ConnectOutcome, Connection, LibraryApi, Reachability, Result } from '../../../../../packages/core/contracts';
 import { OUT_OF_REACH, PROBE_TIMEOUT, Reach, type ProbeOutcome } from '../../../../../packages/core/reach';
 
 // Browser build only: the host runs the real OpenSubsonic connector, with the login this page
@@ -102,11 +102,16 @@ export const webSession = {
       serverName: typeof value.serverName === 'string' ? value.serverName : null, pageConnection: value.pageConnection === true,
     } : unreachable;
   },
-  /** Sends the login to this page's host once. The host keeps it in memory; the page keeps nothing. */
-  async connect(connection: Connection): Promise<Result<{ serverName: string }>> {
-    const { status, result } = await request<{ serverName: string }>('/api/connect', post(connection));
+  /** Sends the login to this page's host once. The host keeps it in memory; the page keeps nothing.
+   *  plain-http: an address typed without a scheme answered only over HTTP, and nothing was connected. */
+  async connect(connection: Connection): Promise<Result<{ serverName: string } | Extract<ConnectOutcome, { type: 'plain-http' }>>> {
+    const { status, result } = await request<{ serverName?: unknown; type?: unknown; url?: unknown }>('/api/connect', post(connection));
     if (status === 401) notifySignedOut();
-    return result.ok && typeof result.value?.serverName !== 'string' ? { ok: false, error: 'The preview server returned an unexpected response.' } : result;
+    if (!result.ok) return result;
+    const value = result.value;
+    if (value?.type === 'plain-http' && typeof value.url === 'string') return { ok: true, value: { type: 'plain-http', url: value.url } };
+    if (typeof value?.serverName === 'string') return { ok: true, value: { serverName: value.serverName } };
+    return { ok: false, error: 'The preview server returned an unexpected response.' };
   },
   async disconnect(): Promise<Result> {
     const { status, result } = await request<void>('/api/disconnect', post({}));

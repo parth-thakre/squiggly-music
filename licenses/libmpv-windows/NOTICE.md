@@ -17,8 +17,7 @@ release tag), so you can rebuild the DLL. The build is reproducible: the recipe 
 the SHA-256 of the DLL it produces, and a rebuild gives the same file.
 
 The app loads the DLL at run time through libmpv's public C API. To use a modified
-library, replace `resources\runtime\libmpv-2.dll` with your build, or set the
-`SQUIGGLY_LIBMPV_PATH` environment variable to its full path.
+library, replace `resources\runtime\libmpv-2.dll` with your build.
 
 ## Build
 
