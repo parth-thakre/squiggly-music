@@ -75,6 +75,14 @@ If libmpv isn't on the loader path, set `SQUIGGLY_LIBMPV_PATH` to the library fi
 ## Browser version
 
 ```bash
+npm run web
+```
+
+This serves the app on 127.0.0.1:5173. The page asks for your Navidrome server the way the desktop app does: the address (without `https://` or `http://`, the host tries HTTPS first, then HTTP), your username, and your password. The password goes once to the host serving the page, which keeps the connection in its memory for that browser until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk, and the page never sees it again. Each browser keeps one connection, and the host keeps 32 at most; when it's full, one left unused for 10 minutes makes room. A failed connection says only that it failed, and repeated failures make the page wait before trying again.
+
+The host can also start with a server of its own, which every browser uses until it connects to another. Here the address needs its `https://` or `http://`:
+
+```bash
 SQUIGGLY_PREVIEW_NAVIDROME_URL=https://music.example.com \
 SQUIGGLY_PREVIEW_NAVIDROME_USER=you \
 SQUIGGLY_PREVIEW_NAVIDROME_PASSWORD='your navidrome password' \
@@ -82,7 +90,7 @@ SQUIGGLY_WEB_PASSWORD='a long password for this page' \
 npm run web
 ```
 
-This serves the app on 127.0.0.1:5173 and keeps the Navidrome login on the server. Anyone who can open the page acts as that account, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
+Anyone who can open the page acts as that account, or can connect the host to any server, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, set it and run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
 
 ## Android
 

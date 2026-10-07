@@ -1,11 +1,11 @@
 import { useSyncExternalStore } from 'react';
-import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
+import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, Connection, Diagnostics, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics } from '../../../../../packages/core/contracts';
 import { following, preceding, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
 import { finishThreshold } from '../../../../../packages/core/plays';
 import { isStation, repeatFor, stationIdOf } from '../../../../../packages/core/stations';
-import { onSignedOut, webSession } from '../bridge/previewLibrary';
+import { onDisconnected, onSignedOut, webSession, type WebSessionStatus } from '../bridge/previewLibrary';
 import { VolumeCommandCoalescer } from '../volumeCommands';
 import { api, resetLibraryCaches } from './library';
 import { clearSearches, searchesFor } from './searches';
@@ -24,6 +24,12 @@ export interface PlayerState {
   // Browser only: whether this host wants its password first. Always 'open' on the desktop;
   // on Android, 'checking' until the saved sign-in has been read.
   access: 'checking' | 'sign-in' | 'signed-in' | 'open';
+  // Browser only: the server is one this page connected to itself (not the host's configured
+  // one), so the page can disconnect from it.
+  pageConnection: boolean;
+  // Browser only: the connect screen is open over the host's configured server, to connect this
+  // page to another one instead.
+  choosingServer: boolean;
   queue: Track[];
   // One id per queue entry, parallel to `queue`. Two copies of a song are two entries.
   entryIds: string[];
@@ -74,8 +80,8 @@ function storedModes(): Pick<PlayerState, 'repeat' | 'shuffle'> {
 }
 const saveModes = () => { try { localStorage.setItem(MODES, JSON.stringify({ repeat: state.repeat, shuffle: state.shuffle })); } catch { /* Kept for this visit only. */ } };
 let state: PlayerState = {
-  mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: desktop || android ? null : 'Navidrome',
-  sessionId: null, access: desktop ? 'open' : 'checking',
+  mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: null,
+  sessionId: null, access: desktop ? 'open' : 'checking', pageConnection: false, choosingServer: false,
   queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
@@ -367,35 +373,81 @@ if (web && 'mediaSession' in navigator) {
 }
 
 // Browser sign-in -----------------------------------------------------------------------
-// The host may protect its Navidrome account with a password. Until it's given, the browser
-// shows only the sign-in screen; any 401 from /api (an expired or ended session) returns there.
+// The host may protect itself with a password. Until it's given, the browser shows only the
+// sign-in screen; any 401 from /api (an expired or ended session) returns there.
 // An unreachable host reads as signed out; signing in then says it couldn't be reached.
-async function checkAccess() {
-  const status = await webSession.status();
+// Past that, the host needs a server: one this page connects to (the connect screen), or one
+// from the host's environment. Without either the page shows the connect screen.
+// Recent searches belong to the account the page uses: the host's configured server, or the
+// page's own connection, as the host names it. Without a server there is none. The host doesn't
+// say which username a connection uses, so connecting from the page always starts with none.
+const webAccount = (status: { connected: boolean; serverName: string | null; pageConnection: boolean }) =>
+  status.connected ? `web\n${status.pageConnection ? 'page' : 'host'}\n${status.serverName ?? ''}` : null;
+function allowed(status: WebSessionStatus) {
   // Signed out while the page was away: the searches go too.
-  if (status.required && !status.signedIn) { clearSearches(); set({ access: 'sign-in', connected: false }); return; }
-  // The host has one account; its searches last until this page signs out.
-  searchesFor('web');
-  set({ access: status.required ? 'signed-in' : 'open', connected: true });
-  void offerResume();
+  if (status.required && !status.signedIn) { clearSearches(); signedOut(); return; }
+  // The queue's songs belong to the server they came from. When the host now has another one for
+  // this page (its own connection is gone and the host's configured server stands in, say), they
+  // don't carry over to it.
+  if ((state.connected || state.queue.length > 0) && !sameServer(status)) disconnected();
+  searchesFor(webAccount(status));
+  const was = state.connected;
+  set({
+    access: status.required ? 'signed-in' : 'open', connected: status.connected, serverName: status.serverName,
+    pageConnection: status.pageConnection,
+  });
+  if (status.connected && !was) void offerResume();
 }
+const checkAccess = async () => allowed(await webSession.status());
+// The host names a server the same way each time it's asked. Another name, or the page's own
+// connection where the configured server was (or the reverse), is another account.
+const sameServer = (status: WebSessionStatus) => status.connected && status.serverName === state.serverName && status.pageConnection === state.pageConnection;
 function signedOut() {
   if (!web || state.access === 'sign-in') return;
+  // A sign-out from any tab makes the host forget this page's own connection, and an expired
+  // session may be followed by someone else's, so its queue goes now. The host's configured
+  // server is the same account after signing in again, so its queue waits, paused.
+  if (state.pageConnection) disconnected();
   web.active.pause();
   resetLibraryCaches();
   searchesFor(null);
-  set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null });
+  set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null, choosingServer: false });
 }
+// Disconnected, or the host forgot the connection (it restarted): playback stops and the queue
+// empties, since its songs belong to that server. A queue saved there is offered again after
+// connecting to it.
+function disconnected() {
+  if (!web) return;
+  station++; requests++;
+  for (const element of [web.active, web.standby]) { element.pause(); element.dataset.entry = ''; element.removeAttribute('src'); element.load(); }
+  plays.track = null;
+  if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
+  resetLibraryCaches();
+  // The account is gone with its server, and its searches with it.
+  searchesFor(null);
+  set({
+    connected: false, pageConnection: false, serverName: null, choosingServer: false, queue: [], entryIds: [], index: -1,
+    playing: false, buffering: false, position: 0, duration: 0, radio: null, radioStarting: null, resumable: null, delivery: null, error: null,
+  });
+}
+// Checked when a stream fails, since media elements can't report a lost session or connection.
+// A server that is gone, or another one in its place (the host forgot this page's connection
+// and offers its configured server), stops playback and empties the queue as a disconnect does:
+// the song is never asked for again from an account it didn't come from.
 async function stillSignedIn() {
-  if (state.access !== 'signed-in') return true;
+  if (state.access !== 'signed-in' && state.access !== 'open') return true;
   const status = await webSession.status();
   if (status.required && !status.signedIn) { signedOut(); return false; }
+  if (!sameServer(status)) { disconnected(); allowed(status); return false; }
   return true;
 }
 if (web) {
   // Library calls report a lost session (expired, or ended from another tab) through the bridge.
   // Media and artwork can't report one; playback errors check the session instead (stillSignedIn).
   onSignedOut(signedOut);
+  // A call the host had no server for: back to the connect screen, unless the host has a
+  // configured server to fall back on.
+  onDisconnected(() => { if (!state.connected) return; disconnected(); void checkAccess(); });
   void checkAccess();
 }
 
@@ -557,11 +609,36 @@ export const player = {
   // Browser sign-in -----------------------------------------------------------------------
   async signIn(password: string): Promise<Result> {
     const result = await webSession.signIn(password);
-    if (result.ok) { searchesFor('web'); set({ access: 'signed-in', connected: true, error: null }); void offerResume(); }
+    if (result.ok) { set({ error: null }); await checkAccess(); }
     return result;
   },
+  // The browser's connect screen. The login goes to the host once and stays there.
+  async connect(connection: Connection): Promise<Result> {
+    const result = await webSession.connect(connection);
+    if (!result.ok) return result;
+    // A queue from the server before (the host's configured one, say) doesn't carry over.
+    disconnected();
+    // A new connection may be another account on the same server, so the last one's searches go,
+    // even those stored before this page load knew of an account.
+    clearSearches();
+    searchesFor(webAccount({ connected: true, pageConnection: true, serverName: result.value.serverName }));
+    set({ connected: true, pageConnection: true, serverName: result.value.serverName, error: null });
+    void offerResume();
+    return { ok: true, value: undefined };
+  },
+  async disconnect(): Promise<Result> {
+    const result = await webSession.disconnect();
+    if (!result.ok) return result;
+    disconnected();
+    // The host may still have its own server to fall back on.
+    await checkAccess();
+    return result;
+  },
+  // Browser: opens the connect screen over the host's configured server, or closes it again.
+  chooseServer(on: boolean) { if (web) set({ choosingServer: on && state.connected && !state.pageConnection }); },
   async signOut() {
-    // A successful sign-out also arrives through onSignedOut; signedOut() runs once either way.
+    // A successful sign-out also arrives through onSignedOut; signedOut() runs once either way,
+    // and drops this page's own connection with its queue (the host forgets it with the session).
     const result = await webSession.signOut();
     if (result.ok) signedOut(); else set({ error: result.error });
   },

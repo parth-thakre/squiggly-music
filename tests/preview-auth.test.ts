@@ -72,7 +72,7 @@ describe('browser preview authentication', () => {
       expect((await preview.post('/api/deletePlaylist', ['p1'], cookie)).status).toBe(401);
     }
     expect(deleted).toEqual([]);
-    expect(await (await preview.fetch('/api/session')).json()).toEqual({ ok: true, value: { signedIn: false, required: true } });
+    expect(await (await preview.fetch('/api/session')).json()).toEqual({ ok: true, value: { signedIn: false, required: true, connected: false, serverName: null, pageConnection: false } });
   });
 
   it('signs in with the right password and issues a strict HttpOnly cookie', async () => {
@@ -93,7 +93,7 @@ describe('browser preview authentication', () => {
     expect(right.cookie).toMatch(/^squiggly_session=[\w-]{43}$/);
     const flags = right.setCookie.split(';').slice(1).map(flag => flag.trim());
     expect(flags).toEqual(['Path=/', `Max-Age=${30 * 24 * 60 * 60}`, 'HttpOnly', 'SameSite=Strict']);
-    expect(await (await preview.fetch('/api/session', { headers: { cookie: right.cookie } })).json()).toEqual({ ok: true, value: { signedIn: true, required: true } });
+    expect(await (await preview.fetch('/api/session', { headers: { cookie: right.cookie } })).json()).toEqual({ ok: true, value: { signedIn: true, required: true, connected: true, serverName: null, pageConnection: false } });
     expect(await (await preview.post('/api/deletePlaylist', ['p1'], right.cookie)).json()).toEqual({ ok: true });
     expect(deleted).toEqual(['p1']);
     // Each sign-in gets its own session.
@@ -146,7 +146,7 @@ describe('browser preview authentication', () => {
     expect(await response.json()).toEqual({ ok: true });
     expect(response.headers.get('set-cookie')).toBe('squiggly_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict');
     expect(await (await preview.post('/api/playlists', [], cookie)).json()).toEqual(signedOut);
-    expect(await (await preview.fetch('/api/session', { headers: { cookie } })).json()).toEqual({ ok: true, value: { signedIn: false, required: true } });
+    expect(await (await preview.fetch('/api/session', { headers: { cookie } })).json()).toEqual({ ok: true, value: { signedIn: false, required: true, connected: false, serverName: null, pageConnection: false } });
   });
 
   it('expires sessions 30 days after their last use', async () => {
@@ -294,7 +294,7 @@ describe('browser preview binding', () => {
   it('serves this computer without a password on a loopback bind, but not through a proxy', async () => {
     const { preview, deleted } = await setup({ password: null });
     expect(preview.errors).toEqual([]);
-    expect(await (await preview.fetch('/api/session')).json()).toEqual({ ok: true, value: { signedIn: true, required: false } });
+    expect(await (await preview.fetch('/api/session')).json()).toEqual({ ok: true, value: { signedIn: true, required: false, connected: true, serverName: null, pageConnection: false } });
     expect(await (await preview.post('/api/deletePlaylist', ['p1'])).json()).toEqual({ ok: true });
     expect(deleted).toEqual(['p1']);
     // Writes still need a same-origin browser.
