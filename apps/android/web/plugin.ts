@@ -53,6 +53,9 @@ export interface SquigglyPlugin {
   // is over and another begins. Null cancels.
   sleepAt(options: { at: number | null }): Promise<void>;
   sleepAfterPlay(options: { playId: number | null }): Promise<void>;
+  // Writes text to a new document the listener places with the system's picker (Storage Access
+  // Framework). saved is false when they cancel.
+  saveFile(options: { name: string; mimeType: string; text: string }): Promise<{ saved: boolean }>;
   posture(): Promise<Posture>;
   // The window's own background (#rrggbb), which shows around the page on older WebViews, and
   // light (dark: true) or dark system bar icons.

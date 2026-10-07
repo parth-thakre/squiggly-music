@@ -1,10 +1,15 @@
 package dev.squiggly.music
 
+import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.provider.DocumentsContract
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import androidx.activity.result.ActivityResult
 import androidx.core.content.ContextCompat
 import androidx.core.util.Consumer
 import androidx.core.view.WindowCompat
@@ -17,12 +22,13 @@ import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
 import com.getcapacitor.PluginMethod
+import com.getcapacitor.annotation.ActivityCallback
 import com.getcapacitor.annotation.CapacitorPlugin
 import org.json.JSONObject
 
 /**
  * The page's native half (apps/android/web/plugin.ts): HTTP for the connector, the Keystore
- * sign-in, the cover proxy, the player, and the Flip's fold.
+ * sign-in, the cover proxy, the player, saving files, and the Flip's fold.
  */
 @CapacitorPlugin(name = "Squiggly")
 class SquigglyPlugin : Plugin() {
@@ -194,6 +200,56 @@ class SquigglyPlugin : Plugin() {
         main.post { applyRoom() }
     }
 
+    // Files ------------------------------------------------------------------------------------
+    // A playlist file (Export as M3U), written to a new document the listener places with the
+    // system's picker. The WebView ignores downloads, so the page can't save one itself. The text
+    // waits here rather than in the call: Capacitor keeps a pending call's options in the saved
+    // activity state while the picker is open, and a long playlist would overflow it.
+    private var pendingText: String? = null
+
+    @PluginMethod
+    fun saveFile(call: PluginCall) {
+        val name = call.getString("name")?.takeIf { it.isNotBlank() && it.length <= 255 && it.none { c -> c == '/' || c < ' ' } }
+            ?: return call.reject("Not a file name.")
+        val mimeType = call.getString("mimeType")?.takeIf { it in SAVE_TYPES } ?: return call.reject("Not a playlist file.")
+        val text = call.getString("text") ?: return call.reject("Nothing to save.")
+        if (text.length > MAX_SAVE_CHARS) return call.reject("The playlist file is too large to save.")
+        if (pendingText != null) return call.reject("Another file is being saved.")
+        call.data.remove("text")
+        pendingText = text
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE)
+            .setType(mimeType).putExtra(Intent.EXTRA_TITLE, name)
+        try { startActivityForResult(call, intent, "savedFile") } catch (error: ActivityNotFoundException) {
+            pendingText = null
+            call.reject("This phone has nowhere to save files.")
+        }
+    }
+
+    @ActivityCallback
+    private fun savedFile(call: PluginCall?, result: ActivityResult) {
+        val text = pendingText
+        pendingText = null
+        val uri = result.data?.data
+        if (result.resultCode != Activity.RESULT_OK || uri == null) { call?.resolve(JSObject().put("saved", false)); return }
+        val resolver = context.contentResolver
+        Thread {
+            // The app was closed while the picker was open, and the text went with it: remove the
+            // empty document rather than leave it.
+            if (text == null) {
+                runCatching { DocumentsContract.deleteDocument(resolver, uri) }
+                call?.reject("Could not save the playlist file. Export it again.")
+                return@Thread
+            }
+            try {
+                val stream = resolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("No stream")
+                stream.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                call?.resolve(JSObject().put("saved", true))
+            } catch (error: Exception) {
+                call?.reject("Could not save the playlist file. Check that there is room for it.")
+            }
+        }.start()
+    }
+
     // Flex Mode --------------------------------------------------------------------------------
 
     @PluginMethod
@@ -212,5 +268,11 @@ class SquigglyPlugin : Plugin() {
         val top = ((fold.bounds.top - origin[1]) / density).coerceAtLeast(0f)
         val bottom = ((origin[1] + web.height - fold.bounds.bottom) / density).coerceAtLeast(0f)
         return JSObject().put("posture", "flex").put("top", top.toDouble()).put("bottom", bottom.toDouble())
+    }
+
+    private companion object {
+        val SAVE_TYPES = setOf("audio/x-mpegurl")
+        // As apps/android/web/bridge.ts bounds it.
+        const val MAX_SAVE_CHARS = 8 * 1024 * 1024
     }
 }

@@ -79,6 +79,26 @@ export const LibraryRequestSchemas = {
   artistInfo: Schema.Tuple(IdSchema),
   songsByGenre: Schema.Tuple(TextSchema, IntSchema(0, 10_000_000), IntSchema(1, 500)),
   nowPlaying: Schema.Tuple(),
+  // Songs, a record, or a playlist. The description and expiry (epoch ms, up to the year 9999) are
+  // null when not given, since JSON turns a missing array element into null.
+  createShare: Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)),
+    Schema.optionalElement(Schema.NullOr(Schema.String.pipe(Schema.maxLength(1024)))),
+    Schema.optionalElement(Schema.NullOr(IntSchema(0, 253_402_300_799_999)))),
+  shares: Schema.Tuple(),
+  deleteShare: Schema.Tuple(IdSchema),
 };
 // Track IDs must already be known to the main process; startIndex is checked against their count.
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);
+
+// saveM3u, on the desktop and Android: a playlist file's name and songs, as the renderer describes
+// them (m3u.ts). The desktop's main process fills in local files' paths itself and ignores the
+// renderer's. Server paths come from the renderer as given; buildM3u writes only relative ones.
+const M3uTextSchema = Schema.String.pipe(Schema.maxLength(1024));
+export const SaveM3uSchema = Schema.Tuple(
+  Schema.String.pipe(Schema.minLength(1), Schema.maxLength(256)),
+  Schema.Array(Schema.Struct({
+    id: IdSchema, local: Schema.Boolean, title: M3uTextSchema, artist: M3uTextSchema, album: M3uTextSchema,
+    duration: Schema.NullOr(Schema.Number.pipe(Schema.finite(), Schema.between(0, 604_800))),
+    path: Schema.NullOr(Schema.String.pipe(Schema.maxLength(4096))), suffix: Schema.NullOr(Schema.String.pipe(Schema.maxLength(32))),
+  })).pipe(Schema.maxItems(5000)),
+);

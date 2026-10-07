@@ -1,5 +1,7 @@
 import { expect, playlistIds, test, trackOf, type App } from '../fixtures/test';
 import type { FakeNavidrome } from '../fixtures/library';
+import { readFile } from 'node:fs/promises';
+import type { Download } from '@playwright/test';
 
 // Road Mix on the server: Opening 2, Second Wind 2, Opening 3, Opening 2 (again), Second Wind 3.
 const road = ['tr-2-1', 'tr-2-2', 'tr-3-1', 'tr-2-1', 'tr-3-2'];
@@ -141,5 +143,54 @@ test.describe('playlists', () => {
 
     const edits = ['addToPlaylist', 'removeFromPlaylist', 'reorderPlaylist', 'updatePlaylist', 'deletePlaylist'];
     expect(fake.calls.filter(call => edits.includes(call.method))).toEqual([]);
+  });
+
+  // An extended M3U with the paths the server reported, never a stream address. The duet (Second
+  // Wind 2) has no path, so it is written as artist/album/title and the file says so at the top.
+  const roadMixM3u = [
+    '#EXTM3U',
+    '#PLAYLIST:Road Mix',
+    '# Some songs had no path from the server. They are written as artist/album/title.suffix, relative to the music folder.',
+    '#EXTINF:18,Bell Tower - Opening 2', 'Bell Tower/Quiet Harbor/01 - Opening 2.wav',
+    '#EXTINF:21,Bell Tower & Cinder Lane - Second Wind 2', 'Bell Tower & Cinder Lane/Quiet Harbor/Second Wind 2.wav',
+    '#EXTINF:21,Cinder Lane - Opening 3', 'Cinder Lane/Amber Field/01 - Opening 3.wav',
+    '#EXTINF:18,Bell Tower - Opening 2', 'Bell Tower/Quiet Harbor/01 - Opening 2.wav',
+    '#EXTINF:24,Cinder Lane - Second Wind 3', 'Cinder Lane/Amber Field/02 - Second Wind 3.wav',
+  ].join('\n') + '\n';
+  const contents = async (download: Download) => readFile((await download.path())!, 'utf8');
+
+  test('Export as M3U downloads the playlist with its songs\' paths', async ({ app, page }) => {
+    await app.openPlaylist('Road Mix');
+    const saved = page.waitForEvent('download');
+    await app.main.getByRole('button', { name: 'Export as M3U' }).click();
+    const download = await saved;
+    expect(download.suggestedFilename()).toBe('Road Mix.m3u8');
+    const text = await contents(download);
+    expect(text).toBe(roadMixM3u);
+    expect(text).not.toMatch(/stream|https?:|[?&](u|t|s|p)=/);
+  });
+
+  test('Export as M3U is in a playlist\'s menu, and the queue exports from the palette', async ({ app, page }) => {
+    await app.section('Playlists').click();
+    await expect(app.heading).toHaveText('Playlists');
+    await app.openMenuOn(app.main.getByRole('button', { name: /^Server Picks/ }));
+    let saved = page.waitForEvent('download');
+    await app.menu.getByRole('menuitem', { name: 'Export as M3U' }).click();
+    let download = await saved;
+    expect(download.suggestedFilename()).toBe('Server Picks.m3u8');
+    const picks = await contents(download);
+    expect(picks.split('\n').slice(0, 4)).toEqual(['#EXTM3U', '#PLAYLIST:Server Picks', '#EXTINF:24,Dune Pilot - Opening 4', 'Dune Pilot/Northern Wires/01 - Opening 4.wav']);
+    expect(picks).not.toContain('# Some songs had no path');
+
+    await app.play('Quiet Harbor', 'Opening 2');
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox', { name: 'Find a command' }).fill('export the queue');
+    saved = page.waitForEvent('download');
+    await page.keyboard.press('Enter');
+    download = await saved;
+    expect(download.suggestedFilename()).toMatch(/^Queue, .+\.m3u8$/);
+    const queue = await contents(download);
+    expect(queue).toMatch(/^#EXTM3U\n#PLAYLIST:Queue, /);
+    expect(queue).toContain('\n#EXTINF:18,Bell Tower - Opening 2\nBell Tower/Quiet Harbor/01 - Opening 2.wav\n');
   });
 });

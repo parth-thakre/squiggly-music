@@ -27,6 +27,7 @@ export type {
 } from '../core/contracts';
 export type { DeckPlacement, DeckSlotProps, MenuTarget, PageContribution, Route, ThemeTokensInput };
 export type { SearchOptions, SearchResults } from '../core/contracts';
+export type { Share, ShareEntry } from '../core/contracts';
 
 // Bumped only for breaking changes. Additions keep the same number.
 export const API_VERSION = 1;

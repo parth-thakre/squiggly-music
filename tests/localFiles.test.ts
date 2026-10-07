@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { readLocalCover, readLocalTracks } from '../apps/desktop/main/localFiles';
+import { openLocalFiles, withLocalPaths } from '../apps/desktop/main/localPaths';
+import { buildM3u, m3uEntry, NO_PATH_NOTE } from '../packages/core/m3u';
 
 let directory: string | undefined;
 afterEach(async () => { if (directory) await rm(directory, { recursive: true, force: true }); directory = undefined; });
@@ -68,5 +70,28 @@ describe('files opened from this computer', () => {
     expect(again.coverArt).toBe(tracks[0].coverArt);
     expect(tracks[1].coverArt).not.toBe(tracks[0].coverArt);
     expect(await readLocalCover('local-unknown')).toBeNull();
+  });
+
+  it('are remembered where they are, so a playlist file names them by their own paths', async () => {
+    directory = await mkdtemp(join(tmpdir(), 'squiggly-local-'));
+    const chosen = join(directory, 'chosen.flac'), dropped = join(directory, 'Dropped Song.wav');
+    await writeFile(chosen, flac({ TITLE: 'Chosen', ARTIST: 'Ada Brass', ALBUM: 'Quiet Harbor' }, png()));
+    await writeFile(dropped, Buffer.from('not really audio'));
+    // The Open files dialog and a drop on the window both open files this way (main/index.ts).
+    const [first] = await openLocalFiles([chosen]);
+    const [second] = await openLocalFiles([dropped]);
+    expect(first.location).toBe(chosen);
+    expect(second).toMatchObject({ location: dropped, track: { title: 'Dropped Song', source: 'local' } });
+    // What the renderer sends has no local paths; one it makes up is ignored.
+    const entries = [first.track, second.track].map(m3uEntry);
+    expect(entries.map(entry => entry.path)).toEqual([null, null]);
+    const forged = { ...m3uEntry(second.track), id: 'not-opened', path: '/etc/passwd' };
+    expect(buildM3u(withLocalPaths([...entries, forged]))).toBe([
+      // The forged entry has no path, so the file says some were guessed.
+      '#EXTM3U', NO_PATH_NOTE,
+      '#EXTINF:10,Ada Brass - Chosen', chosen,
+      '#EXTINF:-1,Unknown artist - Dropped Song', dropped,
+      '#EXTINF:-1,Unknown artist - Dropped Song', 'Unknown artist/Unknown album/Dropped Song.wav',
+    ].join('\n') + '\n');
   });
 });

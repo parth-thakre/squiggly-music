@@ -112,6 +112,8 @@ The types in `@squiggly/extension-api` come from the app's own modules, so they 
 
 The app's library API: `albums`, `album`, `artists`, `artist`, `playlists`, `playlist`, `genres`, `starred`, `randomSongs`, `tracks` (every track, sorted, a page at a time), `search`, `star`, `rate` (one to five stars, 0 clears), playlist editing, `similarSongs`, `topSongs`, `lyrics`, `nowPlaying` (what other accounts on the server are playing), and `coverUrl(coverArt, size)` for an image URL. Calls return `{ ok: true, value }` or `{ ok: false, error }` and never throw. They use the app's server session. Server credentials are not part of the API, because nothing in it needs them.
 
+Shares are public links made on the server: `createShare(ids, description?, expiresAt?)` takes song ids, one record's id, or one playlist's id, and an expiry in epoch milliseconds (without one, the server picks); it returns a `Share` whose `url` anyone can open without signing in. `shares()` lists them and `deleteShare(id)` removes one. Navidrome makes shares only when its administrator turns on `EnableSharing`; otherwise these calls fail with a message saying so. Songs carry `path`, the file's path as the server reports it, when the server gives one.
+
 ### `ctx.navigation`
 
 - `go(route)` goes to a place: `{ view: 'home' }`, `{ view: 'records' }`, `{ view: 'album', id }`, `{ view: 'search', query }`, `{ view: 'queue' }`, `{ view: 'settings' }`, and so on.
