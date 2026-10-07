@@ -100,6 +100,13 @@ img:is(.deck-cover, .head-cover) {
 .glyph:hover { color: var(--accent); }
 .play { width: 50px; height: 50px; border-radius: 50%; background: var(--ink); color: var(--ground); transition: background-color .6s, color .6s; }
 .play svg { width: 24px; }
+/* Starting: asked to play, nothing heard yet. The play mark waits, dimmed, inside a turning ring. */
+.play { position: relative; }
+.play.starting { cursor: progress; }
+.play.starting:active { transform: none; }
+.play.starting svg { opacity: .5; }
+.starting-ring { position: absolute; inset: 4px; border: 2px solid color-mix(in srgb, currentColor 22%, transparent); border-top-color: currentColor; border-radius: 50%; animation: turn .9s linear infinite; }
+@keyframes turn { to { transform: rotate(1turn); } }
 .volume { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; margin-left: 8px; color: var(--soft); }
 .volume svg { flex: none; width: 17px; }
 .volume .figure { flex: none; width: 2.7em; text-align: right; font-size: calc(12.5px * var(--text)); color: var(--ink); }
@@ -849,7 +856,7 @@ html[data-density='compact'] { --row-height: 38px; }
   .lyric-lines.synced li.far { filter: none; }
   .grid .playable:hover .cover, .playable:hover .play-over { transform: none; }
   .play:active, .play-action:active .disc { transform: none; }
-  .wave.moving path, .deck-cover, .flip-sleeve, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet { animation: none; }
+  .wave.moving path, .deck-cover, .flip-sleeve, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet, .starting-ring { animation: none; }
   ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; }
   .theme-sample { transition: none; }
 }
@@ -858,7 +865,7 @@ html:is([data-motion='reduced'], [data-motion='none']) :is(.room, .play, .disc, 
 html:is([data-motion='reduced'], [data-motion='none']) .lyric-lines.synced li.far { filter: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.grid .playable:hover .cover, .playable:hover .play-over) { transform: none; }
 html:is([data-motion='reduced'], [data-motion='none']) :is(.play:active, .play-action:active .disc) { transform: none; }
-html:is([data-motion='reduced'], [data-motion='none']) :is(.wave.moving path, .deck-cover, .flip-sleeve, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet) { animation: none; }
+html:is([data-motion='reduced'], [data-motion='none']) :is(.wave.moving path, .deck-cover, .flip-sleeve, .star.on svg, .star-text.on svg, .deck.open .deck-bottom > *, .menu, .menu.sheet, .starting-ring) { animation: none; }
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-group(*),
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-old(*),
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-new(*) { animation: none !important; }

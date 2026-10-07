@@ -22,13 +22,14 @@ import {
 import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, PlaysFileSchema } from '../../../packages/core/desktopValidation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { stationIdOf } from '../../../packages/core/stations';
-import type { AppSnapshot, Connection, Result, PlayerCommand, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Connection, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
 import { SubsonicClient, libraryCall, libraryMethods, reachOf, resolveServerAddress, ServerError, Unreachable } from '../../../packages/adapter-opensubsonic/client';
 import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
+import { SavedQueueCopy } from './savedQueue';
 import { Radio } from './radio';
 import { readSink, SinkWatch } from './sinks';
 import { startMpris, type MediaSession } from './mpris';
@@ -189,9 +190,13 @@ function serverRefused(error: string) {
   broadcast();
 }
 const away = () => reach.state.away;
+// The server's saved queue as read at launch, which Resume shortly after plays without reading it again.
+const savedQueues = new SavedQueueCopy<SubsonicClient>();
 const queueSync = new QueueSync((saved, generation) => {
   const client = generation === connectionGeneration ? server : generation === finalSession?.generation ? finalSession.client : null;
   if (!client || !settings.value.syncQueue) return Promise.resolve();
+  // The server's copy is about to change; the one read earlier no longer describes it.
+  savedQueues.clear();
   return Effect.runPromise(metrics.measure('sync.save-queue', semaphores.sync.withPermits(1)(client.saveQueue(saved.trackIds, saved.currentIndex, saved.positionSeconds))));
 });
 function rememberTracks(tracks: readonly Track[]) {
@@ -303,7 +308,7 @@ async function sendReport(trackId: string, event: 'started' | 'finished', at?: n
 }
 // Per-session state that must not carry across an account switch or disconnect.
 function resetSessionState() {
-  queueSync.reset(); plays.reset(); savedSong = null;
+  queueSync.reset(); plays.reset(); savedSong = null; savedQueues.clear();
   artRequest = null;
   if (art) void rm(art.path, { force: true }).catch(() => undefined);
   art = null;
@@ -472,14 +477,15 @@ function setPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuffle
 function shellPlayMode(command: Extract<PlayerCommand, { type: 'repeat' | 'shuffle' }>) {
   void Effect.runPromise(Effect.either(metrics.measure('shell.play-mode', semaphores.audio.withPermits(1)(setPlayMode(command))))).then(broadcast);
 }
-// Plays the server-saved queue from its song and position. The host holds it paused until the
-// position is reached, so the song never starts from 0:00 first.
+// Plays the server-saved queue from its song and position. The host opens the song at the
+// position, paused until it's there, so the song never starts from 0:00 first. The copy read at
+// launch is used while it's recent (savedQueues), which saves a round trip to the server.
 function resumeSaved() {
   return Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
     if (away()) return yield* Effect.fail(new Unreachable(OUT_OF_REACH));
     const client = server;
-    const saved = yield* client.savedQueue();
+    const saved = savedQueues.take(client) ?? (yield* client.savedQueue());
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Try again.'));
     if (!saved || !saved.tracks.length) return yield* Effect.fail(new Error('There is no saved queue on this server.'));
     if (saved.tracks.length > QUEUE_LIMIT) return yield* Effect.fail(new Error(`The saved queue has more than ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`));
@@ -695,8 +701,12 @@ function installHandlers() {
     const client = server;
     // LRCLIB is a third party. Contact it only when both the caller and the stored setting allow it.
     const args = method === 'lyrics' && Array.isArray(value) ? [value[0], value[1] === true && settings.value.lyricsLookup] : value;
+    // The deck's Resume offer reads the saved queue; Resume may play this copy (resumeSaved).
+    if (method === 'saveQueue') savedQueues.clear();
+    const keep = method === 'savedQueue' ? savedQueues.reading(client) : null;
     const result = yield* libraryCall(client, method, args);
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
+    keep?.(result.value as SavedQueue | null);
     rememberTracks(result.tracks);
     return result.value;
   }), 'library');
@@ -781,7 +791,7 @@ function installHandlers() {
     if (deviceChanged) yield* send({ type: 'device', id: next.outputDevice });
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
-    if (!next.syncQueue) queueSync.reset();
+    if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); }
     // Plays waiting to be reported go when reporting is turned off.
     if (!next.reportPlays) reports?.clear();
     // A new limit shows at once. Lowering it never removes anything kept.
@@ -1080,8 +1090,11 @@ let savedSong: { track: Track; position: number } | null = null;
 async function loadSavedSong(client: SubsonicClient) {
   savedSong = null;
   if (process.platform === 'linux' || !settings.value.syncQueue || away()) return;
+  const keep = savedQueues.reading(client);
   const saved = await Effect.runPromise(Effect.either(metrics.measure('shell.saved-song', semaphores.sync.withPermits(1)(client.savedQueue()))));
-  if (Either.isLeft(saved) || !saved.right?.tracks.length || server !== client) return;
+  if (Either.isLeft(saved) || server !== client) return;
+  keep(saved.right);
+  if (!saved.right?.tracks.length) return;
   const track = saved.right.tracks[Math.min(Math.max(0, Math.trunc(saved.right.currentIndex) || 0), saved.right.tracks.length - 1)];
   savedSong = { track, position: Number.isFinite(saved.right.positionSeconds) ? Math.max(0, saved.right.positionSeconds) : 0 };
   updateSystemMedia();
