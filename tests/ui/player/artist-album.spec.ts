@@ -94,12 +94,16 @@ test.describe('artist and record pages', () => {
     expect(after.y).toBeGreaterThanOrEqual(head.y + head.height - 1);
 
     // On a narrow phone the long title stays on one line inside its row; the tooltip has all of it.
+    // The list measures its rows again at the new width and may swap the heading's row out and
+    // back meanwhile, so it's found and measured again until the layout settles.
     await page.setViewportSize({ width: 320, height: 780 });
-    await second.scrollIntoViewIfNeeded();
+    await expect(async () => {
+      await second.scrollIntoViewIfNeeded({ timeout: 1000 });
+      const row = await box(heads.filter({ hasText: title })), text = await box(second);
+      expect(text.y).toBeGreaterThanOrEqual(row.y - 0.5);
+      expect(text.y + text.height).toBeLessThanOrEqual(row.y + row.height + 0.5);
+    }).toPass();
     await expect(second).toHaveAttribute('title', title);
-    const row = await box(heads.filter({ hasText: title })), text = await box(second);
-    expect(text.y).toBeGreaterThanOrEqual(row.y - 0.5);
-    expect(text.y + text.height).toBeLessThanOrEqual(row.y + row.height + 0.5);
     expect(await second.evaluate(element => element.scrollWidth > element.clientWidth)).toBe(true);
   });
 });
