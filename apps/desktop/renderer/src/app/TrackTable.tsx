@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
+import { canDrag, carriesItems, readPayload, startDrag, type DragPayload } from './drag';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
@@ -19,13 +20,15 @@ function occurrenceKeys(tracks: Track[]) {
 }
 
 // A song list. Click plays; ctrl/cmd-click and shift-click select; right-click or long-press
-// opens the menu for the selection. Where the list is editable, rows drag to reorder,
-// Alt+Up and Alt+Down move the focused or selected song, and Delete removes the selection.
+// opens the menu for the selection. Rows (or the selection) drag onto the queue and playlists
+// (drag.ts). Where the list is editable, rows drag to reorder, Alt+Up and Alt+Down move the
+// focused or selected song, and Delete removes the selection. With `onDropItems`, records,
+// artists, and songs from elsewhere drop between rows, before the row under the pointer.
 // A heading between rows (a record's discs): it sits above the row at index `at`.
 export interface TrackGroup { at: number; label: string }
 const noGroups: TrackGroup[] = [];
 
-export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, groups = noGroups }: {
+export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, onDropItems, groups = noGroups }: {
   tracks: Track[]; album?: string; albumArtist?: string; showAlbum?: boolean; numbered?: 'position' | 'track';
   // In the queue, the entry id the click saw comes along: pass it to player.jump.
   onPick?(index: number, entryId?: string): void;
@@ -33,6 +36,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   playlist?: Playlist; queue?: boolean;
   onMove?(from: number, to: number): void;
   onRemove?(indexes: number[]): void;
+  // A drop from outside the list, to go before the song at `at`.
+  onDropItems?(payload: DragPayload, at: number): void;
   // Headings only: rows keep one numbering of indexes, one selection, and one keyboard.
   groups?: TrackGroup[];
 }) {
@@ -53,6 +58,15 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   const [menuRow, setMenuRow] = useState<string | null>(null);
   const anchor = useRef<string | null>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
+  // Where a drop from outside would land: before this row.
+  const [into, setInto] = useState<number | null>(null);
+  useEffect(() => {
+    if (into === null) return;
+    const clear = () => setInto(null);
+    addEventListener('dragend', clear, true); addEventListener('drop', clear, true);
+    return () => { removeEventListener('dragend', clear, true); removeEventListener('drop', clear, true); };
+  }, [into !== null]);
+  const draggable = !!onMove || canDrag();
   // A keyboard move on its way: once the row lands, focus follows it and the move is announced.
   const moving = useRef<{ key: string; to: number; title: string; at: number } | null>(null);
   const [announcement, setAnnouncement] = useState('');
@@ -124,6 +138,27 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
       reorder: onMove && indexes.length === 1 ? { index, length: tracks.length, move: to => move(index, to) } : undefined },
       () => setMenuRow(null));
   };
+  // A selected row carries the whole selection; any other row carries itself.
+  const dragStart = (event: ReactDragEvent, index: number) => {
+    const indexes = selected.has(keys[index]) ? selectedIndexes() : [index];
+    startDrag(event, { kind: 'tracks', tracks: indexes.map(i => tracks[i]) }, { reorder: !!onMove });
+    if (onMove) setDrag({ from: index, to: index });
+  };
+  const dragOver = (event: ReactDragEvent, index: number) => {
+    if (drag) { event.preventDefault(); if (drag.to !== index) setDrag({ ...drag, to: index }); return; }
+    if (!onDropItems || !carriesItems(event.dataTransfer, true)) return;
+    event.preventDefault(); event.dataTransfer.dropEffect = 'copy';
+    if (into !== index) setInto(index);
+  };
+  const drop = (event: ReactDragEvent, index: number) => {
+    if (drag) { event.preventDefault(); event.stopPropagation(); if (drag.from !== drag.to) onMove?.(drag.from, drag.to); setDrag(null); return; }
+    // Anything else is left to the page around the list, if it takes drops.
+    if (!onDropItems || !carriesItems(event.dataTransfer, true)) return;
+    event.preventDefault(); event.stopPropagation();
+    setInto(null);
+    const payload = readPayload(event.dataTransfer);
+    if (payload) onDropItems(payload, index);
+  };
   const keyDown = (event: ReactKeyboardEvent) => {
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && onMove) {
       event.preventDefault();
@@ -141,6 +176,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
 
   return <>
     <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
+      onDragLeave={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setInto(null); }}
       style={windowed ? { height: (tracks.length + groups.length) * ROW, position: 'relative' } : undefined}>
       {tracks.slice(first, last).map((track, offset) => {
         const index = first + offset;
@@ -150,15 +186,14 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const name = splitTitle(track.title, album);
         const starred = isStarred(track.id, track.starred);
         const credit = track.artist !== albumArtist ? track.artist : null;
-        const classes = [isNow && 'now', isSelected && 'selected', drag && drag.to === index && drag.from !== index && (drag.from < index ? 'drop-after' : 'drop-before')].filter(Boolean).join(' ');
+        const classes = [isNow && 'now', isSelected && 'selected', drag && drag.to === index && drag.from !== index && (drag.from < index ? 'drop-after' : 'drop-before'),
+          !drag && into === index && 'drop-before'].filter(Boolean).join(' ');
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
         const row = <li key={key} data-key={key} data-index={index} className={classes || undefined}
           style={windowed ? { position: 'absolute', top: slot(index) * ROW, left: 0, right: 0 } : undefined}
-          draggable={!!onMove} onContextMenu={event => menu(event, index)}
-          onDragStart={event => { event.dataTransfer.effectAllowed = 'move'; setDrag({ from: index, to: index }); }}
-          onDragOver={event => { if (!drag) return; event.preventDefault(); if (drag.to !== index) setDrag({ ...drag, to: index }); }}
-          onDrop={event => { event.preventDefault(); if (drag && drag.from !== drag.to) onMove?.(drag.from, drag.to); setDrag(null); }}
-          onDragEnd={() => setDrag(null)}>
+          draggable={draggable} onContextMenu={event => menu(event, index)}
+          onDragStart={event => dragStart(event, index)} onDragOver={event => dragOver(event, index)}
+          onDrop={event => drop(event, index)} onDragEnd={() => setDrag(null)}>
           <button type="button" className="track" onClick={event => click(event, index, isNow)}
             aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selected.size ? isSelected : undefined}>
             <span className="n">{isNow ? <Wave playing={playing} /> : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1}</span>

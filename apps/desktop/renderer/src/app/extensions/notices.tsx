@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react';
 
 // Short messages from extensions (ctx.notify), stacked in a corner of the window. Info notes go
-// away after a few seconds; errors stay until dismissed.
+// away after a few seconds; errors stay until dismissed. The app's own notes (drag and drop,
+// drag.ts) come from '' and show no name.
 
 export interface Notice { id: number; from: string; message: string; level: 'info' | 'error' }
 
@@ -30,8 +31,8 @@ export function ExtensionNotices() {
   const list = useNotices();
   return <div className="extension-notices" aria-live="polite">
     {list.map(notice => <p key={notice.id} className={`extension-notice${notice.level === 'error' ? ' error' : ''}`} role={notice.level === 'error' ? 'alert' : undefined}>
-      <strong>{notice.from}</strong> {notice.message}
-      <button type="button" className="link" onClick={() => dismissNotice(notice.id)} aria-label={`Dismiss the message from ${notice.from}`}>Dismiss</button>
+      {notice.from && <><strong>{notice.from}</strong> </>}{notice.message}
+      <button type="button" className="link" onClick={() => dismissNotice(notice.id)} aria-label={notice.from ? `Dismiss the message from ${notice.from}` : 'Dismiss'}>Dismiss</button>
     </p>)}
   </div>;
 }

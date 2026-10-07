@@ -3,7 +3,8 @@ import type { PlayerCommand, PlayerSnapshot, Track } from '../core/contracts';
 // Private transport. Stream URLs and local paths never enter renderer snapshots.
 export interface PlayableTrack { track: Track; location: string }
 export type QueueEdit =
-  | { type: 'queue-add'; tracks: PlayableTrack[]; where: 'next' | 'end' }
+  // A number inserts before the entry at that index (a song dropped onto the queue).
+  | { type: 'queue-add'; tracks: PlayableTrack[]; where: 'next' | 'end' | number }
   | { type: 'queue-move'; from: number; to: number }
   | { type: 'queue-remove'; indexes: number[] }
   | { type: 'queue-clear' };

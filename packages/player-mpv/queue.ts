@@ -6,7 +6,7 @@ export const QUEUE_LIMIT = 1000;
 interface PlaylistEngine { command(...args: string[]): void; number(name: string): number | null }
 const gone = () => new Error('That song is no longer in the queue. Try again.');
 // The host stores its own entry type (with a queue-entry id); edits keep each item whole.
-export type Edit<T extends PlayableTrack> = Exclude<QueueEdit, { type: 'queue-add' }> | { type: 'queue-add'; tracks: T[]; where: 'next' | 'end' };
+export type Edit<T extends PlayableTrack> = Exclude<QueueEdit, { type: 'queue-add' }> | { type: 'queue-add'; tracks: T[]; where: 'next' | 'end' | number };
 
 // Applies one edit to mpv's playlist and the host's parallel copy, entry by entry, so a
 // native failure part-way leaves both describing the same list. `live` is false after a
@@ -18,7 +18,7 @@ export function editQueue<T extends PlayableTrack>(native: PlaylistEngine, queue
       if (!edit.tracks.length) throw new Error('Choose at least one track.');
       if (queue.length + edit.tracks.length > QUEUE_LIMIT) throw new Error(`The queue holds up to ${QUEUE_LIMIT.toLocaleString('en-US')} songs.`);
       // With nothing current (stopped, or finished), "next" means the front of the queue.
-      const at = edit.where === 'end' ? queue.length : current + 1;
+      const at = edit.where === 'end' ? queue.length : edit.where === 'next' ? current + 1 : Math.max(0, Math.min(edit.where, queue.length));
       for (const [offset, item] of edit.tracks.entries()) {
         const target = at + offset;
         if (live) {

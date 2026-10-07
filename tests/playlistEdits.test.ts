@@ -24,7 +24,7 @@ function server(ids: string[]) {
       if (refuse.has(`remove ${indexes}`)) return fail;
       songs = songs.filter((_, i) => !indexes.includes(i)); log.push(`remove ${indexes}`); return ok;
     }),
-    reorderPlaylist: (_: string, order: string[]) => gate(`reorder ${order}`, () => { songs = order.map(track); log.push(`reorder ${order}`); return ok; }),
+    reorderPlaylist: (_: string, order: string[]) => gate(`reorder ${order}`, () => { if (refuse.has('reorder')) return fail; songs = order.map(track); log.push(`reorder ${order}`); return ok; }),
     updatePlaylist: (_: string, changes: { name?: string }) => gate(`rename ${changes.name}`, () => { if (refuse.has('rename')) return fail; name = changes.name ?? name; return ok; }),
     deletePlaylist: () => gate('delete', () => ok),
   };
@@ -127,6 +127,76 @@ describe('playlist editing', () => {
     expect((await deleted).ok).toBe(true);
     expect((await late).ok).toBe(false);
     expect(editor.snapshot.deleted).toBe(true);
+  });
+
+  it('places songs dropped into the list where they were dropped: appended, then the list rewritten', async () => {
+    const { fake, editor } = await opened(['A', 'B', 'C']);
+    const done = editor.add([track('X'), track('Y')], 1);
+    // Shown in place at once, before the server has answered.
+    expect(shown(editor)).toEqual(['A', 'X', 'Y', 'B', 'C']);
+    await fake.step();
+    expect(fake.waiting()).toEqual(['reorder A,X,Y,B,C']);
+    await fake.step();
+    expect(await done).toEqual({ ok: true, value: undefined });
+    expect(fake.log).toEqual(['add X,Y', 'reorder A,X,Y,B,C']);
+    expect(fake.songs()).toEqual(['A', 'X', 'Y', 'B', 'C']);
+    expect(shown(editor)).toEqual(['A', 'X', 'Y', 'B', 'C']);
+    // At the top, and past the end (which appends without a reorder).
+    const top = editor.add([track('T')], 0);
+    await fake.step(); await fake.step();
+    expect(await top).toEqual({ ok: true, value: undefined });
+    const end = editor.add([track('Z')], 99);
+    await fake.step();
+    expect(await end).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['T', 'A', 'X', 'Y', 'B', 'C', 'Z']);
+    expect(shown(editor)).toEqual(['T', 'A', 'X', 'Y', 'B', 'C', 'Z']);
+  });
+
+  it('keeps a dropped place as the song it follows, so edits made while the songs load don’t move it', async () => {
+    const { fake, editor } = await opened(['A', 'B', 'C']);
+    // Dropped before B while its songs load; meanwhile Y is dropped at the top.
+    const place = editor.place(1);
+    const top = editor.add([track('Y')], 0);
+    await fake.step(); await fake.step();
+    expect(await top).toEqual({ ok: true, value: undefined });
+    expect(shown(editor)).toEqual(['Y', 'A', 'B', 'C']);
+    const done = editor.add([track('X')], place);
+    expect(shown(editor)).toEqual(['Y', 'A', 'X', 'B', 'C']);
+    await fake.step(); await fake.step();
+    expect(await done).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['Y', 'A', 'X', 'B', 'C']);
+    // When the song it follows is gone by then, the songs go where the drop was.
+    const gone = editor.place(3);
+    const removed = editor.removeAt([2], [track('X')]);
+    await fake.step();
+    expect(await removed).toEqual({ ok: true, value: undefined });
+    const late = editor.add([track('Z')], gone);
+    await fake.step(); await fake.step();
+    expect(await late).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['Y', 'A', 'B', 'Z', 'C']);
+    expect(editor.place()).toBeNull();
+    expect(editor.place(99)).toBeNull();
+  });
+
+  it('keeps songs appended but not put in place, so an edit queued for them still finds them', async () => {
+    const { fake, editor } = await opened(['A', 'B']);
+    fake.refuse.add('reorder');
+    const added = editor.add([track('X')], 0);
+    expect(shown(editor)).toEqual(['X', 'A', 'B']);
+    // Removed again while the drop is saving.
+    const removed = editor.removeAt([0], [track('X')]);
+    await fake.step();
+    expect(fake.waiting()).toEqual(['reorder X,A,B']);
+    await fake.step();
+    expect(await added).toEqual({ ok: false, error: 'The songs were added at the end. Refused' });
+    // X is on the server, at the end, and still under the removal waiting for it.
+    expect(fake.songs()).toEqual(['A', 'B', 'X']);
+    expect(shown(editor)).toEqual(['A', 'B']);
+    expect(fake.waiting()).toEqual(['remove 2']);
+    await fake.step();
+    expect(await removed).toEqual({ ok: true, value: undefined });
+    expect(fake.songs()).toEqual(['A', 'B']);
+    expect(shown(editor)).toEqual(['A', 'B']);
   });
 
   it('refuses index edits against a list that changed under the click', async () => {

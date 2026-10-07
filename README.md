@@ -17,6 +17,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Open at Home: the saved queue to pick up, records played lately, the newest and most played, your automatic playlists, and what other people on the server are playing. The wordmark and G then H go back to it.
 - Rate songs, records, and artists from one to five stars, and list the records and tracks you rate highest.
 - Edit the queue and your playlists. The queue follows you between devices through the server.
+- Drag records, artists, songs, and playlists onto the queue or a playlist, and drop audio files from your computer onto the desktop app's window to play them.
 - Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).
 - Start a radio station from any song, record, or artist.
 - Star the playing song from the controls or with F. G then C opens its record, and G then . its artist.
