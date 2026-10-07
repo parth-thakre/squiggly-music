@@ -144,7 +144,8 @@ test.describe('cover screen', () => {
     expect(await violations(page), 'nothing playing').toEqual([]);
     await screen(page).getByRole('button', { name: 'Resume' }).tap();
     await expect(title(page)).toHaveText('Long Run');
-    await expect(screen(page).locator('.squiggle-time').first()).toHaveText('0:17');
+    await expect(screen(page).getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
+    await expect(screen(page).locator('.squiggle-time').first()).toHaveText(/^0:(1[7-9]|2\d)$/);
     expect(await violations(page), 'now playing').toEqual([]);
   });
 

@@ -660,7 +660,7 @@ export const player = {
     if (desktop) { report(await desktop.resumeQueue()); return; }
     const chosen = queueWindow(saved.tracks, saved.currentIndex);
     station++;
-    webLoad(chosen.start, { play: false, startAt: saved.positionSeconds, patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio: null } });
+    webLoad(chosen.start, { play: true, startAt: saved.positionSeconds, patch: { queue: chosen.items, entryIds: mint(chosen.items.length), radio: null } });
   },
   dismissResume() { set({ resumable: null }); },
 
