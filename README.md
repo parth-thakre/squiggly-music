@@ -29,6 +29,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
 - Search the library from the bar. All shows a few artists, records, and songs, and See all lists the rest of one kind. Enter goes to the first result, Escape goes back, and the searches you used wait under the empty field.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
+- Extensions can also put a line in the deck and the mini player, and a section on the Playlists page.
 
 ![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
 

@@ -12,6 +12,7 @@ import { following } from '../../../../../packages/core/playOrder';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
+import { DeckSlots } from './extensions';
 import { useSwipeSongs } from './swipe';
 import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
@@ -221,6 +222,7 @@ const Deck = memo(function Deck() {
             {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
           </>}
         </p>
+        <DeckSlots placement="under-title" track={track} />
       </div>
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
       <Position track={track} palette={palette} />
@@ -237,7 +239,9 @@ const Deck = memo(function Deck() {
         <FavoriteToggle track={track} />
         <PlayModes />
       </div>
+      <DeckSlots placement="under-controls" track={track} />
       <SignalPath track={track} />
+      <DeckSlots placement="quiet-line" track={track} />
       <SleepNote />
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>

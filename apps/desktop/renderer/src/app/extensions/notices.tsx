@@ -26,7 +26,7 @@ export function showNotice(from: string, message: string, level: Notice['level']
 }
 export const useNotices = () => useSyncExternalStore(subscribe, () => notices);
 
-// Mount once, in the main window.
+// Mount once per window: in the room, and in the mini player.
 export function ExtensionNotices() {
   const list = useNotices();
   return <div className="extension-notices" aria-live="polite">

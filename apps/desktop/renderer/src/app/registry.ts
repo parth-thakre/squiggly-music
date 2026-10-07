@@ -1,3 +1,4 @@
+import type { ComponentType } from 'react';
 import type { Album, Artist, Playlist, Track } from '../../../../../packages/core/contracts';
 
 // The seam extensions will plug into. Built-in features register here the same way an
@@ -59,8 +60,32 @@ export interface Command {
   run(): void | Promise<void>;
 }
 
+// A small component in the deck (and the phone's now-playing sheet): under the title, under the
+// controls, or on the quiet line beside the signal path. The mini player shows quiet lines only.
+// Shown while a song is loaded; the component gets that song, and ctx.player.use for the rest.
+export type DeckPlacement = 'under-title' | 'under-controls' | 'quiet-line';
+export const DECK_PLACEMENTS: readonly DeckPlacement[] = ['under-title', 'under-controls', 'quiet-line'];
+export interface DeckSlotProps { track: Track }
+export interface DeckSlot {
+  id: string;
+  owner?: string;
+  placement: DeckPlacement;
+  component: ComponentType<DeckSlotProps>;
+  // Set by the registry: a new number per registration, so a re-registered slot starts fresh.
+  serial?: number;
+}
+
+// A section on the Playlists page, below Automatic.
+export interface Section {
+  id: string;
+  owner?: string;
+  title: string;
+  component: ComponentType;
+  serial?: number;
+}
+
 export class RegistryCollision extends Error {
-  constructor(kind: 'menu item' | 'command' | 'theme' | 'page', id: string, owner: string) {
+  constructor(kind: 'menu item' | 'command' | 'theme' | 'page' | 'deck slot' | 'section', id: string, owner: string) {
     super(`The ${kind} “${id}” is already registered by ${owner}. Dispose it before registering it again.`);
     this.name = 'RegistryCollision';
   }
@@ -106,10 +131,44 @@ function changed() {
   queueMicrotask(() => { notifying = false; commandListeners.forEach(listener => listener()); });
 }
 
+// Deck slots and sections: kept in registration order, published as a new array on every change
+// so components can read them with useSyncExternalStore.
+let serial = 0;
+function listed<T extends { id: string; owner?: string; serial?: number; component: unknown }>(kind: 'deck slot' | 'section', check: (entry: T) => void) {
+  const entries = new Map<string, T>();
+  let list: T[] = [];
+  const listeners = new Set<() => void>();
+  const publish = () => { list = [...entries.values()]; listeners.forEach(listener => listener()); };
+  return {
+    add(given: T, owner: string): Dispose {
+      if (!given || typeof given !== 'object') throw new Error(`A ${kind} needs an id and a component.`);
+      const entry: T = { ...given, id: namespaced(owner, given.id), owner, serial: ++serial };
+      if (typeof entry.component !== 'function' && (typeof entry.component !== 'object' || entry.component === null)) throw new Error(`The ${kind} “${given.id}” needs a React component.`);
+      check(entry);
+      const live = entries.get(entry.id);
+      if (live) throw new RegistryCollision(kind, entry.id, live.owner ?? 'unknown');
+      entries.set(entry.id, entry);
+      publish();
+      return () => { if (entries.get(entry.id) === entry) { entries.delete(entry.id); publish(); } };
+    },
+    all: () => list,
+    subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
+  };
+}
+const deckSlots = listed<DeckSlot>('deck slot', slot => {
+  if (!DECK_PLACEMENTS.includes(slot.placement)) throw new Error(`The deck slot “${slot.id}” needs a placement: ${DECK_PLACEMENTS.join(', ')}.`);
+});
+const sections = listed<Section>('section', section => {
+  if (typeof section.title !== 'string' || !section.title.trim()) throw new Error(`The section “${section.id}” needs a title.`);
+  section.title = section.title.trim().slice(0, 80);
+});
+
 export interface Scope {
   readonly owner: string;
   menu(item: MenuItem): Dispose;
   command(command: Command): Dispose;
+  deck(slot: DeckSlot): Dispose;
+  section(section: Section): Dispose;
   // Removes everything registered through this scope. Safe to call more than once.
   dispose(): void;
 }
@@ -139,6 +198,16 @@ export const registry = {
     // Bumps on every add and dispose, for useSyncExternalStore.
     version: () => commandVersion,
   },
+  deck: {
+    add: (slot: DeckSlot, owner = 'builtin') => deckSlots.add(slot, owner),
+    all: (): readonly DeckSlot[] => deckSlots.all(),
+    subscribe: deckSlots.subscribe,
+  },
+  sections: {
+    add: (section: Section, owner = 'builtin') => sections.add(section, owner),
+    all: (): readonly Section[] => sections.all(),
+    subscribe: sections.subscribe,
+  },
   scope(owner: string): Scope {
     namespaced(owner, 'check');
     const disposers = new Set<Dispose>();
@@ -152,6 +221,8 @@ export const registry = {
       owner,
       menu: item => track(addMenuItem(item, owner)),
       command: command => track(addCommand(command, owner)),
+      deck: slot => track(deckSlots.add(slot, owner)),
+      section: section => track(sections.add(section, owner)),
       dispose() { for (const dispose of [...disposers]) dispose(); },
     };
   },

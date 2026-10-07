@@ -3,6 +3,8 @@ import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { Cover, splitTitle } from './ui';
+import { useMiniCommandKeys } from './commands';
+import { DeckSlots, ExtensionNotices } from './extensions';
 
 // The mini player: its own small window, for when another app owns the screen.
 // The window is dragged by its background; the controls opt out of dragging.
@@ -12,6 +14,7 @@ export function Mini() {
   const engine = usePlayer(s => s.engine);
   const error = usePlayer(s => s.error);
   const palette = useRoomPalette(track?.coverArt);
+  useMiniCommandKeys();
   // The stored preference until this window changes it; the main process applies it when the
   // window opens, so nothing is written here until the listener asks.
   const stored = useSettings().miniOnTop;
@@ -40,10 +43,14 @@ export function Mini() {
       <TransportButtons playing={playing} />
     </div>
     <div className="mini-window">
+      {/* Extensions' quiet lines, all on this one line beside the buttons, so they take no room from
+          the song. The other deck placements need more room than this window has. */}
+      <div className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></div>
       {failed ? <button type="button" className="text-button" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
         : problem && <button type="button" className="text-button" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
       <button type="button" className="text-button" aria-pressed={onTop} title="Keep the mini player above other windows" onClick={() => void pin()}>{onTop ? 'Unpin' : 'Pin'}</button>
       <button type="button" className="text-button" onClick={() => void window.squiggly?.window.toggleMini()}>Full window</button>
     </div>
+    <ExtensionNotices />
   </div>;
 }
