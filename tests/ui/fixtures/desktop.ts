@@ -33,13 +33,15 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // `play:<ids>:device|stream` in bridgeCalls and plays at once, from the device when every song is
 // kept. Nothing here checks limits or files; vitest covers the real main process.
 // `connect` answers connect by the address given (a Result); any other address fails.
+// `settings` overrides the saved settings. window.setPlayer(patch) sends a snapshot with those
+// player fields changed, as the engine does when an output is unplugged or it has news.
 // `diagnostics` makes it a beta with remote diagnostics built in: the bridge has sendDiagnostics,
 // whose calls are recorded in bridgeCalls. Without it (the default) there are none, as in
 // stable releases. Settings changes are kept and recorded as `settings:<json>`.
 export interface KeptSeed { kind: 'album' | 'playlist' | 'mix'; id: string; name: string; artist: string | null; coverArt: string | null; tracks: object[] }
 export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; player?: object; mini?: boolean;
-  server?: boolean; away?: boolean; kept?: { seed?: KeptSeed[]; refuse?: string }; connect?: Record<string, object>; diagnostics?: boolean } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, playerPatch, mini, useServer, startAway, keptOptions, connectResults, diagnostics }) => {
+  server?: boolean; away?: boolean; kept?: { seed?: KeptSeed[]; refuse?: string }; connect?: Record<string, object>; diagnostics?: boolean; settings?: object } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, playerPatch, mini, useServer, startAway, keptOptions, connectResults, diagnostics, settingsPatch }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -90,7 +92,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const library = useServer ? serverLibrary : new Proxy({}, {
       get: (_target, method: string) => method === 'coverUrl' ? () => '' : async () => ({ ok: true, value: method in empty ? empty[method] : [] }),
     });
-    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true };
+    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true, ...settingsPatch };
     // Keep on this device.
     type Container = { kind: string; id: string; name: string; artist: string | null; coverArt: string | null; tracks: Track[]; keptAt: number };
     const containers = new Map<string, Container>();
@@ -177,6 +179,8 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     };
     const calls: string[] = [];
     Object.assign(window, { bridgeCalls: calls });
+    Object.assign(window, { setPlayer: (patch: object) => { playerPatch = { ...playerPatch, ...patch }; const next = snapshot(); listeners.forEach(listener => listener(next)); } });
+    Object.assign(window, { setPlayer: (patch: object) => { playerPatch = { ...playerPatch, ...patch }; const next = snapshot(); listeners.forEach(listener => listener(next)); } });
     const disabled = new Set<string>(), removed = new Set<string>();
     let reloads = 0;
     const fresh = new Set(given.filter(extension => extension.isNew).map(extension => extension.id));
@@ -260,5 +264,5 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     } });
   }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {},
     playerPatch: options.player ?? {}, mini: options.mini ?? false, useServer: options.server ?? false, startAway: options.away ?? false, keptOptions: options.kept ?? null, connectResults: options.connect ?? {},
-    diagnostics: options.diagnostics ?? false });
+    diagnostics: options.diagnostics ?? false, settingsPatch: options.settings ?? {} });
 }
