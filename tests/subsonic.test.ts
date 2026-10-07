@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Effect, Either, Schema } from 'effect';
+import { Effect, Either, Fiber, Schema, TestClock, TestContext } from 'effect';
 import { createHash } from 'node:crypto';
-import { SubsonicClient, libraryCall, normalizeServerUrl, plainText, resolveServerAddress, serverUrlCandidates } from '../packages/adapter-opensubsonic/client';
+import { SubsonicClient, libraryCall, normalizeServerUrl, plainText, reachOf, resolveServerAddress, ServerError, serverUrlCandidates, Unreachable } from '../packages/adapter-opensubsonic/client';
 import { Metrics } from '../packages/core/metrics';
 import { LibraryRequestSchemas, PlayTracksSchema } from '../packages/core/validation';
 import { stationIdOf } from '../packages/core/stations';
@@ -718,5 +718,93 @@ describe('internet radio stations', () => {
     const missing = await Effect.runPromise(Effect.either(subject.stationLocation('st3')));
     expect(Either.isLeft(missing) && missing.left.message).toBe('This station is no longer on the server. Refresh the stations and try again.');
     expect(mock.mock.calls.length).toBe(asked + 1);
+  });
+});
+
+describe('no answer, or an answer that refused', () => {
+  const failure = async (task: Effect.Effect<unknown, Error>) => {
+    const result = await Effect.runPromise(Effect.either(task));
+    if (Either.isRight(result)) throw new Error('Expected a failure.');
+    return result.left;
+  };
+  it('calls a refused connection unreachable, with the same words as before', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) }))));
+    const error = await failure(client().ping());
+    expect(error).toBeInstanceOf(Unreachable);
+    expect(reachOf(error)).toBe('unreachable');
+    expect(error.message).toBe('Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.');
+  });
+  it('treats a gateway saying the server is down as no answer, and other statuses as answers', async () => {
+    for (const status of [502, 503, 504]) {
+      serve(() => new Response('down', { status }));
+      const error = await failure(client().ping());
+      expect(reachOf(error)).toBe('unreachable');
+      expect(error.message).toBe(`Server returned HTTP ${status}. Check the server address and reverse proxy settings.`);
+    }
+    for (const status of [401, 404, 500]) {
+      serve(() => new Response('no', { status }));
+      expect(reachOf(await failure(client().ping()))).toBe('refused');
+    }
+    serve(() => Response.json({ 'subsonic-response': { status: 'failed', error: { code: 40 } } }));
+    expect(reachOf(await failure(client().ping()))).toBe('refused');
+    serve(() => new Response('not json'));
+    expect(reachOf(await failure(client().ping()))).toBe('refused');
+  });
+  it('calls a redirect refused, since something answered', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(Object.assign(new TypeError('fetch failed'), { cause: new Error('unexpected redirect') }))));
+    const error = await failure(client().ping());
+    expect(reachOf(error)).toBe('refused');
+    expect(error).toBeInstanceOf(ServerError);
+  });
+  it('calls a body that stops arriving unreachable', async () => {
+    serve(() => new Response(new ReadableStream({ pull(controller) { controller.error(new Error('socket hang up')); } })));
+    expect(reachOf(await failure(client().ping()))).toBe('unreachable');
+  });
+  it('calls the 15 second timeout unreachable, with the same words as before', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => new URL(url).pathname.endsWith('/getOpenSubsonicExtensions.view') ? Promise.resolve(discoveryResponse())
+      : new Promise((_resolve, reject) => options.signal!.addEventListener('abort', () => reject(new Error('aborted'))))));
+    const error = await Effect.runPromise(Effect.gen(function* () {
+      const fiber = yield* Effect.fork(Effect.flip(client().ping()));
+      yield* Effect.promise(() => new Promise(resolve => setTimeout(resolve, 20)));
+      yield* TestClock.adjust('15 seconds');
+      return yield* Fiber.join(fiber);
+    }).pipe(Effect.provide(TestContext.TestContext)));
+    expect(reachOf(error)).toBe('unreachable');
+    expect(error.message).toBe('The server did not respond within 15 seconds. Check your connection and try again.');
+  });
+  it('reads a song\'s size only when the server sends one', async () => {
+    servePayload(albumPayload({ id: 's', title: 's', size: 31_457_280 }));
+    expect((await Effect.runPromise(client().album('a'))).tracks[0].size).toBe(31_457_280);
+    servePayload(albumPayload({ id: 's', title: 's' }));
+    expect('size' in (await Effect.runPromise(client().album('a'))).tracks[0]).toBe(false);
+    servePayload(albumPayload({ id: 's', title: 's', size: 0 }));
+    expect('size' in (await Effect.runPromise(client().album('a'))).tracks[0]).toBe(false);
+  });
+  it('reports a finished play at the time it finished', async () => {
+    const mock = servePayload({});
+    await Effect.runPromise(client().reportPlay('s1', 'finished', 1_700_000_000_000));
+    const body = mock.mock.calls.at(-1)![1].body as URLSearchParams;
+    expect(body.get('time')).toBe('1700000000000');
+    expect(body.get('submission')).toBe('true');
+    await Effect.runPromise(client().reportPlay('s1', 'started'));
+    expect((mock.mock.calls.at(-1)![1].body as URLSearchParams).has('time')).toBe(false);
+  });
+  it('fetches the original for keeping, and refuses an error sent as a 200 without naming the address', async () => {
+    serve(() => new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'audio/flac' } }));
+    const response = await client().original('s1', new AbortController().signal);
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+    const mock = serve(() => Response.json({ 'subsonic-response': { status: 'failed', error: { code: 70, message: 'secret-marker' } } }));
+    const refused = await client().original('s1', new AbortController().signal).catch((error: Error) => error);
+    expect(refused).toBeInstanceOf(ServerError);
+    expect(reachOf(refused)).toBe('refused');
+    const sent = new URL(mock.mock.calls.at(-1)![0]);
+    expect(sent.searchParams.get('format')).toBe('raw');
+    for (const secret of ['secret-marker', sent.searchParams.get('t')!, 'music.example.com', connection.username]) expect(String((refused as Error).message)).not.toContain(secret);
+    serve(() => new Response('<html/>', { headers: { 'content-type': 'text/html' } }));
+    await expect(client().original('s1', new AbortController().signal)).rejects.toThrow('The server sent an error instead of the song.');
+    serve(() => new Response('down', { status: 503 }));
+    expect(reachOf(await client().original('s1', new AbortController().signal).catch(error => error))).toBe('unreachable');
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new TypeError('fetch failed'))));
+    expect(reachOf(await client().original('s1', new AbortController().signal).catch(error => error))).toBe('unreachable');
   });
 });

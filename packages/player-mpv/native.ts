@@ -58,13 +58,15 @@ export class NativePlayer {
     if (!this.handle) throw new Error('libmpv could not create a player.');
     try {
       // Ignore user mpv configuration so no hidden DSP or scripts change the path.
+      // access-references=no: a local file, a kept song included, is trusted, so a playlist, EDL, or
+      // cue sheet inside one could open any other file on this computer. Songs never need to.
       // Gapless: 'weak' keeps the output open from one song to the next while their formats
       // match (an album, usually), and reopens it in the new format when they don't. ('yes'
       // would hold the first song's format and resample the rest.) prefetch-playlist opens the
       // next song's stream before this one ends, so a network fetch doesn't open a gap. The host
       // turns it off while a station is queued (host.ts, followPrefetch).
       const options: Record<string, string> = {
-        config: 'no', 'load-scripts': 'no', terminal: 'no', video: 'no',
+        config: 'no', 'load-scripts': 'no', 'access-references': 'no', terminal: 'no', video: 'no',
         idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'weak', 'prefetch-playlist': 'yes',
         replaygain: 'no', volume: '100', 'volume-max': '100',
         'audio-display': 'no',

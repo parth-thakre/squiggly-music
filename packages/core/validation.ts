@@ -103,3 +103,10 @@ export const SaveM3uSchema = Schema.Tuple(
     path: Schema.NullOr(Schema.String.pipe(Schema.maxLength(4096))), suffix: Schema.NullOr(Schema.String.pipe(Schema.maxLength(32))),
   })).pipe(Schema.maxItems(5000)),
 );
+// Finished plays waiting to be reported (packages/core/plays.ts): the desktop's plays.json and the
+// Android page's localStorage. Bound to one account.
+export const QueuedPlaysSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  account: Schema.NullOr(Schema.String.pipe(Schema.maxLength(2048))),
+  plays: Schema.Array(Schema.Struct({ trackId: IdSchema, at: IntSchema(0, 253_402_300_799_999) })).pipe(Schema.maxItems(500)),
+});

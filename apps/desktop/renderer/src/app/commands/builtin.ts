@@ -1,6 +1,7 @@
 import { resetLibraryCaches } from '../library';
 import { createPlaylist } from '../menu';
-import { current, getPlayer, optimisticVolume, player } from '../player';
+import { current, getPlayer, isAway, optimisticVolume, player } from '../player';
+import { keptSupported } from '../keptState';
 import { registry, type Command } from '../registry';
 import { nav, type Route } from '../route';
 import { getThemes, onThemesChange, selectTheme } from '../theme';
@@ -51,7 +52,7 @@ add({
 });
 // Ratings for the playing song, which must be from the server. setRating shows its own failures.
 // Ctrl+1 to Ctrl+5 work in the search field too, as Ctrl+Right does: Ctrl chords are commands there.
-const playingOnServer = () => getPlayer().connected && current(getPlayer())?.source === 'navidrome';
+const playingOnServer = () => getPlayer().connected && !isAway() && current(getPlayer())?.source === 'navidrome';
 for (const n of [1, 2, 3, 4, 5] as const) add({
   id: `rate-${n}`, title: `Rate the playing song ${n === 1 ? '1 star' : `${n} stars`}`, category: 'Playback', keys: [`ctrl+${n}`],
   when: playingOnServer, run: async () => { await setRating('track', [current(getPlayer())!.id], n); },
@@ -79,8 +80,10 @@ const places: [id: string, title: string, route: Route, key: string][] = [
   ['genres', 'Go to genres', { view: 'genres' }, 'g g'],
   ['home', 'Go to home', { view: 'home' }, 'g h'],
   ['mixes', 'Go to mixes', { view: 'mixes' }, 'g m'],
+  ['kept', 'Go to kept songs', { view: 'kept' }, 'g k'],
 ];
-for (const [id, title, route, key] of places) add({ id: `go-${id}`, title, category: 'Go to', keys: id === 'settings' ? [key, 'ctrl+,'] : [key], run: () => nav.go(route) });
+// Kept songs only where songs can be kept (the desktop and Android).
+for (const [id, title, route, key] of places) add({ id: `go-${id}`, title, category: 'Go to', keys: id === 'settings' ? [key, 'ctrl+,'] : [key], ...(id === 'kept' ? { when: () => keptSupported } : {}), run: () => nav.go(route) });
 add({ id: 'back', title: 'Back', category: 'Go to', keys: ['alt+left'], run: () => nav.back() });
 add({ id: 'forward', title: 'Forward', category: 'Go to', keys: ['alt+right'], run: () => history.forward() });
 add({
@@ -97,7 +100,7 @@ add({
 add({ id: 'clear-up-next', title: 'Clear up next', category: 'Queue', when: () => getPlayer().queue.length - getPlayer().index - 1 > 0, run: () => player.clear() });
 add({
   id: 'save-queue', title: 'Save the queue as a playlist', category: 'Queue',
-  when: () => getPlayer().connected && getPlayer().queue.some(t => t.source === 'navidrome'),
+  when: () => getPlayer().connected && !isAway() && getPlayer().queue.some(t => t.source === 'navidrome'),
   async run() {
     const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
     fail(await createPlaylist(`Queue, ${date}`, getPlayer().queue.filter(t => t.source === 'navidrome').map(t => t.id)));
@@ -116,7 +119,7 @@ add({
 // Radio
 add({
   id: 'radio-start', title: 'Start radio from this song', category: 'Radio',
-  when: () => getPlayer().connected && current(getPlayer())?.source === 'navidrome',
+  when: () => getPlayer().connected && !isAway() && current(getPlayer())?.source === 'navidrome',
   run: () => { const track = current(getPlayer())!; return player.radio({ kind: 'song', track, label: splitTitle(track.title).main }); },
 });
 add({ id: 'radio-stop', title: 'Stop radio', category: 'Radio', when: () => !!getPlayer().radio, run: () => player.stopRadio() });
@@ -131,7 +134,7 @@ const playingSong = () => { const track = current(getPlayer()); return getPlayer
 const playingArtist = () => { const track = playingSong(); return track && firstArtistId(track); };
 add({
   id: 'favorite-current', title: 'Add or remove the playing song from favorites', category: 'Now playing', keys: ['f'],
-  when: () => !!playingSong(),
+  when: () => !!playingSong() && !isAway(),
   async run() {
     const track = playingSong()!;
     const result = await setStarred('track', [track.id], !isStarred(track.id, track.starred));
@@ -157,7 +160,7 @@ add({
 add({ id: 'now-playing', title: 'Open now playing', category: 'View', when: () => phone() && playing() && !!shell.openNowPlaying, run: () => shell.openNowPlaying?.() });
 
 // Library
-add({ id: 'refresh', title: 'Refresh the library', category: 'Library', when: () => getPlayer().connected, run: () => resetLibraryCaches() });
+add({ id: 'refresh', title: 'Refresh the library', category: 'Library', when: () => getPlayer().connected && !isAway(), run: () => resetLibraryCaches() });
 
 // App
 // Signing out of the browser build is one keystroke; disconnecting the desktop or the phone forgets

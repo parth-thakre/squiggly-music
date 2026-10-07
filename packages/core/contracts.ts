@@ -34,6 +34,8 @@ export interface Track {
   // The file's path as the server reports it (Subsonic `path`), for playlist files (m3u.ts).
   // Absent when the server gives none, and for local files, whose paths stay in the main process.
   path?: string | null;
+  // The file's size in bytes as the server reports it (Subsonic song.size). Absent when it sends none.
+  size?: number;
 }
 // One credited artist with their own page. See Track.artists.
 export interface ArtistRef { id: string; name: string }
@@ -198,6 +200,7 @@ export interface Settings {
   miniOnTop: boolean;         // keep the mini player above other windows
   outputDevice: string;       // mpv audio-device name; 'auto' is the system default
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
+  keptLimitMb: number;        // how much room songs kept on this device may take, in MB (1024 * 1024 bytes)
 }
 export interface QueueApi {
   // A number inserts before the entry at that index.
@@ -284,6 +287,9 @@ export interface PlayerSnapshot {
   // A station playing: the title its stream announces (ICY StreamTitle), as mpv reads it. Null
   // when it announces none, and for anything but a station. Absent from older hosts.
   stationTitle?: string | null;
+  // The current entry is a kept song and the player opened its file on this device, not the
+  // stream. Absent from older hosts, which means false.
+  fromDevice?: boolean;
 }
 // off: the queue stops after its last song. all: it wraps to the first. one: a finished song
 // starts again; Next still moves on.
@@ -335,8 +341,52 @@ export interface ServerState {
   canRemember: boolean;
   // Reconnecting with the saved sign-in at launch, and why that failed, if it did.
   reconnecting: boolean; reconnectError: string | null;
+  // Whether the server answers (packages/core/reach.ts). Absent from older hosts: online.
+  reach?: Reachability;
+  // Finished plays waiting to be reported until the server answers again.
+  queuedPlays?: number;
 }
-export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string };
+// A failure carries `unreachable` when no answer came at all (the connection failed, the request
+// timed out, or a gateway said the server is down), as opposed to an answer that refused.
+export type Result<T = void> = { ok: true; value: T } | { ok: false; error: string; unreachable?: true };
+
+// Whether the server is out of reach. away: the app shows what is kept and stops asking the
+// server; since: when that began (epoch ms); checking: a probe is on its way; checkedAt: the last
+// probe's answer (epoch ms).
+export interface Reachability { away: boolean; since: number | null; checking: boolean; checkedAt: number | null }
+export const ONLINE: Reachability = { away: false, since: null, checking: false, checkedAt: null };
+
+// Songs kept on this device (desktop and Android). A record, a playlist, or a mix's draw is kept
+// as a container of song ids; the songs are files, the originals as the server sent them.
+export type KeepKind = 'album' | 'playlist' | 'mix';
+export interface KeepRequest { kind: KeepKind; id: string; name: string; artist: string | null; coverArt: string | null; tracks: Track[] }
+// present: how many of its songs are kept; bytes: what they take.
+export interface KeptContainer { kind: KeepKind; id: string; name: string; artist: string | null; coverArt: string | null; total: number; present: number; bytes: number; keptAt: number }
+// A keep in progress. paused: the server went away and it goes on when the server is back.
+// stopped: it ended early, and `error` says why.
+export interface KeptJob { kind: KeepKind; id: string; name: string; done: number; total: number; failed: number; state: 'waiting' | 'keeping' | 'paused' | 'stopped'; error: string | null }
+// revision changes whenever what is kept changes. dir: the kept folder (desktop only). notice: a
+// one-time line, such as the list of kept songs having been unreadable.
+export interface KeptState { revision: number; songs: number; usedBytes: number; limitBytes: number; containers: KeptContainer[]; jobs: KeptJob[]; dir: string | null; notice: string | null }
+// What each push carries while downloads run.
+export interface KeptProgress { revision: number; usedBytes: number; jobs: KeptJob[] }
+// A container and its kept songs, in container order.
+export interface KeptDetail { container: KeptContainer; trackIds: string[]; tracks: Track[] }
+export interface KeptApi {
+  state(): Promise<KeptState>;
+  // Every kept track id. Pulled again when the revision changes.
+  present(): Promise<string[]>;
+  container(kind: KeepKind, id: string): Promise<Result<KeptDetail>>;
+  subscribe(listener: (progress: KeptProgress) => void): () => void;
+  // Resolves once the keep is admitted (there is room, and the songs are known), not when it ends.
+  keep(request: KeepRequest): Promise<Result>;
+  // Stops a keep, or clears one that stopped or paused. Songs already kept stay.
+  cancel(kind: KeepKind, id: string): Promise<Result>;
+  forget(kind: KeepKind, id: string): Promise<Result>;
+  forgetAll(): Promise<Result>;
+  // Desktop only: shows the kept folder.
+  openDir?(): Promise<Result>;
+}
 // The user's config folder (~/.config/squiggly on Linux, %APPDATA%\Squiggly on Windows).
 // Files are read and watched by the main process; edits apply live.
 export interface ThemeFile { id: string; name: string; tokens: unknown }
@@ -431,6 +481,11 @@ export interface DesktopBridge {
   // Saves an extended M3U (m3u.ts) through a save dialog, as `<name>.m3u8`. Local files are
   // written with their paths, which only the main process knows. Cancelling is not an error.
   saveM3u(name: string, entries: M3uEntry[]): Promise<Result>;
+  // Songs kept on this computer. Absent from stand-ins, which means the build keeps nothing.
+  kept?: KeptApi;
+  // Asks the server again while it is out of reach. passive: a check the page made on its own
+  // (focus, the network coming back), skipped when one was made in the last few seconds.
+  retryServer?(passive?: boolean): Promise<Result>;
 }
 // One song in a playlist file. `local` marks a file on this computer (Track.source 'local').
 export interface M3uEntry {
@@ -447,7 +502,7 @@ export const emptyAudio = (): AudioPath => ({
 export const emptyPlayer = (): PlayerSnapshot => ({
   engine: 'starting', error: null, playing: false, position: 0, duration: 0,
   volume: 100, currentIndex: -1, queue: [], entryIds: [], playId: '', radio: null, devices: [], audio: emptyAudio(),
-  repeat: 'off', shuffle: false, stationTitle: null,
+  repeat: 'off', shuffle: false, stationTitle: null, fromDevice: false,
 });
 export const emptyDiagnostics = (): Diagnostics => ({
   uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0,
@@ -465,6 +520,9 @@ export interface AndroidSession {
   sessionId: string | null;
   account: string | null;
   signIn: Pick<ServerState, 'saved' | 'canRemember' | 'reconnecting' | 'reconnectError'>;
+  // Whether the server answers, as on the desktop. Absent means online.
+  reach?: Reachability;
+  queuedPlays?: number;
 }
 // What the native player reports. Times are seconds; a duration of 0 is unknown.
 export interface AndroidPlayback {
@@ -480,10 +538,14 @@ export interface AndroidPlayback {
   // A station playing: the title its stream announces, from ExoPlayer's ICY metadata. Null when
   // it announces none.
   stationTitle?: string | null;
+  // The entry playing is a kept file on the phone, not the stream.
+  local?: boolean;
 }
 export interface AndroidQueueSnapshot { queue: Track[]; entryIds: string[]; index: number; playback: AndroidPlayback }
 export interface AndroidBridge {
   library: LibraryApi;
+  // Songs kept on the phone. Absent from older bridges.
+  kept?: KeptApi;
   session: {
     get(): AndroidSession;
     subscribe(listener: (session: AndroidSession) => void): () => void;
@@ -493,6 +555,8 @@ export interface AndroidBridge {
     reconnect(): Promise<Result>;
     // Stops playback, empties the native queue, and forgets the saved sign-in.
     disconnect(): Promise<Result>;
+    // Asks the server again while it is out of reach (see DesktopBridge.retryServer).
+    retry?(passive?: boolean): Promise<Result>;
   };
   player: {
     // What the native player still holds from before the page loaded (the app was swiped away

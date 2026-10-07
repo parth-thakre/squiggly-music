@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, KeptApi, KeptProgress, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
@@ -73,6 +73,19 @@ const updates: UpdatesApi = {
   install: () => ipcRenderer.invoke('squiggly:update:install'),
   open: () => ipcRenderer.invoke('squiggly:update:open'),
 };
+// Songs kept on this computer. Songs go by id; the main process looks the tracks up itself and
+// never sends a path back.
+const kept: KeptApi = {
+  state: () => ipcRenderer.invoke('squiggly:kept:state'),
+  present: () => ipcRenderer.invoke('squiggly:kept:present'),
+  container: (kind, id) => ipcRenderer.invoke('squiggly:kept:container', [kind, id]),
+  subscribe: listener => listen<KeptProgress>('squiggly:kept', listener),
+  keep: ({ kind, id, name, artist, coverArt, tracks }) => ipcRenderer.invoke('squiggly:kept:keep', { kind, id, name, artist, coverArt, trackIds: tracks.map(track => track.id) }),
+  cancel: (kind, id) => ipcRenderer.invoke('squiggly:kept:cancel', [kind, id]),
+  forget: (kind, id) => ipcRenderer.invoke('squiggly:kept:forget', [kind, id]),
+  forgetAll: () => ipcRenderer.invoke('squiggly:kept:forget-all'),
+  openDir: () => ipcRenderer.invoke('squiggly:kept:open-dir'),
+};
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
@@ -121,5 +134,7 @@ const bridge: DesktopBridge = {
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
   exportDiagnostics: () => ipcRenderer.invoke('squiggly:export-diagnostics'),
   saveM3u: (name, entries) => ipcRenderer.invoke('squiggly:save-m3u', [name, entries]),
+  kept,
+  retryServer: passive => ipcRenderer.invoke('squiggly:retry-server', passive === true),
 };
 contextBridge.exposeInMainWorld('squiggly', bridge);

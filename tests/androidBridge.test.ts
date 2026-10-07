@@ -44,6 +44,10 @@ const fake = vi.hoisted(() => {
     }),
     load: vi.fn(async ({ id, seq }: { id: string; seq: number }) => { loads.push({ id, seq }); order.push(`load ${id}`); }),
     seek: vi.fn(async () => undefined), play: vi.fn(async () => undefined), pause: vi.fn(async () => undefined),
+    // Keep on this device (Kept.kt): nothing kept, so a launch signs in as usual.
+    keptState: vi.fn(async () => ({ account: null, revision: 0, songs: 0, usedBytes: 0, containers: [], jobs: [], notice: null })),
+    keptPresent: vi.fn(async () => ({ ids: [] })),
+    keptBind: vi.fn(async () => undefined), keptResume: vi.fn(async () => undefined),
   };
   return { stationLists, held, edits, loads, order, fetch, plugin, setNative: (ids: string[]) => { native = ids; } };
 });

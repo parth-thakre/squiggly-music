@@ -185,6 +185,34 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('queue editing in real libmpv
   });
 });
 
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('kept songs in real libmpv', () => {
+  it('says a kept song plays from the device only while mpv has its file open, and never shows the path', async () => {
+    const file = await wavFixture(8);
+    const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+    await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+    const track = (id: string) => ({ id, title: id, artist: '', album: '', duration: 8, source: 'navidrome' as const, sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null });
+    send({ id: 1, action: { type: 'queue', tracks: [{ track: track('kept'), location: file, kept: true }, { track: track('stream'), location: file }] } });
+    await expect.poll(() => replies.has(1)).toBe(true);
+    await expect.poll(() => snapshots.at(-1)?.fromDevice).toBe(true);
+    send({ id: 2, action: { type: 'next' } });
+    await expect.poll(() => snapshots.at(-1)?.currentIndex).toBe(1);
+    await expect.poll(() => snapshots.at(-1)?.fromDevice).toBe(false);
+    expect(JSON.stringify(snapshots)).not.toContain(fixtureDirectory!);
+  });
+  it('doesn\'t follow a playlist in a kept file to another file on the device', async () => {
+    const file = await wavFixture(8);
+    const playlist = join(fixtureDirectory!, 's-kept.m3u');
+    await writeFile(playlist, `#EXTM3U\n${file}\n`);
+    const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+    await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+    const track = { id: 'kept', title: 'kept', artist: '', album: '', duration: 8, source: 'navidrome' as const, sourceFormat: 'm3u', sourceSampleRate: null, sourceBitDepth: null };
+    send({ id: 1, action: { type: 'queue', tracks: [{ track, location: playlist, kept: true }] } });
+    await expect.poll(() => replies.has(1)).toBe(true);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    expect(snapshots.some(snapshot => snapshot.audio.codec !== null || snapshot.position > 0)).toBe(false);
+  });
+});
+
 async function mockHost(supportsStopKeepPlaylist = false, configure?: (native: { set: ReturnType<typeof vi.fn>; property: ReturnType<typeof vi.fn> }) => void) {
   vi.useFakeTimers();
   const { emptyAudio } = await import('../packages/core/contracts');

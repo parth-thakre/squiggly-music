@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "account": "music.example.com/navidrome\nlistener",
+  "songs": {
+    "tr-1-1": {
+      "track": { "id": "tr-1-1", "title": "Long Run", "artist": "Ada Brass", "album": "Test Pressing", "duration": 45, "source": "navidrome", "sourceFormat": "flac", "sourceSampleRate": 44100, "sourceBitDepth": 16, "albumId": "al-1", "artistId": "ar-1", "coverArt": "al-1", "trackNumber": 1, "discNumber": 1, "year": 2024, "genre": "Folk", "path": "Ada Brass/Test Pressing/01 - Long Run.flac", "size": 7340032 },
+      "file": "s-0123456789abcdef0123456789abcdef.flac",
+      "bytes": 7340032,
+      "keptAt": 1790000000000
+    }
+  },
+  "containers": [
+    { "kind": "album", "id": "al-1", "name": "Test Pressing", "artist": "Ada Brass", "coverArt": "al-1", "trackIds": ["tr-1-1", "tr-1-2"], "keptAt": 1790000000000 },
+    { "kind": "mix", "id": "everything", "name": "Everything", "artist": null, "coverArt": null, "trackIds": ["tr-1-1"], "keptAt": 1790000000001 }
+  ],
+  "covers": {
+    "al-1": { "file": "c-fedcba9876543210fedcba9876543210.jpg", "bytes": 48213, "type": "image/jpeg", "keptAt": 1790000000000 }
+  }
+}

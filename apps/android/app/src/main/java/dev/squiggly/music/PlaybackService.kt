@@ -18,6 +18,7 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        Kept.init(this)
         Playback.init(this)
         CoverProxy.init(this)
         val open = PendingIntent.getActivity(

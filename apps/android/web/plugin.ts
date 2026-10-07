@@ -1,4 +1,5 @@
 import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import type { KeepKind, KeptContainer, KeptJob, KeptProgress } from '../../../packages/core/contracts';
 
 // The app's own Capacitor plugin (apps/android/app/src/main/java/dev/squiggly/music/SquigglyPlugin.kt).
 
@@ -6,7 +7,8 @@ import { registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 // to the player and nowhere else. `track` is the page's Track as JSON, kept natively so a page
 // that loads while the player is already going (after the app was swiped away) can show it.
 export interface NativeItem {
-  id: string; url: string; fallbackUrl: string;
+  // trackId: the song, so the player can find its kept file (Kept.kt).
+  id: string; trackId: string; url: string; fallbackUrl: string;
   title: string; artist: string; album: string; coverArt: string | null; duration: number | null;
   track: string;
   // An internet radio station: a live stream, with no fallback, and no repeat one.
@@ -27,6 +29,8 @@ export interface NativePlayback {
   position: number; duration: number; fallback: boolean; error: string | null;
   // A station playing: the title its stream announces (ICY), or null.
   stationTitle?: string | null;
+  // The entry playing is a kept file on the phone, and the player opened it.
+  local?: boolean;
 }
 export interface NativeAccount { url: string; username: string; password: string }
 export interface Posture { posture: 'flat' | 'flex'; top: number; bottom: number }
@@ -65,7 +69,26 @@ export interface SquigglyPlugin {
   // light (dark: true) or dark system bar icons.
   setWindowColour(options: { colour: string; dark: boolean }): Promise<void>;
 
+  // Keep on this device (Kept.kt). The index lives natively, so the player finds kept files with
+  // the page asleep or gone. Song addresses carry credentials: they go to native code, which
+  // holds them in the running keep only, as the player holds stream addresses.
+  keptState(): Promise<{ account: string | null; revision: number; songs: number; usedBytes: number; containers: KeptContainer[]; jobs: KeptJob[]; notice: string | null }>;
+  keptPresent(): Promise<{ ids: string[] }>;
+  keptContainer(options: { kind: KeepKind; id: string }): Promise<{ container: KeptContainer; trackIds: string[]; tracks: string[] }>;
+  keptKeep(options: {
+    kind: KeepKind; id: string; name: string; artist: string | null; coverArt: string | null;
+    songs: { id: string; track: string; url: string; size: number | null }[]; limitBytes: number;
+  }): Promise<{ ok: boolean; error: string | null }>;
+  keptCancel(options: { kind: KeepKind; id: string }): Promise<{ ok: boolean; error: string | null }>;
+  keptForget(options: { kind: KeepKind; id: string }): Promise<{ ok: boolean; error: string | null }>;
+  keptForgetAll(): Promise<{ ok: boolean; error: string | null }>;
+  // The server answers again: paused keeps go on.
+  keptResume(): Promise<void>;
+  // Kept songs belong to one account (keyOf in packages/core/kept.ts); another forgets them.
+  keptBind(options: { key: string }): Promise<void>;
+
   addListener(event: 'playback', listener: (playback: NativePlayback) => void): Promise<PluginListenerHandle>;
+  addListener(event: 'kept', listener: (progress: KeptProgress) => void): Promise<PluginListenerHandle>;
   addListener(event: 'posture', listener: (posture: Posture) => void): Promise<PluginListenerHandle>;
 }
 
