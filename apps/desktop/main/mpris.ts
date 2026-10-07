@@ -20,13 +20,15 @@ export interface MediaSession { update(player: PlayerSnapshot, artUrl: string | 
 // MediaSession/MPRIS integration never sees it. Shells show these controls and route media
 // keys here. Without a session bus (headless, some sandboxes) this returns null and playback
 // is unaffected. Metadata carries only display text and a local file:// cover, never server URLs.
+// Shells match the entry to a desktop file: squiggly-music.desktop from the RPM, deb, and
+// AppImage, and dev.squiggly.music.desktop in a Flatpak, which sets FLATPAK_ID to that id.
 export async function startMpris(controls: MediaControls, onError: () => void): Promise<MediaSession | null> {
   let Player: typeof import('@jellybrick/mpris-service').default;
   try { ({ default: Player } = await import('@jellybrick/mpris-service')); } catch { return null; }
   let service: InstanceType<typeof Player>;
   try {
     service = new Player({
-      name: 'squiggly', identity: 'Squiggly Music', desktopEntry: 'squiggly-music',
+      name: 'squiggly', identity: 'Squiggly Music', desktopEntry: process.env.FLATPAK_ID || 'squiggly-music',
       supportedInterfaces: ['player'], supportedUriSchemes: [], supportedMimeTypes: [],
     });
   } catch { onError(); return null; }

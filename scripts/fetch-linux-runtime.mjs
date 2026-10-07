@@ -1,7 +1,8 @@
 // Downloads the Linux audio-host runtime into .local/linux-runtime for packaging.
 // The Electron utility process cannot host libmpv (see README), so a release ships
-// its own Node executable. libmpv is not bundled on Linux: the package depends on
-// the distribution's libmpv (Fedora: mpv-libs). Koffi's linux-x64 binary is an
+// its own Node executable. No Linux package bundles libmpv: the RPM and deb depend on
+// the distribution's (Fedora: mpv-libs; Debian and Ubuntu: libmpv2 or libmpv1), and the
+// AppImage uses whichever is installed. Koffi's linux-x64 binary is an
 // optional npm package that is already installed on linux-x64 hosts (npm ci checks
 // its lockfile integrity).
 //
@@ -28,12 +29,12 @@ if (!existsSync(`node_modules/@koromix/koffi-linux-${ARCH}/linux_${ARCH}/koffi.n
   throw new Error(`@koromix/koffi-linux-${ARCH} is missing from node_modules. Run npm ci on a linux-${ARCH} host.`);
 }
 
-// electron-builder's bundled fpm (used for the RPM) runs a Ruby that links libcrypt.so.1.
+// electron-builder's bundled fpm (used for the RPM and the deb) runs a Ruby that links libcrypt.so.1.
 // Fail before the long packaging step instead of inside it.
 const hasLibcrypt1 = execFileSync('/sbin/ldconfig', ['-p']).toString().includes('libcrypt.so.1 ')
   || (process.env.LD_LIBRARY_PATH ?? '').split(':').some(dir => dir && existsSync(join(dir, 'libcrypt.so.1')));
 if (process.env.USE_SYSTEM_FPM !== 'true' && !hasLibcrypt1) {
-  throw new Error('libcrypt.so.1 is missing; electron-builder needs it to build the RPM. On Fedora: sudo dnf install libxcrypt-compat');
+  throw new Error('libcrypt.so.1 is missing; electron-builder needs it to build the RPM and the deb. On Fedora: sudo dnf install libxcrypt-compat');
 }
 
 const nodeName = `node-${NODE_VERSION}-linux-${ARCH}`;

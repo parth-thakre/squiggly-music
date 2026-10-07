@@ -38,11 +38,13 @@ LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run dev
 
 The native decoding tests skip unless `SQUIGGLY_LIBMPV_PATH` is set. They decode generated PCM to mpv's null output, so they never touch a real DAC. Don't set `SQUIGGLY_TEST_NULL_AUDIO=1` for listening. It silences output on purpose.
 
-`npm run test:ui` builds the browser version and drives it in Chromium against a fake Navidrome with generated covers and audio. It runs desktop and phone layouts. The same run checks the website's download buttons (`tests/ui/site`) with a mocked GitHub release: a Mac whose browser can't say its CPU, as in Safari and Firefox, gets a button for Apple silicon and one for Intel.
+`npm run test:ui` builds the browser version and drives it in Chromium against a fake Navidrome with generated covers and audio. It runs desktop and phone layouts. The same run loads the website (`site/`) with a faked GitHub release (`tests/ui/site`). It checks the download buttons, so that a Mac whose browser can't say its CPU, as in Safari and Firefox, gets a button for Apple silicon and one for Intel, and that the download list keeps what each file needs.
 
 The Android app's pure parts run with the rest: `tests/androidQueue.test.ts` checks how the page's queue is mirrored to the native player. [android.md](android.md) covers the emulator.
 
-`npm run test:desktop` starts the real Electron app and checks the preload bridge and process isolation. It needs a display (a graphical session, or Xvfb on Linux).
+`npm run test:desktop` starts the real Electron app and checks the preload bridge and process isolation. It needs a display (a graphical session, or Xvfb on Linux). `npm run smoke:packaged -- <executable>` does the same for a packaged build; [packaging.md](packaging.md) has the details. `tests/packagedSmoke.test.ts` runs that script against a stand-in app whose page crashes, stalls, or reloads, and checks it still fails in time and deletes its profile.
+
+`tests/packaging.test.ts` checks the Linux packaging config: the RPM, deb, and AppImage targets, their libmpv dependencies, and the Flatpak manifest's pins against `build/libmpv/sources.json`.
 
 ## Limits
 

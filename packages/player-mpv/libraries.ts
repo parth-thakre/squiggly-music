@@ -18,7 +18,12 @@ export function libmpvCandidates(platform: NodeJS.Platform, explicit?: string): 
 // Shown in the deck, so it says what to do, in plain words, with no markup. Windows and Linux keep
 // their message: the packaged Windows app passes its bundled DLL as an explicit path, so naming the
 // setting there would point at something the user never set. On macOS nothing sets it but the user.
-export function libmpvMissing(platform: NodeJS.Platform, explicit?: string): string {
+// An AppImage can't depend on a package the way the deb and RPM do, so it has to tell the user
+// which one to install.
+export function libmpvMissing(platform: NodeJS.Platform, explicit?: string, env: NodeJS.ProcessEnv = process.env): string {
+  if (platform === 'linux' && env.APPIMAGE) {
+    return 'libmpv could not be loaded. This AppImage doesn\'t include it. Install your distribution\'s libmpv (libmpv2 on Debian and Ubuntu, mpv-libs on Fedora, mpv on Arch) or set SQUIGGLY_LIBMPV_PATH, then restart the audio engine.';
+  }
   if (platform === 'darwin') {
     return explicit
       ? 'libmpv could not be loaded from the path in SQUIGGLY_LIBMPV_PATH. Check that the file is there and is a libmpv library, then restart the audio engine.'

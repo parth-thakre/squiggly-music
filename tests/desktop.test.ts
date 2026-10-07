@@ -466,6 +466,15 @@ describe('MPRIS media controls', () => {
     expect(controls.volume).toHaveBeenCalledWith(100);
   });
 
+  it('names its desktop entry after the Flatpak when it runs in one', async () => {
+    try {
+      vi.stubEnv('FLATPAK_ID', '');
+      expect((await mpris()).service.options).toMatchObject({ name: 'squiggly', desktopEntry: 'squiggly-music' });
+      vi.resetModules(); vi.stubEnv('FLATPAK_ID', 'dev.squiggly.music');
+      expect((await mpris()).service.options).toMatchObject({ desktopEntry: 'dev.squiggly.music' });
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('maps Seek and SetPosition to the current track only, and signals jumps', async () => {
     const { session, service, controls } = await mpris();
     vi.spyOn(performance, 'now').mockReturnValue(1000);

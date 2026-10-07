@@ -12,6 +12,8 @@
     setup: /-windows-x64-setup\.exe$/i,
     portable: /-windows-x64-portable\.exe$/i,
     rpm: /\.x86_64\.rpm$/i,
+    deb: /_amd64\.deb$/i,
+    appimage: /-x86_64\.AppImage$/i,
     apk: /-android\.apk$/i,
     macArm: /-macos-arm64\.zip$/i,
     macIntel: /-macos-x64\.zip$/i,
@@ -29,6 +31,16 @@
     if (/Linux/i.test(p + ua)) return "linux";
     return "other";
   }
+
+  // The Linux button takes the package for the visitor's distribution when the browser names it
+  // (Firefox as Ubuntu and Fedora ship it does; Chrome doesn't), and the AppImage otherwise.
+  function linuxFlavour() {
+    var ua = navigator.userAgent || "";
+    if (/Ubuntu|Debian|Mint|Pop!?_?OS/i.test(ua)) return "deb";
+    if (/Fedora/i.test(ua)) return "rpm";
+    return "appimage";
+  }
+  PATTERNS.linux = PATTERNS[linuxFlavour()];
 
   // The visitor's system gets the one filled button, and its files lead the list. The other
   // systems follow as a quiet "Also for" line. Anything without a build (an iPhone, an iPad)
@@ -69,6 +81,7 @@
       if (!asset) return;
       var links = doc.querySelectorAll('[data-asset="' + key + '"]');
       for (var j = 0; j < links.length; j++) links[j].href = asset.browser_download_url;
+      // Only the data-file element changes. What the file needs sits beside it and stays.
       var file = doc.querySelector('[data-file="' + key + '"]');
       if (file) file.textContent = asset.name + (asset.size > 1000000 ? ", " + Math.round(asset.size / 1000000) + " MB" : "");
     });

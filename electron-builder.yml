@@ -101,6 +101,10 @@ linux:
   target:
     - target: rpm
       arch: x64
+    - target: deb
+      arch: x64
+    - target: AppImage
+      arch: x64
   executableName: squiggly-music
   syncDesktopName: true
   # Generated from apps/desktop/renderer/public/icon.svg by `npm run icons`.
@@ -120,7 +124,8 @@ linux:
     - '!node_modules/**/*.map'
     - '!node_modules/effect/src/**'
     - '!node_modules/esbuild/bin/**'
-    # Keep only the linux-x64 glibc Koffi binary. The system provides libmpv.
+    # Keep only the linux-x64 glibc Koffi binary. The distribution provides libmpv: the RPM
+    # and deb depend on it, and the AppImage needs it installed (docs/packaging.md).
     - '!node_modules/@koromix/koffi-{win32,darwin,freebsd,openbsd,android}-*/**'
     - '!node_modules/@koromix/koffi-linux-{arm,arm64,ia32,riscv64,loong64,ppc64}/**'
     - '!node_modules/@koromix/koffi-linux-x64/musl_x64/**'
@@ -188,6 +193,30 @@ rpm:
   fpm:
     # Avoid /usr/lib/.build-id conflicts with other Electron RPMs.
     - --rpm-rpmbuild-define=_build_id_links none
+deb:
+  artifactName: squiggly-music_${version}_amd64.${ext}
+  # Section: sound, instead of fpm's "default".
+  packageCategory: sound
+  # electron-builder's deb list (Electron's libraries, and libsecret for safeStorage), then
+  # Debian's and Ubuntu's libmpv: libmpv2 from Debian 12 and Ubuntu 24.04, libmpv1 before.
+  depends:
+    - libgtk-3-0
+    - libnotify4
+    - libnss3
+    - libxss1
+    - libxtst6
+    - xdg-utils
+    - libatspi2.0-0
+    - libuuid1
+    - libsecret-1-0
+    - libmpv2 | libmpv1
+# An AppImage can't depend on packages and doesn't bundle libmpv. The audio host loads the
+# system's, and says which package to install when there is none.
+appImage:
+  artifactName: Squiggly-Music-${version}-x86_64.${ext}
+  # The default adds --no-sandbox to the desktop entry. AppRun adds it by itself when the
+  # system doesn't allow the user namespaces Chromium's sandbox needs.
+  executableArgs: []
 # Release asset names avoid spaces: GitHub rewrites them, which breaks latest.yml.
 nsis:
   artifactName: Squiggly-Music-${version}-windows-${arch}-setup.${ext}

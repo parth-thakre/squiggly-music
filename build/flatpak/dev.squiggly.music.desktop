@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Squiggly Music
+Comment=An inspectable, audiophile-first desktop music player
+Exec=squiggly-music.sh
+Terminal=false
+Type=Application
+Icon=dev.squiggly.music
+StartupWMClass=dev.squiggly.music
+Categories=AudioVideo;Audio;Player;
+Keywords=music;player;audio;navidrome;subsonic;mpv;

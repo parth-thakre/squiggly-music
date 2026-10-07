@@ -7,7 +7,7 @@
 
 Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too. There is a macOS build as well, but it hasn't been tested on a Mac yet.
+It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Linux (Fedora, Debian and Ubuntu, and other distributions as an AppImage), and on Android phones, and a browser version works on phones too. There is a macOS build as well, but it hasn't been tested on a Mac yet.
 
 ![Squiggly in use: playing a record turns the window its colours and opens the queue, a search finds a song, and Ctrl+K opens its lyrics, filling in word by word](docs/screenshots/demo.gif)
 
@@ -53,23 +53,29 @@ sha256sum --ignore-missing -c SHA256SUMS
 
 On Windows, run the setup program or the portable exe. They aren't signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.
 
-On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
-
 On macOS 13 or later, open `Squiggly-Music-<version>-macos-arm64.zip` (Apple silicon) or `-macos-x64.zip` (Intel) and move Squiggly Music to Applications. It plays through Homebrew's libmpv, so run `brew install mpv` too. The app isn't signed: on macOS 15 and later, open it once, then choose Open Anyway in System Settings, Privacy & Security; on earlier versions, Control-click it and choose Open. The Mac builds are made on Linux and haven't been tried on a Mac yet. To check the download there, use `shasum`:
 
 ```bash
 grep ' Squiggly-Music-.*-macos-arm64.zip$' SHA256SUMS | shasum -a 256 -c
 ```
 
+On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
+
+On Debian and Ubuntu, `sudo apt install ./squiggly-music_<version>_amd64.deb` installs Squiggly and pulls in `libmpv2` (`libmpv1` on Ubuntu 22.04).
+
+On other distributions, make `Squiggly-Music-<version>-x86_64.AppImage` executable (`chmod +x`) and run it. It doesn't include libmpv, so install your distribution's (`libmpv2` on Debian and Ubuntu, `mpv-libs` on Fedora, `mpv` on Arch); without one, the player says which to install. It needs FUSE 2 (`libfuse2`) to start, or run it with `--appimage-extract-and-run`.
+
+Only libmpv 0.41, Fedora's, has been tested. Debian and Ubuntu ship older versions.
+
 On Android 7 or later, open `Squiggly-Music-<version>-android.apk` on the phone and allow your file manager to install apps when Android asks.
 
-Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe, the RPM, and the Mac builds can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
+Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe, the Mac builds, the RPM, the deb, and the AppImage can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
 
 To connect, enter your Navidrome address with any port or subpath (`music.example.com/navidrome` works; without `https://` or `http://`, Squiggly tries HTTPS first, then HTTP), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
 
 ## Run from source
 
-You need Node 22.16 or newer and libmpv (`mpv-libs` on Fedora, `brew install mpv` on macOS).
+You need Node 22.16 or newer and libmpv (`mpv-libs` on Fedora, `libmpv2` on Debian and Ubuntu, `brew install mpv` on macOS).
 
 ```bash
 npm ci

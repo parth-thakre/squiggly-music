@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Squiggly — a music player for Navidrome</title>
-  <meta name="description" content="Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and leaves the signal alone. Open source, for Windows, macOS, Fedora, and Android, with a browser version for phones.">
+  <meta name="description" content="Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and leaves the signal alone. Open source, for Windows, macOS, Linux, and Android, with a browser version for phones.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#d6c7a6" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1d1913" media="(prefers-color-scheme: dark)">
   <meta property="og:title" content="Squiggly — a music player for Navidrome">
-  <meta property="og:description" content="Plays your own music from Navidrome through libmpv and leaves the signal alone. Open source, for Windows, macOS, Fedora, and Android.">
+  <meta property="og:description" content="Plays your own music from Navidrome through libmpv and leaves the signal alone. Open source, for Windows, macOS, Linux, and Android.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://squiggly.psthl.com/demo-poster.webp">
   <meta name="twitter:card" content="summary_large_image">
@@ -52,11 +52,11 @@
     <section class="hero" aria-labelledby="hero-title">
       <h1 id="hero-title">Plays your records. Leaves the signal alone.</h1>
       <div class="hero-side">
-        <p class="lede">A music player for your Navidrome server, on Windows, macOS, Fedora, and Android.</p>
+        <p class="lede">A music player for your Navidrome server, on Windows, macOS, Linux, and Android.</p>
         <p class="cta" data-cta>
           <a class="btn primary" data-asset="setup" data-os="windows" data-name="Windows" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Windows</a>
           <a class="btn" data-os="mac" data-name="macOS" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for macOS</a>
-          <a class="btn" data-asset="rpm" data-os="linux" data-name="Fedora" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Fedora</a>
+          <a class="btn" data-asset="linux" data-os="linux" data-name="Linux" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Linux</a>
           <a class="btn" data-asset="apk" data-os="android" data-name="Android" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Android</a>
         </p>
         <p class="small">Version <span data-version>0.2.0</span>, open source. No server? Try <a href="https://www.navidrome.org/demo/">Navidrome's demo</a>, user <code>demo</code>, password <code>demo</code>.</p>
@@ -140,17 +140,19 @@
         <p class="cta" data-cta>
           <a class="btn primary" data-asset="setup" data-os="windows" data-name="Windows" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Windows</a>
           <a class="btn" data-os="mac" data-name="macOS" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for macOS</a>
-          <a class="btn" data-asset="rpm" data-os="linux" data-name="Fedora" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Fedora</a>
+          <a class="btn" data-asset="linux" data-os="linux" data-name="Linux" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Linux</a>
           <a class="btn" data-asset="apk" data-os="android" data-name="Android" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Android</a>
         </p>
-        <p>Windows 10/11, macOS 13 or later, Fedora, and Android 7 or later.</p>
+        <p>Windows 10/11, macOS 13 or later, Linux, and Android 7 or later.</p>
       </div>
       <dl class="files">
         <div data-os="windows"><dt><a data-asset="setup" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Windows installer</a></dt><dd data-file="setup">x64</dd></div>
-        <div data-os="windows"><dt><a data-asset="portable" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Windows portable</a></dt><dd data-file="portable">x64, nothing to install</dd></div>
-        <div data-os="mac"><dt><a data-asset="macArm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">macOS, Apple silicon</a></dt><dd data-file="macArm">zip, arm64, needs Homebrew's mpv</dd></div>
-        <div data-os="mac"><dt><a data-asset="macIntel" href="https://github.com/parth-thakre/squiggly-music/releases/latest">macOS, Intel</a></dt><dd data-file="macIntel">zip, x64, needs Homebrew's mpv</dd></div>
-        <div data-os="linux"><dt><a data-asset="rpm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Fedora RPM</a></dt><dd data-file="rpm">x86_64, pulls in mpv-libs</dd></div>
+        <div data-os="windows"><dt><a data-asset="portable" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Windows portable</a></dt><dd><span data-file="portable">x64</span>, nothing to install</dd></div>
+        <div data-os="mac"><dt><a data-asset="macArm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">macOS, Apple silicon</a></dt><dd><span data-file="macArm">zip, arm64</span>, needs Homebrew's mpv</dd></div>
+        <div data-os="mac"><dt><a data-asset="macIntel" href="https://github.com/parth-thakre/squiggly-music/releases/latest">macOS, Intel</a></dt><dd><span data-file="macIntel">zip, x64</span>, needs Homebrew's mpv</dd></div>
+        <div data-os="linux"><dt><a data-asset="rpm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Fedora RPM</a></dt><dd><span data-file="rpm">x86_64</span>, pulls in mpv-libs</dd></div>
+        <div data-os="linux"><dt><a data-asset="deb" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Debian and Ubuntu deb</a></dt><dd><span data-file="deb">amd64</span>, pulls in libmpv2</dd></div>
+        <div data-os="linux"><dt><a data-asset="appimage" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Linux AppImage</a></dt><dd><span data-file="appimage">x86_64</span>, needs libmpv installed</dd></div>
         <div data-os="android"><dt><a data-asset="apk" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Android APK</a></dt><dd data-file="apk">Android 7 or later</dd></div>
         <div><dt><a data-asset="sums" href="https://github.com/parth-thakre/squiggly-music/releases/latest">SHA256SUMS</a></dt><dd><code>sha256sum --ignore-missing -c SHA256SUMS</code></dd></div>
       </dl>
@@ -158,6 +160,7 @@
         <li>The builds aren't signed yet, so Windows warns you: choose More info, then Run anyway.</li>
         <li>The installed Windows app updates itself.</li>
         <li>The Mac builds aren't signed either. macOS 15 and later asks you to choose Open Anyway in System Settings, Privacy &amp; Security; earlier versions, Control-click the app and choose Open. They need Homebrew's mpv (<code>brew install mpv</code>), and they haven't been tried on a Mac yet. They tell you about updates but don't install them.</li>
+        <li>The AppImage doesn't include libmpv, so install your distribution's first: libmpv2 on Debian and Ubuntu, mpv-libs on Fedora, mpv on Arch. The <a href="https://github.com/parth-thakre/squiggly-music/releases/latest">release notes</a> say how to run it.</li>
       </ul>
     </section>
 

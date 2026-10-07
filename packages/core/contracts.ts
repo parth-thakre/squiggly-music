@@ -310,7 +310,7 @@ export interface AppSnapshot {
 // Updates from GitHub releases (apps/desktop/main/updates.ts).
 export interface UpdateState {
   // install: the app updates itself. notify: it says a version is out and links to it (the
-  // portable exe, the RPM). off: development builds.
+  // portable exe and the Linux packages). off: development builds and Flatpak.
   mode: 'install' | 'notify' | 'off';
   status: 'idle' | 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error';
   current: string;          // this app's version
@@ -322,7 +322,7 @@ export interface UpdatesApi {
   check(): Promise<Result>;
   // Restart to update. Only when an update is ready.
   install(): Promise<Result>;
-  // The new version's release page, where the portable exe and the RPM are downloaded.
+  // The new version's release page, where the portable exe and the Linux packages are downloaded.
   open(): Promise<Result>;
 }
 export interface ServerState {
