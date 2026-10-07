@@ -159,6 +159,10 @@ add({ id: 'now-playing', title: 'Open now playing', category: 'View', when: () =
 add({ id: 'refresh', title: 'Refresh the library', category: 'Library', when: () => getPlayer().connected, run: () => resetLibraryCaches() });
 
 // App
+// Signing out of the browser build is one keystroke; disconnecting the desktop or the phone forgets
+// the saved sign-in, so that goes to Settings, where the button says what it does.
+add({ id: 'sign-out', title: 'Sign out', category: 'App', when: () => getPlayer().access === 'signed-in', run: () => player.signOut() });
+add({ id: 'disconnect', title: 'Disconnect from the server', category: 'App', when: () => getPlayer().mode !== 'web' && getPlayer().connected, run: () => nav.go({ view: 'settings' }) });
 add({ id: 'open-config', title: 'Open the config folder', category: 'App', when: () => !!window.squiggly?.config, run: async () => fail(await openConfigFolder()) });
 add({
   id: 'reload-extensions', title: 'Reload extensions', category: 'App', when: () => !!window.squiggly?.extensions,
