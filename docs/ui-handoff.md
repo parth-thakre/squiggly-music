@@ -6,7 +6,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 
 | File | Role |
 | --- | --- |
-| `App.tsx` | Shell: bar, deck (now playing), page, connect screen |
+| `App.tsx` | Shell: bar, deck (now playing), page, connect screen. The bar's search field searches after a 250 ms pause; Enter searches at once and moves to the first result, Escape empties it and goes back. Recent searches (`squiggly.searches`, the query text only) and that Enter request live in `searches.ts`. `/` opens the Search page, which lists them until you type |
 | `views.tsx` | Pages: records, album, artists, artist, tracks, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics, home |
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself. Android (`mode: 'android'`) keeps the queue as web does and follows the native player's reports |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions do |
@@ -42,6 +42,7 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `library.songsByGenre(genre, offset, size)` | One genre's songs, up to 500 at a time (`getSongsByGenre`). The genre page asks for 200 at a time as it scrolls |
 | `library.nowPlaying()` | What other accounts on the server are playing (`getNowPlaying`), as `{ username, track }`. The connector leaves out this account's own players and a song someone has on two players at once. Home reads it once per visit and hides it when it's empty or fails |
 | `library.albums('byYear', offset, size, { fromYear, toYear })` | Records from those years, oldest first. Only `byYear` takes years. Records' decade filter uses it; the decades offered are the ones the automatic playlists find |
+| `library.search(query, options?)` | `search3`. Left out, the options mean 8 artists, 16 records, and 40 songs; `artistCount`, `albumCount`, `songCount` (0 to 200, 0 skips the kind) and `artistOffset`, `albumOffset`, `songOffset` (0 to 1,000,000) page each kind. `capped` says which kinds came back full: there may be more, and the Search page offers See all. Subsonic gives no totals. The page's tab (`{ view: 'search', query, type?: 'artists' \| 'albums' \| 'songs' }`) pages one kind, songs 100 at a time |
 | `settings()`, `updateSettings(changes)` | Stored preferences; re-read `settings()` after a failed update |
 | `extensions.list()`, `subscribe`, `setEnabled`, `reload`, `remove`, `openDir`, `writeClipboard` | Extensions in `<config>/extensions`. `remove` moves the folder to the trash. The runtime in `extensions/` is the only caller |
 | `config.dir`, `config.read()`, `config.subscribe(listener)`, `config.openDir()` | The config folder: `keybindings.json` and `themes/*.json` as parsed JSON, with plain errors for files that couldn't be read. Pushed again whenever their contents change |

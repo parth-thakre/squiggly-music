@@ -62,7 +62,7 @@ const metrics = new Metrics();
 const loop = monitorEventLoopDelay({ resolution: 20 });
 const state: AppSnapshot = {
   player: emptyPlayer(), diagnostics: emptyDiagnostics(), update: initialUpdateState(),
-  server: { connected: false, name: null, sessionId: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null },
+  server: { connected: false, name: null, sessionId: null, account: null, saved: null, canRemember: false, reconnecting: false, reconnectError: null },
 };
 const windows: { main: BrowserWindow | null; mini: BrowserWindow | null } = { main: null, mini: null };
 let tray: Tray | null = null;
@@ -389,7 +389,7 @@ function connectTo(typed: Connection, generation: number) {
     connectionGeneration++; resetSessionState();
     // A plain HTTP server is named with its scheme, since nothing sent to it is encrypted.
     const address = new URL(candidate.baseUrl);
-    state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), reconnectError: null };
+    state.server = { ...state.server, connected: true, name: `${info.name} (${address.protocol === 'http:' ? 'http://' : ''}${address.host})`, sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
     // Play in the tray, MPRIS, and the system media controls can now resume the saved queue.
     updateTray(); updateMedia(); void loadSavedSong(candidate);
     return connection;
@@ -588,7 +588,7 @@ function installHandlers() {
     server = null; knownTracks.clear(); resetSessionState();
     // Disconnecting also forgets the saved sign-in.
     yield* Effect.promise(() => account.forget().catch(() => undefined));
-    state.server = { ...state.server, connected: false, name: null, sessionId: null, saved: account.saved, reconnectError: null };
+    state.server = { ...state.server, connected: false, name: null, sessionId: null, account: null, saved: account.saved, reconnectError: null };
     yield* Effect.tryPromise(() => launchPlayer());
   }));
   handle('export-diagnostics', () => Effect.gen(function* () {

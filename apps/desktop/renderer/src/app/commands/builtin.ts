@@ -85,7 +85,11 @@ add({ id: 'forward', title: 'Forward', category: 'Go to', keys: ['alt+right'], r
 add({
   id: 'search', title: 'Search the library', category: 'Go to', keys: ['/'],
   when: () => !!document.querySelector('.search'),
-  run: () => { const field = document.querySelector<HTMLInputElement>('.search'); field?.focus(); field?.select(); },
+  // From another page it opens Search, which lists recent searches until you type.
+  run: () => {
+    if (nav.current.view !== 'search') nav.go({ view: 'search', query: '' });
+    const field = document.querySelector<HTMLInputElement>('.search'); field?.focus(); field?.select();
+  },
 });
 
 // Queue

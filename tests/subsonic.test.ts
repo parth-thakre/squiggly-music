@@ -398,12 +398,43 @@ describe('OpenSubsonic', () => {
   it('accepts empty library sections and maps unknown values to null', async () => {
     servePayload({ starred2: {}, searchResult3: {}, genres: {}, playlists: {}, artists: {}, randomSongs: {} });
     expect(await Effect.runPromise(client().starred())).toEqual({ artists: [], albums: [], tracks: [] });
-    expect(await Effect.runPromise(client().search('q'))).toEqual({ artists: [], albums: [], tracks: [] });
+    expect(await Effect.runPromise(client().search('q'))).toEqual({ artists: [], albums: [], tracks: [], capped: { artists: false, albums: false, tracks: false } });
     for (const task of [client().genres(), client().playlists(), client().artists(), client().randomSongs({ size: 10 })] as Effect.Effect<unknown[], Error>[]) expect(await Effect.runPromise(task)).toEqual([]);
     servePayload({ album: { id: 'a', name: 'a', artistId: '', coverArt: '', genre: '', year: 0, song: [{ id: 's', title: 's', albumId: '', discNumber: 0 }] } });
     const detail = await Effect.runPromise(client().album('a'));
     expect(detail.album).toEqual({ id: 'a', name: 'a', artist: 'Unknown artist', songCount: 1, artistId: null, year: null, genre: null, duration: null, coverArt: null, starred: false });
     expect(detail.tracks[0]).toMatchObject({ album: 'a', albumId: null, discNumber: null, coverArt: null, starred: false });
+  });
+  it('asks search3 for the counts and offsets given, and says which kinds came back full', async () => {
+    const song = (id: number) => ({ id: `s${id}`, title: 's' });
+    const fetchMock = serve(() => Response.json(envelope({ searchResult3: { artist: [{ id: 'a', name: 'a' }], song: Array.from({ length: 100 }, (_, i) => song(i)) } })));
+    const sent = () => [...(fetchMock.mock.calls.at(-1)![1].body as URLSearchParams)].filter(([key]) => /Count|Offset|query/.test(key));
+    // The songs tab's second page: the other kinds are skipped, and anything the server sends for them anyway is dropped.
+    const page = await Effect.runPromise(client().search('night', { artistCount: 0, albumCount: 0, songCount: 100, songOffset: 100 }));
+    expect(sent()).toEqual([['query', 'night'], ['artistCount', '0'], ['albumCount', '0'], ['songCount', '100'], ['songOffset', '100']]);
+    expect(page.artists).toEqual([]);
+    expect(page.tracks.map(track => track.id)).toEqual(Array.from({ length: 100 }, (_, i) => `s${i}`));
+    expect(page.capped).toEqual({ artists: false, albums: false, tracks: true });
+    // Left out, the counts are the usual 8, 16, and 40, from the top; out-of-range values are clamped.
+    servePayload({ searchResult3: { artist: Array.from({ length: 8 }, (_, i) => ({ id: `a${i}`, name: 'a' })), song: [song(1)] } });
+    const all = await Effect.runPromise(client().search('q'));
+    expect(all.capped).toEqual({ artists: true, albums: false, tracks: false });
+    const mock = serve(() => Response.json(envelope({ searchResult3: {} })));
+    await Effect.runPromise(client().search('q', { artistCount: 500, artistOffset: -4, albumOffset: 32, songCount: 2.4 }));
+    expect([...(mock.mock.calls.at(-1)![1].body as URLSearchParams)].filter(([key]) => /Count|Offset/.test(key)))
+      .toEqual([['artistCount', '200'], ['albumCount', '16'], ['songCount', '2'], ['albumOffset', '32']]);
+    // A page larger than asked is refused, as other lists are.
+    servePayload({ searchResult3: { album: Array.from({ length: 3 }, (_, i) => ({ id: `al${i}`, name: 'a' })) } });
+    await expectRedactedFailure(client().search('q', { albumCount: 2 }));
+  });
+  it('bounds search options: counts 0 to 200, offsets 0 to 1,000,000, and a bare query still works', () => {
+    const decode = (value: unknown) => Either.isRight(Schema.decodeUnknownEither(LibraryRequestSchemas.search)(value));
+    expect(decode(['night'])).toBe(true);
+    expect(decode(['night', {}])).toBe(true);
+    expect(decode(['night', { songCount: 200, songOffset: 1_000_000, artistCount: 0, albumCount: 0 }])).toBe(true);
+    for (const options of [{ songCount: 201 }, { songCount: -1 }, { albumOffset: 1_000_001 }, { artistOffset: -1 }, { songCount: 1.5 }, { songCount: '10' }, null])
+      expect(decode(['night', options])).toBe(false);
+    expect(decode(['night', {}, 'extra'])).toBe(false);
   });
   it('validates library IPC arguments and play-tracks selections', () => {
     const decode = <A, I>(schema: Schema.Schema<A, I>, value: unknown) => Either.isRight(Schema.decodeUnknownEither(schema)(value));

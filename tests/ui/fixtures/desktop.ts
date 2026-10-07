@@ -24,8 +24,8 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       filters: null, bufferSeconds: null, streamBytesPerSecond: null, buffering: false,
     };
     const signIn = { saved: null, canRemember: true, reconnecting: false, reconnectError: null, ...signInPatch };
-    let server: { connected: boolean; name: string | null; sessionId: string | null } = connected
-      ? { connected: true, name: 'Navidrome (music.example.com)', sessionId: 'session-1' } : { connected: false, name: null, sessionId: null };
+    let server: { connected: boolean; name: string | null; sessionId: string | null; account: string | null } = connected
+      ? { connected: true, name: 'Navidrome (music.example.com)', sessionId: 'session-1', account: 'https://music.example.com\nlistener' } : { connected: false, name: null, sessionId: null, account: null };
     const snapshot = () => ({
       player: { engine: 'ready', error: null, playing: false, position: 0, duration: 0, volume: 100, currentIndex: -1, queue: [], entryIds: [], radio: null, devices: [], audio },
       diagnostics: { uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0, playerBytesPerSecond: 0, pendingCommands: 0, eventLoopDelayMs: 0, processes: [], operations: [] },
@@ -79,7 +79,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       connect: async (connection: { url: string; username: string }) => { calls.push(`connect:${connection.url}:${connection.username}`); return { ok: false, error: 'No server in the test.' }; },
       disconnect: async () => {
         calls.push('disconnect');
-        server = { connected: false, name: null, sessionId: null };
+        server = { connected: false, name: null, sessionId: null, account: null };
         const next = snapshot();
         listeners.forEach(listener => listener(next));
         return { ok: true, value: undefined };

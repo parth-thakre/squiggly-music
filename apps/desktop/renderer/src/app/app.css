@@ -865,3 +865,8 @@ button.wordmark { padding: 0; background: none; border: 0; color: inherit; }
   .page .home-shelf .grid { grid-auto-columns: 40%; gap: 16px; }
   .pick-up { flex-wrap: wrap; }
 }
+
+/* Search (views.tsx): "See all" beside a group's heading, and recent searches under the empty field. */
+.section-head .see-all { font-size: calc(14px * var(--text)); }
+.section-head .text-button.quiet { font-size: calc(14px * var(--text)); }
+.recent-searches .link { font-weight: 500; }
