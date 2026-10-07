@@ -13,8 +13,8 @@ export type QueueEdit =
 export type HostRequest = {
   id: number;
   action:
-    // paused and startPosition restore a saved queue without starting playback. With shuffle on,
-    // the songs after startIndex are put in random order unless `ordered` (radio, a saved queue).
+    // startPosition restores a saved queue, playing once it's there unless `paused`. With shuffle
+    // on, the songs after startIndex are put in random order unless `ordered` (radio, a saved queue).
     | { type: 'queue'; tracks: PlayableTrack[]; startIndex?: number; startPosition?: number; paused?: boolean; ordered?: boolean }
     // Plays one queue entry, refused unless entryId still names the entry at that index.
     | { type: 'queue-jump'; index: number; entryId: string }
