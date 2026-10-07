@@ -10,6 +10,7 @@ import { paletteStyle, Position, TransportButtons, useRoomPalette } from './tran
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
 import { isStation } from '../../../../../packages/core/stations';
+import { resampledNote } from '../../../../../packages/core/sinks';
 import { Credits } from './credits';
 import { CommandPalette, keysFor, openPalette, PALETTE, shell, useCommandKeys, useKeymap } from './commands';
 import { ExtensionNotices, ExtensionPage } from './extensions';
@@ -351,9 +352,11 @@ function SignalPath({ track }: { track: Track }) {
   const delivery = usePlayer(s => s.delivery);
   const codec = usePlayer(s => s.audio?.codec ?? null);
   const decoderRate = usePlayer(s => s.audio?.decoderRate ?? null);
+  // Linux: the sound server resamples what mpv sends (AudioPath.sink). Nothing when it doesn't or isn't known.
+  const resampled = usePlayer(s => resampledNote(s.audio?.sink));
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
   const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
-    volume < 100 && `Volume at ${volume}%.`, buffering && 'Buffering.'].filter(Boolean).join(' ');
+    volume < 100 && `Volume at ${volume}%.`, resampled, buffering && 'Buffering.'].filter(Boolean).join(' ');
   // A station: a live stream, and what mpv says it decodes, if anything. The server's list says
   // nothing about the stream, and the browser can't hear what the station says is on.
   const decoded = [codec?.toUpperCase(), kHz(decoderRate)].filter(Boolean).join(' at ');

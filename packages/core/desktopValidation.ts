@@ -1,4 +1,4 @@
-import { Schema } from 'effect';
+import { Either, Schema } from 'effect';
 import type { Settings } from './contracts';
 import { IdSchema, QUEUE_LIMIT } from './validation';
 
@@ -58,3 +58,61 @@ export const PlayModesSchema = Schema.Struct({
 });
 export type PlayModes = Schema.Schema.Type<typeof PlayModesSchema>;
 export const defaultPlayModes = (): PlayModes => Schema.decodeUnknownSync(PlayModesSchema)({});
+
+// What the sound server says about its sinks (main/sinks.ts). Each object of `pw-dump`'s array
+// decodes on its own, so one odd object doesn't spoil the dump. Only the fields the sink line
+// reads are declared; everything else (media.name holds the playing file's name) is dropped.
+const ObjectIdSchema = Schema.Number.pipe(Schema.int(), Schema.nonNegative());
+const RateSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 10_000_000));
+const ChannelsSchema = Schema.Number.pipe(Schema.int(), Schema.between(1, 256));
+const PidSchema = Schema.Number.pipe(Schema.int(), Schema.positive());
+const NameSchema = Schema.String.pipe(Schema.maxLength(1024));
+// A field of the wrong type reads as missing rather than rejecting its object.
+const loose = <A, I>(schema: Schema.Schema<A, I>) => Schema.optional(Schema.Unknown.pipe(
+  Schema.transform(Schema.UndefinedOr(Schema.typeSchema(schema)), {
+    strict: false, decode: value => Either.getOrUndefined(Schema.decodeUnknownEither(schema)(value)), encode: value => value,
+  }),
+));
+export const PwNodeSchema = Schema.Struct({
+  id: ObjectIdSchema,
+  type: Schema.Literal('PipeWire:Interface:Node'),
+  info: Schema.Struct({
+    props: Schema.Struct({
+      'media.class': loose(NameSchema), 'node.name': loose(NameSchema), 'node.description': loose(NameSchema),
+      'client.id': loose(ObjectIdSchema), 'application.process.id': loose(PidSchema),
+    }),
+    // The format the node runs at now: one entry of plain values, or none while suspended.
+    // (EnumFormat, which lists what it could run at, uses objects and is not read.)
+    params: loose(Schema.Struct({
+      Format: loose(Schema.Array(Schema.Struct({ format: loose(NameSchema), rate: loose(RateSchema), channels: loose(ChannelsSchema) }))),
+    })),
+  }),
+});
+export const PwLinkSchema = Schema.Struct({
+  id: ObjectIdSchema,
+  type: Schema.Literal('PipeWire:Interface:Link'),
+  info: Schema.Struct({ 'output-node-id': ObjectIdSchema, 'input-node-id': ObjectIdSchema }),
+});
+export const PwClientSchema = Schema.Struct({
+  id: ObjectIdSchema,
+  type: Schema.Literal('PipeWire:Interface:Client'),
+  info: Schema.Struct({ props: Schema.Struct({ 'application.process.id': loose(PidSchema) }) }),
+});
+export const PwMetadataSchema = Schema.Struct({
+  type: Schema.Literal('PipeWire:Interface:Metadata'),
+  props: Schema.Struct({ 'metadata.name': loose(NameSchema) }),
+  metadata: loose(Schema.Array(Schema.Struct({ key: loose(NameSchema), value: Schema.Unknown }))),
+});
+// A metadata value naming a node: `{ "name": ... }`, or the same as JSON text.
+export const PwTargetSchema = Schema.Union(Schema.Struct({ name: NameSchema }), Schema.parseJson(Schema.Struct({ name: NameSchema })));
+// `pactl -f json` (PulseAudio 16 or newer, and pipewire-pulse). Its lists decode one entry at a time too.
+export const PactlSinkSchema = Schema.Struct({
+  index: ObjectIdSchema, name: NameSchema, description: loose(NameSchema), driver: loose(NameSchema),
+  sample_specification: loose(NameSchema),
+});
+// PulseAudio gives a sink-input's process id as text.
+export const PactlSinkInputSchema = Schema.Struct({
+  index: ObjectIdSchema, sink: ObjectIdSchema,
+  properties: loose(Schema.Struct({ 'application.process.id': loose(NameSchema) })),
+});
+export const PactlInfoSchema = Schema.Struct({ default_sink_name: loose(NameSchema) });

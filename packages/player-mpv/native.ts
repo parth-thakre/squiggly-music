@@ -155,6 +155,8 @@ export class NativePlayer {
       bufferSeconds: this.number('demuxer-cache-duration'),
       streamBytesPerSecond: this.number('cache-speed'),
       buffering: this.property('paused-for-cache') === 'yes',
+      // The sound server's view of the sink. The main process asks the server and fills it in.
+      sink: null,
     };
   }
   close() {

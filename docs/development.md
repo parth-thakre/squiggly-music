@@ -4,7 +4,7 @@
 
 | Path | What lives there |
 | --- | --- |
-| `apps/desktop/main` | Electron lifecycle, IPC checks, the server session, radio, queue sync, tray, MPRIS, media keys, settings |
+| `apps/desktop/main` | Electron lifecycle, IPC checks, the server session, radio, queue sync, tray, MPRIS, media keys, settings, and on Linux the sound server's sink reading |
 | `apps/desktop/preload` | The only bridge between the interface and the desktop |
 | `apps/desktop/renderer` | The React interface, with no Node or libmpv access. The same code runs as the browser version |
 | `packages/core` | Shared types and request schemas |
@@ -33,6 +33,8 @@ LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run dev
 ## Tests
 
 `npm run check` typechecks, builds, and runs every Vitest suite. `npm run test:source` skips the build, which is quicker while editing, but `tests/native.test.ts` forks the built `out/main/player.js`. After changing `packages/player-mpv`, build first or that test runs stale code.
+
+`tests/sinks.test.ts` reads recorded `pw-dump` and `pactl` output (`tests/sinkFixtures.ts`) and never runs the real tools. To see what the sound server says on your machine, play something and open the Diagnostics page.
 
 The native decoding tests skip unless `SQUIGGLY_LIBMPV_PATH` is set. They decode generated PCM to mpv's null output, so they never touch a real DAC. Don't set `SQUIGGLY_TEST_NULL_AUDIO=1` for listening. It silences output on purpose.
 
