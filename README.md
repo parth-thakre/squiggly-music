@@ -7,7 +7,7 @@
 
 Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too.
+It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Fedora, and on Android phones, and a browser version works on phones too. There is a macOS build as well, but it hasn't been tested on a Mac yet.
 
 ![Squiggly in use: playing a record turns the window its colours and opens the queue, a search finds a song, and Ctrl+K opens its lyrics, filling in word by word](docs/screenshots/demo.gif)
 
@@ -28,7 +28,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.
 - Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
 - Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more. On Linux it reports what PipeWire or PulseAudio says it runs the sink at, and whether that means it resamples what mpv sends.
-- Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, or `%APPDATA%\Squiggly` on Windows); saved changes apply at once.
+- Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, `%APPDATA%\Squiggly` on Windows, or `~/Library/Application Support/Squiggly` on macOS); saved changes apply at once.
 - Search the library from the bar. All shows a few artists, records, and songs, and See all lists the rest of one kind. Enter goes to the first result, Escape goes back, and the searches you used wait under the empty field.
 - Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
 - Extensions can also put a line in the deck and the mini player, and a section on the Playlists page.
@@ -55,15 +55,21 @@ On Windows, run the setup program or the portable exe. They aren't signed yet, s
 
 On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
 
+On macOS 13 or later, open `Squiggly-Music-<version>-macos-arm64.zip` (Apple silicon) or `-macos-x64.zip` (Intel) and move Squiggly Music to Applications. It plays through Homebrew's libmpv, so run `brew install mpv` too. The app isn't signed: on macOS 15 and later, open it once, then choose Open Anyway in System Settings, Privacy & Security; on earlier versions, Control-click it and choose Open. The Mac builds are made on Linux and haven't been tried on a Mac yet. To check the download there, use `shasum`:
+
+```bash
+grep ' Squiggly-Music-.*-macos-arm64.zip$' SHA256SUMS | shasum -a 256 -c
+```
+
 On Android 7 or later, open `Squiggly-Music-<version>-android.apk` on the phone and allow your file manager to install apps when Android asks.
 
-Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe and the RPM can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
+Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe, the RPM, and the Mac builds can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
 
 To connect, enter your Navidrome address with any port or subpath (`music.example.com/navidrome` works; without `https://` or `http://`, Squiggly tries HTTPS first, then HTTP), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
 
 ## Run from source
 
-You need Node 22.16 or newer and libmpv (`mpv-libs` on Fedora).
+You need Node 22.16 or newer and libmpv (`mpv-libs` on Fedora, `brew install mpv` on macOS).
 
 ```bash
 npm ci

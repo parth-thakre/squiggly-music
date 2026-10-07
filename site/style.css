@@ -271,6 +271,19 @@ kbd {
   gap: 0.75rem;
 }
 
+/* A Mac whose browser can't say its CPU gets a button for each. */
+.pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.hint {
+  margin-top: -0.35rem;
+  font-size: 0.9375rem;
+  color: var(--soft);
+}
+
 .also {
   display: flex;
   flex-wrap: wrap;

@@ -18,6 +18,8 @@ export default defineConfig({
   reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: { ...chromium, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
   projects: [
+    // The website's download buttons (site/), which need no server.
+    { name: 'site', testDir: './tests/ui/site', use: { viewport: { width: 1366, height: 820 } } },
     { name: 'desktop', testIgnore: /(phone|cover)\.spec\.ts/, use: { viewport: { width: 1366, height: 820 } } },
     { name: 'phone', testMatch: /(phone|a11y|qa-regressions)\.spec\.ts/, use: { viewport: { width: 412, height: 860 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 } },
     // The Galaxy Z Flip's cover screens, as a page sees them. Flip 5 and 6: a 748×720 panel (held

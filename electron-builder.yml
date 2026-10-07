@@ -12,8 +12,9 @@ asar: true
 #   scripts/smoke-runtime.mjs fails if the host can't start from app.asar.unpacked.
 # - esbuild's native binary, which the extension loader spawns (ESBUILD_BINARY_PATH is set
 #   in apps/desktop/main/extensions/electron.ts). esbuild's JavaScript stays in app.asar.
-# Windows maps the Koffi and esbuild binaries in from .local/windows-runtime (see win.files);
-# asarUnpack matches those mapped copies by their source directory names.
+# Windows and macOS map the Koffi and esbuild binaries in from .local/windows-runtime and
+# .local/macos-runtime/<arch> (see win.files, mac.files); asarUnpack matches those mapped
+# copies by their source directory names.
 asarUnpack:
   - out/main/**
   - node_modules/koffi/**
@@ -21,6 +22,8 @@ asarUnpack:
   - '**/node_modules/@esbuild/**'
   - '**/koffi-win32-x64/**'
   - '**/esbuild-win32-x64/**'
+  - '**/koffi-darwin-*/**'
+  - '**/esbuild-darwin-*/**'
 # The UI is English-only. Chromium's other 54 locale packs are about 49 MB.
 electronLanguages: [en-US]
 # Koffi ships prebuilt binaries and runs in the Node host, not Electron. Do not rebuild it.
@@ -37,7 +40,8 @@ files:
   # @esbuild/<platform> binary through ESBUILD_BINARY_PATH instead.
   - '!node_modules/esbuild/bin/**'
 # Third-party notices ship in resources/licenses on every platform. Electron's own
-# LICENSE.electron.txt and LICENSES.chromium.html sit beside the executable.
+# LICENSE.electron.txt and LICENSES.chromium.html sit beside the executable, except on macOS,
+# where they are in the bundle's Contents/Resources/licenses (see afterExtract).
 extraResources:
   - from: THIRD-PARTY-NOTICES.md
     to: licenses/THIRD-PARTY-NOTICES.md
@@ -46,6 +50,9 @@ extraResources:
 # Writes resources/licenses/npm-packages.txt and fails the build when a required notice
 # is missing or a production dependency has an unreviewed license.
 afterPack: ./scripts/release-notices.mjs
+# macOS only: electron-builder deletes Electron's LICENSE and LICENSES.chromium.html from a macOS app,
+# so this keeps copies in the bundle's resources/licenses before it does.
+afterExtract: ./scripts/release-notices.mjs
 # Electron sets its Linux app_id / WM_CLASS from desktopName; the .desktop file matches it.
 extraMetadata:
   desktopName: squiggly-music.desktop
@@ -53,7 +60,7 @@ extraMetadata:
   homepage: https://github.com/parth-thakre/squiggly-music
 # Release assets live on GitHub Releases. Scripts and CI pass --publish never and upload
 # with the release workflow; this block only feeds electron-updater metadata
-# (resources/app-update.yml, latest.yml, latest-linux.yml) for a future update check.
+# (resources/app-update.yml, latest.yml, latest-linux.yml, latest-mac.yml) for a future update check.
 publish:
   provider: github
   owner: parth-thakre
@@ -124,6 +131,47 @@ linux:
     - from: .local/linux-runtime
       to: runtime
       filter: [node, LICENSE.node.txt]
+mac:
+  # electron-builder makes the icns from this 1024 px master when it packages the app.
+  icon: build/icon.png
+  category: public.app-category.music
+  # A dmg needs macOS; scripts/package-macos.mjs builds the zips only on other hosts. The updater
+  # reads latest-mac.yml, which lists the zips.
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+    - target: zip
+      arch: [arm64, x64]
+  # Unsigned, like Windows. Squirrel.Mac needs a signed app to install an update, so the app only
+  # says a new version is out (apps/desktop/main/updates.ts).
+  identity: null
+  hardenedRuntime: false
+  gatekeeperAssess: false
+  artifactName: Squiggly-Music-${version}-macos-${arch}.${ext}
+  # Platform files replace the top-level list for the app directory, so repeat it.
+  files:
+    - out/**
+    - package.json
+    - '!node_modules/{react,react-dom,lucide-react,scheduler}/**'
+    - '!node_modules/**/*.map'
+    - '!node_modules/effect/src/**'
+    - '!node_modules/esbuild/bin/**'
+    # Koffi's and esbuild's darwin binaries come from scripts/fetch-macos-runtime.mjs, pinned to the
+    # lockfile's integrity, so a Linux host can build the macOS package. One CPU per build.
+    - '!node_modules/@koromix/koffi-*/**'
+    - '!node_modules/@esbuild/**'
+    - from: .local/macos-runtime/${arch}/koffi-darwin-${arch}
+      to: node_modules/@koromix/koffi-darwin-${arch}
+    - from: .local/macos-runtime/${arch}/esbuild-darwin-${arch}
+      to: node_modules/@esbuild/darwin-${arch}
+  extraResources:
+    # The audio host's Node. libmpv is not bundled: the host loads Homebrew's or MacPorts'.
+    - from: .local/macos-runtime/${arch}
+      to: runtime
+      filter: [node, LICENSE.node.txt]
+dmg:
+  # The updater needs only the zips.
+  writeUpdateInfo: false
 rpm:
   artifactName: squiggly-music-${version}.x86_64.${ext}
   # Electron defaults plus Fedora's libmpv (libmpv.so.2), loaded by the audio host.

@@ -36,7 +36,7 @@ describe('key parsing', () => {
     expect(error(42)).toMatch(/empty/);
     expect(error('ctrl')).toMatch(/no key after its modifiers/);
     expect(error('hyper+k')).toMatch(/“hyper” in “hyper\+k” isn't a modifier/);
-    // There is no macOS build, so there is no "mod" or "cmd".
+    // Keys are written with ctrl, alt, shift, and meta on every platform, macOS included, so there is no "mod" or "cmd".
     expect(error('mod+k')).toMatch(/isn't a modifier/);
     expect(error('ctrl+kk')).toMatch(/isn't a key/);
     expect(error('shift+/')).toMatch(/“\?” rather than “shift\+\/”/);
