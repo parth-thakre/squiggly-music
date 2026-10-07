@@ -1,4 +1,5 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { isStation } from '../../../../../packages/core/stations';
 import type { LyricLine, LyricWord, Lyrics as LyricsData, Track } from '../../../../../packages/core/contracts';
 import { timeWords } from '../../../../../packages/lyrics/words';
 import { api, useResource } from './library';
@@ -22,6 +23,7 @@ const FOLLOW_AT = .32;
 export function Lyrics({ compact = false }: { compact?: boolean }) {
   const track = usePlayer(current);
   if (!track) return <p className="status">Play a song to see its lyrics.</p>;
+  if (isStation(track)) return <p className="status">Radio stations have no lyrics here.</p>;
   return <LyricSheet key={track.id} track={track} compact={compact} />;
 }
 

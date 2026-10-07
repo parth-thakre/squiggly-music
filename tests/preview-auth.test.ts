@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { Effect } from 'effect';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type SubsonicClient, libraryMethods } from '../packages/adapter-opensubsonic/client';
-import { isLoopbackHost, refusal } from '../scripts/navidrome-preview';
+import { isLoopbackHost, openStation, publicAddress, refusal } from '../scripts/navidrome-preview';
 import { previewServer, webPassword } from './previewHarness';
 
 const day = 24 * 60 * 60 * 1000;
@@ -13,10 +13,19 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.all(cleanup.splice(0).map(close => close())); });
 
 // A stand-in connector (password null: no SQUIGGLY_WEB_PASSWORD): playlists and deletePlaylist answer in memory, cover art is a fixed
-// PNG, and stream locations point at a local audio fixture that honours Range.
-async function setup({ password = webPassword as string | null, host = '127.0.0.1' as string | boolean | undefined } = {}) {
+// PNG, and stream locations point at a local audio fixture that honours Range. Its stations are
+// on 127.0.0.1, which the relay is told is public unless `stationAddress` says otherwise.
+async function setup({ password = webPassword as string | null, host = '127.0.0.1' as string | boolean | undefined, stationAddress = (address: string) => address === '127.0.0.1' || publicAddress(address) } = {}) {
   const deleted: string[] = [];
+  const heard: string[] = [], listed: string[] = [];
   const audioServer = createServer((request, response) => {
+    heard.push(request.url!);
+    // Station redirects: /hop/<n> counts down to the stream; the others lead where they're named.
+    const hop = /^\/hop\/(\d+)$/.exec(request.url!);
+    if (hop) return void response.writeHead(302, { location: Number(hop[1]) ? `/hop/${Number(hop[1]) - 1}` : '/live' }).end();
+    const away: Record<string, string> = { '/to-lan': 'http://192.168.1.1/live', '/to-mapped': 'http://[::ffff:127.0.0.2]/live', '/to-file': 'file:///etc/passwd' };
+    if (request.url! in away) return void response.writeHead(301, { location: away[request.url!] }).end();
+    if (request.url === '/page') return void response.writeHead(200, { 'content-type': 'text/html' }).end('<p>Listen live</p>');
     const range = /^bytes=(\d+)-(\d+)?$/.exec(request.headers.range ?? '');
     response.setHeader('content-type', 'audio/flac');
     response.setHeader('accept-ranges', 'bytes');
@@ -33,13 +42,18 @@ async function setup({ password = webPassword as string | null, host = '127.0.0.
     deletePlaylist: (id: string) => Effect.sync(() => { deleted.push(id); }),
     coverArt: () => Effect.succeed({ contentType: 'image/png', bytes: png }),
     streamLocation: (id: string) => `http://127.0.0.1:${port}/rest/stream.view?id=${encodeURIComponent(id)}&t=secret`,
+    // One internet radio station, whose stream is the same fixture, and more that lead elsewhere
+    // (stationPaths); any other id is unknown. Unknown ids ask for the whole list again.
+    knownStationLocation: (id: string) => id === 'st1' ? `http://127.0.0.1:${port}/live?listener=secret` : id in stationPaths ? `http://127.0.0.1:${port}${stationPaths[id]}` : null,
+    stationLocation: (id: string) => Effect.suspend(() => { listed.push(id); return Effect.fail(new Error('This station is no longer on the server. Refresh the stations and try again.')); }),
   } as unknown as SubsonicClient;
   const clock = { now: 1_800_000_000_000 };
-  const preview = await previewServer({ env: password === null ? {} : { SQUIGGLY_WEB_PASSWORD: password }, client, now: () => clock.now }, host);
+  const preview = await previewServer({ env: password === null ? {} : { SQUIGGLY_WEB_PASSWORD: password }, client, now: () => clock.now, stationAddress }, host);
   cleanup.push(preview.close, () => { audioServer.closeAllConnections(); return new Promise<void>(resolve => audioServer.close(() => resolve())); });
-  return { preview, deleted, clock };
+  return { preview, deleted, clock, heard, listed, port };
 }
 const signedOut = { ok: false, error: 'Sign in to use this library.' };
+const stationPaths: Record<string, string> = { hops5: '/hop/4', hops6: '/hop/5', lan: '/to-lan', mapped: '/to-mapped', file: '/to-file', page: '/page' };
 
 describe('browser preview authentication', () => {
   it('answers 401 on every library, cover and stream route without a session', async () => {
@@ -49,7 +63,7 @@ describe('browser preview authentication', () => {
       expect(response.status, method).toBe(401);
       expect(await response.json()).toEqual(signedOut);
     }
-    for (const [path, method] of [['/api/cover?id=c1&size=300', 'GET'], ['/api/stream?id=s1', 'GET'], ['/api/stream?id=s1', 'HEAD'], ['/api/deletePlaylist', 'GET']] as const) {
+    for (const [path, method] of [['/api/cover?id=c1&size=300', 'GET'], ['/api/stream?id=s1', 'GET'], ['/api/stream?id=s1', 'HEAD'], ['/api/station?id=st1', 'GET'], ['/api/deletePlaylist', 'GET']] as const) {
       const response = await preview.fetch(path, { method });
       expect(response.status, `${method} ${path}`).toBe(401);
     }
@@ -184,6 +198,78 @@ describe('browser preview authentication', () => {
     expect(part.headers.get('content-range')).toBe('bytes 10-19/1000');
     expect(Buffer.from(await part.arrayBuffer())).toEqual(audio.subarray(10, 20));
     expect((await preview.fetch('/api/stream?id=s1', { method: 'HEAD', headers: { cookie } })).status).toBe(200);
+  });
+
+  it('relays an internet radio station without showing its address', async () => {
+    const { preview } = await setup();
+    const { cookie } = await preview.signIn();
+    const live = await preview.fetch('/api/station?id=st1', { headers: { cookie } });
+    expect(live.status).toBe(200);
+    expect(live.headers.get('content-type')).toBe('audio/flac');
+    expect(live.headers.get('cache-control')).toBe('no-store');
+    expect(Buffer.from(await live.arrayBuffer())).toEqual(audio);
+    for (const id of ['st9', '']) {
+      const missing = await preview.fetch(`/api/station?id=${id}`, { headers: { cookie } });
+      expect(missing.status).toBe(404);
+      expect(await missing.text()).not.toContain('secret');
+    }
+    expect((await preview.fetch('/api/station?id=st1', { method: 'POST', headers: { cookie } })).status).toBe(405);
+  });
+
+  it('follows a station\'s redirects only to public web addresses, five at most', async () => {
+    const { preview, heard } = await setup();
+    const { cookie } = await preview.signIn();
+    const station = (id: string) => preview.fetch(`/api/station?id=${id}`, { headers: { cookie } });
+    const five = await station('hops5');
+    expect(five.status).toBe(200);
+    expect(Buffer.from(await five.arrayBuffer())).toEqual(audio);
+    heard.length = 0;
+    expect((await station('hops6')).status).toBe(502);
+    expect(heard).not.toContain('/live');
+    // Into the LAN, to a loopback address written as IPv4-mapped IPv6, or out of the web: refused.
+    for (const id of ['lan', 'mapped', 'file']) {
+      const refused = await station(id);
+      expect(refused.status, id).toBe(502);
+      expect(await refused.json()).toEqual({ ok: false, error: 'The station did not answer.' });
+    }
+    // Only audio passes.
+    expect((await station('page')).status).toBe(502);
+  });
+
+  it('refuses a station on this machine, and asks for the station list at most every 30 seconds', async () => {
+    const { preview, heard, listed, clock } = await setup({ stationAddress: publicAddress });
+    const { cookie } = await preview.signIn();
+    expect((await preview.fetch('/api/station?id=st1', { headers: { cookie } })).status).toBe(502);
+    expect(heard).toEqual([]);
+    for (const id of ['st7', 'st8', 'st9']) expect((await preview.fetch(`/api/station?id=${id}`, { headers: { cookie } })).status).toBe(404);
+    expect(listed).toEqual(['st7']);
+    clock.now += 30_000;
+    expect((await preview.fetch('/api/station?id=st9', { headers: { cookie } })).status).toBe(404);
+    expect(listed).toEqual(['st7', 'st9']);
+  });
+});
+
+describe('station addresses', () => {
+  it('counts only public addresses as public', () => {
+    for (const address of ['1.1.1.1', '8.8.8.8', '100.63.255.255', '100.128.0.1', '172.32.0.1', '2606:4700:4700::1111', '::ffff:8.8.8.8']) expect(publicAddress(address), address).toBe(true);
+    for (const address of [
+      '127.0.0.1', '127.1.2.3', '10.0.0.1', '172.16.0.1', '172.31.255.255', '192.168.1.1', '169.254.169.254', '100.64.0.1', '100.127.255.255',
+      '0.0.0.0', '224.0.0.1', '239.255.255.250', '255.255.255.255',
+      '::', '::1', 'fe80::1', 'fc00::1', 'fd12:3456::1', 'ff02::1',
+      '::ffff:127.0.0.1', '::ffff:10.0.0.1', '::ffff:169.254.169.254', '::ffff:192.168.0.1', 'not an address',
+    ]) expect(publicAddress(address), address).toBe(false);
+  });
+
+  it('checks a name\'s addresses before connecting, on every hop', async () => {
+    const { heard, port } = await setup();
+    const signal = new AbortController().signal;
+    await expect(openStation(`http://localhost:${port}/live`, publicAddress, signal)).rejects.toThrow('public address');
+    await expect(openStation(`http://[::1]:${port}/live`, publicAddress, signal)).rejects.toThrow('public address');
+    expect(heard).toEqual([]);
+    const allowed = await openStation(`http://localhost:${port}/hop/1`, () => true, signal);
+    expect(allowed.statusCode).toBe(200);
+    allowed.destroy();
+    expect(heard).toEqual(['/hop/1', '/hop/0', '/live']);
   });
 });
 

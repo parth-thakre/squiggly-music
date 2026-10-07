@@ -200,6 +200,14 @@ describe('play reporting', () => {
     expect(play(tracker, 71, 170, {}, 131_000).map(event => event.event)).toEqual(['finished']);
   });
 
+  it('never reports an internet radio station, however long it plays', () => {
+    const tracker = new PlayTracker();
+    const station = track('st1', 'station', null);
+    expect(play(tracker, 600, 0, { queue: [station], duration: 0, playId: 'p1' })).toEqual([]);
+    // After it, a song is reported as usual.
+    expect(play(tracker, 1, 0, { queue: [station, track('a')], currentIndex: 1, playId: 'p2' }, 600_250)).toEqual([{ trackId: 'a', event: 'started' }]);
+  });
+
   it('never reports local files and waits for playback to start', () => {
     const tracker = new PlayTracker();
     expect(play(tracker, 150, 0, { queue: [track('local', 'local')] })).toEqual([]);
@@ -249,6 +257,20 @@ describe('queue sync', () => {
     expect(savedState(snapshot({ queue: [track('a'), track('l', 'local')] }))).toBeNull();
     expect(savedState(snapshot({ queue: [] }))).toBeNull();
     expect(savedState(snapshot({ currentIndex: -1, position: 50 }))).toEqual({ trackIds: ['a', 'b'], currentIndex: 0, positionSeconds: 0 });
+  });
+
+  it('never saves a queue holding an internet radio station', async () => {
+    const station = track('st1', 'station', null);
+    expect(savedState(snapshot({ queue: [track('a'), station] }))).toBeNull();
+    expect(savedState(snapshot({ queue: [station], duration: 0 }))).toBeNull();
+    vi.useFakeTimers();
+    const { queue, saves } = sync();
+    queue.observe(snapshot({ playing: true, queue: [station, track('a')] }), 1, true);
+    queue.observe(snapshot({ playing: true, queue: [station, track('a')], currentIndex: 1 }), 1, true);
+    queue.observe(snapshot({ playing: false, queue: [station, track('a')], currentIndex: 1 }), 1, true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await queue.flush();
+    expect(saves).toEqual([]);
   });
 
   it('debounces track changes, pauses, and queue edits into one save', async () => {

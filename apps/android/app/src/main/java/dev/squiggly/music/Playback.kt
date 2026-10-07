@@ -8,12 +8,14 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Metadata
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.extractor.metadata.icy.IcyInfo
 import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import org.json.JSONArray
@@ -29,7 +31,8 @@ import org.json.JSONObject
  * Everything here runs on the main thread, which is the player's application thread.
  */
 object Playback {
-    private class Entry(val url: String, val fallbackUrl: String, val track: String)
+    // live: an internet radio station, a stream with no end, no fallback, and no repeat one.
+    private class Entry(val url: String, val fallbackUrl: String, val track: String, val live: Boolean)
 
     lateinit var player: ExoPlayer
         private set
@@ -45,6 +48,10 @@ object Playback {
     private var playId = 0
     private var current: String? = null
     private var error: String? = null
+    // What the station playing says is on (its ICY StreamTitle), or null.
+    private var stationTitle: String? = null
+    // The page's repeat mode. ExoPlayer's own is this, except repeat one is off while a station plays.
+    private var repeatMode = "off"
 
     /** Receives every state report while a page is listening. */
     var listener: ((JSObject) -> Unit)? = null
@@ -68,8 +75,18 @@ object Playback {
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(item: MediaItem?, reason: Int) {
                 // A song repeating (repeat one, or repeat all with one song) starts over: a new play.
-                if (item?.mediaId != current || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) { current = item?.mediaId; playId++; error = null }
+                if (item?.mediaId != current || reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) { current = item?.mediaId; playId++; error = null; stationTitle = null }
+                applyRepeat()
                 sleepIfPlayOver()
+                report()
+            }
+            // A station's stream announces what's on (ICY). ExoPlayer reads it as the audio plays.
+            override fun onMetadata(metadata: Metadata) {
+                if (!isLive(player.currentMediaItem?.mediaId)) return
+                for (i in 0 until metadata.length()) {
+                    val entry = metadata.get(i)
+                    if (entry is IcyInfo) stationTitle = entry.title?.replace(Regex("\\s+"), " ")?.trim()?.take(500)?.takeIf { it.isNotEmpty() }
+                }
                 report()
             }
             override fun onEvents(player: Player, events: Player.Events) {
@@ -126,7 +143,7 @@ object Playback {
         val index = ids().indexOf(id)
         if (index < 0) return report()
         // Loading an entry starts a new play, even when it's the entry already loaded.
-        current = id; playId++; error = null
+        current = id; playId++; error = null; stationTitle = null
         if (play) ensureService(app)
         player.seekTo(index, (position * 1000).toLong().coerceAtLeast(0))
         player.playWhenReady = play
@@ -157,12 +174,22 @@ object Playback {
      * which reorders its queue and sends the moves, so ExoPlayer's own shuffle is never turned on.
      */
     fun repeat(mode: String) {
-        player.repeatMode = when (mode) {
+        repeatMode = mode
+        applyRepeat()
+    }
+
+    // A live stream has no end to start again from: under repeat one, a station that drops would
+    // only be dialled again forever. So repeat one is off while a station plays.
+    private fun applyRepeat() {
+        val mode = when (repeatMode) {
             "all" -> Player.REPEAT_MODE_ALL
-            "one" -> Player.REPEAT_MODE_ONE
+            "one" -> if (isLive(player.currentMediaItem?.mediaId)) Player.REPEAT_MODE_OFF else Player.REPEAT_MODE_ONE
             else -> Player.REPEAT_MODE_OFF
         }
+        if (player.repeatMode != mode) player.repeatMode = mode
     }
+
+    private fun isLive(id: String?) = id?.let { entries[it]?.live } == true
 
     // The sleep timer. The page keeps its own and tells the player too, so it still pauses after
     // the app is swiped away: the page and its timers go, and the player plays on. The deadline
@@ -214,6 +241,7 @@ object Playback {
             .put("duration", if (duration == C.TIME_UNSET) 0.0 else duration / 1000.0)
             .put("fallback", player.currentMediaItem?.mediaId?.let { it in fallbacks } == true)
             .put("error", error ?: JSONObject.NULL)
+            .put("stationTitle", stationTitle ?: JSONObject.NULL)
     }
 
     // Reports coalesce: one per turn of the main loop, however many player events arrived.
@@ -242,7 +270,7 @@ object Playback {
         val id = item?.mediaId
         val entry = id?.let { entries[it] }
         val format = failure.errorCode / 1000 == 3 || failure.errorCode / 1000 == 4
-        if (item != null && id != null && entry != null && format && id !in fallbacks) {
+        if (item != null && id != null && entry != null && !entry.live && format && id !in fallbacks) {
             fallbacks += id
             val index = player.currentMediaItemIndex
             val position = player.currentPosition
@@ -260,7 +288,7 @@ object Playback {
     private fun items(list: JSONArray): List<MediaItem> = (0 until list.length()).map { i ->
         val item = list.getJSONObject(i)
         val id = item.getString("id")
-        val entry = Entry(item.getString("url"), item.getString("fallbackUrl"), item.getString("track"))
+        val entry = Entry(item.getString("url"), item.getString("fallbackUrl"), item.getString("track"), item.optBoolean("live", false))
         entries[id] = entry
         val coverArt = item.optNullableString("coverArt")
         val duration = if (item.isNull("duration")) null else item.optDouble("duration")
@@ -274,7 +302,7 @@ object Playback {
                     .setAlbumTitle(item.optNullableString("album"))
                     .setArtworkUri(coverArt?.let { CoverProxy.artworkUri(it) })
                     .setDurationMs(duration?.takeIf { it.isFinite() && it > 0 }?.let { (it * 1000).toLong() })
-                    .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
+                    .setMediaType(if (entry.live) MediaMetadata.MEDIA_TYPE_RADIO_STATION else MediaMetadata.MEDIA_TYPE_MUSIC)
                     .setIsPlayable(true)
                     .setIsBrowsable(false)
                     .build(),

@@ -63,7 +63,8 @@ export class NativePlayer {
       // Gapless: 'weak' keeps the output open from one song to the next while their formats
       // match (an album, usually), and reopens it in the new format when they don't. ('yes'
       // would hold the first song's format and resample the rest.) prefetch-playlist opens the
-      // next song's stream before this one ends, so a network fetch doesn't open a gap.
+      // next song's stream before this one ends, so a network fetch doesn't open a gap. The host
+      // turns it off while a station is queued (host.ts, followPrefetch).
       const options: Record<string, string> = {
         config: 'no', 'load-scripts': 'no', terminal: 'no', video: 'no',
         idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'weak', 'prefetch-playlist': 'yes',

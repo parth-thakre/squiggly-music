@@ -14,6 +14,10 @@ On Windows and macOS, the system media controls come from Chromium, which only s
 
 The browser version plays through the browser's own audio element, so the browser decodes and the phone or computer mixes. If the browser can't decode the original (ALAC, for example), it asks the server for a 320 kbps MP3 instead, and the signal-path line says that too.
 
+## Internet radio
+
+Stations come from the server's list (Navidrome's Radios), and each plays its own stream. They're live, so there's no length, no position, and nothing to seek, and repeat one does nothing while one plays. On the desktop, while a station is anywhere in the queue, mpv opens nothing early, so a station joins the broadcast when its turn comes rather than playing what it sent minutes before; songs in that queue can have a short gap between them over a slow network. Squiggly asks for the stream as it is and doesn't know what the station encoded or how. On the desktop, mpv plays the stream directly, and the line under the station says it's a live stream and what mpv decodes it as, nothing more. When the station announces what's on (ICY metadata), mpv reads it and the deck shows it; when it doesn't, the deck says internet radio. The browser version gets the stream through its host, which keeps the station's address; the browser can't read what the station announces, and the line says so. The Android app plays the stream with ExoPlayer, which reads the same announcements. Stations are never reported as played and never saved in the server's queue.
+
 ## Reading the signal path
 
 - The source format, rate, and bit depth come from Navidrome's metadata about the file. Asking for the original doesn't prove the server sent it untouched.
