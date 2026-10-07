@@ -130,7 +130,8 @@ test.describe('tracks', () => {
     await expect(app.tracks().first()).toContainText('Take 100');
 
     await app.main.getByRole('button', { name: 'Shuffle', exact: true }).click();
-    await expect.poll(() => fake.callsTo('randomSongs').map(call => call.args)).toEqual([[{ size: 500 }]]);
+    // Home's mix tiles draw a few random songs each on sign-in; the library-wide draw is the one asking for 500.
+    await expect.poll(() => fake.callsTo('randomSongs').map(call => call.args).filter(([draw]) => (draw as { size: number }).size === 500)).toEqual([[{ size: 500 }]]);
     await expect(app.deck.getByRole('button', { name: 'Pause', exact: true })).toBeVisible();
   });
 

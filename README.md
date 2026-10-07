@@ -24,7 +24,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Listen to the internet radio stations your server lists, from the Playlists page. They play live, and on the desktop the line under the station says what it's playing when the station says.
 - Star the playing song from the controls or with F. G then C opens its record, and G then . its artist.
 - Set a sleep timer from Ctrl+K: it pauses in 15, 30, or 60 minutes, or after this song.
-- Build automatic playlists from your library by genre, by decade, and from what's new.
+- Build automatic playlists from your library by genre, by decade, and from what's new, all on one Mixes page (G then M).
 - Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.
 - Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
 - Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more.

@@ -55,6 +55,20 @@ it('keeps the records decade, the genres and a genre across Back', async () => {
   (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'genre', name: 'Rock & Roll' });
 });
 
+it('returns from a mix to Mixes, at the offset it was left', async () => {
+  const { nav } = await import('../apps/desktop/renderer/src/app/route');
+  const scroller = { scrollTop: 0, scrollTo(_x: number, y: number) { this.scrollTop = y; }, addEventListener() {}, removeEventListener() {} };
+  nav.attach(scroller as unknown as HTMLElement);
+  nav.go({ view: 'mixes' });
+  scroller.scrollTop = 640;
+  nav.go({ view: 'mix', id: 'decade:1990' });
+  expect(scroller.scrollTop).toBe(0);
+  nav.back(); expect(nav.current).toEqual({ view: 'mixes' });
+  expect(scroller.scrollTop).toBe(640);
+  (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'mix', id: 'decade:1990' });
+  nav.attach(null);
+});
+
 it('opens at Home on a fresh start, keeps a reloaded place, and Back returns Home', async () => {
   // A fresh page load: an empty history and a new copy of route.ts.
   entries.splice(0, entries.length, null); at = 0; handlers.length = 0;

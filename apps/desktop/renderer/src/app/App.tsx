@@ -18,7 +18,7 @@ import { useSwipeSongs } from './swipe';
 import { CoverScreen } from './CoverScreen';
 import { useCoverScreen } from './nowPlaying';
 import { AlbumPage, ArtistPage, Artists, DiagnosticsView, Favorites, LyricsPage, MixPage, PlaylistPage, Playlists, Queue, Records, Search, SettingsView, Tracks } from './views';
-import { GenrePage, Genres } from './views';
+import { GenrePage, Genres, Mixes } from './views';
 import { Home } from './views';
 import { dropFocusRequest, focusFirstResult, rememberSearch } from './searches';
 import { dropOnQueue, useDropTarget, useFileDrops, useSpringOpen } from './drag';
@@ -32,10 +32,10 @@ const sections: { view: 'records' | 'artists' | 'tracks' | 'playlists' | 'favori
   { view: 'genres', label: 'Genres' },
 ];
 // Places that need the server. Without one, they offer to connect instead.
-const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre', 'home']);
+const library = new Set<Route['view']>(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'genres', 'genre', 'home', 'mixes']);
 const PaletteContext = createContext(neutral);
 const sectionOf = (route: Route) => route.view === 'album' ? 'records' : route.view === 'artist' ? 'artists'
-  : route.view === 'playlist' || route.view === 'mix' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
+  : route.view === 'playlist' || route.view === 'mix' || route.view === 'mixes' ? 'playlists' : route.view === 'genre' ? 'genres' : route.view;
 
 // App re-renders only when the connection or the playing record's sleeve changes. Position
 // snapshots reach the deck's own subscribers, never the page.
@@ -169,6 +169,7 @@ const View = memo(function View() {
     case 'genres': return <Genres />;
     case 'genre': return <GenrePage key={route.name} name={route.name} />;
     case 'home': return <Home />;
+    case 'mixes': return <Mixes />;
   }
 });
 
