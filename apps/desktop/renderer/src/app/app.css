@@ -145,10 +145,23 @@ img:is(.deck-cover, .head-cover) {
 .star-text { display: inline-flex; align-items: center; gap: 6px; }
 .star-text svg { width: 17px; }
 .star-text.on svg { color: var(--accent); }
-/* A rating, as small marks beside the byline: filled in the accent, the rest hollow. */
-.rating-marks { display: inline-flex; gap: 1px; margin-left: .5em; vertical-align: -1px; color: var(--soft); }
-.rating-marks svg { display: block; width: 13px; }
-.rating-marks .on { color: var(--accent); }
+/* A rating as five stars to click: filled in the accent up to the rating. Beside the byline,
+   in song rows, and under the deck. */
+.rating { display: inline-flex; vertical-align: -4px; }
+.rating button { display: grid; place-items: center; padding: 2px; background: none; border: 0; border-radius: 4px; color: var(--soft); }
+.rating button:focus-visible { outline-offset: 0; }
+.rating svg { display: block; width: 18px; transition: transform .12s; }
+.rating button:hover svg { transform: scale(1.15); }
+.rating .on { color: var(--accent); }
+.byline .rating { margin-left: .4em; }
+.deck-rating { display: flex; margin: 12px 0 0 -2px; }
+/* Touch: bigger targets, and beside the byline a line of their own, the first star lined up with it. */
+@media (pointer: coarse) {
+  .rating button { padding: 6px 4px; } .rating svg { width: 20px; }
+  .byline .rating { display: flex; margin: 2px 0 -6px -4px; }
+  .deck-rating { margin: 6px 0 -6px -4px; }
+}
+@media (prefers-reduced-motion: reduce) { .rating svg { transition: none; } }
 
 /* Covers */
 .cover { display: block; object-fit: cover; background: var(--line); }
@@ -194,13 +207,21 @@ img:is(.deck-cover, .head-cover) {
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }
 .tracks li { display: flex; align-items: center; height: var(--row-height, 44px); }
 .track {
-  flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr) 60px; align-items: center; gap: 12px;
+  flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
   height: 100%; padding: 0; background: none; border: 0; text-align: left; font-size: calc(15.5px * var(--text));
 }
-.with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) 60px; }
+.with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr); }
 .track .n { font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .n .wave { width: 20px; }
-.track .figure { text-align: right; font-size: calc(13.5px * var(--text)); color: var(--soft); }
+/* The rating and the duration sit outside the row's button, between it and the favorite star.
+   An unrated song's stars stay faint until the row is pointed at. */
+.tracks .figure { flex: none; width: 48px; text-align: right; font-size: calc(13.5px * var(--text)); color: var(--soft); }
+.row-rating { flex: none; width: 90px; margin-left: 12px; }
+.row-rating .rating { display: flex; vertical-align: 0; }
+.row-rating .rating button { padding: 2px 1px; }
+.row-rating .rating svg { width: 16px; }
+.row-rating .unrated { opacity: .35; transition: opacity .12s; }
+.tracks li:hover .unrated, .row-rating .unrated:focus-within { opacity: 1; }
 .track .title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 /* The song's name keeps its width; the version note and credits give way first, and the name
    only shortens when it can't fit on its own. */
@@ -537,7 +558,10 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .artist-list { --name-row: 42px; --name-columns: 1; }
   .index { gap: 2px 4px; }
   .index a { display: grid; place-items: center; min-width: 30px; min-height: 36px; }
-  .track, .with-album .track { grid-template-columns: 28px minmax(0, 1fr) 44px; gap: 8px; }
+  .track, .with-album .track { grid-template-columns: 28px minmax(0, 1fr); gap: 8px; }
+  .tracks .figure { width: 40px; }
+  /* No room in a phone's rows: songs are rated from their menu or the open deck. */
+  .row-rating { display: none; }
   .track .credit, .track .album { display: none; }
   .star { width: 32px; opacity: 1; }
 
@@ -557,7 +581,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .transport { grid-column: 3; grid-row: 1; margin: 0; gap: 2px; }
   .transport .glyph { width: 44px; height: 44px; }
   .play { width: 46px; height: 46px; }
-  .volume, .signal, .up-next, .quiet-link, .transport .glyph:first-child, .deck-actions, .deck-links { display: none; }
+  .volume, .signal, .up-next, .deck-rating, .quiet-link, .transport .glyph:first-child, .deck-actions, .deck-links { display: none; }
   .sleep-note { display: none; }
   .resume { grid-column: 1 / -1; margin: 6px 0 4px; }
   .deck-empty { margin: 0; font-size: calc(13.5px * var(--text)); }
@@ -594,6 +618,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
   .deck.open .play { width: 68px; height: 68px; }
   .deck.open .play svg { width: 30px; }
   .deck.open .signal, .deck.open .up-next { display: block; }
+  .deck.open .deck-rating { display: flex; justify-content: center; margin-top: 18px; }
   .deck.open .signal { margin-top: 22px; }
   .deck.open .sleep-note { display: block; }
   .deck.open .deck-links { display: flex; justify-content: center; gap: 28px; margin-top: auto; padding-top: 18px; }

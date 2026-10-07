@@ -98,7 +98,7 @@ The types in `@squiggly/extension-api` come from the app's own modules, so they 
 
 ### `ctx.menus`
 
-`register({ id, label, run?, when?, submenu?, section?, danger? })` adds an item to right-click menus. `when(target)` decides where it shows. `target.kind` is `tracks`, `album`, `artist`, or `playlist`, with the matching data. Built-in items use sections 0 to 6; extension items default to section 10, below them.
+`register({ id, label, run?, when?, submenu?, section?, danger?, checked? })` adds an item to right-click menus. `checked` makes the item one choice among its siblings, ticked when true. `when(target)` decides where it shows. `target.kind` is `tracks`, `album`, `artist`, or `playlist`, with the matching data. Built-in items use sections 0 to 6; extension items default to section 10, below them.
 
 ### `ctx.player`
 

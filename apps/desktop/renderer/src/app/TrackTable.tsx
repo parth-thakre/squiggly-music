@@ -6,6 +6,7 @@ import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
 import { nav } from './route';
+import { RatingStars } from './ratings';
 import { useActiveTheme } from './theme';
 import { Glyph, splitTitle, time, Wave } from './ui';
 import { isKept, keptSupported, useKeptVersion } from './keptState';
@@ -212,8 +213,11 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
             <span className="title"><span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
               {credit && <span className="credit">{credit}</span>}</span>
             {showAlbum && <span className="album">{splitTitle(track.album).main}</span>}
-            <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
           </button>
+          {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
+              and only while it's in reach; other rows keep the slot empty so the durations line up. */}
+          <span className="row-rating">{track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>
+          <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
           {/* Beside the button, so the row's name stays "Play <title>". */}
           {keptSupported && <span className="kept-slot">{kept && <KeptMark />}</span>}
           {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
