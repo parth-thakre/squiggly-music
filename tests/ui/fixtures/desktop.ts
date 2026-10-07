@@ -33,10 +33,13 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // `play:<ids>:device|stream` in bridgeCalls and plays at once, from the device when every song is
 // kept. Nothing here checks limits or files; vitest covers the real main process.
 // `connect` answers connect by the address given (a Result); any other address fails.
+// `diagnostics` makes it a beta with remote diagnostics built in: the bridge has sendDiagnostics,
+// whose calls are recorded in bridgeCalls. Without it (the default) there are none, as in
+// stable releases. Settings changes are kept and recorded as `settings:<json>`.
 export interface KeptSeed { kind: 'album' | 'playlist' | 'mix'; id: string; name: string; artist: string | null; coverArt: string | null; tracks: object[] }
 export async function installDesktopBridge(page: Page, options: { extensions?: FakeExtension[]; mediaHost?: boolean; signIn?: object; connected?: boolean; update?: object; player?: object; mini?: boolean;
-  server?: boolean; away?: boolean; kept?: { seed?: KeptSeed[]; refuse?: string }; connect?: Record<string, object> } = {}) {
-  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, playerPatch, mini, useServer, startAway, keptOptions, connectResults }) => {
+  server?: boolean; away?: boolean; kept?: { seed?: KeptSeed[]; refuse?: string }; connect?: Record<string, object>; diagnostics?: boolean } = {}) {
+  await page.addInitScript(({ extensions: given, mediaHost, signInPatch, connected, updatePatch, playerPatch, mini, useServer, startAway, keptOptions, connectResults, diagnostics }) => {
     const listeners = new Set<(snapshot: unknown) => void>();
     const audio = {
       codec: null, decoderRate: null, decoderFormat: null, decoderChannels: null, outputRate: null, outputFormat: null,
@@ -87,7 +90,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     const library = useServer ? serverLibrary : new Proxy({}, {
       get: (_target, method: string) => method === 'coverUrl' ? () => '' : async () => ({ ok: true, value: method in empty ? empty[method] : [] }),
     });
-    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096 };
+    const settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: false, syncQueue: false, reportPlays: false, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true };
     // Keep on this device.
     type Container = { kind: string; id: string; name: string; artist: string | null; coverArt: string | null; tracks: Track[]; keptAt: number };
     const containers = new Map<string, Container>();
@@ -218,8 +221,9 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
         hosted: mediaHost,
         subscribe: (listener: (state: unknown) => void) => { Object.assign(window, { pushMedia: listener }); return () => undefined; },
       },
-      settings: async () => settings,
-      updateSettings: async () => ({ ok: true, value: settings }),
+      settings: async () => ({ ...settings }),
+      updateSettings: async (changes: object) => { calls.push(`settings:${JSON.stringify(changes)}`); Object.assign(settings, changes); return { ok: true, value: { ...settings } }; },
+      ...(diagnostics ? { sendDiagnostics: async () => { calls.push('send-diagnostics'); return { ok: true, value: 'Sent 3 diagnostic events.' }; } } : {}),
       library,
       window: {
         isMini: mini, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }),
@@ -255,5 +259,6 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       },
     } });
   }, { extensions: options.extensions ?? [], mediaHost: options.mediaHost ?? false, signInPatch: options.signIn ?? {}, connected: options.connected ?? true, updatePatch: options.update ?? {},
-    playerPatch: options.player ?? {}, mini: options.mini ?? false, useServer: options.server ?? false, startAway: options.away ?? false, keptOptions: options.kept ?? null, connectResults: options.connect ?? {} });
+    playerPatch: options.player ?? {}, mini: options.mini ?? false, useServer: options.server ?? false, startAway: options.away ?? false, keptOptions: options.kept ?? null, connectResults: options.connect ?? {},
+    diagnostics: options.diagnostics ?? false });
 }

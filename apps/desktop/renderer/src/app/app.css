@@ -499,6 +499,13 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .deck-links .update-link { flex-basis: 100%; }
 .connect-update:empty { display: none; }
 .connect-update .quiet-link { padding: 0; margin: 0; }
+/* A beta with diagnostics built in: its own line in the deck's links, and under the connect
+   form, where it opens the switch in place (the form's label and input styles don't apply). */
+.deck-links .beta-link { flex-basis: 100%; text-align: left; }
+.connect-beta { margin-top: 14px; }
+.connect-beta .quiet-link { padding: 0; margin: 0; }
+.connect-beta .setting { gap: 14px; margin-top: 6px; font-size: inherit; color: var(--ink); }
+.connect-beta .setting input { padding: 0; border: 0; }
 .deck-links .quiet-link { margin: 0; padding: 0; white-space: nowrap; }
 .bar-commands { display: none; }
 .deck-sheet-bar { display: none; }

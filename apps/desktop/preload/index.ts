@@ -136,5 +136,7 @@ const bridge: DesktopBridge = {
   saveM3u: (name, entries) => ipcRenderer.invoke('squiggly:save-m3u', [name, entries]),
   kept,
   retryServer: passive => ipcRenderer.invoke('squiggly:retry-server', passive === true),
+  // Only in betas with remote diagnostics built in, whose main process adds this argument.
+  ...(process.argv.includes('--squiggly-diagnostics') ? { sendDiagnostics: () => ipcRenderer.invoke('squiggly:diagnostics:send') } : {}),
 };
 contextBridge.exposeInMainWorld('squiggly', bridge);

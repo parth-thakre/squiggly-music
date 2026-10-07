@@ -31,11 +31,16 @@ export const initialUpdateState = (): UpdateState => ({
 export class Updates {
   private updater: typeof electronUpdater.autoUpdater | null = null;
   private timers: ReturnType<typeof setTimeout>[] = [];
-  constructor(private state: () => UpdateState, private set: (state: UpdateState) => void, private enabled: () => boolean) {}
+  // report: diagnostics builds' raw updater events (remoteDiagnostics.ts), errors included.
+  constructor(
+    private state: () => UpdateState, private set: (state: UpdateState) => void, private enabled: () => boolean,
+    private report: (event: string, data?: Record<string, unknown>) => void = () => undefined,
+  ) {}
 
   private patch(changes: Partial<UpdateState>) { this.set({ ...this.state(), ...changes }); }
 
   start() {
+    this.report('start', { mode: this.state().mode, current: this.state().current });
     if (this.state().mode === 'off') return;
     const updater = this.updater = electronUpdater.autoUpdater;
     updater.autoDownload = this.state().mode === 'install';
@@ -43,25 +48,35 @@ export class Updates {
     updater.autoInstallOnAppQuit = false;
     updater.allowPrerelease = false;
     updater.logger = null;
-    updater.on('checking-for-update', () => this.patch({ status: 'checking', error: null }));
-    updater.on('update-not-available', () => this.patch({ status: 'up-to-date', version: null, percent: null }));
-    updater.on('update-available', info => this.patch({
-      status: this.state().mode === 'install' ? 'downloading' : 'available', version: info.version, percent: null,
-    }));
-    updater.on('download-progress', progress => this.patch({ percent: Math.round(progress.percent) }));
-    updater.on('update-downloaded', info => this.patch({ status: 'ready', version: info.version, percent: null }));
+    let decile = -1;
+    updater.on('checking-for-update', () => { this.report('checking'); this.patch({ status: 'checking', error: null }); });
+    updater.on('update-not-available', info => { this.report('not-available', { version: info.version }); this.patch({ status: 'up-to-date', version: null, percent: null }); });
+    updater.on('update-available', info => {
+      this.report('available', { version: info.version, releaseDate: info.releaseDate }); decile = -1;
+      this.patch({ status: this.state().mode === 'install' ? 'downloading' : 'available', version: info.version, percent: null });
+    });
+    updater.on('download-progress', progress => {
+      if (Math.floor(progress.percent / 10) !== decile) { decile = Math.floor(progress.percent / 10); this.report('progress', { percent: Math.round(progress.percent), bytesPerSecond: progress.bytesPerSecond, total: progress.total }); }
+      this.patch({ percent: Math.round(progress.percent) });
+    });
+    updater.on('update-downloaded', info => { this.report('downloaded', { version: info.version }); this.patch({ status: 'ready', version: info.version, percent: null }); });
     // electron-updater's messages can carry URLs and paths, so only a plain one is shown.
-    updater.on('error', () => this.patch({
-      status: this.state().status === 'ready' ? 'ready' : 'error', error: 'Couldn\'t reach GitHub to check for updates.', percent: null,
-    }));
+    updater.on('error', (error, message) => {
+      this.report('error', { message: error?.message ?? null, detail: message ?? null, stack: error?.stack ?? null });
+      this.patch({ status: this.state().status === 'ready' ? 'ready' : 'error', error: 'Couldn\'t reach GitHub to check for updates.', percent: null });
+    });
     this.timers.push(setTimeout(() => this.check(), FIRST_CHECK), setInterval(() => this.check(), EVERY));
   }
 
   // Scheduled checks respect the setting; one asked for by hand always runs.
   check(asked = false) {
     const status = this.state().status;
-    if (!this.updater || (!asked && !this.enabled()) || status === 'checking' || status === 'downloading' || status === 'ready') return;
-    void this.updater.checkForUpdates().catch(() => undefined);
+    if (!this.updater || (!asked && !this.enabled()) || status === 'checking' || status === 'downloading' || status === 'ready') {
+      this.report('check-skipped', { asked, status, updater: this.updater !== null, enabled: this.enabled() });
+      return;
+    }
+    this.report('check', { asked });
+    void this.updater.checkForUpdates().catch(error => this.report('check-failed', { message: error instanceof Error ? error.message : String(error) }));
   }
 
   // Restart to update: runs the downloaded installer, which starts the app again when it's done.

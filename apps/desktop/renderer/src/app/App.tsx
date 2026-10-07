@@ -28,6 +28,8 @@ import { ShareDialog } from './share';
 import { Kept, OfflineNotice } from './kept';
 import { keptCount, keptSupported, useKeptVersion } from './keptState';
 import { pageFor, serverPages } from './offline';
+import { DiagnosticsSwitch, showDiagnosticsSetting } from './views';
+import { diagnosticsBuilt, useSettings } from './settings';
 
 onMenuError(message => player.showError(message));
 
@@ -302,6 +304,20 @@ function UpdateLink() {
   if (update?.status === 'available') return <button type="button" className="quiet-link update-link" onClick={() => void window.squiggly!.updates.open()}>Squiggly {update.version} is out</button>;
   return null;
 }
+// Desktop betas with remote diagnostics built in say so, under the deck and on the connect
+// screen. Under the deck it opens the switch in Settings; the connect screen has no Settings,
+// so there it shows the switch in place.
+function BetaMarker({ inPlace = false }: { inPlace?: boolean }) {
+  const on = useSettings().diagnostics;
+  const [open, setOpen] = useState(false);
+  if (!diagnosticsBuilt) return null;
+  const label = on ? 'Beta · sends diagnostics' : 'Beta · diagnostics off';
+  if (!inPlace) return <button type="button" className="quiet-link beta-link" onClick={showDiagnosticsSetting}>{label}</button>;
+  return <div className="connect-beta">
+    <button type="button" className="quiet-link beta-link" aria-expanded={open} onClick={() => setOpen(value => !value)}>{label}</button>
+    {open && <DiagnosticsSwitch />}
+  </div>;
+}
 // Opening files from this computer lives here rather than in the header, which has to leave
 // room for the window's buttons.
 const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
@@ -313,6 +329,7 @@ function DeckLinks() {
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
   return <p className="deck-links">
     <UpdateLink />
+    <BetaMarker />
     <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
@@ -468,6 +485,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     <p className="connect-demo">No server yet? <button type="button" className="link" disabled={busy}
       onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>, a public server of Creative Commons music that everyone shares.</p>
     {!embedded && window.squiggly && <p className="connect-update"><UpdateLink /></p>}
+    {!embedded && <BetaMarker inPlace />}
   </Frame>;
 }
 
