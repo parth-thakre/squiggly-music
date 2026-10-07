@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright';
 import type { Page } from '@playwright/test';
-import { expect, test } from '../fixtures/test';
+import { expect, test, trackOf } from '../fixtures/test';
 
 // An axe-core smoke check (WCAG 2.x A and AA rules) of the main screens, on desktop and phone.
 async function violations(page: Page) {
@@ -43,5 +43,15 @@ test.describe('accessibility smoke', () => {
     await app.rowButton(app.row('Short Stop')).dispatchEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 200, clientY: 300 });
     await expect(app.menu.getByRole('menuitem').first()).toBeFocused();
     expect(await violations(page)).toEqual([]);
+  });
+
+  test('home, with every shelf showing', async ({ page, app, fake }) => {
+    fake.recent = ['al-2']; fake.frequent = ['al-3'];
+    fake.saved = { tracks: [{ ...trackOf('tr-1-1') }], currentIndex: 0, positionSeconds: 5, changed: null, changedBy: null };
+    fake.listening = [{ username: 'sam', trackId: 'tr-2-1' }];
+    await app.signIn({ home: true });
+    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Pick up where you left off', 'Played lately', 'Newest', 'Most played', 'Your mixes', 'Playing elsewhere']);
+    await expect(app.main.locator('ul.grid img').first()).toBeVisible();
+    expect(await violations(page), 'Home').toEqual([]);
   });
 });

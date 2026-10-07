@@ -7,7 +7,7 @@ The renderer lives in `apps/desktop/renderer/src/app/`. It runs in three places:
 | File | Role |
 | --- | --- |
 | `App.tsx` | Shell: bar, deck (now playing), page, connect screen |
-| `views.tsx` | Pages: records, album, artists, artist, tracks, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics |
+| `views.tsx` | Pages: records, album, artists, artist, tracks, playlists, playlist editor, mixes, favorites, search, queue, lyrics, settings, diagnostics, home |
 | `player.ts` | Playback store. Desktop mirrors main-process snapshots; web drives two audio elements, reports plays, and saves the queue itself. Android (`mode: 'android'`) keeps the queue as web does and follows the native player's reports |
 | `registry.ts`, `menu.tsx` | The extension seam: right-click menu items and commands. Built-in items register the same way extensions do |
 | `TrackTable.tsx` | Song lists: selection, drag reorder, windowing past 120 rows |
@@ -35,11 +35,12 @@ Import types from `packages/core/contracts.ts`. `window.squiggly` (see `apps/des
 | `queue.jump(index, entryId)` | Play a queue entry. The entry id makes the jump land on that exact entry, even when the same song appears twice |
 | `radio.start(seed)`, `radio.stop()` | Radio from a song, album, or artist. The main process owns it and keeps topping up the queue while every window is hidden |
 | `resumeQueue()` | Load the server-saved queue paused at its song and position |
-| `library.*` | `LibraryApi`: browse, search, star, rate (`rate(kind, id, 0 to 5)`, where 0 clears; items carry `userRating` when rated), playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics` |
+| `library.*` | `LibraryApi`: browse, search, star, rate (`rate(kind, id, 0 to 5)`, where 0 clears; items carry `userRating` when rated), playlists and editing, radio (`similarSongs`, `topSongs`), `lyrics`, what other accounts are playing (`nowPlaying`) |
 | `library.tracks(sort, offset, size, seed)` | Every track on the server, up to 500 at a time, sorted as Records sorts (Newest, A to Z, By artist, Most played, Recently played, Random, Top rated; `seed` keeps a random order across pages). A page shorter than `size` is the last. Navidrome's own API does the sorting: the connector signs in to it with the account's password (`POST /auth/login`), keeps the session token in memory, takes the fresh one each answer brings, and signs in again when it's refused. Other servers, or a Navidrome whose own API is out of reach, answer in the server's one order (`search3` with an empty query) with `sorted: false`, and the Tracks page hides its sorts. The page asks for 200 at a time as it scrolls |
 | `library.coverUrl(coverArt, size)` | `squiggly-art://` URL; the main process fetches art, credentials never reach the renderer |
 | `library.artistInfo(artistId)` | `getArtistInfo2`: the biography as plain text (the server's HTML stripped, its Last.fm link dropped), links, and similar artists that are in the library. Every field may be empty, and the artist page then shows nothing. Image addresses are external, so the renderer doesn't load them |
 | `library.songsByGenre(genre, offset, size)` | One genre's songs, up to 500 at a time (`getSongsByGenre`). The genre page asks for 200 at a time as it scrolls |
+| `library.nowPlaying()` | What other accounts on the server are playing (`getNowPlaying`), as `{ username, track }`. The connector leaves out this account's own players and a song someone has on two players at once. Home reads it once per visit and hides it when it's empty or fails |
 | `library.albums('byYear', offset, size, { fromYear, toYear })` | Records from those years, oldest first. Only `byYear` takes years. Records' decade filter uses it; the decades offered are the ones the automatic playlists find |
 | `settings()`, `updateSettings(changes)` | Stored preferences; re-read `settings()` after a failed update |
 | `extensions.list()`, `subscribe`, `setEnabled`, `reload`, `remove`, `openDir`, `writeClipboard` | Extensions in `<config>/extensions`. `remove` moves the folder to the trash. The runtime in `extensions/` is the only caller |
@@ -60,7 +61,7 @@ Mutations return `{ ok: true, value }` or `{ ok: false, error }` and every failu
 - **Playlist edits** go through `playlistEditor(id)` in `library.ts`, or `usePlaylist(id)` in components. There is one editor per playlist, shared by its page and every menu. It queues edits and sends them to the server one at a time, then reconciles the local list with the server's read-back. Don't call the playlist mutations in `library.*` directly from views. New playlists go through `createPlaylist()` in `menu.tsx`, which refreshes the playlist list and opens the new one.
 - **Menus and commands** register through `registry.ts`. Ids are namespaced by owner (`builtin:play`). Registering an id that is still live throws `RegistryCollision`; dispose the old registration first. Disposers are idempotent and never remove a newer registration with the same id. `registry.scope(owner)` gives an extension its own add functions and one `dispose()` for everything it added.
 - `tracksOf(target)` in `menu.tsx` returns a `Result`. Show its error; don't assume the tracks loaded.
-- **Navigation state** lives in the route. The Records and Tracks sorts are part of the route, so Back returns to the same order and scroll offset. So is the Records decade (`decade`).
+- **Navigation state** lives in the route. The Records and Tracks sorts are part of the route, so Back returns to the same order and scroll offset. So is the Records decade (`decade`). A fresh start opens Home (`{ view: 'home' }`); a reload stays where it was. Home's shelves each load on their own through `useResource`, twelve records at most, except that Your mixes waits for Most played's list to learn whether there is history, and its automatic playlists show their names without drawing songs.
 - **Contrast.** `--accent` is for marks and large type (3:1 against the ground). `--accent-text` is for normal-weight text: it keeps 4.5:1 against both the ground and the selected-row tint. Use it for the current track number. Lyrics stay in ink and soft: the current line is ink and its words fill from soft to ink as they are sung.
 
 ## Browser build

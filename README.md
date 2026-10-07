@@ -14,6 +14,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 ## What it does
 
 - Browse records, artists, tracks, genres, playlists, and favorites on your server, or play files from your computer. Records filter by decade, artists show a biography and similar artists when the server has them, and records with more than one disc show each disc.
+- Open at Home: the saved queue to pick up, records played lately, the newest and most played, your automatic playlists, and what other people on the server are playing. The wordmark and G then H go back to it.
 - Rate songs, records, and artists from one to five stars, and list the records and tracks you rate highest.
 - Edit the queue and your playlists. The queue follows you between devices through the server.
 - Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).

@@ -1,6 +1,6 @@
 import { Effect } from 'effect';
 import type { Album, AlbumListType, Artist, Lyrics, LyricsQuery, Playlist, RandomSongOptions, SavedQueue, StarTarget, Track, TrackSort } from '../../../packages/core/contracts';
-import type { AlbumYears, ArtistInfo, DiscTitle } from '../../../packages/core/contracts';
+import type { AlbumYears, ArtistInfo, DiscTitle, NowPlayingEntry } from '../../../packages/core/contracts';
 import { SubsonicClient, plainText } from '../../../packages/adapter-opensubsonic/client';
 import { Metrics } from '../../../packages/core/metrics';
 import { timeWords } from '../../../packages/lyrics/words';
@@ -151,6 +151,11 @@ export class FakeNavidrome {
   private failures = new Map<string, string[]>();
   /** Adds Two Nights Live (special.twoNights) and its genre, Live, to the library. */
   large = false;
+  /** Listening history by record id, as getAlbumList2's recent and frequent list it. Empty: nothing played. */
+  recent: string[] = [];
+  frequent: string[] = [];
+  /** The server's players (getNowPlaying): whose, and the song each is on. This account's are among them. */
+  listening: { username: string; trackId: string }[] = [];
   private created = 0;
   /** The preview plugin's clock; advancing it past 30 days ends every session. */
   clock = { now: Date.UTC(2026, 8, 25) };
@@ -170,6 +175,7 @@ export class FakeNavidrome {
     this.saved = null; this.delays.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
     this.ratings.clear(); this.failures.clear(); this.large = false;
+    this.recent = []; this.frequent = []; this.listening = [];
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -219,7 +225,7 @@ export class FakeNavidrome {
       else if (type === 'random') list = [...list].reverse();
       else if (type === 'starred') list = list.filter(a => a.starred);
       else if (type === 'highest') list = list.filter(a => a.userRating).sort((a, b) => b.userRating! - a.userRating!);
-      else if (type === 'frequent' || type === 'recent') list = [];
+      else if (type === 'frequent' || type === 'recent') list = (type === 'recent' ? this.recent : this.frequent).map(id => list.find(a => a.id === id)!).filter(Boolean);
       return Effect.succeed(list.slice(offset, offset + size));
     }),
     album: (id: string) => this.op('album', [id], () => {
@@ -324,6 +330,10 @@ export class FakeNavidrome {
       : { biography: null, musicBrainzId: null, lastFmUrl: null, images: { small: null, medium: null, large: null }, similar: [] })),
     songsByGenre: (genre: string, offset: number, size: number) => this.op('songsByGenre', [genre, offset, size], () =>
       Effect.succeed(this.songs().filter(t => t.genre === genre).slice(offset, offset + size).map(t => this.track(t.id)))),
+    // As the connector answers: this account's own players are left out.
+    nowPlaying: () => this.op('nowPlaying', [], () => Effect.succeed<NowPlayingEntry[]>(this.listening
+      .filter(entry => entry.username.toLowerCase() !== account.username.toLowerCase())
+      .map(entry => ({ username: entry.username, track: this.track(entry.trackId) })))),
     streamLocation: (id: string, format: 'raw' | 'mp3' = 'raw') => `${this.audioBase()}/rest/stream.view?id=${encodeURIComponent(id)}&format=${format}`,
   };
 

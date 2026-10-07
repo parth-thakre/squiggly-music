@@ -24,8 +24,8 @@ it('keeps Back and Forward working past any number of places, with the sheet and
   for (let i = 0; i < 120; i++) nav.go({ view: 'album', id: String(i) });
   expect(nav.current).toEqual({ view: 'album', id: '119' });
   for (let i = 118; i >= 0; i--) { nav.back(); expect(nav.current).toEqual({ view: 'album', id: String(i) }); }
-  nav.back(); expect(nav.current).toEqual({ view: 'records' });
-  nav.back(); expect(nav.current).toEqual({ view: 'records' }); // nothing behind the first place
+  nav.back(); expect(nav.current).toEqual({ view: 'home' });
+  nav.back(); expect(nav.current).toEqual({ view: 'home' }); // nothing behind the first place
   for (let i = 0; i < 120; i++) { (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'album', id: String(i) }); }
   // Sheet: open, Back closes it without moving; following a link replaces the sheet's entry.
   let open = false;
@@ -53,4 +53,28 @@ it('keeps the records decade, the genres and a genre across Back', async () => {
   nav.back(); expect(nav.current).toEqual({ view: 'genre', name: 'Rock & Roll' });
   nav.back(); expect(nav.current).toEqual({ view: 'genres' });
   (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'genre', name: 'Rock & Roll' });
+});
+
+it('opens at Home on a fresh start, keeps a reloaded place, and Back returns Home', async () => {
+  // A fresh page load: an empty history and a new copy of route.ts.
+  entries.splice(0, entries.length, null); at = 0; handlers.length = 0;
+  vi.resetModules();
+  const { nav } = await import('../apps/desktop/renderer/src/app/route');
+  expect(nav.current).toEqual({ view: 'home' });
+  nav.back(); expect(nav.current).toEqual({ view: 'home' });
+  nav.go({ view: 'records' });
+  nav.go({ view: 'album', id: 'a' });
+  nav.back(); expect(nav.current).toEqual({ view: 'records' });
+  nav.back(); expect(nav.current).toEqual({ view: 'home' });
+  nav.back(); expect(nav.current).toEqual({ view: 'home' });
+  (history as unknown as { forward(): void }).forward(); expect(nav.current).toEqual({ view: 'records' });
+  // Going Home is a place like any other, so Back leaves it.
+  nav.go({ view: 'home' });
+  nav.back(); expect(nav.current).toEqual({ view: 'records' });
+  // A reload picks up the place the history shows, not Home.
+  handlers.length = 0;
+  vi.resetModules();
+  const reloaded = (await import('../apps/desktop/renderer/src/app/route')).nav;
+  expect(reloaded.current).toEqual({ view: 'records' });
+  reloaded.back(); expect(reloaded.current).toEqual({ view: 'home' });
 });

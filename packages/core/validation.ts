@@ -73,6 +73,7 @@ export const LibraryRequestSchemas = {
   rate: Schema.Tuple(Schema.Literal('track', 'album', 'artist'), IdSchema, Schema.Literal(0, 1, 2, 3, 4, 5)),
   artistInfo: Schema.Tuple(IdSchema),
   songsByGenre: Schema.Tuple(TextSchema, IntSchema(0, 10_000_000), IntSchema(1, 500)),
+  nowPlaying: Schema.Tuple(),
 };
 // Track IDs must already be known to the main process; startIndex is checked against their count.
 export const PlayTracksSchema = Schema.Tuple(Schema.Array(IdSchema).pipe(Schema.minItems(1), Schema.maxItems(QUEUE_LIMIT)), QueueIndexSchema);

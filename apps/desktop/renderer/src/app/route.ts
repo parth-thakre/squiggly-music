@@ -12,7 +12,9 @@ export type Route =
   // A page an extension added; id is the page's namespaced id.
   | { view: 'extension'; id: string }
   // Every genre, and one genre's songs.
-  | { view: 'genres' } | { view: 'genre'; name: string };
+  | { view: 'genres' } | { view: 'genre'; name: string }
+  // Where the app opens: what's lately played, new, and playing elsewhere.
+  | { view: 'home' };
 
 // Navigation rides on the browser's own history, so a phone's back gesture (and Forward)
 // steps through the app instead of leaving it. Each history entry carries its route, a
@@ -20,7 +22,7 @@ export type Route =
 // however long the session runs; the app itself only remembers the current place and the
 // scroll offsets of the most recent places.
 interface Place { id: string; depth: number; route: Route; overlay?: boolean }
-const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre']);
+const views = new Set(['records', 'artists', 'tracks', 'playlists', 'favorites', 'album', 'artist', 'playlist', 'mix', 'search', 'queue', 'lyrics', 'settings', 'diagnostics', 'extension', 'genres', 'genre', 'home']);
 function placeOf(state: unknown): Place | null {
   const s = state as { squiggly?: unknown; depth?: unknown; route?: { view?: unknown }; overlay?: unknown } | null;
   if (!s || typeof s.squiggly !== 'string' || typeof s.depth !== 'number' || !views.has(String(s.route?.view))) return null;
@@ -41,8 +43,8 @@ const remember = (id: string, offset: number) => {
   while (scrolls.size > SCROLLS) scrolls.delete(scrolls.keys().next().value!);
 };
 
-// A reload keeps the browser's history, so pick up the place it was showing.
-let now: Place = placeOf(history.state) ?? { id: nextId(), depth: 0, route: { view: 'records' } };
+// A reload keeps the browser's history, so pick up the place it was showing. A fresh start opens Home.
+let now: Place = placeOf(history.state) ?? { id: nextId(), depth: 0, route: { view: 'home' } };
 now = { ...now, overlay: false };
 history.replaceState(stateOf(now), '');
 
