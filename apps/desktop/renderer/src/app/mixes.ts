@@ -1,5 +1,5 @@
 import type { Genre, Result, Track } from '../../../../../packages/core/contracts';
-import { api, load, onLibraryReset } from './library';
+import { albumDetails, api, load, onLibraryReset } from './library';
 import { shuffled } from './ui';
 
 // Automatic playlists, built from the library itself. They work on a fresh server with
@@ -9,7 +9,7 @@ export interface Mix { id: string; name: string; description: string; tracks(): 
 async function fromAlbums(type: 'newest' | 'frequent' | 'recent', count: number, mix: boolean): Promise<Result<Track[]>> {
   const albums = await load(`albums:${type}:0:${count}`, () => api.albums(type, 0, count));
   if (!albums.ok) return albums;
-  const details = await Promise.all(albums.value.map(album => load(`album:${album.id}`, () => api.album(album.id))));
+  const details = await albumDetails(albums.value.map(album => album.id));
   const failed = details.find(detail => !detail.ok);
   if (failed && !failed.ok) return failed;
   const tracks = details.flatMap(detail => detail.ok ? detail.value.tracks : []);

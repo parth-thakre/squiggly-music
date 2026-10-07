@@ -3,7 +3,7 @@ import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
-import { api, invalidate, load, playlistEditor } from './library';
+import { albumDetails, api, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, isAway, player, type PlayerState } from './player';
 import { forget, isContainerKept, isKept, keep, keptSupported } from './keptState';
 import { showNowPlaying } from './nowPlaying';
@@ -112,12 +112,7 @@ export async function tracksOf(target: MenuTarget): Promise<Result<Track[]>> {
   }
   const artist = await load(`artist:${target.artist.id}`, () => api.artist(target.artist.id));
   if (!artist.ok) return artist;
-  // A few at a time: an artist with two hundred records shouldn't fire two hundred requests at once.
-  const albums = artist.value.albums, details: Result<{ tracks: Track[] }>[] = new Array(albums.length);
-  let next = 0;
-  await Promise.all(Array.from({ length: Math.min(6, albums.length) }, async () => {
-    while (next < albums.length) { const i = next++; details[i] = await load(`album:${albums[i].id}`, () => api.album(albums[i].id)); }
-  }));
+  const details = await albumDetails(artist.value.albums.map(album => album.id));
   const missing = details.filter(detail => !detail.ok);
   if (missing.length) {
     const first = missing[0] as Extract<Result, { ok: false }>;

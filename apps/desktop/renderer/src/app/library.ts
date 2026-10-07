@@ -26,6 +26,19 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>): Promise<
   while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); }
   return entry as Promise<Result<T>>;
 }
+// Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
+// would otherwise ask for dozens at once (the desktop refuses past 32 requests in flight, and the
+// server has its own limits). A record already read comes from load's cache without waiting.
+const ALBUMS_AT_ONCE = 6;
+let albumsReading = 0;
+const albumWaiting: (() => void)[] = [];
+async function albumSlot<T>(task: () => Promise<T>) {
+  // A finished read hands its slot straight to the next waiting one, so none slips in between.
+  if (albumsReading < ALBUMS_AT_ONCE) albumsReading++; else await new Promise<void>(resolve => albumWaiting.push(resolve));
+  try { return await task(); } finally { const next = albumWaiting.shift(); if (next) next(); else albumsReading--; }
+}
+export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)));
+export const albumDetails = (ids: readonly string[]) => Promise.all(ids.map(albumDetail));
 export function invalidate(prefix: string) {
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); listeners.forEach(listener => listener(key)); }
   invalidations.forEach(listener => listener(prefix));
