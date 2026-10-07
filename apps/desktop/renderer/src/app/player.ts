@@ -4,7 +4,7 @@ import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
 import { OUT_OF_REACH } from '../../../../../packages/core/reach';
-import { following, preceding, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
+import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
 import { finishThreshold } from '../../../../../packages/core/plays';
 import { isStation, repeatFor, stationIdOf } from '../../../../../packages/core/stations';
 import { onDisconnected, onSignedOut, webReach, webSession, type WebSessionStatus } from '../bridge/previewLibrary';
@@ -874,7 +874,7 @@ export const player = {
     if (local) {
       const previous = preceding(state.index, state.queue.length, state.repeat);
       // A station has no start to go back to: Previous only moves back in the queue.
-      if (!isStation(current(state)) && ((web ? web.active.currentTime : livePosition()) > 3 || previous < 0)) player.seek(0);
+      if (!isStation(current(state)) && ((web ? web.active.currentTime : livePosition()) > RESTART_AFTER || previous < 0)) player.seek(0);
       else if (previous >= 0) webLoad(previous);
       return;
     }

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { emptyAudio, emptyPlayer, listedDevice, type RepeatMode } from '../core/contracts';
-import { shuffleOrder } from '../core/playOrder';
+import { preceding, RESTART_AFTER, shuffleOrder } from '../core/playOrder';
 import { NativePlayer } from './native';
 import { clearPlayerSession } from './session';
 import { editQueue, QUEUE_LIMIT, shuffleQueue } from './queue';
@@ -517,7 +517,17 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         chosenDevice = action.id; fallback = null; retryOnDefault = false; break;
       // Another song drops mpv's buffered audio with the old file, so unpausing at once is safe.
       case 'next': native.command('playlist-next', 'weak'); if (dropped?.resume) native.set('pause', 'no'); break;
-      case 'previous': native.command('playlist-prev', 'weak'); if (dropped?.resume) native.set('pause', 'no'); break;
+      case 'previous': {
+        // Past RESTART_AFTER, or on the first song with nothing before it, the song starts again (a
+        // seek, not a new play). Every desktop Previous comes here: the deck, media keys, the tray,
+        // and the system's media controls. A station has no start: it moves back.
+        const index = native.number('playlist-pos') ?? -1;
+        const restart = index >= 0 && !isStationAt(index)
+          && ((native.number('time-pos') ?? 0) > RESTART_AFTER || preceding(index, playableQueue.length, player.repeat) < 0);
+        if (restart) { native.command('seek', '0', 'absolute+exact'); hostSeek = 4; } else native.command('playlist-prev', 'weak');
+        if (dropped?.resume) native.set('pause', 'no');
+        break;
+      }
       case 'queue-jump': {
         // By entry, not song id: in [A, B, A] the second A is a different entry from the first.
         if (playableQueue[action.index]?.entry !== action.entryId) throw new Error('The queue changed before that song could play. Try again.');

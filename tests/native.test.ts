@@ -400,6 +400,28 @@ describe('host snapshot lifecycle', () => {
     expect(native.command).not.toHaveBeenCalledWith('seek', '10', 'absolute+exact');
   });
 
+  it('starts the song again on Previous past three seconds, or on the first song, and goes back a song otherwise', async () => {
+    const { sends, command, native } = await mockHost();
+    sends[0].callback(null);
+    const tracks = ['first', 'second'].map(id => ({ location: `/${id}.wav`, track: {
+      id, title: id, artist: '', album: '', duration: 90, source: 'local' as const,
+      sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null,
+    } }));
+    command({ id: 1, action: { type: 'queue', tracks } });
+    const at = (index: number, seconds: number) => native.number.mockImplementation(name => ({ 'playlist-pos': index, 'time-pos': seconds })[name as 'playlist-pos'] ?? null);
+    const previous = (id: number) => { native.command.mockClear(); command({ id, action: { type: 'previous' } }); return native.command.mock.calls; };
+    at(1, 12);
+    expect(previous(2)).toEqual([['seek', '0', 'absolute+exact']]);
+    at(1, 2.5);
+    expect(previous(3)).toEqual([['playlist-prev', 'weak']]);
+    // The first song, with nothing before it: it starts again however far in it is.
+    at(0, 1);
+    expect(previous(4)).toEqual([['seek', '0', 'absolute+exact']]);
+    // Under repeat all the last song comes before it.
+    command({ id: 5, action: { type: 'repeat', mode: 'all' } });
+    expect(previous(6)).toEqual([['playlist-prev', 'weak']]);
+  });
+
   it('switches output only to the system default or a device mpv lists now', async () => {
     const { sends, command, native } = await mockHost();
     const dac = { name: 'alsa/plughw:CARD=DAC', description: 'USB DAC' };
