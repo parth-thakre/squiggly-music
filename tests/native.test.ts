@@ -185,6 +185,28 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('queue editing in real libmpv
   });
 });
 
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('streaming quality in real libmpv', () => {
+  it('plays the next song from its new stream, though mpv had already opened the old one', async () => {
+    const [first, original, smaller] = await Promise.all([wavFixture(2), wavFixture(6), wavFixture(3)]);
+    const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+    await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+    const item = (id: string, location: string) => ({ location, track: { id, title: id, artist: '', album: '', duration: null, source: 'navidrome' as const,
+      sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null } });
+    send({ id: 1, action: { type: 'queue', tracks: [item('a', first), item('b', original)] } });
+    await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
+    // Long enough for mpv to open the next song early (prefetch-playlist).
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const entryId = snapshots.at(-1)!.entryIds[1];
+    send({ id: 2, action: { type: 'queue-relocate', entries: [{ entryId, item: { ...item('b', smaller), kbps: 128 } }] } });
+    await expect.poll(() => replies.has(2)).toBe(true);
+    expect(replies.get(2)).toBeNull();
+    expect(snapshots.at(-1)).toMatchObject({ currentIndex: 0, playing: true, entryIds: [expect.any(String), entryId] });
+    await expect.poll(() => snapshots.at(-1)?.currentIndex, { timeout: 5000 }).toBe(1);
+    await expect.poll(() => snapshots.at(-1)?.duration).toBeCloseTo(3, 0);
+    expect(snapshots.at(-1)!.streamKbps).toBe(128);
+  });
+});
+
 describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('kept songs in real libmpv', () => {
   it('says a kept song plays from the device only while mpv has its file open, and never shows the path', async () => {
     const file = await wavFixture(8);
@@ -642,6 +664,32 @@ describe('queue editing', () => {
     expect(native.command.mock.calls.at(-1)).toEqual(['loadfile', '/z.flac', 'append']);
     expect(native.set).not.toHaveBeenCalledWith('pause', 'yes');
     expect(native.set.mock.calls.filter(([name]) => name === 'playlist-pos')).toEqual([['playlist-pos', '1']]);
+  });
+
+  it('gives queued songs a new stream in place when the streaming quality changes, but not the one playing', async () => {
+    const { run, reply, order, snapshot, mpv, native } = await editableHost();
+    const ids = snapshot().entryIds;
+    const smaller = (id: string) => ({ ...playable(id), location: `http://127.0.0.1:9/${id}`, kbps: 128 });
+    native.command.mockClear();
+    expect(reply(run({ type: 'queue-relocate', entries: [
+      { entryId: ids[0], item: smaller('a') }, { entryId: ids[1], item: smaller('b') }, { entryId: ids[3], item: smaller('d') },
+      // Gone since: skipped.
+      { entryId: 'gone.1', item: smaller('x') },
+    ] }))).toMatchObject(ok);
+    expect(mpv.locations()).toEqual(['http://127.0.0.1:9/a', '/b.flac', '/c.flac', 'http://127.0.0.1:9/d']);
+    // Same songs, same ids, same place; playback never moved.
+    expect(order()).toEqual(['a', 'b', 'c', 'd']);
+    expect(snapshot().entryIds).toEqual(ids);
+    expect(snapshot().currentIndex).toBe(1);
+    expect(mpv.current()).toBe(1);
+    expect(native.set).not.toHaveBeenCalledWith('pause', 'yes');
+    // The new entry goes in first, so the old one is always the one after it.
+    expect(native.command.mock.calls.slice(0, 3)).toEqual([['loadfile', 'http://127.0.0.1:9/a', 'append'], ['playlist-move', '4', '0'], ['playlist-remove', '1']]);
+    // Back to the original: only the songs that changed are touched.
+    native.command.mockClear();
+    run({ type: 'queue-relocate', entries: [{ entryId: ids[2], item: playable('c') }, { entryId: ids[3], item: playable('d') }] });
+    expect(mpv.locations()).toEqual(['http://127.0.0.1:9/a', '/b.flac', '/c.flac', '/d.flac']);
+    expect(native.command.mock.calls.filter(([name]) => name === 'loadfile')).toEqual([['loadfile', '/d.flac', 'append']]);
   });
 
   it('inserts before an entry for a drop onto the queue, and the playing song keeps playing', async () => {

@@ -3,7 +3,7 @@ import { emptyAudio, emptyPlayer, listedDevice, type RepeatMode } from '../core/
 import { preceding, RESTART_AFTER, shuffleOrder } from '../core/playOrder';
 import { NativePlayer } from './native';
 import { clearPlayerSession } from './session';
-import { editQueue, QUEUE_LIMIT, shuffleQueue } from './queue';
+import { editQueue, QUEUE_LIMIT, relocateEntry, shuffleQueue } from './queue';
 import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 
 // A standalone Node process keeps Chromium and its native libraries out of this
@@ -472,6 +472,21 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         try { editQueue(native, playableQueue, !reloadPlaylistAfterStop, action.type === 'queue-add' ? { ...action, tracks: action.tracks.map(toEntry) } : action); }
         finally {
           publishQueue(); relaxPrefetch();
+          player.currentIndex = reloadPlaylistAfterStop ? -1 : native.number('playlist-pos') ?? -1;
+        }
+        break;
+      case 'queue-relocate':
+        try {
+          for (const { entryId, item } of action.entries) {
+            const index = playableQueue.findIndex(queued => queued.entry === entryId);
+            const queued = playableQueue[index];
+            // Gone since, or already streaming this way.
+            if (!queued || queued.track.id !== item.track.id || (queued.kbps === item.kbps && queued.kept === item.kept)) continue;
+            if (!reloadPlaylistAfterStop && index === native.number('playlist-pos')) continue;
+            relocateEntry(native, playableQueue, !reloadPlaylistAfterStop, index, { ...item, track: queued.track, entry: entryId });
+          }
+        } finally {
+          publishQueue();
           player.currentIndex = reloadPlaylistAfterStop ? -1 : native.number('playlist-pos') ?? -1;
         }
         break;

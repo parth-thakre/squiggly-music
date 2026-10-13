@@ -230,8 +230,8 @@ const playableOf = (client: SubsonicClient, track: Track) => track.source === 's
   : Effect.succeed(playable(client, track));
 // A server song: its kept file when this computer has one (online too, which saves the download),
 // otherwise its stream: the original, or an MP3 at a lower quality (Settings › Streaming quality)
-// through the relay. Songs queued before a keep finished, or before the setting changed, stay as
-// they were queued.
+// through the relay. Songs queued before a keep finished stay as they were queued; a change to the
+// setting reaches the queued songs too (update-settings).
 function playable(client: SubsonicClient, track: Track): PlayableTrack {
   const picked = pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
   const kbps = reducedKbps(settings.value.streamQuality);
@@ -805,6 +805,14 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); }
+    // Songs already queued stream at the new quality from the next one on. The one playing keeps its
+    // stream: switching it would start it again.
+    if (next.streamQuality !== previous.streamQuality && server && host !== null && state.player.engine === 'ready') {
+      const client = server, { queue, entryIds, currentIndex } = state.player;
+      const entries = queue.flatMap((track, index) => track.source === 'navidrome' && index !== currentIndex && entryIds[index]
+        ? [{ entryId: entryIds[index], item: playable(client, track) }] : []);
+      if (entries.length) yield* Effect.ignore(send({ type: 'queue-relocate', entries }));
+    }
     // Plays waiting to be reported go when reporting is turned off.
     if (!next.reportPlays) reports?.clear();
     // A new limit shows at once. Lowering it never removes anything kept.

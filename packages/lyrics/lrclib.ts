@@ -1,4 +1,4 @@
-import { Effect, Schema } from 'effect';
+import { Effect, Schedule, Schema } from 'effect';
 import type { Lyrics, LyricsQuery } from '../core/contracts';
 import { attachSpaces, type LyricLines, lineSpan, round, timeWords, weightOf } from './words';
 
@@ -101,6 +101,7 @@ type LrclibRecord = Schema.Schema.Type<typeof RecordSchema>;
 export const lrclibUserAgent = 'Squiggly Music (https://github.com/parth-thakre)';
 export interface LrclibOptions { baseUrl?: string; fetch?: typeof globalThis.fetch }
 class LookupError extends Error {}
+class BusyError extends LookupError {}
 const failed = 'Lyrics lookup failed. Try again later.';
 
 function fromRecord(record: LrclibRecord): Lyrics | null {
@@ -129,6 +130,8 @@ export function lrclibLyrics(query: LyricsQuery, options: LrclibOptions = {}): E
       const reader = response.body?.getReader();
       try {
         if (response.status === 404) return null;
+        // LRCLIB answers 503 ("ServerOverloaded") or 429 when it's busy, for a fair share of requests.
+        if (response.status === 503 || response.status === 429) throw new BusyError('The lyrics service is busy. Try again in a moment.');
         if (!response.ok || !reader) throw new LookupError(failed);
         const chunks: Uint8Array[] = [];
         let total = 0;
@@ -147,7 +150,7 @@ export function lrclibLyrics(query: LyricsQuery, options: LrclibOptions = {}): E
     },
     // Service error text is never forwarded.
     catch: error => error instanceof LookupError ? error : new LookupError(failed),
-  });
+  }).pipe(Effect.retry({ times: 2, schedule: Schedule.spaced('1 second'), while: error => error instanceof BusyError }));
   const title = query.title.trim(), artist = query.artist.trim(), album = query.album.trim();
   if (!title || !artist) return Effect.succeed(null);
   const decode = <A, I>(schema: Schema.Schema<A, I>) => (body: unknown) => body === null ? Effect.succeed(null)

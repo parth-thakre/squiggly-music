@@ -90,6 +90,25 @@ describe('LRCLIB', () => {
     expect(Either.isLeft(result) && result.left.message).toMatch(/^(Lyrics lookup failed|The lyrics service sent)/);
     expect(String(Either.isLeft(result) && result.left)).not.toContain('secret-marker');
   });
+  it('asks again while the service is busy, then says it is busy', async () => {
+    vi.useFakeTimers();
+    try {
+      const busy = () => Response.json({ message: 'The server is busy, please retry in a moment', name: 'ServerOverloaded', statusCode: 503 }, { status: 503 });
+      let refusals = 2;
+      const { mock, options } = service({ '/api/get': () => refusals-- > 0 ? busy() : Response.json(record()) });
+      const found = run(lrclibLyrics(query, options));
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(await found).toMatchObject({ right: { synced: true, lines: [{ text: 'Synced one' }, { text: 'Synced two' }] } });
+      expect(mock).toHaveBeenCalledTimes(3);
+      // Still busy after two more tries: it says so, and stops asking.
+      const always = service({ '/api/get': busy, '/api/search': busy });
+      const refused = run(lrclibLyrics(query, always.options));
+      await vi.advanceTimersByTimeAsync(2000);
+      const result = await refused;
+      expect(Either.isLeft(result) && result.left.message).toBe('The lyrics service is busy. Try again in a moment.');
+      expect(always.mock).toHaveBeenCalledTimes(3);
+    } finally { vi.useRealTimers(); }
+  });
   it('fails with a local message on transport errors and times out after 8 seconds', async () => {
     const failing = vi.fn(() => Promise.reject(new Error('http://lrclib.test/?secret-marker')));
     const result = await run(lrclibLyrics(query, { fetch: failing as unknown as typeof fetch }));

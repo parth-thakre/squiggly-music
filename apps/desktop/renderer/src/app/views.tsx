@@ -811,7 +811,7 @@ export function SettingsView() {
           </select>
         </label>
         <label className="setting choice">
-          <span><strong>Streaming quality</strong><span>On a slow connection, Navidrome can send a smaller MP3 instead of the original file. It applies to songs you play after changing it. Songs kept on this computer always play from their file.</span></span>
+          <span><strong>Streaming quality</strong><span>On a slow connection, Navidrome can send a smaller MP3 instead of the original file. A change applies from the next song; the one playing keeps its stream. Songs kept on this computer always play from their file.</span></span>
           <select value={settings.streamQuality} onChange={event => void updateSettings({ streamQuality: event.target.value === 'original' ? 'original' : Number(event.target.value) as StreamQuality })}>
             {STREAM_QUALITIES.map(quality => <option key={quality} value={quality}>{quality === 'original' ? 'Original file' : `MP3, ${quality} kbps`}</option>)}
           </select>

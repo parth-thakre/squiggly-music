@@ -185,6 +185,13 @@ function pass(answer: Response, body: Body, response: ServerResponse, head: bool
   return finish(body, response, head, Infinity);
 }
 
+// Until the player wants more, or has gone. mpv stops reading once its cache is full, so a song
+// waits here many times; each wait takes both listeners off again.
+const drained = (response: ServerResponse) => new Promise<void>(resolve => {
+  const done = () => { response.off('drain', done); response.off('close', done); resolve(); };
+  response.once('drain', done).once('close', done);
+});
+
 // Sends the body on, at most `limit` bytes; a HEAD request gets the headers alone.
 async function finish(body: Body, response: ServerResponse, head: boolean, limit: number) {
   if (head) { body.cancel(); response.end(); return; }
@@ -192,7 +199,7 @@ async function finish(body: Body, response: ServerResponse, head: boolean, limit
     for await (const chunk of body.chunks()) {
       const part = chunk.length > limit ? chunk.subarray(0, limit) : chunk;
       limit -= part.length;
-      if (!response.write(part)) await new Promise(resolve => { response.once('drain', resolve); response.once('close', resolve); });
+      if (!response.write(part)) await drained(response);
       if (limit <= 0 || response.destroyed) break;
     }
   } finally {

@@ -132,6 +132,37 @@ describe('the stream relay', () => {
     expect(asked).toHaveLength(0);
   });
 
+  it('waits for a player that reads slowly as often as it needs to', async () => {
+    // An hour-long conversion, read a little at a time, as mpv does once its cache is full.
+    const hour = 3600 * PER_SECOND;
+    const chunk = Buffer.from(Array.from({ length: PER_SECOND }, (_, i) => audioByte(i)));
+    let sent = 0;
+    asked.length = 0;
+    relay = await startStreamRelay((async () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(tag())); },
+      pull(controller) { if (sent >= hour) controller.close(); else { controller.enqueue(new Uint8Array(chunk)); sent += chunk.length; } },
+    }), { headers: { 'content-type': 'audio/mpeg', 'accept-ranges': 'none', 'x-content-duration': '3600' } })) as typeof fetch);
+    const location = relay.location('https://music.example/rest/stream?id=s1&format=mp3&maxBitRate=128', 3600);
+    const warnings: Error[] = [];
+    const warned = (warning: Error) => warnings.push(warning);
+    process.on('warning', warned);
+    try {
+      const read = await new Promise<number>((resolve, reject) => {
+        request(location, response => {
+          let bytes = 0;
+          response.on('data', (data: Buffer) => {
+            bytes += data.length;
+            response.pause();
+            setTimeout(() => response.resume(), 1);
+          }).on('end', () => resolve(bytes)).on('error', reject);
+        }).on('error', reject).end();
+      });
+      expect(read).toBe(TAG + hour);
+      await new Promise(resolve => setImmediate(resolve));
+      expect(warnings.map(warning => warning.name)).not.toContain('MaxListenersExceededWarning');
+    } finally { process.off('warning', warned); }
+  }, 30_000);
+
   it('reads an MP3 frame\'s bitrate', () => {
     expect(mp3Kbps(Uint8Array.from([0xff, 0xfb, 0x90, 0x64]))).toBe(128);
     expect(mp3Kbps(Uint8Array.from([0xff, 0xfb, 0xe0, 0x64]))).toBe(320);

@@ -19,6 +19,9 @@ export type HostRequest = {
     | { type: 'queue'; tracks: PlayableTrack[]; startIndex?: number; startPosition?: number; paused?: boolean; ordered?: boolean }
     // Plays one queue entry, refused unless entryId still names the entry at that index.
     | { type: 'queue-jump'; index: number; entryId: string }
+    // New locations for queued songs, by entry id, after Settings › Streaming quality changed. Each
+    // keeps its id and place; the song playing keeps its stream, and one gone since is skipped.
+    | { type: 'queue-relocate'; entries: { entryId: string; item: PlayableTrack }[] }
     | { type: 'clear-session' } | { type: 'exclusive'; on: boolean } | QueueEdit | PlayerCommand;
 };
 export type HostMessage =
