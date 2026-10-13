@@ -179,6 +179,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 /* Until its songs are drawn, an automatic playlist is an outline rather than a printed sleeve. */
 .mix-tile.cover-type { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); }
 .mosaic { display: grid; grid-template-columns: 1fr 1fr; }
+.mosaic.single { grid-template-columns: 1fr; }
 .mosaic img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 30px 22px; margin: 0; padding: 0; list-style: none; }

@@ -30,6 +30,27 @@ test.describe('mixes', () => {
     await expect.poll(() => fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 8)).toHaveLength(9);
   });
 
+  test('a decade with songs from only a few records shows a record\'s sleeve, not a blank', async ({ app, page }) => {
+    // The 1990s' draw comes from two records, as a little-played decade's might.
+    await page.route('**/api/randomSongs', async route => {
+      const [options] = route.request().postDataJSON() as [{ size: number; fromYear?: number }];
+      const response = await route.fetch();
+      if (options.fromYear !== 1990 || options.size !== 50) return route.fulfill({ response });
+      const result = await response.json() as { ok: boolean; value: { albumId: string }[] };
+      const two = [...new Set(result.value.map(track => track.albumId))].slice(0, 2);
+      return route.fulfill({ response, json: { ...result, value: result.value.filter(track => two.includes(track.albumId)) } });
+    });
+    await app.signIn();
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('m');
+    const nineties = group(app, 'By decade').locator('li').filter({ hasText: 'The 1990s' });
+    await expect(nineties.locator('.mix-tile.single img')).toHaveCount(1);
+    await expect(nineties.locator('.mix-tile.cover-type')).toHaveCount(0);
+    // A decade with four records or more keeps its square of four.
+    await expect(group(app, 'By decade').locator('li').filter({ hasText: 'The 2020s' }).locator('.mix-tile.mosaic:not(.single) img')).toHaveCount(4);
+  });
+
   test('without listening history the history group is left out', async ({ app, page }) => {
     await app.signIn();
     await app.main.focus();

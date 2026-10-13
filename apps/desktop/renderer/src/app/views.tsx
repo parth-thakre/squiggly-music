@@ -621,7 +621,12 @@ function MixTile({ mix, tracks, large = false, travels = false }: { mix: Mix; tr
   const list = tracks ?? drawn ?? [];
   const covers = [...new Map(list.filter(t => t.coverArt).map(t => [t.albumId ?? t.coverArt, t.coverArt!])).values()].slice(0, 4);
   const classes = `cover mix-tile${large ? ' head-cover' : ''}${travels ? ' morph' : ''}`;
-  if (covers.length < 4) return <div ref={tile} className={`${classes} cover-type`} aria-hidden="true"><span>{mix.name}</span></div>;
+  // Four records' sleeves in a square; with fewer (a decade with little in it), the first record's
+  // whole; with none yet, or none at all, the mix's name.
+  if (!covers.length) return <div ref={tile} className={`${classes} cover-type`} aria-hidden="true"><span>{mix.name}</span></div>;
+  if (covers.length < 4) return <div ref={tile} className={`${classes} mosaic single`} aria-hidden="true">
+    <img src={api.coverUrl(covers[0], large ? 600 : 300)} alt="" loading="lazy" decoding="async" />
+  </div>;
   return <div ref={tile} className={`${classes} mosaic`} aria-hidden="true">
     {covers.map(id => <img key={id} src={api.coverUrl(id, large ? 300 : 80)} alt="" loading="lazy" decoding="async" />)}
   </div>;
