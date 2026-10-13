@@ -229,16 +229,37 @@ const playableOf = (client: SubsonicClient, track: Track) => track.source === 's
   ? client.stationLocation(stationIdOf(track)).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
   : Effect.succeed(playable(client, track));
 // A server song: its kept file when this computer has one (online too, which saves the download),
-// otherwise its stream: the original, or an MP3 at a lower quality (Settings › Streaming quality)
-// through the relay. Songs queued before a keep finished stay as they were queued; a change to the
-// setting reaches the queued songs too (update-settings).
+// otherwise its stream through the relay, which downloads it whole as it plays: the original, or
+// an MP3 at a lower quality (Settings › Streaming quality). Songs queued before a keep finished
+// stay as they were queued; a change to the setting reaches the queued songs too (update-settings).
 function playable(client: SubsonicClient, track: Track): PlayableTrack {
   const picked = pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
+  if (picked.kept || track.source !== 'navidrome') return picked;
   const kbps = reducedKbps(settings.value.streamQuality);
-  if (picked.kept || track.source !== 'navidrome' || kbps === null) return picked;
-  const stream = client.streamLocation(track.id, 'mp3', kbps);
-  // Without the relay the MP3 still plays, seekable only as far as it has downloaded.
-  return { track, location: relay ? relay.location(stream, track.duration) : stream, kbps };
+  const stream = kbps === null ? picked.location : client.streamLocation(track.id, 'mp3', kbps);
+  // Without the relay the song streams as it is; an MP3 then seeks only as far as it has downloaded.
+  const location = relay ? relay.location(stream, track.duration, streamKey(track.id, kbps)) : stream;
+  return kbps === null ? { ...picked, location } : { track, location, kbps };
+}
+// A song at a quality, as the relay knows its download.
+const streamKey = (id: string, kbps: number | null) => kbps === null ? id : `${id}@${kbps}`;
+// Songs queued after the one playing download ahead (the relay's want), so a slow or dropped
+// connection later doesn't stall them. Kept songs and stations don't download.
+const DOWNLOAD_AHEAD = 3;
+function downloadAhead() {
+  if (!relay) return;
+  const { queue, currentIndex, repeat, engine } = state.player;
+  const kbps = reducedKbps(settings.value.streamQuality);
+  const keys: string[] = [];
+  if (engine === 'ready' && server && currentIndex >= 0 && repeat !== 'one') {
+    for (let step = 1; step < queue.length && keys.length < DOWNLOAD_AHEAD; step++) {
+      const index = currentIndex + step;
+      if (index >= queue.length && repeat !== 'all') break;
+      const track = queue[index % queue.length];
+      if (track.source === 'navidrome' && !keptStore?.locate(track.id)) keys.push(streamKey(track.id, kbps));
+    }
+  }
+  relay.want(keys);
 }
 // A library track by id: one a window was shown this session, or a kept one.
 const trackById = (id: string) => knownTracks.get(id) ?? keptStore?.track(id);
@@ -332,6 +353,7 @@ function observePlayer() {
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
   // Kept files forgotten while queued go once they leave the queue.
   void keeper?.retryPending();
+  downloadAhead();
 }
 // Silent by design: failures appear only in operation metrics. A finished play that gets no
 // answer waits in plays.json for the server (PlayReports).
@@ -1211,7 +1233,10 @@ app.whenReady().then(async () => {
   await Promise.all([settings.load(), windowState.load(), account.load()]);
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
   await playModes.load();
-  relay = await startStreamRelay().catch(() => null);
+  relay = await startStreamRelay(fetch, {
+    cacheDir: join(userData, 'song-cache'),
+    onEvent: ({ name, ...data }) => remote.event(name, { ...data }, name === 'stream.failed'),
+  }).catch(() => null);
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   // What is kept, and plays waiting, are read before reconnecting: they decide whether the app
   // opens away when the server doesn't answer.

@@ -7,6 +7,10 @@ import type { HostMessage, HostRequest } from '../packages/player-mpv/protocol';
 import { emptyPlayer, type AudioDevice, type PlayerSnapshot } from '../packages/core/contracts';
 import { clearPlayerSession } from '../packages/player-mpv/session';
 import { libmpvMissing } from '../packages/player-mpv/libraries';
+import { startStreamRelay, type StreamRelay } from '../apps/desktop/main/streamRelay';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
 
 let worker: ChildProcess | undefined;
 let fixtureDirectory: string | undefined;
@@ -205,6 +209,40 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('streaming quality in real li
     await expect.poll(() => snapshots.at(-1)?.duration).toBeCloseTo(3, 0);
     expect(snapshots.at(-1)!.streamKbps).toBe(128);
   });
+});
+
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('downloading songs in real libmpv', () => {
+  it('plays on through a server stream that goes silent partway, from the relay\'s download', async () => {
+    const wav = await readFile(await wavFixture(6));
+    // Any answer that starts before two seconds of the song sends up to there, then nothing, open.
+    const cut = 44 + 48000 * 2 * 2;
+    const ranges: string[] = [];
+    const server = createServer((request, response) => {
+      const start = Number(/bytes=(\d+)-/.exec(request.headers.range ?? '')?.[1] ?? 0);
+      ranges.push(request.headers.range ?? 'all');
+      response.writeHead(request.headers.range ? 206 : 200, {
+        'content-type': 'audio/wav', 'accept-ranges': 'bytes', 'content-length': String(wav.length - start),
+        ...(request.headers.range ? { 'content-range': `bytes ${start}-${wav.length - 1}/${wav.length}` } : {}),
+      });
+      if (start < cut) response.write(wav.subarray(start, cut)); else response.end(wav.subarray(start));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    let relay: StreamRelay | undefined;
+    try {
+      relay = await startStreamRelay(fetch, { cacheDir: join(fixtureDirectory!, 'songs'), stallMs: 500 });
+      const location = relay.location(`http://127.0.0.1:${(server.address() as AddressInfo).port}/rest/stream?id=a&format=raw`, 6, 'a');
+      const { snapshots, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      send({ id: 1, action: { type: 'queue', tracks: [{ location, track: { id: 'a', title: 'a', artist: '', album: '', duration: 6, source: 'navidrome',
+        sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null } }] } });
+      await expect.poll(() => snapshots.at(-1)?.position ?? 0, { timeout: 12_000 }).toBeGreaterThan(5);
+      // Without the relay, libmpv waits out its network timeout (a minute) at two seconds.
+      expect(ranges.slice(0, 2)).toEqual(['all', `bytes=${cut}-`]);
+    } finally {
+      await relay?.close();
+      server.closeAllConnections(); server.close();
+    }
+  }, 20_000);
 });
 
 describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('kept songs in real libmpv', () => {

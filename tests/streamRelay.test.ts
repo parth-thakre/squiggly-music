@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { request } from 'node:http';
-import { mp3Kbps, startStreamRelay, type StreamRelay } from '../apps/desktop/main/streamRelay';
+import { mkdtemp, readdir, stat } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { mp3Kbps, startStreamRelay, type RelayEvent, type StreamRelay } from '../apps/desktop/main/streamRelay';
 
 // A Navidrome conversion of a 10-second song to a 128 kbps MP3 (16,000 bytes a second): an ID3v2
 // tag, then frames. Each audio byte says where it is in the song (its index mod 251), so a test
@@ -171,3 +174,148 @@ describe('the stream relay', () => {
     for (const bytes of [[0x49, 0x44, 0x33, 4], [0xff, 0xfb, 0xf0, 0x64], [0xff, 0xfd, 0x90, 0x64], [0xff, 0xfb]]) expect(mp3Kbps(Uint8Array.from(bytes))).toBeNull();
   });
 });
+
+// Original files, served in ranges as Navidrome does, by song id. A song in `quiet` sends that many
+// bytes of any answer that starts before them, then nothing more, without closing. One in `held`
+// stops there until let go.
+describe('downloading songs whole', () => {
+  const files: Record<string, Buffer> = {
+    a: Buffer.from(Array.from({ length: 300_000 }, (_, i) => i % 256)),
+    b: Buffer.from(Array.from({ length: 200_000 }, (_, i) => (i * 7) % 256)),
+    c: Buffer.from(Array.from({ length: 100_000 }, (_, i) => (i * 13) % 256)),
+  };
+  let quiet: Record<string, number> = {};
+  let held: Record<string, { at: number; release: Promise<void> }> = {};
+  let events: RelayEvent[] = [];
+  let cacheDir = '';
+  const ranged: Answer = (url, headers) => {
+    const id = url.searchParams.get('id')!, file = files[id];
+    const start = Number(/bytes=(\d+)-/.exec(headers.range ?? '')?.[1] ?? 0);
+    const stopAt = quiet[id] ?? held[id]?.at;
+    const hold = held[id];
+    let sent = false;
+    const body = stopAt !== undefined && start < stopAt
+      ? new ReadableStream<Uint8Array>({ async pull(controller) {
+        if (!sent) { sent = true; controller.enqueue(new Uint8Array(file.subarray(start, stopAt))); return; }
+        await (hold?.release ?? new Promise(() => {}));
+        controller.enqueue(new Uint8Array(file.subarray(stopAt))); controller.close();
+      } })
+      : new Uint8Array(file.subarray(start));
+    return new Response(body, { status: headers.range ? 206 : 200, headers: {
+      'content-type': 'audio/flac', 'accept-ranges': 'bytes', 'content-length': String(file.length - start),
+      ...(headers.range ? { 'content-range': `bytes ${start}-${file.length - 1}/${file.length}` } : {}),
+    } });
+  };
+  async function cached(answer: Answer, options: { stallMs?: number; cacheBytes?: number } = {}) {
+    asked.length = 0; quiet = {}; held = {}; events = [];
+    cacheDir = await mkdtemp(join(tmpdir(), 'squiggly-relay-'));
+    relay = await startStreamRelay((async (input: string | URL | Request, init?: RequestInit) => {
+      const url = new URL(String(input));
+      asked.push(url);
+      return answer(url, (init?.headers ?? {}) as Record<string, string>);
+    }) as typeof fetch, { cacheDir, ...options, onEvent: event => events.push(event) });
+    return (id: string) => relay!.location(`https://music.example/rest/stream?id=${id}&u=me&t=token&s=salt&format=raw`, null, id);
+  }
+  const requests = (id?: string) => asked.filter(url => !id || url.searchParams.get('id') === id).map(url => url.searchParams.get('id'));
+  const until = async (check: () => boolean) => { for (let i = 0; i < 500 && !check(); i++) await new Promise(resolve => setTimeout(resolve, 10)); expect(check()).toBe(true); };
+  const downloaded = (id: string) => events.some(event => event.name === 'stream.downloaded' && event.key === id);
+
+  it('downloads the song playing whole, and reads it from the file after', async () => {
+    const song = await cached(ranged);
+    // The same song at the same quality has one address, whatever credentials it's asked with.
+    expect(song('a')).toBe(song('a'));
+    const whole = await get(song('a'));
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get('content-length')).toBe('300000');
+    expect(whole.body).toEqual(files.a);
+    await until(() => downloaded('a'));
+    const part = await get(song('a'), 'bytes=1000-');
+    expect(part.status).toBe(206);
+    expect(part.headers.get('content-range')).toBe('bytes 1000-299999/300000');
+    expect(part.body).toEqual(files.a.subarray(1000));
+    // One download, and the read after came from its file.
+    expect(requests()).toEqual(['a']);
+    const [name] = await readdir(cacheDir);
+    expect((await stat(join(cacheDir, name))).size).toBe(300_000);
+  });
+
+  it('asks again from the byte it reached when a download goes quiet', async () => {
+    const song = await cached(ranged, { stallMs: 200 });
+    quiet.a = 100_000;
+    expect((await get(song('a'))).body).toEqual(files.a);
+    expect(asked.map(url => url.searchParams.get('id'))).toEqual(['a', 'a']);
+    expect(events.map(event => [event.name, event.bytes])).toEqual([['stream.stalled', 100_000], ['stream.downloaded', 300_000]]);
+  });
+
+  it('picks a conversion that goes quiet up from the second it reached', async () => {
+    cacheDir = await mkdtemp(join(tmpdir(), 'squiggly-relay-'));
+    let first = true;
+    asked.length = 0;
+    relay = await startStreamRelay((async (input: string | URL | Request) => {
+      const url = new URL(String(input));
+      asked.push(url);
+      const answer = converting(url, {});
+      if (!first) return answer;
+      first = false;
+      // Three seconds of the song, then silence.
+      const bytes = Buffer.from(await answer.arrayBuffer()).subarray(0, TAG + 3 * PER_SECOND);
+      return new Response(new ReadableStream({ start(controller) { controller.enqueue(new Uint8Array(bytes)); } }), { headers: answer.headers });
+    }) as typeof fetch, { cacheDir, stallMs: 200 });
+    const location = relay.location('https://music.example/rest/stream?id=s1&format=mp3&maxBitRate=128', SECONDS, 's1@128');
+    const whole = await get(location);
+    expect(whole.body).toEqual(Buffer.concat([tag(), audio(0)]).subarray(0, TAG + SECONDS * PER_SECOND));
+    expect(offsets()).toEqual([null, '3']);
+  });
+
+  it('downloads the songs queued next, one at a time, once the one playing has', async () => {
+    const song = await cached(ranged);
+    let release!: () => void;
+    held.a = { at: 150_000, release: new Promise<void>(resolve => { release = resolve; }) };
+    const playing = fetch(song('a'));
+    await until(() => requests().length === 1);
+    song('b'); song('c');
+    relay!.want(['b', 'c']);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    // Nothing queued downloads while the song playing still is.
+    expect(requests()).toEqual(['a']);
+    release();
+    expect(Buffer.from(await (await playing).arrayBuffer())).toEqual(files.a);
+    await until(() => downloaded('c'));
+    expect(events.filter(event => event.name === 'stream.downloaded').map(event => event.key)).toEqual(['a', 'b', 'c']);
+    // Each was asked for once, and plays from its file.
+    expect((await get(song('b'))).body).toEqual(files.b);
+    expect(requests()).toEqual(['a', 'b', 'c']);
+  });
+
+  it('stops a download no longer wanted, and goes on from where it was when it is again', async () => {
+    const song = await cached(ranged);
+    held.b = { at: 50_000, release: new Promise<void>(() => {}) };
+    song('b');
+    relay!.want(['b']);
+    await until(() => requests().length === 1);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    relay!.want([]);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    delete held.b;
+    relay!.want(['b']);
+    await until(() => downloaded('b'));
+    expect(asked.map(url => url.searchParams.get('id'))).toEqual(['b', 'b']);
+    expect((await get(song('b'))).body).toEqual(files.b);
+    expect(asked).toHaveLength(2);
+  });
+
+  it('lets the songs used longest ago go past the size limit, and every song go on sign-out', async () => {
+    const song = await cached(ranged, { cacheBytes: 450_000 });
+    for (const id of ['a', 'b', 'c']) { await get(song(id)); await until(() => downloaded(id)); }
+    // 600,000 bytes: the first song went.
+    await until(() => requests().length === 3);
+    await get(song('b')); await get(song('c'));
+    expect(requests()).toEqual(['a', 'b', 'c']);
+    await get(song('a'));
+    expect(requests()).toEqual(['a', 'b', 'c', 'a']);
+    relay!.forget();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(await readdir(cacheDir)).toEqual([]);
+  });
+});
+
