@@ -48,6 +48,12 @@ const invalidations = new Set<(prefix: string) => void>();
 export const onInvalidate = (listener: (prefix: string) => void) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; };
 // Read an answer that has already arrived, without asking for it.
 export const peek = <T,>(key: string) => settled.get(key) as Result<T> | undefined;
+// Put a fresher answer in place of one already shown, for answers refreshed in the background;
+// pages showing it take the new one.
+export function prime<T>(key: string, result: Result<T>) {
+  cache.set(key, Promise.resolve(result)); settled.set(key, result);
+  listeners.forEach(listener => listener(key));
+}
 
 // Everything the renderer remembers about one account. A different server or user must not
 // see the last one's records, stars, mixes, or pending edits where ids happen to overlap.
@@ -64,6 +70,7 @@ export function resetLibraryCaches() {
   epochListeners.forEach(listener => listener());
 }
 // Bumps on every reset, for state that lives outside useResource.
+export const libraryEpoch = () => epoch;
 export const useLibraryEpoch = () => useSyncExternalStore(listener => { epochListeners.add(listener); return () => { epochListeners.delete(listener); }; }, () => epoch);
 
 export function useResource<T>(key: string | null, loader: () => Promise<Result<T>>): Result<T> | undefined {

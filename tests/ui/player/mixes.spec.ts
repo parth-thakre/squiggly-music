@@ -51,6 +51,26 @@ test.describe('mixes', () => {
     await expect(group(app, 'By decade').locator('li').filter({ hasText: 'The 2020s' }).locator('.mix-tile.mosaic:not(.single) img')).toHaveCount(4);
   });
 
+  test('the decades found are there at once next time, on Home too, and looked for again meanwhile', async ({ app, fake, page }) => {
+    await app.signIn();
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('m');
+    await expect(names(app, 'By decade')).toHaveCount(4);
+    // Next time the server is slow to say which decades it has.
+    fake.delay('randomSongs', ...Array.from({ length: 9 }, () => 4000));
+    const before = fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 8).length;
+    await page.reload();
+    await expect(app.heading).toHaveText('Mixes');
+    await expect(names(app, 'By decade')).toHaveText(['The 2020s', 'The 2010s', 'The 2000s', 'The 1990s'], { timeout: 1500 });
+    // Looked for again all the same, in the background.
+    await expect.poll(() => fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 8).length).toBe(before + 9);
+    // Home shows them without looking for them itself.
+    await page.getByRole('button', { name: 'Squiggly home' }).click();
+    await expect(app.heading).toHaveText('Home');
+    await expect(app.main.getByRole('region', { name: 'Your mixes' }).locator('.grid-name')).toContainText(['The 2020s']);
+  });
+
   test('without listening history the history group is left out', async ({ app, page }) => {
     await app.signIn();
     await app.main.focus();

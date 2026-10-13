@@ -5,7 +5,7 @@ import type { RadioStation } from '../../../../../packages/core/contracts';
 import { stationTrack } from '../../../../../packages/core/stations';
 import { sinkSentence } from '../../../../../packages/core/sinks';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
-import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
+import { buildMixes, knownDecades, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, outputDescription, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
@@ -24,7 +24,7 @@ import { ExtensionsSettings } from './extensions';
 import { ExtensionSections } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
-import { invalidate, peek } from './library';
+import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
@@ -1197,8 +1197,7 @@ function HomeMixes() {
   const history = useResource(`albums:frequent:0:${SHELF}`, () => api.albums('frequent', 0, SHELF));
   // Wait for both, so the row doesn't reshuffle as they arrive.
   if (!genres || !history) return null;
-  const decades = peek<number[]>('decades');
-  const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0).slice(0, SHELF);
+  const mixes = buildMixes(genres.ok ? genres.value : [], knownDecades(), history.ok && history.value.length > 0).slice(0, SHELF);
   return <section className="shelf-section home-shelf" aria-labelledby="home-mixes">
     <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
     <ul className="grid">
