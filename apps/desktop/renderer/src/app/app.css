@@ -226,7 +226,8 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 }
 /* The row's play button holds the song's name, but takes a press anywhere on the row: its ::after
    covers it. The artists and the record are links lifted above that. */
-.track-play { display: flex; align-items: baseline; gap: 8px; flex: 0 1 auto; min-width: 0; padding: 0; background: none; border: 0; text-align: left; }
+/* Like the name it holds, it keeps its width: the credits give way first. */
+.track-play { display: flex; align-items: baseline; gap: 8px; flex: 0 0 auto; max-width: 100%; min-width: 0; padding: 0; background: none; border: 0; text-align: left; }
 .track-play::after { content: ''; position: absolute; inset: 0; }
 .track .credit .link, .track .album .link { position: relative; z-index: 1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: inherit; font-weight: inherit; }
 .with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr); }
