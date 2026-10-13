@@ -42,7 +42,7 @@ export class App {
   get signInPassword() { return this.page.getByLabel('Password'); }
   tracks(scope: Locator = this.main) { return scope.locator('ol.tracks > li'); }
   row(title: string, scope: Locator = this.main) { return this.tracks(scope).filter({ has: this.page.getByRole('button', { name: new RegExp(`^(Play|Pause|Resume) ${escape(title)}$`) }) }); }
-  rowButton(row: Locator) { return row.locator('button.track'); }
+  rowButton(row: Locator) { return row.locator('button.track-play'); }
   section(name: 'Records' | 'Artists' | 'Tracks' | 'Playlists' | 'Favorites' | 'Genres') { return this.page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: true }); }
 
   /** Signs in the way a browser does: the session cookie lands in this page's context. The app

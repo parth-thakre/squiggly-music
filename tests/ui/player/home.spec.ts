@@ -68,7 +68,7 @@ test.describe('home', () => {
     await app.page.goBack();
     await expect(app.heading).toHaveText('Home');
     // The sleeve now carries the playing mark before its name.
-    await quiet.locator('button:not(.play-over)').click();
+    await quiet.locator(':scope > button:not(.play-over)').click();
     await expect(app.heading).toHaveText('Quiet Harbor');
   });
 

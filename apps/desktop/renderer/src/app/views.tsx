@@ -261,10 +261,11 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
         draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
         <span className="grid-name">{album.id === nowAlbum && <Wave playing={playing} />}<span>{splitTitle(album.name).main}</span></span>
-        <span className="grid-sub">{album.artist}</span>
         {/* After the name, so the card's accessible name still starts with the record's. */}
         <ContainerMark kind="album" id={album.id} />
       </button>
+      {/* Below the card's button, which can't hold the artists' links. */}
+      <span className="grid-sub"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} /></span>
     </li>)}
   </ul>;
 }
@@ -1243,7 +1244,7 @@ const skipped = { artistCount: 0, albumCount: 0, songCount: 0 };
 const searchPage = (type: SearchType, offset: number, size: number): SearchOptions => type === 'artists' ? { ...skipped, artistCount: size, artistOffset: offset }
   : type === 'albums' ? { ...skipped, albumCount: size, albumOffset: offset } : { ...skipped, songCount: size, songOffset: offset };
 // What Enter in the search field focuses: the first song, record, or artist, in page order.
-const FIRST_RESULT = '.tracks .track, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
+const FIRST_RESULT = '.tracks .track-play, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
 // Long lists render only the rows near the viewport, so the first one on the page may not be the
 // list's first: a song row knows its index, and a record grid pads the rows above the window.
 const listStart = (result: HTMLElement) => {

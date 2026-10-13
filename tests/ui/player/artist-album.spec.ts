@@ -52,6 +52,31 @@ test.describe('artist and record pages', () => {
     await expect(page.locator('.deck .deck-title')).toHaveText(trackOf('tr-6-1').title);
   });
 
+  test('artists\' and records\' names in song lists and on record cards open their pages', async ({ app, page }) => {
+    const title = trackOf('tr-2-2').title;
+    await app.page.getByPlaceholder('Find anything').fill(title);
+    await app.page.getByPlaceholder('Find anything').press('Enter');
+    // Second Wind 2: a duet, each of its two artists a link of its own.
+    const duet = app.row(title);
+    await duet.getByRole('button', { name: 'Cinder Lane', exact: true }).click();
+    await expect(app.heading).toHaveText('Cinder Lane');
+    await page.goBack();
+    await app.row(title).getByRole('button', { name: 'Quiet Harbor', exact: true }).click();
+    await expect(app.heading).toHaveText('Quiet Harbor');
+    // Following a link doesn't play the song.
+    await expect(page.locator('.deck .deck-title')).toHaveCount(0);
+    // Anywhere else on the row still plays it: here, its number.
+    await page.goBack();
+    await app.row(title).click({ position: { x: 12, y: 20 } });
+    await expect(page.locator('.deck .deck-title')).toHaveText(title);
+
+    await app.section('Records').click();
+    await expect(app.heading).toHaveText('Records');
+    const card = app.main.locator('ul.grid > li').filter({ hasText: 'Amber Field' });
+    await card.locator('.grid-sub').getByRole('button', { name: 'Cinder Lane' }).click();
+    await expect(app.heading).toHaveText('Cinder Lane');
+  });
+
   test('a biography of broken HTML shows as text, with no tag left in it', async ({ app }) => {
     await openArtist(app, 'Cinder Lane');
     const bio = app.main.getByRole('region', { name: 'About' });

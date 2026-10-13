@@ -189,6 +189,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .grid-name { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: calc(14px * var(--text)); font-weight: 600; line-height: 1.3; }
 .grid-name > span, .grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .grid-sub { display: block; font-size: calc(13px * var(--text)); color: var(--soft); line-height: 1.35; }
+.grid-sub .link { display: inline; width: auto; color: inherit; font-weight: inherit; }
 /* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
    keyboard focus. Touch screens have no hover, so there it always shows, a little smaller. */
 .playable { position: relative; }
@@ -220,9 +221,14 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }
 .tracks li { display: flex; align-items: center; height: var(--row-height, 44px); }
 .track {
-  flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
-  height: 100%; padding: 0; background: none; border: 0; text-align: left; font-size: calc(15.5px * var(--text));
+  position: relative; flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
+  height: 100%; text-align: left; font-size: calc(15.5px * var(--text));
 }
+/* The row's play button holds the song's name, but takes a press anywhere on the row: its ::after
+   covers it. The artists and the record are links lifted above that. */
+.track-play { display: flex; align-items: baseline; gap: 8px; flex: 0 1 auto; min-width: 0; padding: 0; background: none; border: 0; text-align: left; }
+.track-play::after { content: ''; position: absolute; inset: 0; }
+.track .credit .link, .track .album .link { position: relative; z-index: 1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; color: inherit; font-weight: inherit; }
 .with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr); }
 .track .n { font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .n .wave { width: 20px; }

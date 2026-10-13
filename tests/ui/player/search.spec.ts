@@ -92,7 +92,7 @@ test.describe('search', () => {
     await field(app).fill('harbor');
     await field(app).press('Enter');
     await expect(app.heading).toHaveText('“harbor”');
-    await expect(records(app).locator('button:not(.play-over)').first()).toBeFocused();
+    await expect(records(app).locator(':scope > button:not(.play-over)').first()).toBeFocused();
     await expect(records(app).first()).toContainText('Quiet Harbor');
 
     await field(app).focus();
@@ -156,7 +156,7 @@ test.describe('search', () => {
     await expect(app.heading).toHaveText('“harbor”');
     await expect(app.main.locator('.status.loading')).toHaveText('Searching');
     await expect(records(app).first()).toContainText('Quiet Harbor', { timeout: 10_000 });
-    await expect(records(app).locator('button:not(.play-over)').first()).toBeFocused();
+    await expect(records(app).locator(':scope > button:not(.play-over)').first()).toBeFocused();
   });
 
   test('Enter leaves focus where it went if you move on before the results arrive', async ({ app, fake, page }) => {

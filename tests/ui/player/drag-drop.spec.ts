@@ -67,7 +67,9 @@ async function dropFiles(page: Page, names: string[], shiftKey = false) {
   }, { names, shiftKey });
 }
 
-const sleeve = (app: App, name: string) => app.main.getByRole('list').first().getByRole('button', { name: new RegExp(`^${escape(name)}`) });
+// A record's card on the Records page, not a song row's link to the record (the queue's rows have
+// those, and it may still be showing just after Records is clicked).
+const sleeve = (app: App, name: string) => app.main.locator('ul.grid').first().getByRole('button', { name: new RegExp(`^${escape(name)}`) });
 const playlistRow = (app: App, name: string) => app.main.locator('ul.rows > li').filter({ has: app.page.getByRole('button', { name: new RegExp(`^${escape(name)}`) }) });
 const queueButton = (app: App) => app.deck.getByRole('button', { name: 'Queue', exact: true });
 const notice = (app: App) => app.page.locator('.extension-notice');

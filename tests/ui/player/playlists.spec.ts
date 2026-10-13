@@ -66,10 +66,10 @@ test.describe('playlists', () => {
     await app.rowButton(app.row('Opening 3')).focus();
     await page.keyboard.press('Alt+ArrowUp');
     await settled(app, fake, ['tr-2-1', 'tr-3-1', 'tr-2-2', 'tr-2-1', 'tr-3-2']);
-    await expect(app.tracks().nth(1).locator('button.track')).toBeFocused();
+    await expect(app.tracks().nth(1).locator('button.track-play')).toBeFocused();
     await page.keyboard.press('Alt+ArrowUp');
     await settled(app, fake, ['tr-3-1', 'tr-2-1', 'tr-2-2', 'tr-2-1', 'tr-3-2']);
-    await expect(app.tracks().nth(0).locator('button.track')).toBeFocused();
+    await expect(app.tracks().nth(0).locator('button.track-play')).toBeFocused();
   });
 
   test('Move up from the menu reorders without dragging', async ({ app, fake }) => {
