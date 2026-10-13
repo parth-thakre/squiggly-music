@@ -279,8 +279,34 @@ async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8
   if (away()) return null;
   const client = server;
   if (!client) return null;
-  const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size))));
-  return Either.isRight(result) && server === client ? result.right : null;
+  return serverCover(client, id, size);
+}
+
+// Server covers this session has fetched, newest last, by id and then size. A window, the mini
+// player, the system's media controls, and the next song fetched early all ask for one sleeve at
+// different sizes; over a slow connection each crossing costs seconds, and the audio shares it. So
+// a size this already has, or is fetching, larger is cut from that one here instead. A failed
+// fetch isn't kept, so the next ask tries again.
+type CoverBytes = { bytes: Uint8Array<ArrayBuffer>; contentType: string };
+const serverCovers = new Map<string, Map<number, Promise<CoverBytes | null>>>();
+async function serverCover(client: SubsonicClient, id: string, size: number): Promise<CoverBytes | null> {
+  const sizes = serverCovers.get(id) ?? new Map<number, Promise<CoverBytes | null>>();
+  serverCovers.delete(id); serverCovers.set(id, sizes);
+  if (serverCovers.size > 40) serverCovers.delete(serverCovers.keys().next().value!);
+  const larger = [...sizes.keys()].filter(have => have >= size).sort((a, b) => a - b)[0];
+  const from = larger === undefined ? null : await sizes.get(larger)!;
+  if (from && larger === size) return from;
+  const wanted = from ? Promise.resolve(shrinkCover(from, size))
+    : Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size)))).then(result => Either.isRight(result) ? result.right : null);
+  sizes.set(size, wanted);
+  const cover = await wanted;
+  if (!cover && sizes.get(size) === wanted) sizes.delete(size);
+  return server === client ? cover : null;
+}
+function shrinkCover(cover: CoverBytes, size: number): CoverBytes {
+  const image = nativeImage.createFromBuffer(Buffer.from(cover.bytes));
+  if (image.isEmpty() || image.getSize().width <= size) return cover;
+  return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
 }
 
 const alive = (target: BrowserWindow | null): target is BrowserWindow => target !== null && !target.isDestroyed();
@@ -322,6 +348,7 @@ async function sendReport(trackId: string, event: 'started' | 'finished', at?: n
 function resetSessionState() {
   queueSync.reset(); plays.reset(); savedSong = null; savedQueues.clear();
   relay?.forget();
+  serverCovers.clear();
   artRequest = null;
   if (art) void rm(art.path, { force: true }).catch(() => undefined);
   art = null;

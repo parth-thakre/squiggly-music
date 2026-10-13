@@ -42,16 +42,36 @@ export function usePalette(coverArt: string | null | undefined): Palette {
   useEffect(() => {
     if (!coverArt) { setPalette(neutral); return; }
     let live = true;
-    let entry = palettes.get(coverArt);
-    if (!entry) {
-      entry = paletteFromImage(api.coverUrl(coverArt, 64)).catch(() => neutral);
-      palettes.set(coverArt, entry);
-      if (palettes.size > 200) palettes.delete(palettes.keys().next().value!);
-    }
-    void entry.then(p => { if (live) setPalette(p); });
+    void paletteOf(coverArt).then(p => { if (live) setPalette(p); });
     return () => { live = false; };
   }, [coverArt]);
   return palette;
+}
+function paletteOf(coverArt: string) {
+  let entry = palettes.get(coverArt);
+  if (!entry) {
+    entry = paletteFromImage(api.coverUrl(coverArt, 64)).catch(() => neutral);
+    palettes.set(coverArt, entry);
+    if (palettes.size > 200) palettes.delete(palettes.keys().next().value!);
+  }
+  return entry;
+}
+
+// The next song's sleeve and colours, fetched while this one plays, so they change with the music
+// rather than seconds after it on a slow connection. It waits a few seconds, after the song playing
+// has its own art and its stream has started. The image is held so the page keeps it.
+let early: HTMLImageElement | null = null;
+export function useNextCover(coverArt: string | null | undefined, size: number) {
+  useEffect(() => {
+    if (!coverArt) return;
+    const timer = setTimeout(() => {
+      void paletteOf(coverArt);
+      early = new Image();
+      early.decoding = 'async';
+      early.src = api.coverUrl(coverArt, size);
+    }, 4000);
+    return () => clearTimeout(timer);
+  }, [coverArt, size]);
 }
 
 // Real titles carry qualifiers: "(Original Motion Picture Soundtrack)", "- Single", "[From "Film"]".

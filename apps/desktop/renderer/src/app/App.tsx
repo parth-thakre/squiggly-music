@@ -5,7 +5,7 @@ import { current, currentEntry, optimisticVolume, player, usePlayer } from './pl
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
+import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
@@ -53,6 +53,8 @@ export function App() {
   const choosing = usePlayer(s => s.choosingServer);
   // The room takes the colour of the record that is playing, unless the theme fixes its colours.
   const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
+  // At the deck's size (see Deck).
+  useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), 600);
   useCommandKeys();
   useFileDrops();
   // On phones the status bar takes the room colour too.
