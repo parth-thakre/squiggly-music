@@ -101,7 +101,7 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', streamQuality: 'original', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
@@ -114,6 +114,9 @@ describe('desktop request schemas', () => {
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ miniOnTop: 'no' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: '' })).toThrow();
     expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ outputDevice: 'alsa/default\u0000' })).toThrow();
+    // The original file unless a lower quality was chosen, and only the qualities offered.
+    expect(Schema.decodeUnknownSync(SettingsFileSchema)({ streamQuality: 128 }).streamQuality).toBe(128);
+    for (const bad of ['128', 64, 'mp3', null]) expect(() => Schema.decodeUnknownSync(SettingsFileSchema)({ streamQuality: bad })).toThrow();
   });
 
   it('accepts only known, defined setting changes', () => {
@@ -121,6 +124,9 @@ describe('desktop request schemas', () => {
     expect(patch({ exclusiveOutput: true })).toEqual({ exclusiveOutput: true });
     expect(patch({ miniOnTop: false })).toEqual({ miniOnTop: false });
     expect(patch({ diagnostics: false })).toEqual({ diagnostics: false });
+    expect(patch({ streamQuality: 192 })).toEqual({ streamQuality: 192 });
+    expect(patch({ streamQuality: 'original' })).toEqual({ streamQuality: 'original' });
+    expect(() => patch({ streamQuality: 256 })).toThrow();
     expect(() => patch({ diagnostics: 'no' })).toThrow();
     expect(() => patch({ miniOnTop: undefined })).toThrow();
     expect(patch({})).toEqual({});

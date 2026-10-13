@@ -2,8 +2,9 @@ import type { PlayerCommand, PlayerSnapshot, Track } from '../core/contracts';
 
 // Private transport. Stream URLs and local paths never enter renderer snapshots.
 // kept: the location is a kept song's file on this computer, not the stream (only the signal-path
-// line uses it: PlayerSnapshot.fromDevice).
-export interface PlayableTrack { track: Track; location: string; kept?: true }
+// line uses it: PlayerSnapshot.fromDevice). kbps: the stream is an MP3 of at most that many kbps,
+// not the original (PlayerSnapshot.streamKbps).
+export interface PlayableTrack { track: Track; location: string; kept?: true; kbps?: number }
 export type QueueEdit =
   // A number inserts before the entry at that index (a song dropped onto the queue).
   | { type: 'queue-add'; tracks: PlayableTrack[]; where: 'next' | 'end' | number }

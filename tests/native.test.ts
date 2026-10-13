@@ -385,6 +385,18 @@ describe('host snapshot lifecycle', () => {
     expect(native.command).toHaveBeenCalledWith('stop', 'keep-playlist');
   });
 
+  it('says which songs stream as a smaller MP3, and only while one plays', async () => {
+    const { command, native, snapshots, deliver } = await mockHost();
+    deliver();
+    // mpv is on the third song (playlist-pos 2), the one queued as a 128 kbps MP3.
+    command({ id: 1, action: { type: 'queue', tracks: [playable('a'), playable('b'), { ...playable('c'), location: 'http://127.0.0.1:9/c', kbps: 128 }] } });
+    vi.advanceTimersByTime(250); deliver();
+    expect(snapshots().at(-1)!.player.streamKbps).toBe(128);
+    native.number.mockImplementation(name => ({ 'playlist-pos': 1, 'time-pos': 3, duration: 200, volume: 100 })[name] ?? null);
+    vi.advanceTimersByTime(250); deliver();
+    expect(snapshots().at(-1)!.player.streamKbps).toBeNull();
+  });
+
   it('rejects a seek after native playback advances to another track', async () => {
     const { sends, command, native } = await mockHost();
     sends[0].callback(null);
@@ -1381,16 +1393,22 @@ describe('restoring a saved queue', () => {
     expect(r.pauses()).toEqual(['yes', 'yes']);
     expect(r.starts()).toEqual(['30', 'none']);
     expect(r.last()).toMatchObject({ playing: false, position: 30 });
-    // A seek before mpv has opened the song is refused, and the saved position still holds.
+    // A seek before mpv has opened the song waits for it, in place of the saved position: the
+    // song opens there, shows there meanwhile, and plays once it's there.
     r.native.set.mockClear(); r.native.command.mockClear();
     r.run(resume());
-    const refused = r.run({ type: 'seek', seconds: 12, queueIndex: 0, trackId: 'a' });
-    expect(r.reply(refused)).toMatchObject({ error: expect.stringContaining('seek') });
-    expect(r.starts()).toEqual(['30', 'none', '30']);
-    r.opened(30);
+    const waits = r.run({ type: 'seek', seconds: 12, queueIndex: 0, trackId: 'a' });
+    expect(r.reply(waits)).toEqual({ type: 'reply', id: waits, error: null });
+    expect(r.starts()).toEqual(['30', 'none', '12']);
+    r.tick(1000);
+    expect(r.last()).toMatchObject({ position: 12, error: null });
+    expect(r.pauses()).toEqual(['yes']);
+    r.opened(12);
     r.tick();
     expect(r.pauses()).toEqual(['yes', 'no']);
-    expect(r.starts()).toEqual(['30', 'none', '30', 'none']);
+    expect(r.starts()).toEqual(['30', 'none', '12', 'none']);
+    // Opened there: only the seek mpv refused, none after it.
+    expect(r.seeks()).toEqual([['seek', '12', 'absolute+exact']]);
     // Once it's open (here at 0:00), a seek of the user's own plays from there once it lands.
     r.native.set.mockClear(); r.native.command.mockClear();
     r.run(resume());
@@ -1418,6 +1436,61 @@ describe('restoring a saved queue', () => {
     expect(r.pauses()).toEqual(['yes']);
     expect(r.seeks()).toEqual([]);
     expect(r.last().playing).toBe(false);
+    // mpv read the saved position before the seek came, so it opens there: then it seeks the
+    // usual way, showing the seek's position all along, and plays once that lands.
+    r.native.set.mockClear(); r.native.command.mockClear();
+    r.run(resume());
+    r.run({ type: 'seek', seconds: 12, queueIndex: 0, trackId: 'a' });
+    r.opened(30); r.seekable();
+    r.tick();
+    expect(r.seeks()).toEqual([['seek', '12', 'absolute+exact'], ['seek', '12', 'absolute+exact']]);
+    expect(r.last().position).toBe(12);
+    expect(r.pauses()).toEqual(['yes']);
+    landed(r.native);
+    r.tick();
+    expect(r.pauses()).toEqual(['yes', 'no']);
+  });
+
+  it('waits with a seek made while a slow server is still opening the song', async () => {
+    const r = await resuming();
+    r.run({ type: 'queue', tracks: ['a', 'b'].map(playable) });
+    r.tick();
+    const waits = r.run({ type: 'seek', seconds: 50, queueIndex: 0, trackId: 'a' });
+    expect(r.reply(waits)).toEqual({ type: 'reply', id: waits, error: null });
+    expect(r.starts()).toEqual(['50']);
+    // Not back to 0:00 while it opens, and never paused.
+    r.tick(2000);
+    expect(r.last()).toMatchObject({ position: 50, error: null });
+    r.opened(50);
+    r.tick();
+    expect(r.starts()).toEqual(['50', 'none']);
+    // Opened there: only the seek mpv refused, none after it.
+    expect(r.seeks()).toHaveLength(1);
+    expect(r.pauses()).not.toContain('yes');
+    // Opened at 0:00 anyway (the start option came too late): it seeks once mpv can.
+    r.native.set.mockClear(); r.native.command.mockClear();
+    r.select(1);
+    r.run({ type: 'seek', seconds: 40, queueIndex: 1, trackId: 'b' });
+    r.opened(0);
+    r.tick();
+    r.seekable();
+    r.tick();
+    expect(r.seeks()).toEqual([['seek', '40', 'absolute+exact'], ['seek', '40', 'absolute+exact']]);
+    expect(r.pauses()).toEqual([]);
+  });
+
+  it('gives up on a seek whose song never becomes seekable, and says so', async () => {
+    const r = await resuming();
+    // An mpv that won't take the start option, so the seek waits on the song being seekable.
+    const set = r.native.set.getMockImplementation()!;
+    r.native.set.mockImplementation((name: string, value: string) => { if (name === 'start' && value !== 'none') throw new Error('rejected'); set(name, value); });
+    r.run({ type: 'queue', tracks: ['a'].map(playable) });
+    r.run({ type: 'seek', seconds: 20, queueIndex: 0, trackId: 'a' });
+    r.tick(5000);
+    expect(r.last()).toMatchObject({ position: 20, error: null });
+    r.tick(7000);
+    expect(r.seeks()).toHaveLength(1);
+    expect(r.last().error).toMatch(/too long to open/);
   });
 
   // The output fallback (above) during a resume: the song whose output failed plays again once,

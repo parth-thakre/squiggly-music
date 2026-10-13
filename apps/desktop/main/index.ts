@@ -13,6 +13,7 @@ import iconPath from './assets/icon.png?asset';
 import { emptyPlayer, emptyDiagnostics, listedDevice, ONLINE } from '../../../packages/core/contracts';
 import { LAUNCH_WAIT, OUT_OF_REACH, PROBE_TIMEOUT, Reach, type ProbeOutcome } from '../../../packages/core/reach';
 import { PlayReports, type SendOutcome } from '../../../packages/core/plays';
+import { reducedKbps } from '../../../packages/core/streamQuality';
 import { KEPT_MESSAGES, keyOf, MB } from '../../../packages/core/kept';
 import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema, SaveM3uSchema } from '../../../packages/core/validation';
 import {
@@ -45,6 +46,7 @@ import { paintFrame } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
 import { startKept } from './keptBridge';
 import { remote } from './remoteDiagnostics';
+import { startStreamRelay, type StreamRelay } from './streamRelay';
 
 // Betas with remote diagnostics compiled in (remoteDiagnostics.ts); otherwise does nothing.
 remote.installEarly();
@@ -133,6 +135,8 @@ const sinks = new SinkWatch(query => readSink(query), { record: (ms, failed) => 
 let finalSession: { generation: number; client: SubsonicClient } | null = null;
 // Songs kept on this computer (<userData>/kept), and their downloads. Created at ready.
 let keptStore: KeptStore | null = null;
+// Makes songs streamed at a lower quality seekable (streamRelay.ts). Null until started, or if it couldn't.
+let relay: StreamRelay | null = null;
 let keeper: KeepManager | null = null;
 let keptPush: () => void = () => {};
 // Finished plays waiting for the server (<userData>/plays.json). Created at ready.
@@ -225,9 +229,16 @@ const playableOf = (client: SubsonicClient, track: Track) => track.source === 's
   ? client.stationLocation(stationIdOf(track)).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
   : Effect.succeed(playable(client, track));
 // A server song: its kept file when this computer has one (online too, which saves the download),
-// otherwise its stream. Songs queued before a keep finished stay streams.
+// otherwise its stream: the original, or an MP3 at a lower quality (Settings › Streaming quality)
+// through the relay. Songs queued before a keep finished, or before the setting changed, stay as
+// they were queued.
 function playable(client: SubsonicClient, track: Track): PlayableTrack {
-  return pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
+  const picked = pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
+  const kbps = reducedKbps(settings.value.streamQuality);
+  if (picked.kept || track.source !== 'navidrome' || kbps === null) return picked;
+  const stream = client.streamLocation(track.id, 'mp3', kbps);
+  // Without the relay the MP3 still plays, seekable only as far as it has downloaded.
+  return { track, location: relay ? relay.location(stream, track.duration) : stream, kbps };
 }
 // A library track by id: one a window was shown this session, or a kept one.
 const trackById = (id: string) => knownTracks.get(id) ?? keptStore?.track(id);
@@ -310,6 +321,7 @@ async function sendReport(trackId: string, event: 'started' | 'finished', at?: n
 // Per-session state that must not carry across an account switch or disconnect.
 function resetSessionState() {
   queueSync.reset(); plays.reset(); savedSong = null; savedQueues.clear();
+  relay?.forget();
   artRequest = null;
   if (art) void rm(art.path, { force: true }).catch(() => undefined);
   art = null;
@@ -1164,6 +1176,7 @@ app.whenReady().then(async () => {
   await Promise.all([settings.load(), windowState.load(), account.load()]);
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
   await playModes.load();
+  relay = await startStreamRelay().catch(() => null);
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   // What is kept, and plays waiting, are read before reconnecting: they decide whether the app
   // opens away when the server doesn't answer.

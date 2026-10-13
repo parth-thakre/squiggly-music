@@ -81,6 +81,9 @@ export class NativePlayer {
         idle: 'yes', 'keep-open': 'no', 'gapless-audio': 'weak', 'prefetch-playlist': 'yes',
         replaygain: 'no', volume: '100', 'volume-max': '100',
         'audio-display': 'no', 'tls-verify': 'yes',
+        // An MP3 without a seek index (one Navidrome converted, through the stream relay) is
+        // sought by its bitrate, one request, rather than read through to the position.
+        'demuxer-lavf-o': 'fflags=+fastseek',
       };
       for (const [name, value] of Object.entries(options)) {
         if (this.option(this.handle, name, value) < 0) throw new Error(`libmpv rejected required option: ${name}`);

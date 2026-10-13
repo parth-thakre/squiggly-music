@@ -448,6 +448,7 @@ builtin.menu({
       track.source === 'navidrome' && ratingText(ratingOf(track.id, track.userRating)),
       track.source !== 'navidrome' ? 'A file on this computer.'
         : deliveryOf(track) === 'mp3-fallback' ? 'This browser couldn’t decode the original, so it is playing a 320 kbps MP3 from Navidrome instead.'
+        : deliveryOf(track) === 'reduced' ? `Streaming a ${getPlayer().streamKbps} kbps MP3 from Navidrome, as set in Settings, not the original file.`
         : deliveryOf(track) === 'device' ? 'Playing the copy kept on this device.'
         : keptSupported && isKept(track.id) && current(getPlayer())?.id === track.id ? 'Kept on this device. This play streams from the server.'
         : keptSupported && isKept(track.id) ? 'Kept on this device.'

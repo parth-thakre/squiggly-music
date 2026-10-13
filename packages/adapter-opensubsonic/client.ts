@@ -871,10 +871,11 @@ export class SubsonicClient {
   }
   // Requests the original stream, but the UI does not claim the server honored it.
   // The location carries credentials and must stay inside the desktop and audio processes.
-  // Browsers that cannot decode the original (ALAC, some DSD) ask for a 320 kbps MP3 instead.
-  streamLocation(id: string, format: 'raw' | 'mp3' = 'raw') {
+  // Browsers that cannot decode the original (ALAC, some DSD) ask for a 320 kbps MP3 instead, and
+  // the desktop asks for a smaller MP3 on a slow connection (Settings › Streaming quality).
+  streamLocation(id: string, format: 'raw' | 'mp3' = 'raw', kbps = 320) {
     const location = this.endpointUrl('stream');
-    location.search = this.params(format === 'raw' ? { id, format } : { id, format, maxBitRate: '320' }).toString();
+    location.search = this.params(format === 'raw' ? { id, format } : { id, format, maxBitRate: String(kbps) }).toString();
     return location.href;
   }
   playable(track: Track): PlayableTrack { return { track, location: this.streamLocation(track.id) }; }

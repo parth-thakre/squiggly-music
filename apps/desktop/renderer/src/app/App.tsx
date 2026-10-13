@@ -392,6 +392,7 @@ function SignalPath({ track }: { track: Track }) {
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
+  const streamKbps = usePlayer(s => s.streamKbps);
   const codec = usePlayer(s => s.audio?.codec ?? null);
   const decoderRate = usePlayer(s => s.audio?.decoderRate ?? null);
   // Linux: the sound server resamples what mpv sends (AudioPath.sink). Nothing when it doesn't or isn't known.
@@ -399,6 +400,7 @@ function SignalPath({ track }: { track: Track }) {
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
   // A kept song is a file on this device: said only when the player really opened it.
   const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
+    delivery === 'reduced' && `Streaming a ${streamKbps} kbps MP3 of it, as set in Settings.`,
     delivery === 'device' && 'Playing the copy kept on this device.',
     volume < 100 && `Volume at ${volume}%.`, resampled, buffering && delivery !== 'device' && 'Buffering.'].filter(Boolean).join(' ');
   // A station: a live stream, and what mpv says it decodes, if anything. The server's list says

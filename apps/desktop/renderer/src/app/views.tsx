@@ -15,6 +15,7 @@ import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseD
 import { morph, nav, useRoute } from './route';
 import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from './settings';
 import { PLAY_COUNTS_AT, type PlayCountsAt } from '../../../../../packages/core/plays';
+import { STREAM_QUALITIES, type StreamQuality } from '../../../../../packages/core/streamQuality';
 import { Lyrics } from './lyrics';
 import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
@@ -778,7 +779,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt' | 'streamQuality'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -807,6 +808,12 @@ export function SettingsView() {
           <select value={settings.outputDevice} onChange={event => void updateSettings({ outputDevice: event.target.value })}>
             {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${outputDescription(settings.outputDevice) ?? settings.outputDevice} (disconnected)`}</option>}
             {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
+          </select>
+        </label>
+        <label className="setting choice">
+          <span><strong>Streaming quality</strong><span>On a slow connection, Navidrome can send a smaller MP3 instead of the original file. It applies to songs you play after changing it. Songs kept on this computer always play from their file.</span></span>
+          <select value={settings.streamQuality} onChange={event => void updateSettings({ streamQuality: event.target.value === 'original' ? 'original' : Number(event.target.value) as StreamQuality })}>
+            {STREAM_QUALITIES.map(quality => <option key={quality} value={quality}>{quality === 'original' ? 'Original file' : `MP3, ${quality} kbps`}</option>)}
           </select>
         </label>
         {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows and macOS support this; many Linux setups ignore it.')}

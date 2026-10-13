@@ -76,7 +76,8 @@ let exclusive = false;
 // the entry seeks once it's seekable. Changing the track or position cancels either.
 // `resume` plays once the position is reached: the queue loads paused so its first moments never play.
 // `sent`: the seek command went to mpv, which hasn't carried it out yet.
-let pendingSeek: { id: string; entry?: string; seconds: number; polls: number; resume: boolean; opening?: boolean; sent?: boolean } | null = null;
+// `asked`: the user's own seek, made while mpv was still opening the song. It waits the same way.
+let pendingSeek: { id: string; entry?: string; seconds: number; polls: number; resume: boolean; opening?: boolean; sent?: boolean; asked?: boolean } | null = null;
 // mpv's start option, which opens a file at a position. Two things use it: a resume (above), and a
 // song played again after its output failed (recoverOutput). It applies to every file mpv loads
 // while it's set (the next song too, and a prefetched one), so it's only ever set for one entry,
@@ -123,7 +124,7 @@ const port = {
 function resetTrack() {
   // Whatever plays next starts a new play, even the same entry.
   playEntry = undefined; startPending = false;
-  player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0, stationTitle: null, fromDevice: false,
+  player = { ...player, currentIndex: -1, playing: false, position: 0, duration: 0, stationTitle: null, fromDevice: false, streamKbps: null,
     audio: { ...emptyAudio(), requestedDevice: player.audio.requestedDevice,
       replayGain: player.audio.replayGain, filters: player.audio.filters, exclusiveRequested: player.audio.exclusiveRequested },
   };
@@ -346,7 +347,8 @@ function restoreSeek(seeks: number) {
   // About ten seconds of polls; slow servers may not have opened the stream yet.
   if (++seek.polls > 40) {
     pendingSeek = null;
-    if (seek.seconds > 0) player.error = 'Could not restore the saved position. The song starts from the beginning.';
+    if (seek.seconds > 0) player.error = seek.asked ? 'The song took too long to open to seek in it. Try again once it plays.'
+      : 'Could not restore the saved position. The song starts from the beginning.';
     if (seek.resume) native.set('pause', 'no');
     return;
   }
@@ -503,7 +505,19 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         }
         // A station is live: there is no position to seek to, so the seek does nothing.
         if (isStationAt(action.queueIndex)) { if (dropped?.resume) native.set('pause', 'no'); break; }
-        native.command('seek', String(action.seconds), 'absolute+exact'); hostSeek = 4;
+        try { native.command('seek', String(action.seconds), 'absolute+exact'); }
+        catch (error) {
+          // mpv refuses to seek in a song it hasn't opened yet, as on a slow server. The seek waits
+          // for it as a resume does: mpv opens the song there if it still can, or seeks once it has
+          // (checkOpening, restoreSeek), and meanwhile the song shows at the seek's position.
+          if (native.number('time-pos') !== null) throw error;
+          const entry = playableQueue[action.queueIndex]?.entry;
+          const opening = entry !== undefined && action.seconds > 0 && setStart(entry, action.seconds);
+          pendingSeek = { id: action.trackId, entry, seconds: action.seconds, polls: 0, resume: Boolean(dropped?.resume), opening, asked: true };
+          if (opening) watchOpening();
+          break;
+        }
+        hostSeek = 4;
         // Still paused from the resume: play once mpv has made this seek, as restoreSeek does.
         if (dropped?.resume) pendingSeek = { id: action.trackId, entry: playableQueue[action.queueIndex]?.entry, seconds: action.seconds, polls: 0, resume: true, sent: true };
         break;
@@ -559,9 +573,9 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
     port.postMessage({ type: 'reply', id, error: null });
   } catch (error) {
     // A refused seek, skip, or jump changed nothing, so the saved position still applies, and so
-    // does the start option for the entry it was set for. (mpv refuses a seek before the entry has
-    // opened.) An entry that read the start option while it was cleared opens at 0:00: a resume
-    // then seeks (checkOpening).
+    // does the start option for the entry it was set for. (A seek before the entry has opened
+    // waits for it instead: see 'seek'.) An entry that read the start option while it was cleared
+    // opens at 0:00: a resume then seeks (checkOpening).
     if (['queue-jump', 'seek', 'next', 'previous'].includes(action.type)) {
       if (droppedStart && !startFor && selectedEntry() === droppedStart.entry) setStart(droppedStart.entry, droppedStart.seconds);
       if (dropped && !pendingSeek) { pendingSeek = dropped; if (dropped.opening) watchOpening(); }
@@ -591,12 +605,15 @@ timer = setInterval(() => {
     // A resume waiting on its position shows as starting at the saved position: playing and
     // buffering, so the play button doesn't flash to paused and the position doesn't flash 0:00.
     const resuming = pendingSeek?.resume ? pendingSeek.seconds : null;
+    // A seek of the user's waiting on its song to open shows at its position too, so the deck
+    // doesn't go back to where the song was (or 0:00) for as long as a slow server takes.
+    const waiting = pendingSeek?.asked ? pendingSeek.seconds : null;
     const audio = native.audio();
     const playing = resuming !== null || native.property('pause') === 'no' && native.property('idle-active') === 'no';
     player = {
       ...player,
       playing,
-      position: resuming ?? native.number('time-pos') ?? 0,
+      position: resuming ?? waiting ?? native.number('time-pos') ?? 0,
       duration: native.number('duration') ?? 0,
       volume: native.number('volume') ?? 100,
       currentIndex: native.number('playlist-pos') ?? -1,
@@ -609,6 +626,7 @@ timer = setInterval(() => {
     // A kept song says it plays from this computer only when mpv really opened its file.
     const entry = playableQueue[player.currentIndex];
     player.fromDevice = entry?.kept === true && native.property('path') === entry.location;
+    player.streamKbps = player.fromDevice ? null : entry?.kbps ?? null;
     followLoop();
     // The start seek of an entry opening at the saved position is the host's own too.
     followPlay(pendingSeek?.opening ? { ...events, seeks: 0 } : events);
