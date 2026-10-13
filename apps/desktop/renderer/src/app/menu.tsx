@@ -112,6 +112,8 @@ export async function tracksOf(target: MenuTarget): Promise<Result<Track[]>> {
   }
   const artist = await load(`artist:${target.artist.id}`, () => api.artist(target.artist.id));
   if (!artist.ok) return artist;
+  // No records of their own: the songs that credit them (ArtistDetail.appearsOn).
+  if (!artist.value.albums.length) return { ok: true, value: artist.value.appearsOn?.tracks ?? [] };
   const details = await albumDetails(artist.value.albums.map(album => album.id));
   const missing = details.filter(detail => !detail.ok);
   if (missing.length) {

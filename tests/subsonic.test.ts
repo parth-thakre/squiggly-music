@@ -568,6 +568,46 @@ describe('credited artists', () => {
     const [solo] = (await Effect.runPromise(client().album('a'))).tracks;
     expect(solo.artists).toBeUndefined();
   });
+
+  it('finds the songs that credit an artist with no records of their own, and the records they are on', async () => {
+    const song = (id: string, album: string, artists: { id: string; name: string }[], extra: object = {}) => ({
+      id, title: id, album, albumId: `al-${album}`, coverArt: `al-${album}`, year: 2010, displayAlbumArtist: 'Vishal-Shekhar',
+      artist: artists.map(artist => artist.name).join(' & '), artistId: artists[0].id, artists, ...extra,
+    });
+    const sunidhi = { id: 'ar-sc', name: 'Sunidhi Chauhan' };
+    const mock = serve(() => Response.json(envelope({})));
+    mock.mockImplementation((input: string, init: RequestInit) => {
+      const endpoint = new URL(input).pathname.split('/').pop();
+      if (endpoint === 'getOpenSubsonicExtensions.view') return Promise.resolve(discoveryResponse());
+      // Navidrome lists only the records she's the record's artist of: none.
+      if (endpoint === 'getArtist.view') return Promise.resolve(Response.json(envelope({ artist: { id: 'ar-sc', name: 'Sunidhi Chauhan', albumCount: 0, coverArt: 'ar-ar-sc' } })));
+      const params = init.body as URLSearchParams;
+      expect([endpoint, params.get('query'), params.get('songCount'), params.get('albumCount')]).toEqual(['search3.view', 'Sunidhi Chauhan', '500', '0']);
+      return Promise.resolve(Response.json(envelope({ searchResult3: { song: [
+        song('sheila', 'Tees Maar Khan', [sunidhi, { id: 'ar-vd', name: 'Vishal Dadlani' }]),
+        // Matched by name, but credits another artist: not hers.
+        song('tribute', 'Covers', [{ id: 'ar-x', name: 'A Band' }], { title: 'Sunidhi Chauhan Tribute' }),
+        song('beedi', 'Omkara', [{ id: 'ar-vb', name: 'Vishal Bhardwaj' }, sunidhi]),
+        song('naina', 'Tees Maar Khan', [sunidhi]),
+      ] } })));
+    });
+    const detail = await Effect.runPromise(client().artist('ar-sc'));
+    expect(detail.albums).toEqual([]);
+    expect(detail.artist.coverArt).toBe('ar-ar-sc');
+    expect(detail.appearsOn?.tracks.map(track => track.id)).toEqual(['sheila', 'beedi', 'naina']);
+    expect(detail.appearsOn?.albums).toEqual([
+      expect.objectContaining({ id: 'al-Tees Maar Khan', name: 'Tees Maar Khan', artist: 'Vishal-Shekhar', songCount: 2, coverArt: 'al-Tees Maar Khan', year: 2010 }),
+      expect.objectContaining({ id: 'al-Omkara', name: 'Omkara', songCount: 1 }),
+    ]);
+  });
+
+  it('asks nothing more for an artist with records of their own', async () => {
+    const mock = servePayload({ artist: { id: 'ar-1', name: 'Master Saleem', album: [{ id: 'a', name: 'a' }] } });
+    const detail = await Effect.runPromise(client().artist('ar-1'));
+    expect(detail.albums.map(album => album.id)).toEqual(['a']);
+    expect(detail.appearsOn).toBeUndefined();
+    expect(mock.mock.calls.map(([url]) => new URL(url).pathname.split('/').pop())).toEqual(['getOpenSubsonicExtensions.view', 'getArtist.view']);
+  });
 });
 
 describe('artist information, genres, years and discs', () => {

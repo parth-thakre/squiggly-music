@@ -1,4 +1,4 @@
-import { expect, test, type App } from '../fixtures/test';
+import { expect, test, trackOf, type App } from '../fixtures/test';
 
 // An artist's biography and similar artists (from the server's agents, shown only when there are
 // some), and a record on more than one disc, grouped by disc in one song list.
@@ -33,6 +33,23 @@ test.describe('artist and record pages', () => {
     await expect(app.main.getByRole('heading', { name: 'Similar artists' })).toHaveCount(0);
     await page.goBack();
     await expect(app.heading).toHaveText('Ada Brass');
+  });
+
+  test('an artist with no records of their own shows and plays the songs that credit them', async ({ app, page }) => {
+    // Gale Guest sings on one song each of two other artists' records, as a singer on soundtracks does.
+    await page.route('**/api/cover?id=ar-guest**', route => route.fulfill({ contentType: 'image/svg+xml',
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="#a52"/></svg>' }));
+    await openArtist(app, 'Gale Guest');
+    await expect(app.main.locator('.byline')).toContainText('2 songs on 2 records');
+    // Their picture, as the server has it.
+    await expect(app.main.locator('.head img.head-cover.portrait')).toHaveAttribute('src', /id=ar-guest/);
+    await expect(app.main.locator('.head img.head-cover.portrait')).toHaveCSS('border-radius', '50%');
+    await expect(app.main.getByRole('heading', { name: 'Records' })).toHaveCount(0);
+    const appears = app.main.locator('.shelf-section', { has: page.getByRole('heading', { name: 'Appears on' }) });
+    await expect(appears.locator('.grid-name')).toHaveText(['Morning Freight', 'Velvet Static']);
+    await app.main.getByRole('button', { name: 'Play', exact: true }).click();
+    await expect(app.main.getByRole('alert')).toHaveCount(0);
+    await expect(page.locator('.deck .deck-title')).toHaveText(trackOf('tr-6-1').title);
   });
 
   test('a biography of broken HTML shows as text, with no tag left in it', async ({ app }) => {

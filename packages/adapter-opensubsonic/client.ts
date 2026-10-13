@@ -40,6 +40,8 @@ const SongSchema = Schema.Struct({
   track: Schema.optional(KnownCountSchema), discNumber: Schema.optional(KnownCountSchema), year: Schema.optional(KnownCountSchema),
   genre: Schema.optional(Schema.String), starred: Schema.optional(Schema.String), artists: ArtistRefsSchema,
   userRating: RatingSchema,
+  // OpenSubsonic: the record's artist as its credit reads, on each song.
+  displayAlbumArtist: Schema.optional(Schema.String),
   path: Schema.optional(PathSchema),
   // The file's size in bytes, when the server reports it.
   size: Schema.optional(CountSchema),
@@ -592,9 +594,41 @@ export class SubsonicClient {
     }));
   }
   artist(id: string) {
-    return this.request('getArtist', ArtistResponseSchema, { id }).pipe(Effect.flatMap(({ artist }) => artist.id !== id
-      ? Effect.fail(new ServerError('The server did not return the requested artist. Refresh the library.'))
-      : Effect.succeed<ArtistDetail>({ artist: toArtist(artist), albums: (artist.album ?? []).map(toAlbum) })));
+    return this.request('getArtist', ArtistResponseSchema, { id }).pipe(Effect.flatMap(({ artist }) => {
+      if (artist.id !== id) return Effect.fail(new ServerError('The server did not return the requested artist. Refresh the library.'));
+      const detail: ArtistDetail = { artist: toArtist(artist), albums: (artist.album ?? []).map(toAlbum) };
+      return detail.albums.length ? Effect.succeed(detail)
+        : this.creditedSongs(id, artist.name).pipe(Effect.map(appearsOn => appearsOn.tracks.length ? { ...detail, appearsOn } : detail));
+    }));
+  }
+  // Navidrome lists only the records an artist is the record's artist of (getArtist; unless its
+  // Subsonic.ArtistParticipations is on), so a singer heard only on soundtracks has none. search3
+  // finds songs by the artist's name; those whose credits name this artist are kept, by id, so
+  // another artist of the same name isn't. Up to 2,000 songs, in the order the server gives them.
+  // Their records are put together from the songs, which is all the cards show.
+  private creditedSongs(artistId: string, name: string) {
+    const page = (offset: number) => this.request('search3', SongPageSchema, {
+      query: name, artistCount: '0', albumCount: '0', songCount: '500', songOffset: String(offset),
+    }).pipe(Effect.map(result => result.searchResult3.song ?? []));
+    return Effect.gen(function* () {
+      const songs: Song[] = [];
+      while (songs.length < 2000) {
+        const next = yield* page(songs.length);
+        songs.push(...next);
+        if (next.length < 500) break;
+      }
+      const credited = songs.filter(song => song.artistId === artistId || song.artists?.some(artist => artist.id === artistId));
+      const albums = new Map<string, Album>();
+      for (const song of credited) {
+        if (!song.albumId || albums.has(song.albumId)) continue;
+        albums.set(song.albumId, {
+          id: song.albumId, name: song.album ?? '', artist: song.displayAlbumArtist || song.artist || 'Unknown artist', artistId: null,
+          songCount: credited.filter(other => other.albumId === song.albumId).length, year: song.year ?? null, genre: song.genre || null,
+          duration: null, coverArt: song.coverArt || null, starred: false,
+        });
+      }
+      return { albums: [...albums.values()], tracks: credited.map(song => toTrack(song)) };
+    });
   }
   private toPlaylist(playlist: Schema.Schema.Type<Schema.Struct<typeof PlaylistFields>>): Playlist {
     return {
@@ -1016,7 +1050,7 @@ const library = {
   albums: entry(LibraryRequestSchemas.albums, (client, [type, offset, size, years]) => client.albumList(type, offset, size, years)),
   album: entry(LibraryRequestSchemas.album, (client, [id]) => client.album(id), value => value.tracks),
   artists: entry(LibraryRequestSchemas.artists, client => client.artists()),
-  artist: entry(LibraryRequestSchemas.artist, (client, [id]) => client.artist(id)),
+  artist: entry(LibraryRequestSchemas.artist, (client, [id]) => client.artist(id), value => value.appearsOn?.tracks ?? []),
   playlists: entry(LibraryRequestSchemas.playlists, client => client.playlists()),
   playlist: entry(LibraryRequestSchemas.playlist, (client, [id]) => client.playlist(id), value => value.tracks),
   genres: entry(LibraryRequestSchemas.genres, client => client.genres()),

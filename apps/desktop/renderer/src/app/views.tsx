@@ -425,9 +425,10 @@ export function ArtistPage({ id }: { id: string }) {
     await player.play(shuffle ? shuffled(tracks.value) : tracks.value, 0);
     showNowPlaying();
   };
-  return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
-    <Head title={artist.name}>
-      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
+  return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => <>
+    <Head title={artist.name} cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
+      <p className="byline"><span>{albums.length || !appearsOn ? plural(albums.length, 'record')
+        : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play
@@ -441,7 +442,8 @@ export function ArtistPage({ id }: { id: string }) {
     </Head>
     {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
     {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
-    <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>
+    {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
+    {appearsOn && <section className="shelf-section"><h2>Appears on</h2><AlbumGrid albums={appearsOn.albums} /></section>}
     {info?.ok && info.value.similar.length > 0 && <SimilarArtists artists={info.value.similar} />}
   </>}</Pending>;
 }

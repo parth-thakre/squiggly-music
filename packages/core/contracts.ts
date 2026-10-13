@@ -56,7 +56,9 @@ export interface AlbumDetail {
   discTitles?: DiscTitle[];
 }
 export interface DiscTitle { disc: number; title: string }
-export interface ArtistDetail { artist: Artist; albums: Album[] }
+// `appearsOn`: for an artist with no records of their own, the songs that credit them (a singer on
+// soundtracks, say) and the records those are on. Absent when the server lists records of theirs.
+export interface ArtistDetail { artist: Artist; albums: Album[]; appearsOn?: { albums: Album[]; tracks: Track[] } }
 export interface Playlist {
   id: string; name: string; comment: string | null; owner: string | null;
   songCount: number; duration: number; coverArt: string | null;

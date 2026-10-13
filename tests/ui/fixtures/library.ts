@@ -34,6 +34,7 @@ export const special = {
   wordByWord: 'tr-4-3', // 24 s on Northern Wires, lyrics with exact word times
   twoDiscs: 'al-8', // Low Tide Radio: three songs on disc 1, two on disc 2 ("Night Side")
   withBio: 'ar-1', // Ada Brass: a biography and one similar artist in the library
+  guest: 'ar-guest', // Gale Guest: no records of their own, credited on two songs on two records (appearsOn)
   badBio: 'ar-3', // Cinder Lane: a biography of broken HTML
   twoNights: 'al-40', // Two Nights Live, with fake.large on: 210 songs on two discs, the only record tagged Live
 } as const;
@@ -109,10 +110,14 @@ function buildLibrary() {
       // The file's path as Navidrome reports it. The duet has none, as a server may leave it out.
       ...(k === 2 && n === 1 ? {} : { path: `${artist.name}/${name}/${String(n + 1).padStart(2, '0')} - ${title}.wav` }),
     }));
+    // Gale Guest sings on the first song of Morning Freight and of Velvet Static.
+    if (k === 6 || k === 7) Object.assign(albumTracks[0], { artist: `${artist.name} & Gale Guest`, artists: [{ id: artist.id, name: artist.name }, { id: special.guest, name: 'Gale Guest' }] });
     tracks.push(...albumTracks);
     albums.push({ id: `al-${k}`, name, artist: artist.name, songCount: albumTracks.length, artistId: artist.id, year, genre,
       duration: albumTracks.reduce((sum, t) => sum + (t.duration ?? 0), 0), coverArt: `al-${k}`, starred: false });
   });
+  // The only artist with a picture of their own.
+  artists.push({ id: special.guest, name: 'Gale Guest', albumCount: 0, coverArt: 'ar-guest', starred: false });
   return { artists, albums, tracks };
 }
 const catalog = buildLibrary();
@@ -263,7 +268,11 @@ export class FakeNavidrome {
     artist: (id: string) => this.op('artist', [id], () => {
       const artist = catalog.artists.find(a => a.id === id);
       if (!artist) return fail('That artist is not on the server.');
-      return Effect.succeed({ artist: { ...artist, starred: this.starred.has(id), ...this.rated(id) }, albums: this.albums().filter(a => a.artistId === id).map(this.album) });
+      const albums = this.albums().filter(a => a.artistId === id).map(this.album);
+      // As the connector finds them for an artist with no records of their own (ArtistDetail.appearsOn).
+      const credited = albums.length ? [] : catalog.tracks.filter(t => t.artists?.some(a => a.id === id)).map(t => this.track(t.id));
+      const appearsOn = credited.length ? { tracks: credited, albums: this.albums().filter(a => credited.some(t => t.albumId === a.id)).map(this.album) } : undefined;
+      return Effect.succeed({ artist: { ...artist, starred: this.starred.has(id), ...this.rated(id) }, albums, ...(appearsOn ? { appearsOn } : {}) });
     }),
     playlists: () => this.op('playlists', [], () => Effect.succeed(this.playlists.map(p => this.summary(p)))),
     playlist: (id: string) => this.op('playlist', [id], () => {

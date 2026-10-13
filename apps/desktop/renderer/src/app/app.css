@@ -126,6 +126,8 @@ img:is(.deck-cover, .head-cover) {
 .head { margin-bottom: 26px; }
 .head.with-cover { display: grid; grid-template-columns: clamp(160px, 18vw, 230px) minmax(0, 1fr); gap: 32px; align-items: end; }
 .head-cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .12), 0 18px 28px -18px rgba(0, 0, 0, .5); }
+/* An artist's picture is a portrait, cropped to a circle, not a sleeve shown whole. */
+img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; box-shadow: 0 1px 1px rgba(0, 0, 0, .12), 0 18px 28px -18px rgba(0, 0, 0, .5); }
 /* The playing record's page: its sleeve is already in the deck beside it, so the page's cover
    folds away and the title leads. It folds rather than vanishes, so starting a song from the
    list doesn't jolt the page. Desktop only; a phone's deck is a strip. */
