@@ -348,8 +348,9 @@ describe('host snapshot lifecycle', () => {
     } }] } });
     const snapshot = snapshots().at(-1)!.player;
     expect(snapshot.queue[0].id).toBe('new');
-    expect(snapshot).toMatchObject({ currentIndex: -1, playing: false, position: 0, duration: 0 });
-    expect(snapshot.audio).toMatchObject({ codec: null, decoderRate: null, outputRate: null, bufferSeconds: null });
+    // The new song is current at once, and starting: nothing of the old one's position or format.
+    expect(snapshot).toMatchObject({ currentIndex: 0, playing: false, position: 0, duration: 0 });
+    expect(snapshot.audio).toMatchObject({ codec: null, decoderRate: null, outputRate: null, bufferSeconds: null, buffering: true });
   });
 
   it('starts a replacement queue at the requested entry and rejects an out-of-range start', async () => {
@@ -690,6 +691,16 @@ describe('queue editing', () => {
     run({ type: 'queue-relocate', entries: [{ entryId: ids[2], item: playable('c') }, { entryId: ids[3], item: playable('d') }] });
     expect(mpv.locations()).toEqual(['http://127.0.0.1:9/a', '/b.flac', '/c.flac', '/d.flac']);
     expect(native.command.mock.calls.filter(([name]) => name === 'loadfile')).toEqual([['loadfile', '/d.flac', 'append']]);
+  });
+
+  it('goes straight from the song playing to the chosen one when a new queue replaces it', async () => {
+    const { run, snapshots } = await editableHost();
+    const from = snapshots().length;
+    run({ type: 'queue', tracks: ['x', 'y', 'z'].map(playable), startIndex: 2 });
+    // No snapshot in between with nothing current: the room would flash to its plain colours.
+    const shown = snapshots().slice(from).map(({ player }) => player.queue[player.currentIndex]?.id ?? null);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.every(id => id === 'z')).toBe(true);
   });
 
   it('inserts before an entry for a drop onto the queue, and the playing song keeps playing', async () => {
@@ -2057,8 +2068,10 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('resuming in real libmpv', ()
       send({ id: 1, action: { type: 'queue', tracks: [streamed(server.url('/slow/a.wav'), 'a', 48000)] } });
       await expect.poll(() => snapshots.at(-1)?.position ?? 0, { timeout: 5000 }).toBeGreaterThan(0.5);
       const loaded = snapshots.slice(snapshots.findIndex(s => s.currentIndex === 0));
-      // Playing, and starting, before any audio: then playing, and not.
-      expect(loaded[0]).toMatchObject({ playing: true, position: 0, audio: { buffering: true } });
+      // Starting before any audio (first as the queue loads, not yet playing; then playing): then
+      // playing, and not.
+      expect(loaded[0]).toMatchObject({ playing: false, position: 0, audio: { buffering: true } });
+      expect(loaded.find(s => s.playing)).toMatchObject({ position: 0, audio: { buffering: true } });
       expect(snapshots.at(-1)).toMatchObject({ playing: true, audio: { buffering: false } });
       expect(loaded.filter(s => s.position > 0.3).every(s => !s.audio.buffering)).toBe(true);
     } finally { server.close(); }

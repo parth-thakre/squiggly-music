@@ -465,6 +465,11 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
           pendingSeek = { id: playableQueue[start].track.id, entry: playableQueue[start].entry, seconds, polls: 0, resume: !action.paused, opening };
           if (opening) watchOpening();
         } else if (!action.paused) native.set('pause', 'no');
+        // The new song is current from this snapshot on, and starting (buffering, not yet playing)
+        // unless it loads paused, as the browser's player says too. Left to the next poll, the windows
+        // would show nothing playing in between, and the room would flash to its plain colours.
+        player.currentIndex = start;
+        player.audio = { ...player.audio, buffering: !action.paused };
         break;
       }
       case 'queue-add': case 'queue-move': case 'queue-remove': case 'queue-clear':
