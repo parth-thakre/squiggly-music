@@ -1,9 +1,46 @@
-// Squiggly's site. Fills the download links from the latest GitHub release (the only request
-// this page makes) and puts the visitor's platform first.
+// Squiggly's site. Plays the clips while they're on screen, fills the download links from the
+// latest GitHub release (the only request this page makes), and puts the visitor's platform first.
 (function () {
   "use strict";
 
   var doc = document;
+
+  /* ---------- Clips ---------- */
+
+  // Each clip plays only while it's on screen, and not at all for someone who asked for less
+  // motion: they keep the poster, a still of the clip's first frame. A click pauses a clip, and
+  // another plays it again. The page has no autoplay attribute: it would download every clip as
+  // the page opens, and start them before this script could stop them. preload="none" means a
+  // clip downloads only when it first comes into view.
+  var still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)");
+  var clips = doc.querySelectorAll("video");
+  function play(video) {
+    var p = video.play();
+    if (p && typeof p.catch === "function") p.catch(function () { /* the poster stays */ });
+  }
+  for (var c = 0; c < clips.length; c++) {
+    clips[c].addEventListener("click", function () {
+      var video = this;
+      video.userPaused = !video.paused;
+      if (video.userPaused) video.pause(); else if (!(still && still.matches)) play(video);
+    });
+  }
+  if ("IntersectionObserver" in window) {
+    var seen = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        var video = entry.target;
+        if (entry.isIntersecting && !(still && still.matches) && !video.userPaused) play(video);
+        else video.pause();
+      });
+    }, { threshold: 0.25 });
+    for (var v = 0; v < clips.length; v++) seen.observe(clips[v]);
+    if (still && still.addEventListener) still.addEventListener("change", function () {
+      for (var i = 0; i < clips.length; i++) {
+        if (still.matches) clips[i].pause();
+        else { seen.unobserve(clips[i]); seen.observe(clips[i]); }
+      }
+    });
+  }
 
   /* ---------- Downloads ---------- */
 
