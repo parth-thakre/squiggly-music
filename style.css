@@ -87,6 +87,11 @@ img {
   height: auto;
 }
 
+/* The symbol sprite. A class, not a style attribute, because the CSP blocks inline styles. */
+.sprite {
+  position: absolute;
+}
+
 a {
   color: inherit;
   text-decoration-thickness: 1px;
@@ -271,6 +276,19 @@ kbd {
   gap: 0.75rem;
 }
 
+/* A Mac whose browser can't say its CPU gets a button for each. */
+.pair {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.hint {
+  margin-top: -0.35rem;
+  font-size: 0.9375rem;
+  color: var(--soft);
+}
+
 .also {
   display: flex;
   flex-wrap: wrap;
@@ -332,7 +350,8 @@ kbd {
   max-width: 44rem;
 }
 
-/* Parts */
+/* Parts: the words on one side, the app on the other. A wide part's picture takes two thirds
+   of the row; .flip puts it first. A tall part (the deck, a phone) keeps its picture narrow. */
 
 .part {
   padding-top: clamp(4rem, 8vw, 6.5rem);
@@ -340,7 +359,7 @@ kbd {
 }
 
 .part-text {
-  grid-column: 1 / 6;
+  grid-column: 1 / 5;
 }
 
 .part-text h2,
@@ -360,44 +379,24 @@ kbd {
   text-wrap: pretty;
 }
 
-.shot-deck {
-  grid-column: 8 / 11;
-}
-
-.part-lyrics .shot-lyrics,
-.part-palette .shot-palette {
-  grid-row: 1;
-}
-
-.shot-lyrics {
-  grid-column: 1 / 8;
-}
-
-.part-lyrics .part-text {
-  grid-column: 9 / 13;
-}
-
-.part-queue .part-text {
-  grid-column: 1 / 5;
-}
-
-.shot-queue {
+.part-wide .shot {
   grid-column: 5 / 13;
 }
 
-.shot-palette {
-  grid-column: 1 / 8;
+.part-wide.flip .shot {
+  grid-column: 1 / 9;
+  grid-row: 1;
 }
 
-.part-palette .part-text {
-  grid-column: 8 / 13;
+.part-wide.flip .part-text {
+  grid-column: 9 / 13;
 }
 
-.part-phone .part-text {
+.part-tall .part-text {
   grid-column: 1 / 6;
 }
 
-.shot-phone {
+.part-tall .shot-tall {
   grid-column: 8 / 11;
 }
 
@@ -542,14 +541,10 @@ kbd {
   .hero h1,
   .hero-side,
   .part-text,
-  .part-lyrics .part-text,
-  .part-queue .part-text,
-  .part-palette .part-text,
-  .part-phone .part-text,
-  .shot-lyrics,
-  .shot-queue,
-  .shot-palette,
-  .shot-phone,
+  .part-wide .shot,
+  .part-wide.flip .shot,
+  .part-wide.flip .part-text,
+  .part-tall .part-text,
   .download-lead,
   .files,
   .notes {
@@ -558,20 +553,14 @@ kbd {
   .hero-side {
     margin-top: 1.5rem;
   }
-  .shot-deck,
-  .shot-phone {
+  .part-tall .shot-tall {
     grid-column: 1 / 13;
     max-width: 20rem;
   }
-  .part-lyrics .shot-lyrics,
-  .part-palette .shot-palette {
+  .part-wide.flip .shot {
     grid-row: 2;
   }
-  .shot-deck,
-  .shot-lyrics,
-  .shot-queue,
-  .shot-palette,
-  .shot-phone {
+  .part .shot {
     margin-top: 2rem;
   }
   .files {

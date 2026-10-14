@@ -3,13 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-N9v3EnPaUyp6HvI/g75KoK11mUw7quk1fPSwEhREnaU='; style-src 'self'; img-src 'self'; font-src 'self'; connect-src https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>Squiggly — a music player for Navidrome</title>
-  <meta name="description" content="Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and leaves the signal alone. Open source, for Windows, Fedora, and Android, with a browser version for phones.">
+  <meta name="description" content="Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and leaves the signal alone. Open source, for Windows, macOS, and Linux, with a browser version for phones and an Android beta.">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#d6c7a6" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#1d1913" media="(prefers-color-scheme: dark)">
   <meta property="og:title" content="Squiggly — a music player for Navidrome">
-  <meta property="og:description" content="Plays your own music from Navidrome through libmpv and leaves the signal alone. Open source, for Windows, Fedora, and Android.">
+  <meta property="og:description" content="Plays your own music from Navidrome through libmpv and leaves the signal alone. Open source, for Windows, macOS, and Linux.">
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://squiggly.psthl.com/demo-poster.webp">
   <meta name="twitter:card" content="summary_large_image">
@@ -19,12 +20,13 @@
   <link rel="preload" href="fonts/young-serif-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="fonts/familjen-grotesk-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="style.css">
+  <!-- The Content-Security-Policy above allows this script by its SHA-256. Change one, change the other. -->
   <script>document.documentElement.className = "js";</script>
   <script src="app.js" defer></script>
 </head>
 <body>
   <a class="skip" href="#main">Skip to content</a>
-  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <svg class="sprite" width="0" height="0" aria-hidden="true" focusable="false">
     <symbol id="mark" viewBox="79 170 355 172">
       <path d="M96 256l2.8-5.7 2.9-5.7 2.8-5.4 2.8-5.2 2.9-4.8 2.8-4.3 2.8-3.8 2.9-3.2 2.8-2.6 2.8-1.8 2.9-1.1 2.8-.4 2.8.4 2.9 1.1 2.8 1.8 2.8 2.6 2.9 3.2 2.8 3.8 2.8 4.3 2.9 4.8 2.8 5.2 2.8 5.4 2.9 5.7 2.8 5.7 2.8 5.7 2.9 5.7 2.8 5.4 2.8 5.2 2.9 4.8 2.8 4.3 2.8 3.8 2.9 3.2 2.8 2.6 2.8 1.8 2.9 1.1 2.8.4 2.8-.4 2.9-1.1 2.8-1.8 2.8-2.6 2.9-3.2 2.8-3.8 2.8-4.3 2.9-4.8 2.8-5.2 2.8-5.4 2.9-5.7 2.8-5.7 2.8-5.7 2.9-5.7 2.8-5.4 2.8-5.2 2.9-4.8 2.8-4.3 2.8-3.8 2.9-3.2 2.8-2.6 2.8-1.8 2.9-1.1 2.8-.4 2.8.4 2.9 1.1 2.8 1.8 2.8 2.6 2.9 3.2 2.8 3.8 2.8 4.3 2.9 4.8 2.8 5.2 2.8 5.4 2.9 5.7 2.8 5.7" fill="none" stroke="currentColor" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
       <rect x="336" y="170" width="34" height="172" rx="17" fill="currentColor"/>
@@ -52,83 +54,176 @@
     <section class="hero" aria-labelledby="hero-title">
       <h1 id="hero-title">Plays your records. Leaves the signal alone.</h1>
       <div class="hero-side">
-        <p class="lede">A music player for your Navidrome server, on Windows, Fedora, and Android.</p>
+        <p class="lede">A music player for your Navidrome server, on Windows, macOS, and Linux.</p>
         <p class="cta" data-cta>
           <a class="btn primary" data-asset="setup" data-os="windows" data-name="Windows" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Windows</a>
-          <a class="btn" data-asset="rpm" data-os="linux" data-name="Fedora" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Fedora</a>
-          <a class="btn" data-asset="apk" data-os="android" data-name="Android" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Android</a>
+          <a class="btn" data-os="mac" data-name="macOS" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for macOS</a>
+          <a class="btn" data-asset="linux" data-os="linux" data-name="Linux" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Linux</a>
+          <a class="btn" data-os="android" data-name="Android (beta)" href="https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4">Get the Android beta</a>
         </p>
-        <p class="small">Version <span data-version>0.1.0</span>, open source. No server? Try <a href="https://www.navidrome.org/demo/">Navidrome's demo</a>, user <code>demo</code>, password <code>demo</code>.</p>
+        <p class="small">Version <span data-version>0.3.0</span>, open source. No server? Try <a href="https://www.navidrome.org/demo/">Navidrome's demo</a>, user <code>demo</code>, password <code>demo</code>.</p>
       </div>
       <figure class="shot hero-shot">
         <picture>
-          <source srcset="demo-poster.webp" media="(prefers-reduced-motion: reduce)">
-          <img src="demo.gif" width="1200" height="750" alt="Squiggly in use: playing Ugress's Kosmonaut turns the window red and opens the queue; a search finds Diablo Swing Orchestra's Wedding March for a Bullet; Ctrl+K opens its lyrics, which fill in word by word." fetchpriority="high">
+          <source srcset="demo-poster.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="demo.gif" width="1200" height="844" alt="Squiggly in use. A search for The Knife lists their songs, and the record's name in a song's row opens Shaking The Habitual. Play turns the window the sleeve's pink and plum, opens the queue, and starts the lyrics under the deck. The artist's name opens The Knife's page, with their picture." fetchpriority="high">
         </picture>
       </figure>
     </section>
 
-    <section class="part part-signal" aria-labelledby="signal-title">
+    <section class="part part-wide" aria-labelledby="home-title">
+      <div class="part-text">
+        <h2 id="home-title">Home starts where you left off.</h2>
+        <p>What you played lately, the newest records, and mixes built from your library: by genre, by what you play, and by decade. The queue from your last session waits on the deck, once, with Resume.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-home.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-home.gif" width="960" height="676" alt="Home with nothing playing and the deck offering Velvet Embracer, saved at 2:32. The page scrolls past Played lately, Newest, and Most played to Your mixes, whose row ends with the americana, country, and Punk mixes and The 2020s and The 2010s. Back at the top, Resume plays the song and the window turns the dark red of its sleeve." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+    </section>
+
+    <section class="part part-tall" aria-labelledby="signal-title">
       <div class="part-text">
         <h2 id="signal-title">The sound, untouched.</h2>
-        <p>No EQ, crossfade, or loudness levelling. Turn the volume down and it tells you.</p>
+        <p>No EQ, crossfade, or loudness levelling. The deck takes its colours from the sleeve and names the format and sample rate. Turn the volume down and it says so.</p>
+        <p>When there's room, the synced lyrics run under the deck. The next song's sleeve is fetched before it plays.</p>
       </div>
-      <figure class="shot shot-deck">
+      <figure class="shot shot-tall">
         <picture>
-          <source srcset="clip-deck.webp" media="(prefers-reduced-motion: reduce)">
-          <img src="clip-deck.gif" width="494" height="938" alt="The now-playing column for Wedding March for a Bullet: dragging the volume down to 66% adds “Volume at 66%.” to the line under the song, which reads MP3 · 44.1 kHz, and it goes again at 100%." loading="lazy" decoding="async">
+          <source srcset="clip-deck.webp" width="543" height="1275" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-deck.gif" width="450" height="1056" alt="The deck playing A Tooth For An Eye on a plum background, its line reading M4A · 44.1 kHz · 16-bit and its lyrics moving up line by line under the stars. Next brings Natasha Beller's Fairytale: the room turns pale pink and the line reads MP3 · 44.1 kHz. Dragging the volume to 61% adds “Volume at 61%.” to the line, and it goes again at 100%." loading="lazy" decoding="async">
         </picture>
       </figure>
     </section>
 
-    <section class="part part-lyrics" aria-labelledby="lyrics-title">
-      <figure class="shot shot-lyrics">
+    <section class="part part-wide flip" aria-labelledby="lyrics-title">
+      <figure class="shot">
         <picture>
-          <source srcset="clip-lyrics.webp" media="(prefers-reduced-motion: reduce)">
-          <img src="clip-lyrics.gif" width="1100" height="526" alt="Synced lyrics for Wedding March for a Bullet, the second line filling in word by word." loading="lazy" decoding="async">
+          <source srcset="clip-lyrics.webp" width="1380" height="810" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-lyrics.gif" width="920" height="540" alt="Synced lyrics for Diablo Swing Orchestra's Velvet Embracer, from LRCLIB. The first line fills in word by word, then the second." loading="lazy" decoding="async">
         </picture>
       </figure>
       <div class="part-text">
         <h2 id="lyrics-title">Lyrics, word by word.</h2>
-        <p>Synced lyrics from your server, or from LRCLIB if you turn it on.</p>
+        <p>Synced lyrics from your server, or from LRCLIB if you turn it on. Lyrics looked up are kept on disk, and the next song's are looked up ahead.</p>
       </div>
     </section>
 
-    <section class="part part-queue" aria-labelledby="queue-title">
+    <section class="part part-wide" aria-labelledby="pages-title">
+      <div class="part-text">
+        <h2 id="pages-title">Every name opens a page.</h2>
+        <p>Artists' and records' names in song lists and on cards are links. An artist's page has their picture and their records. An artist with no records of their own lists, and plays, the songs that credit them.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-pages.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-pages.gif" width="1000" height="704" alt="Records, then the compilation netBloc Vol. 42. Dr. Quandary's name in its first song's row opens his page: one song on one record, under Popular and Appears on. Back on Records, the name Nine Inch Nails under The Slip opens their page, with a photo of the band, a short biography, and three records." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+    </section>
+
+    <section class="part part-wide flip" aria-labelledby="search-title">
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-search.webp" width="1380" height="960" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-search.gif" width="920" height="640" alt="A search for “polish” lists songs first. The Records tab shows four records by The Polish Ambassador, Songs lists every match, and Artists shows The Polish Ambassador with four records." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+      <div class="part-text">
+        <h2 id="search-title">Search, by type.</h2>
+        <p>One field finds artists, records, and songs. A tab narrows it to one of them.</p>
+      </div>
+    </section>
+
+    <section class="part part-wide" aria-labelledby="queue-title">
       <div class="part-text">
         <h2 id="queue-title">The queue follows you.</h2>
-        <p>It's saved on your server, so it's waiting on every device.</p>
+        <p>Drag songs into place, or move one with Alt+Up and Alt+Down. The queue is saved on your server, so it's waiting on every device.</p>
       </div>
-      <figure class="shot shot-queue">
+      <figure class="shot">
         <picture>
-          <source srcset="clip-queue.webp" media="(prefers-reduced-motion: reduce)">
-          <img src="clip-queue.gif" width="1100" height="826" alt="The queue for The Butcher's Ballroom: a selected song moves up four places with Alt+Up and back with Alt+Down while Wedding March for a Bullet keeps playing." loading="lazy" decoding="async">
+          <source srcset="clip-queue.webp" width="1380" height="880" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-queue.gif" width="920" height="586" alt="The queue while Balrog Boogie plays. Ctrl+click selects Northeast, Alt+Up moves it up four places and Alt+Down back one. Then Halfway Home is dragged up, a line marks where it will land, and it drops into third place." loading="lazy" decoding="async">
         </picture>
       </figure>
     </section>
 
-    <section class="part part-palette" aria-labelledby="palette-title">
-      <figure class="shot shot-palette">
+    <section class="part part-wide flip" aria-labelledby="playlists-title">
+      <figure class="shot">
         <picture>
-          <source srcset="clip-palette.webp" media="(prefers-reduced-motion: reduce)">
-          <img src="clip-palette.gif" width="1000" height="626" alt="Ctrl+K switches the theme to Night, then Studio, then back to Cover, where the window takes its colours from the record." loading="lazy" decoding="async">
+          <source srcset="clip-playlists.webp" width="1380" height="990" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-playlists.gif" width="920" height="660" alt="A playlist called Evening. Velvet Embracer is dragged from the bottom to second place. More, then Share…, opens a dialog; with 1 month chosen, Create shows a link on the server and the day it expires." loading="lazy" decoding="async">
         </picture>
       </figure>
+      <div class="part-text">
+        <h2 id="playlists-title">Playlists, in your order.</h2>
+        <p>Drag songs, records, and artists onto a playlist, and drag its songs into place. Export one as M3U, or share it with a link from your server that expires when you choose.</p>
+      </div>
+    </section>
+
+    <section class="part part-wide" aria-labelledby="kept-title">
+      <div class="part-text">
+        <h2 id="kept-title">Keep songs on this computer.</h2>
+        <p>Keep a record or a playlist, and its songs play from their files whether the server answers or not.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-kept.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-kept.gif" width="1000" height="704" alt="The record Brighten by Back On Earth. Keep on this device counts up to “Keeping 3 of 3 songs”, then reads “Kept on this device”, with a mark beside each song. The Kept page lists Brighten: 3 songs, 13 MB." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+    </section>
+
+    <section class="part part-wide flip" aria-labelledby="streaming-title">
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-streaming.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-streaming.gif" width="1000" height="704" alt="Settings, Streaming quality. Choosing “MP3, 192 kbps” and pressing Next plays Northeast, and the line under the deck says it's streaming a 192 kbps MP3, as set in Settings. Back on “Original file”, Next plays Halfway Home, and a click far along the seek line plays from there at once." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+      <div class="part-text">
+        <h2 id="streaming-title">Seeking doesn't wait.</h2>
+        <p>Each song downloads whole as it plays, and the next three after it, so a seek plays at once. On a slow connection, Settings can ask Navidrome for a smaller MP3.</p>
+      </div>
+    </section>
+
+    <section class="part part-wide" aria-labelledby="palette-title">
       <div class="part-text">
         <h2 id="palette-title">Every action, one keystroke away.</h2>
-        <p>Ctrl+K finds any command. Keys, themes, and extensions are files you can edit.</p>
+        <p>Ctrl+K finds any command. Themes are commands too: Cover takes the sleeve's colours, Night is for late, Studio is grey with a red light. Keys and themes are files you can edit.</p>
+      </div>
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-palette.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-palette.gif" width="1000" height="704" alt="Nine Inch Nails' page in the Cover theme, tinted plum by The Knife's sleeve. Ctrl+K and “night” switch to Night, blue-black with amber. Then “studio” switches to Studio, light grey with red, and “cover” switches back." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+    </section>
+
+    <section class="part part-wide flip" aria-labelledby="extensions-title">
+      <figure class="shot">
+        <picture>
+          <source srcset="clip-extensions.webp" width="1920" height="1350" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-extensions.gif" width="1000" height="704" alt="Settings, Extensions, with three examples turned off. Turning on Deck note adds “From 2009.”, the playing song's year, under the deck's format line. Turning on Library stats, then Ctrl+K and “library stats”, opens its page: 26 artists, 50 records, 501 songs, 34.2 hours of music." loading="lazy" decoding="async">
+        </picture>
+      </figure>
+      <div class="part-text">
+        <h2 id="extensions-title">Add what's missing.</h2>
+        <p>An extension is a folder of TypeScript. It can add commands, pages, themes, and lines on the deck, and it reloads when you save. New ones stay off until you turn them on. <a href="https://github.com/parth-thakre/squiggly-music/blob/main/docs/extensions.md">How to write one</a>.</p>
       </div>
     </section>
 
-    <section class="part part-phone" aria-labelledby="phone-title">
+    <section class="part part-tall" aria-labelledby="phone-title">
       <div class="part-text">
         <h2 id="phone-title">On your phone too.</h2>
-        <p>The Android app plays with the screen off. A browser version works on any phone.</p>
+        <p>The browser version works on any phone. The Android app, which plays with the screen off, is in beta: get it from the <a href="https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4">0.3.0-beta.4 pre-release</a>.</p>
       </div>
-      <figure class="shot shot-phone">
+      <figure class="shot shot-tall shot-phone">
         <picture>
-          <source srcset="clip-phone.webp" media="(prefers-reduced-motion: reduce)">
-          <img src="clip-phone.gif" width="600" height="1332" alt="Squiggly on a phone: tapping the playing strip opens the now-playing sheet, then Lyrics, where a tap on a line jumps to it and the words fill in." loading="lazy" decoding="async">
+          <source srcset="clip-phone.webp" width="780" height="1688" media="(prefers-reduced-motion: reduce)">
+          <img src="clip-phone.gif" width="600" height="1298" alt="The browser version on a phone. Tapping Shaking The Habitual on Home opens the record; Play opens the now-playing sheet for A Tooth For An Eye. Lyrics turns the sleeve into the lyrics, a tap on a line jumps to it, and the words fill in." loading="lazy" decoding="async">
         </picture>
       </figure>
     </section>
@@ -138,21 +233,29 @@
         <h2 id="download-title">Download</h2>
         <p class="cta" data-cta>
           <a class="btn primary" data-asset="setup" data-os="windows" data-name="Windows" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Windows</a>
-          <a class="btn" data-asset="rpm" data-os="linux" data-name="Fedora" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Fedora</a>
-          <a class="btn" data-asset="apk" data-os="android" data-name="Android" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Android</a>
+          <a class="btn" data-os="mac" data-name="macOS" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for macOS</a>
+          <a class="btn" data-asset="linux" data-os="linux" data-name="Linux" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Download for Linux</a>
+          <a class="btn" data-os="android" data-name="Android (beta)" href="https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4">Get the Android beta</a>
         </p>
-        <p>Windows 10/11, Fedora, and Android 7 or later.</p>
+        <p>Windows 10/11, macOS 13 or later, and Linux. The Android beta needs Android 7 or later.</p>
       </div>
       <dl class="files">
         <div data-os="windows"><dt><a data-asset="setup" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Windows installer</a></dt><dd data-file="setup">x64</dd></div>
-        <div data-os="windows"><dt><a data-asset="portable" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Windows portable</a></dt><dd data-file="portable">x64, nothing to install</dd></div>
-        <div data-os="linux"><dt><a data-asset="rpm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Fedora RPM</a></dt><dd data-file="rpm">x86_64, pulls in mpv-libs</dd></div>
-        <div data-os="android"><dt><a data-asset="apk" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Android APK</a></dt><dd data-file="apk">Android 7 or later</dd></div>
+        <div data-os="windows"><dt><a data-asset="portable" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Windows portable</a></dt><dd><span data-file="portable">x64</span>, nothing to install</dd></div>
+        <div data-os="mac"><dt><a data-asset="macArm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">macOS, Apple silicon</a></dt><dd><span data-file="macArm">zip, arm64</span>, needs Homebrew's mpv, untested</dd></div>
+        <div data-os="mac"><dt><a data-asset="macIntel" href="https://github.com/parth-thakre/squiggly-music/releases/latest">macOS, Intel</a></dt><dd><span data-file="macIntel">zip, x64</span>, needs Homebrew's mpv, untested</dd></div>
+        <div data-os="linux"><dt><a data-asset="rpm" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Fedora RPM</a></dt><dd><span data-file="rpm">x86_64</span>, pulls in mpv-libs</dd></div>
+        <div data-os="linux"><dt><a data-asset="deb" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Debian and Ubuntu deb</a></dt><dd><span data-file="deb">amd64</span>, pulls in libmpv2</dd></div>
+        <div data-os="linux"><dt><a data-asset="appimage" href="https://github.com/parth-thakre/squiggly-music/releases/latest">Linux AppImage</a></dt><dd><span data-file="appimage">x86_64</span>, needs libmpv installed</dd></div>
+        <div data-os="android"><dt><a href="https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4">Android APK, beta</a></dt><dd>0.3.0-beta.4, Android 7 or later</dd></div>
         <div><dt><a data-asset="sums" href="https://github.com/parth-thakre/squiggly-music/releases/latest">SHA256SUMS</a></dt><dd><code>sha256sum --ignore-missing -c SHA256SUMS</code></dd></div>
       </dl>
       <ul class="notes">
         <li>The builds aren't signed yet, so Windows warns you: choose More info, then Run anyway.</li>
         <li>The installed Windows app updates itself.</li>
+        <li>The Mac builds aren't signed either. macOS 15 and later asks you to choose Open Anyway in System Settings, Privacy &amp; Security; earlier versions, Control-click the app and choose Open. They need Homebrew's mpv (<code>brew install mpv</code>). They are built on Linux and haven't been tried on a Mac yet. They tell you about updates but don't install them.</li>
+        <li>The AppImage doesn't include libmpv, so install your distribution's first: libmpv2 on Debian and Ubuntu, mpv-libs on Fedora, mpv on Arch. The <a href="https://github.com/parth-thakre/squiggly-music/releases/latest">release notes</a> say how to run it.</li>
+        <li>Android isn't part of 0.3.0. Its APK stays on the <a href="https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4">0.3.0-beta.4 pre-release</a> for now.</li>
       </ul>
     </section>
 
@@ -161,7 +264,7 @@
   <footer class="foot">
     <p class="foot-brand">
       <svg class="mark" viewBox="0 0 355 172" aria-hidden="true" focusable="false"><use href="#mark"/></svg>
-      <span>MIT licensed. Made by Parth Thakre. Recorded on Navidrome's demo library of freely licensed music.</span>
+      <span>MIT licensed. Made by Parth Thakre. Recorded on Navidrome's demo library of freely licensed music, with lyrics from LRCLIB.</span>
     </p>
     <nav class="foot-nav" aria-label="Links">
       <a href="https://github.com/parth-thakre/squiggly-music">GitHub</a>
