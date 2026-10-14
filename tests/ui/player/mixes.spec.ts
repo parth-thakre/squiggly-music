@@ -30,6 +30,47 @@ test.describe('mixes', () => {
     await expect.poll(() => fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 8)).toHaveLength(9);
   });
 
+  test('a decade with songs from only a few records shows a record\'s sleeve, not a blank', async ({ app, page }) => {
+    // The 1990s' draw comes from two records, as a little-played decade's might.
+    await page.route('**/api/randomSongs', async route => {
+      const [options] = route.request().postDataJSON() as [{ size: number; fromYear?: number }];
+      const response = await route.fetch();
+      if (options.fromYear !== 1990 || options.size !== 50) return route.fulfill({ response });
+      const result = await response.json() as { ok: boolean; value: { albumId: string }[] };
+      const two = [...new Set(result.value.map(track => track.albumId))].slice(0, 2);
+      return route.fulfill({ response, json: { ...result, value: result.value.filter(track => two.includes(track.albumId)) } });
+    });
+    await app.signIn();
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('m');
+    const nineties = group(app, 'By decade').locator('li').filter({ hasText: 'The 1990s' });
+    await expect(nineties.locator('.mix-tile.single img')).toHaveCount(1);
+    await expect(nineties.locator('.mix-tile.cover-type')).toHaveCount(0);
+    // A decade with four records or more keeps its square of four.
+    await expect(group(app, 'By decade').locator('li').filter({ hasText: 'The 2020s' }).locator('.mix-tile.mosaic:not(.single) img')).toHaveCount(4);
+  });
+
+  test('the decades found are there at once next time, on Home too, and looked for again meanwhile', async ({ app, fake, page }) => {
+    await app.signIn();
+    await app.main.focus();
+    await page.keyboard.press('g');
+    await page.keyboard.press('m');
+    await expect(names(app, 'By decade')).toHaveCount(4);
+    // Next time the server is slow to say which decades it has.
+    fake.delay('randomSongs', ...Array.from({ length: 9 }, () => 4000));
+    const before = fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 8).length;
+    await page.reload();
+    await expect(app.heading).toHaveText('Mixes');
+    await expect(names(app, 'By decade')).toHaveText(['The 2020s', 'The 2010s', 'The 2000s', 'The 1990s'], { timeout: 1500 });
+    // Looked for again all the same, in the background.
+    await expect.poll(() => fake.callsTo('randomSongs').filter(call => (call.args[0] as { size: number }).size === 8).length).toBe(before + 9);
+    // Home shows them without looking for them itself.
+    await page.getByRole('button', { name: 'Squiggly home' }).click();
+    await expect(app.heading).toHaveText('Home');
+    await expect(app.main.getByRole('region', { name: 'Your mixes' }).locator('.grid-name')).toContainText(['The 2020s']);
+  });
+
   test('without listening history the history group is left out', async ({ app, page }) => {
     await app.signIn();
     await app.main.focus();

@@ -3,9 +3,9 @@ import { createContext, memo, useContext, useEffect, useRef, useState, useSyncEx
 import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
-import { Lyrics } from './lyrics';
+import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import { Cover, Glyph, kHz, neutral, splitTitle } from './ui';
+import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { following } from '../../../../../packages/core/playOrder';
@@ -53,6 +53,8 @@ export function App() {
   const choosing = usePlayer(s => s.choosingServer);
   // The room takes the colour of the record that is playing, unless the theme fixes its colours.
   const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
+  // At the deck's size (see Deck).
+  useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), 600);
   useCommandKeys();
   useFileDrops();
   // On phones the status bar takes the room colour too.
@@ -280,6 +282,7 @@ const Deck = memo(function Deck() {
       {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
       {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
+      <DeckLyrics />
       <DeckLinks />
     </div>
   </aside>;
@@ -392,6 +395,7 @@ function SignalPath({ track }: { track: Track }) {
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
+  const streamKbps = usePlayer(s => s.streamKbps);
   const codec = usePlayer(s => s.audio?.codec ?? null);
   const decoderRate = usePlayer(s => s.audio?.decoderRate ?? null);
   // Linux: the sound server resamples what mpv sends (AudioPath.sink). Nothing when it doesn't or isn't known.
@@ -399,6 +403,7 @@ function SignalPath({ track }: { track: Track }) {
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
   // A kept song is a file on this device: said only when the player really opened it.
   const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
+    delivery === 'reduced' && `Streaming a ${streamKbps} kbps MP3 of it, as set in Settings.`,
     delivery === 'device' && 'Playing the copy kept on this device.',
     volume < 100 && `Volume at ${volume}%.`, resampled, buffering && delivery !== 'device' && 'Buffering.'].filter(Boolean).join(' ');
   // A station: a live stream, and what mpv says it decodes, if anything. The server's list says

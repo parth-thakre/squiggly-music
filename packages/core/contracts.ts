@@ -1,5 +1,6 @@
 import type { Schema } from 'effect';
 import type { CommandSchema, ConnectionSchema } from './validation';
+import type { StreamQuality } from './streamQuality';
 
 export type PlayerCommand = Schema.Schema.Type<typeof CommandSchema>;
 export type Connection = Schema.Schema.Type<typeof ConnectionSchema>;
@@ -55,7 +56,9 @@ export interface AlbumDetail {
   discTitles?: DiscTitle[];
 }
 export interface DiscTitle { disc: number; title: string }
-export interface ArtistDetail { artist: Artist; albums: Album[] }
+// `appearsOn`: for an artist with no records of their own, the songs that credit them (a singer on
+// soundtracks, say) and the records those are on. Absent when the server lists records of theirs.
+export interface ArtistDetail { artist: Artist; albums: Album[]; appearsOn?: { albums: Album[]; tracks: Track[] } }
 export interface Playlist {
   id: string; name: string; comment: string | null; owner: string | null;
   songCount: number; duration: number; coverArt: string | null;
@@ -203,6 +206,7 @@ export interface Settings {
   playCountsAt: 25 | 50 | 75 | 90; // percent of a song that has to play before it counts
   miniOnTop: boolean;         // keep the mini player above other windows
   outputDevice: string;       // mpv audio-device name; 'auto' is the system default
+  streamQuality: StreamQuality; // the original, or an MP3 of at most that many kbps (packages/core/streamQuality.ts)
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
   keptLimitMb: number;        // how much room songs kept on this device may take, in MB (1024 * 1024 bytes)
   diagnostics: boolean;       // betas with remote diagnostics built in: send them (off: nothing sent or written)
@@ -298,6 +302,9 @@ export interface PlayerSnapshot {
   // The current entry is a kept song and the player opened its file on this device, not the
   // stream. Absent from older hosts, which means false.
   fromDevice?: boolean;
+  // The current entry streams as an MP3 of at most this many kbps (Settings › Streaming quality),
+  // not the original. Null or absent otherwise.
+  streamKbps?: number | null;
 }
 // off: the queue stops after its last song. all: it wraps to the first. one: a finished song
 // starts again; Next still moves on.
@@ -521,7 +528,7 @@ export const emptyAudio = (): AudioPath => ({
 export const emptyPlayer = (): PlayerSnapshot => ({
   engine: 'starting', error: null, playing: false, position: 0, duration: 0,
   volume: 100, currentIndex: -1, queue: [], entryIds: [], playId: '', radio: null, devices: [], audio: emptyAudio(),
-  repeat: 'off', shuffle: false, stationTitle: null, fromDevice: false,
+  repeat: 'off', shuffle: false, stationTitle: null, fromDevice: false, streamKbps: null,
 });
 export const emptyDiagnostics = (): Diagnostics => ({
   uptimeSeconds: 0, startupMs: null, ipcCommands: 0, playerMessagesPerSecond: 0,

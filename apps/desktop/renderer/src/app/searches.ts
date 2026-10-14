@@ -11,6 +11,7 @@ const MAX_LENGTH = 256;
 
 // Who is signed in (server address and username), or null when no one is.
 let account: string | null = null;
+export const signedInAccount = () => account;
 function read(): string[] {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE) ?? '{}') as { account?: unknown; queries?: unknown };

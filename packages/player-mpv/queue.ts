@@ -11,6 +11,22 @@ export type Edit<T extends PlayableTrack> = Exclude<QueueEdit, { type: 'queue-ad
 // Applies one edit to mpv's playlist and the host's parallel copy, entry by entry, so a
 // native failure part-way leaves both describing the same list. `live` is false after a
 // legacy argument-less stop: mpv's playlist is then empty and only the private copy remains.
+// Gives the entry at `index` a new location in place: a new playlist entry moved onto its index,
+// then the old one removed. Never the entry playing, which would start again.
+export function relocateEntry<T extends PlayableTrack>(native: PlaylistEngine, queue: T[], live: boolean, index: number, item: T) {
+  if (live) {
+    if (index === (native.number('playlist-pos') ?? -1)) throw new Error('The current song keeps its stream.');
+    native.command('loadfile', item.location, 'append');
+    try { native.command('playlist-move', String(queue.length), String(index)); }
+    catch (error) { native.command('playlist-remove', String(queue.length)); throw error; }
+    native.command('playlist-remove', String(index + 1));
+  }
+  queue[index] = item;
+  if (live && native.number('playlist-count') !== queue.length) {
+    throw new Error('The audio engine queue changed unexpectedly. Replace the queue to continue.');
+  }
+}
+
 export function editQueue<T extends PlayableTrack>(native: PlaylistEngine, queue: T[], live: boolean, edit: Edit<T>) {
   const current = live ? native.number('playlist-pos') ?? -1 : -1;
   switch (edit.type) {

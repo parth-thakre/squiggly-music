@@ -7,6 +7,10 @@ import type { HostMessage, HostRequest } from '../packages/player-mpv/protocol';
 import { emptyPlayer, type AudioDevice, type PlayerSnapshot } from '../packages/core/contracts';
 import { clearPlayerSession } from '../packages/player-mpv/session';
 import { libmpvMissing } from '../packages/player-mpv/libraries';
+import { startStreamRelay, type StreamRelay } from '../apps/desktop/main/streamRelay';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import type { AddressInfo } from 'node:net';
 
 let worker: ChildProcess | undefined;
 let fixtureDirectory: string | undefined;
@@ -185,6 +189,62 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('queue editing in real libmpv
   });
 });
 
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('streaming quality in real libmpv', () => {
+  it('plays the next song from its new stream, though mpv had already opened the old one', async () => {
+    const [first, original, smaller] = await Promise.all([wavFixture(2), wavFixture(6), wavFixture(3)]);
+    const { snapshots, replies, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+    await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+    const item = (id: string, location: string) => ({ location, track: { id, title: id, artist: '', album: '', duration: null, source: 'navidrome' as const,
+      sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null } });
+    send({ id: 1, action: { type: 'queue', tracks: [item('a', first), item('b', original)] } });
+    await expect.poll(() => snapshots.at(-1)?.playing).toBe(true);
+    // Long enough for mpv to open the next song early (prefetch-playlist).
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const entryId = snapshots.at(-1)!.entryIds[1];
+    send({ id: 2, action: { type: 'queue-relocate', entries: [{ entryId, item: { ...item('b', smaller), kbps: 128 } }] } });
+    await expect.poll(() => replies.has(2)).toBe(true);
+    expect(replies.get(2)).toBeNull();
+    expect(snapshots.at(-1)).toMatchObject({ currentIndex: 0, playing: true, entryIds: [expect.any(String), entryId] });
+    await expect.poll(() => snapshots.at(-1)?.currentIndex, { timeout: 5000 }).toBe(1);
+    await expect.poll(() => snapshots.at(-1)?.duration).toBeCloseTo(3, 0);
+    expect(snapshots.at(-1)!.streamKbps).toBe(128);
+  });
+});
+
+describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('downloading songs in real libmpv', () => {
+  it('plays on through a server stream that goes silent partway, from the relay\'s download', async () => {
+    const wav = await readFile(await wavFixture(6));
+    // Any answer that starts before two seconds of the song sends up to there, then nothing, open.
+    const cut = 44 + 48000 * 2 * 2;
+    const ranges: string[] = [];
+    const server = createServer((request, response) => {
+      const start = Number(/bytes=(\d+)-/.exec(request.headers.range ?? '')?.[1] ?? 0);
+      ranges.push(request.headers.range ?? 'all');
+      response.writeHead(request.headers.range ? 206 : 200, {
+        'content-type': 'audio/wav', 'accept-ranges': 'bytes', 'content-length': String(wav.length - start),
+        ...(request.headers.range ? { 'content-range': `bytes ${start}-${wav.length - 1}/${wav.length}` } : {}),
+      });
+      if (start < cut) response.write(wav.subarray(start, cut)); else response.end(wav.subarray(start));
+    });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+    let relay: StreamRelay | undefined;
+    try {
+      relay = await startStreamRelay(fetch, { cacheDir: join(fixtureDirectory!, 'songs'), stallMs: 500 });
+      const location = relay.location(`http://127.0.0.1:${(server.address() as AddressInfo).port}/rest/stream?id=a&format=raw`, 6, 'a');
+      const { snapshots, send } = start(process.env.SQUIGGLY_LIBMPV_PATH!);
+      await expect.poll(() => snapshots.at(-1)?.engine).toBe('ready');
+      send({ id: 1, action: { type: 'queue', tracks: [{ location, track: { id: 'a', title: 'a', artist: '', album: '', duration: 6, source: 'navidrome',
+        sourceFormat: 'wav', sourceSampleRate: null, sourceBitDepth: null } }] } });
+      await expect.poll(() => snapshots.at(-1)?.position ?? 0, { timeout: 12_000 }).toBeGreaterThan(5);
+      // Without the relay, libmpv waits out its network timeout (a minute) at two seconds.
+      expect(ranges.slice(0, 2)).toEqual(['all', `bytes=${cut}-`]);
+    } finally {
+      await relay?.close();
+      server.closeAllConnections(); server.close();
+    }
+  }, 20_000);
+});
+
 describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('kept songs in real libmpv', () => {
   it('says a kept song plays from the device only while mpv has its file open, and never shows the path', async () => {
     const file = await wavFixture(8);
@@ -326,8 +386,9 @@ describe('host snapshot lifecycle', () => {
     } }] } });
     const snapshot = snapshots().at(-1)!.player;
     expect(snapshot.queue[0].id).toBe('new');
-    expect(snapshot).toMatchObject({ currentIndex: -1, playing: false, position: 0, duration: 0 });
-    expect(snapshot.audio).toMatchObject({ codec: null, decoderRate: null, outputRate: null, bufferSeconds: null });
+    // The new song is current at once, and starting: nothing of the old one's position or format.
+    expect(snapshot).toMatchObject({ currentIndex: 0, playing: false, position: 0, duration: 0 });
+    expect(snapshot.audio).toMatchObject({ codec: null, decoderRate: null, outputRate: null, bufferSeconds: null, buffering: true });
   });
 
   it('starts a replacement queue at the requested entry and rejects an out-of-range start', async () => {
@@ -383,6 +444,18 @@ describe('host snapshot lifecycle', () => {
     const { command, native } = await mockHost(true);
     command({ id: 1, action: { type: 'stop' } });
     expect(native.command).toHaveBeenCalledWith('stop', 'keep-playlist');
+  });
+
+  it('says which songs stream as a smaller MP3, and only while one plays', async () => {
+    const { command, native, snapshots, deliver } = await mockHost();
+    deliver();
+    // mpv is on the third song (playlist-pos 2), the one queued as a 128 kbps MP3.
+    command({ id: 1, action: { type: 'queue', tracks: [playable('a'), playable('b'), { ...playable('c'), location: 'http://127.0.0.1:9/c', kbps: 128 }] } });
+    vi.advanceTimersByTime(250); deliver();
+    expect(snapshots().at(-1)!.player.streamKbps).toBe(128);
+    native.number.mockImplementation(name => ({ 'playlist-pos': 1, 'time-pos': 3, duration: 200, volume: 100 })[name] ?? null);
+    vi.advanceTimersByTime(250); deliver();
+    expect(snapshots().at(-1)!.player.streamKbps).toBeNull();
   });
 
   it('rejects a seek after native playback advances to another track', async () => {
@@ -630,6 +703,42 @@ describe('queue editing', () => {
     expect(native.command.mock.calls.at(-1)).toEqual(['loadfile', '/z.flac', 'append']);
     expect(native.set).not.toHaveBeenCalledWith('pause', 'yes');
     expect(native.set.mock.calls.filter(([name]) => name === 'playlist-pos')).toEqual([['playlist-pos', '1']]);
+  });
+
+  it('gives queued songs a new stream in place when the streaming quality changes, but not the one playing', async () => {
+    const { run, reply, order, snapshot, mpv, native } = await editableHost();
+    const ids = snapshot().entryIds;
+    const smaller = (id: string) => ({ ...playable(id), location: `http://127.0.0.1:9/${id}`, kbps: 128 });
+    native.command.mockClear();
+    expect(reply(run({ type: 'queue-relocate', entries: [
+      { entryId: ids[0], item: smaller('a') }, { entryId: ids[1], item: smaller('b') }, { entryId: ids[3], item: smaller('d') },
+      // Gone since: skipped.
+      { entryId: 'gone.1', item: smaller('x') },
+    ] }))).toMatchObject(ok);
+    expect(mpv.locations()).toEqual(['http://127.0.0.1:9/a', '/b.flac', '/c.flac', 'http://127.0.0.1:9/d']);
+    // Same songs, same ids, same place; playback never moved.
+    expect(order()).toEqual(['a', 'b', 'c', 'd']);
+    expect(snapshot().entryIds).toEqual(ids);
+    expect(snapshot().currentIndex).toBe(1);
+    expect(mpv.current()).toBe(1);
+    expect(native.set).not.toHaveBeenCalledWith('pause', 'yes');
+    // The new entry goes in first, so the old one is always the one after it.
+    expect(native.command.mock.calls.slice(0, 3)).toEqual([['loadfile', 'http://127.0.0.1:9/a', 'append'], ['playlist-move', '4', '0'], ['playlist-remove', '1']]);
+    // Back to the original: only the songs that changed are touched.
+    native.command.mockClear();
+    run({ type: 'queue-relocate', entries: [{ entryId: ids[2], item: playable('c') }, { entryId: ids[3], item: playable('d') }] });
+    expect(mpv.locations()).toEqual(['http://127.0.0.1:9/a', '/b.flac', '/c.flac', '/d.flac']);
+    expect(native.command.mock.calls.filter(([name]) => name === 'loadfile')).toEqual([['loadfile', '/d.flac', 'append']]);
+  });
+
+  it('goes straight from the song playing to the chosen one when a new queue replaces it', async () => {
+    const { run, snapshots } = await editableHost();
+    const from = snapshots().length;
+    run({ type: 'queue', tracks: ['x', 'y', 'z'].map(playable), startIndex: 2 });
+    // No snapshot in between with nothing current: the room would flash to its plain colours.
+    const shown = snapshots().slice(from).map(({ player }) => player.queue[player.currentIndex]?.id ?? null);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.every(id => id === 'z')).toBe(true);
   });
 
   it('inserts before an entry for a drop onto the queue, and the playing song keeps playing', async () => {
@@ -1381,16 +1490,22 @@ describe('restoring a saved queue', () => {
     expect(r.pauses()).toEqual(['yes', 'yes']);
     expect(r.starts()).toEqual(['30', 'none']);
     expect(r.last()).toMatchObject({ playing: false, position: 30 });
-    // A seek before mpv has opened the song is refused, and the saved position still holds.
+    // A seek before mpv has opened the song waits for it, in place of the saved position: the
+    // song opens there, shows there meanwhile, and plays once it's there.
     r.native.set.mockClear(); r.native.command.mockClear();
     r.run(resume());
-    const refused = r.run({ type: 'seek', seconds: 12, queueIndex: 0, trackId: 'a' });
-    expect(r.reply(refused)).toMatchObject({ error: expect.stringContaining('seek') });
-    expect(r.starts()).toEqual(['30', 'none', '30']);
-    r.opened(30);
+    const waits = r.run({ type: 'seek', seconds: 12, queueIndex: 0, trackId: 'a' });
+    expect(r.reply(waits)).toEqual({ type: 'reply', id: waits, error: null });
+    expect(r.starts()).toEqual(['30', 'none', '12']);
+    r.tick(1000);
+    expect(r.last()).toMatchObject({ position: 12, error: null });
+    expect(r.pauses()).toEqual(['yes']);
+    r.opened(12);
     r.tick();
     expect(r.pauses()).toEqual(['yes', 'no']);
-    expect(r.starts()).toEqual(['30', 'none', '30', 'none']);
+    expect(r.starts()).toEqual(['30', 'none', '12', 'none']);
+    // Opened there: only the seek mpv refused, none after it.
+    expect(r.seeks()).toEqual([['seek', '12', 'absolute+exact']]);
     // Once it's open (here at 0:00), a seek of the user's own plays from there once it lands.
     r.native.set.mockClear(); r.native.command.mockClear();
     r.run(resume());
@@ -1418,6 +1533,61 @@ describe('restoring a saved queue', () => {
     expect(r.pauses()).toEqual(['yes']);
     expect(r.seeks()).toEqual([]);
     expect(r.last().playing).toBe(false);
+    // mpv read the saved position before the seek came, so it opens there: then it seeks the
+    // usual way, showing the seek's position all along, and plays once that lands.
+    r.native.set.mockClear(); r.native.command.mockClear();
+    r.run(resume());
+    r.run({ type: 'seek', seconds: 12, queueIndex: 0, trackId: 'a' });
+    r.opened(30); r.seekable();
+    r.tick();
+    expect(r.seeks()).toEqual([['seek', '12', 'absolute+exact'], ['seek', '12', 'absolute+exact']]);
+    expect(r.last().position).toBe(12);
+    expect(r.pauses()).toEqual(['yes']);
+    landed(r.native);
+    r.tick();
+    expect(r.pauses()).toEqual(['yes', 'no']);
+  });
+
+  it('waits with a seek made while a slow server is still opening the song', async () => {
+    const r = await resuming();
+    r.run({ type: 'queue', tracks: ['a', 'b'].map(playable) });
+    r.tick();
+    const waits = r.run({ type: 'seek', seconds: 50, queueIndex: 0, trackId: 'a' });
+    expect(r.reply(waits)).toEqual({ type: 'reply', id: waits, error: null });
+    expect(r.starts()).toEqual(['50']);
+    // Not back to 0:00 while it opens, and never paused.
+    r.tick(2000);
+    expect(r.last()).toMatchObject({ position: 50, error: null });
+    r.opened(50);
+    r.tick();
+    expect(r.starts()).toEqual(['50', 'none']);
+    // Opened there: only the seek mpv refused, none after it.
+    expect(r.seeks()).toHaveLength(1);
+    expect(r.pauses()).not.toContain('yes');
+    // Opened at 0:00 anyway (the start option came too late): it seeks once mpv can.
+    r.native.set.mockClear(); r.native.command.mockClear();
+    r.select(1);
+    r.run({ type: 'seek', seconds: 40, queueIndex: 1, trackId: 'b' });
+    r.opened(0);
+    r.tick();
+    r.seekable();
+    r.tick();
+    expect(r.seeks()).toEqual([['seek', '40', 'absolute+exact'], ['seek', '40', 'absolute+exact']]);
+    expect(r.pauses()).toEqual([]);
+  });
+
+  it('gives up on a seek whose song never becomes seekable, and says so', async () => {
+    const r = await resuming();
+    // An mpv that won't take the start option, so the seek waits on the song being seekable.
+    const set = r.native.set.getMockImplementation()!;
+    r.native.set.mockImplementation((name: string, value: string) => { if (name === 'start' && value !== 'none') throw new Error('rejected'); set(name, value); });
+    r.run({ type: 'queue', tracks: ['a'].map(playable) });
+    r.run({ type: 'seek', seconds: 20, queueIndex: 0, trackId: 'a' });
+    r.tick(5000);
+    expect(r.last()).toMatchObject({ position: 20, error: null });
+    r.tick(7000);
+    expect(r.seeks()).toHaveLength(1);
+    expect(r.last().error).toMatch(/too long to open/);
   });
 
   // The output fallback (above) during a resume: the song whose output failed plays again once,
@@ -1936,8 +2106,10 @@ describe.skipIf(!process.env.SQUIGGLY_LIBMPV_PATH)('resuming in real libmpv', ()
       send({ id: 1, action: { type: 'queue', tracks: [streamed(server.url('/slow/a.wav'), 'a', 48000)] } });
       await expect.poll(() => snapshots.at(-1)?.position ?? 0, { timeout: 5000 }).toBeGreaterThan(0.5);
       const loaded = snapshots.slice(snapshots.findIndex(s => s.currentIndex === 0));
-      // Playing, and starting, before any audio: then playing, and not.
-      expect(loaded[0]).toMatchObject({ playing: true, position: 0, audio: { buffering: true } });
+      // Starting before any audio (first as the queue loads, not yet playing; then playing): then
+      // playing, and not.
+      expect(loaded[0]).toMatchObject({ playing: false, position: 0, audio: { buffering: true } });
+      expect(loaded.find(s => s.playing)).toMatchObject({ position: 0, audio: { buffering: true } });
       expect(snapshots.at(-1)).toMatchObject({ playing: true, audio: { buffering: false } });
       expect(loaded.filter(s => s.position > 0.3).every(s => !s.audio.buffering)).toBe(true);
     } finally { server.close(); }

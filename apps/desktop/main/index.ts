@@ -13,8 +13,9 @@ import iconPath from './assets/icon.png?asset';
 import { emptyPlayer, emptyDiagnostics, listedDevice, ONLINE } from '../../../packages/core/contracts';
 import { LAUNCH_WAIT, OUT_OF_REACH, PROBE_TIMEOUT, Reach, type ProbeOutcome } from '../../../packages/core/reach';
 import { PlayReports, type SendOutcome } from '../../../packages/core/plays';
+import { reducedKbps } from '../../../packages/core/streamQuality';
 import { KEPT_MESSAGES, keyOf, MB } from '../../../packages/core/kept';
-import { CommandSchema, ConnectionSchema, IdSchema, PlayTracksSchema, SaveM3uSchema } from '../../../packages/core/validation';
+import { CommandSchema, ConnectionSchema, IdSchema, LibraryRequestSchemas, PlayTracksSchema, SaveM3uSchema } from '../../../packages/core/validation';
 import {
   defaultSettings, QUEUE_LIMIT, QueueAddSchema, QueueJumpSchema, QueueMoveSchema, QueueRemoveSchema, RadioSeedSchema,
   SettingsFileSchema, SettingsPatchSchema, WindowStateSchema,
@@ -22,7 +23,7 @@ import {
 import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, PlaysFileSchema } from '../../../packages/core/desktopValidation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { stationIdOf } from '../../../packages/core/stations';
-import type { AppSnapshot, Connection, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Connection, Lyrics, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
 import { SubsonicClient, libraryCall, libraryMethods, reachOf, resolveServerAddress, ServerError, Unreachable } from '../../../packages/adapter-opensubsonic/client';
@@ -41,10 +42,12 @@ import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { KeptStore } from './keptStore';
+import { LyricsCache } from './lyricsCache';
 import { paintFrame } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
 import { startKept } from './keptBridge';
 import { remote } from './remoteDiagnostics';
+import { startStreamRelay, type StreamRelay } from './streamRelay';
 
 // Betas with remote diagnostics compiled in (remoteDiagnostics.ts); otherwise does nothing.
 remote.installEarly();
@@ -133,6 +136,9 @@ const sinks = new SinkWatch(query => readSink(query), { record: (ms, failed) => 
 let finalSession: { generation: number; client: SubsonicClient } | null = null;
 // Songs kept on this computer (<userData>/kept), and their downloads. Created at ready.
 let keptStore: KeptStore | null = null;
+let lyricsCache: LyricsCache | null = null;
+// Makes songs streamed at a lower quality seekable (streamRelay.ts). Null until started, or if it couldn't.
+let relay: StreamRelay | null = null;
 let keeper: KeepManager | null = null;
 let keptPush: () => void = () => {};
 // Finished plays waiting for the server (<userData>/plays.json). Created at ready.
@@ -225,9 +231,71 @@ const playableOf = (client: SubsonicClient, track: Track) => track.source === 's
   ? client.stationLocation(stationIdOf(track)).pipe(Effect.map((location): PlayableTrack => ({ track, location })))
   : Effect.succeed(playable(client, track));
 // A server song: its kept file when this computer has one (online too, which saves the download),
-// otherwise its stream. Songs queued before a keep finished stay streams.
+// otherwise its stream through the relay, which downloads it whole as it plays: the original, or
+// an MP3 at a lower quality (Settings › Streaming quality). Songs queued before a keep finished
+// stay as they were queued; a change to the setting reaches the queued songs too (update-settings).
 function playable(client: SubsonicClient, track: Track): PlayableTrack {
-  return pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
+  const picked = pickLocation(track, id => keptStore?.locate(id) ?? null, () => client.streamLocation(track.id));
+  if (picked.kept || track.source !== 'navidrome') return picked;
+  const kbps = reducedKbps(settings.value.streamQuality);
+  const stream = kbps === null ? picked.location : client.streamLocation(track.id, 'mp3', kbps);
+  // Without the relay the song streams as it is; an MP3 then seeks only as far as it has downloaded.
+  const location = relay ? relay.location(stream, track.duration, streamKey(track.id, kbps)) : stream;
+  return kbps === null ? { ...picked, location } : { track, location, kbps };
+}
+// A song at a quality, as the relay knows its download.
+const streamKey = (id: string, kbps: number | null) => kbps === null ? id : `${id}@${kbps}`;
+// Songs queued after the one playing download ahead (the relay's want), so a slow or dropped
+// connection later doesn't stall them. Kept songs and stations don't download.
+const DOWNLOAD_AHEAD = 3;
+function downloadAhead() {
+  if (!relay) return;
+  const { queue, currentIndex, repeat, engine } = state.player;
+  const kbps = reducedKbps(settings.value.streamQuality);
+  const keys: string[] = [];
+  if (engine === 'ready' && server && currentIndex >= 0 && repeat !== 'one') {
+    for (let step = 1; step < queue.length && keys.length < DOWNLOAD_AHEAD; step++) {
+      const index = currentIndex + step;
+      if (index >= queue.length && repeat !== 'all') break;
+      const track = queue[index % queue.length];
+      if (track.source === 'navidrome' && !keptStore?.locate(track.id)) keys.push(streamKey(track.id, kbps));
+    }
+  }
+  relay.want(keys);
+}
+// A song's lyrics, from those kept on this computer when they'll do (lyricsCache.ts). LRCLIB is a
+// third party: it's contacted only when both the caller and the stored setting allow it.
+function lyricsOf(client: SubsonicClient, value: unknown) {
+  return Effect.gen(function* () {
+    const [query, asked] = yield* Schema.decodeUnknown(LibraryRequestSchemas.lyrics)(value).pipe(Effect.mapError(() => new Error('Invalid library request.')));
+    const lookup = asked && settings.value.lyricsLookup;
+    const ask = async () => {
+      if (away()) throw new Unreachable(OUT_OF_REACH);
+      const result = await Effect.runPromise(Effect.either(libraryCall(client, 'lyrics', [query, lookup])));
+      if (Either.isLeft(result)) throw result.left;
+      return result.right.value as Lyrics | null;
+    };
+    if (!lyricsCache) return yield* Effect.tryPromise({ try: ask, catch: error => error });
+    const { lyrics, failed } = yield* Effect.tryPromise({ try: () => lyricsCache!.answer(query.id, lookup, ask, away()), catch: error => error });
+    // Kept lyrics answered for a server that didn't: still say it's out of reach.
+    if (failed instanceof Unreachable) reach.failed();
+    if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
+    return lyrics;
+  });
+}
+// The next song's lyrics, so they show as it starts.
+let warmed: string | null = null;
+function warmLyrics() {
+  const { queue, currentIndex, repeat } = state.player;
+  const client = server;
+  if (!client || away() || currentIndex < 0 || !queue.length) return;
+  const index = repeat === 'one' ? currentIndex : currentIndex + 1;
+  if (index >= queue.length && repeat !== 'all') return;
+  const track = queue[index % queue.length];
+  if (track.source !== 'navidrome' || warmed === track.id) return;
+  warmed = track.id;
+  const query = { id: track.id, title: track.title.slice(0, 1024), artist: track.artist.slice(0, 1024), album: track.album.slice(0, 1024), duration: track.duration };
+  void Effect.runPromise(Effect.either(lyricsOf(client, [query, true])));
 }
 // A library track by id: one a window was shown this session, or a kept one.
 const trackById = (id: string) => knownTracks.get(id) ?? keptStore?.track(id);
@@ -268,8 +336,34 @@ async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8
   if (away()) return null;
   const client = server;
   if (!client) return null;
-  const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size))));
-  return Either.isRight(result) && server === client ? result.right : null;
+  return serverCover(client, id, size);
+}
+
+// Server covers this session has fetched, newest last, by id and then size. A window, the mini
+// player, the system's media controls, and the next song fetched early all ask for one sleeve at
+// different sizes; over a slow connection each crossing costs seconds, and the audio shares it. So
+// a size this already has, or is fetching, larger is cut from that one here instead. A failed
+// fetch isn't kept, so the next ask tries again.
+type CoverBytes = { bytes: Uint8Array<ArrayBuffer>; contentType: string };
+const serverCovers = new Map<string, Map<number, Promise<CoverBytes | null>>>();
+async function serverCover(client: SubsonicClient, id: string, size: number): Promise<CoverBytes | null> {
+  const sizes = serverCovers.get(id) ?? new Map<number, Promise<CoverBytes | null>>();
+  serverCovers.delete(id); serverCovers.set(id, sizes);
+  if (serverCovers.size > 40) serverCovers.delete(serverCovers.keys().next().value!);
+  const larger = [...sizes.keys()].filter(have => have >= size).sort((a, b) => a - b)[0];
+  const from = larger === undefined ? null : await sizes.get(larger)!;
+  if (from && larger === size) return from;
+  const wanted = from ? Promise.resolve(shrinkCover(from, size))
+    : Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size)))).then(result => Either.isRight(result) ? result.right : null);
+  sizes.set(size, wanted);
+  const cover = await wanted;
+  if (!cover && sizes.get(size) === wanted) sizes.delete(size);
+  return server === client ? cover : null;
+}
+function shrinkCover(cover: CoverBytes, size: number): CoverBytes {
+  const image = nativeImage.createFromBuffer(Buffer.from(cover.bytes));
+  if (image.isEmpty() || image.getSize().width <= size) return cover;
+  return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
 }
 
 const alive = (target: BrowserWindow | null): target is BrowserWindow => target !== null && !target.isDestroyed();
@@ -295,6 +389,8 @@ function observePlayer() {
   if (settings.value.reportPlays) for (const event of events) reportPlay(event);
   // Kept files forgotten while queued go once they leave the queue.
   void keeper?.retryPending();
+  downloadAhead();
+  warmLyrics();
 }
 // Silent by design: failures appear only in operation metrics. A finished play that gets no
 // answer waits in plays.json for the server (PlayReports).
@@ -310,6 +406,9 @@ async function sendReport(trackId: string, event: 'started' | 'finished', at?: n
 // Per-session state that must not carry across an account switch or disconnect.
 function resetSessionState() {
   queueSync.reset(); plays.reset(); savedSong = null; savedQueues.clear();
+  relay?.forget();
+  warmed = null;
+  serverCovers.clear();
   artRequest = null;
   if (art) void rm(art.path, { force: true }).catch(() => undefined);
   art = null;
@@ -541,6 +640,7 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     const key = keyOf(candidate.baseUrl, connection.username);
     if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
     if (keptStore) yield* Effect.promise(() => keptStore!.bind(key).catch(() => undefined));
+    if (lyricsCache) yield* Effect.promise(() => lyricsCache!.bind(key));
     keptPush();
     reports?.bind(key);
     void reports?.flush();
@@ -559,6 +659,7 @@ function adoptAway(candidate: SubsonicClient, connection: Connection, key: strin
   unverified = { connection };
   state.server = { ...state.server, connected: true, name: hostName(candidate), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnecting: false, reconnectError: null };
   reports?.bind(key);
+  void lyricsCache?.bind(key);
   reach.enter({ probeNow });
   updateTray(); updateMedia();
 }
@@ -694,18 +795,18 @@ function installHandlers() {
   }), 'server');
   for (const method of libraryMethods) handle(`library:${method}`, value => Effect.gen(function* () {
     if (!server) return yield* Effect.fail(new Error('Connect to a server first.'));
+    // Lyrics may come from those kept on this computer, away too.
+    if (method === 'lyrics') return yield* lyricsOf(server, value);
     // Away: answered at once, without the server, until a probe finds it again.
     if (away()) return yield* Effect.fail(new Unreachable(OUT_OF_REACH));
     // The main process reports plays and saves the queue itself; renderer calls still honor the settings.
     if (method === 'reportPlay' && !settings.value.reportPlays) return yield* Effect.fail(new Error('Play reporting is turned off in Settings.'));
     if ((method === 'saveQueue' || method === 'savedQueue') && !settings.value.syncQueue) return yield* Effect.fail(new Error('Queue sync is turned off in Settings.'));
     const client = server;
-    // LRCLIB is a third party. Contact it only when both the caller and the stored setting allow it.
-    const args = method === 'lyrics' && Array.isArray(value) ? [value[0], value[1] === true && settings.value.lyricsLookup] : value;
     // The deck's Resume offer reads the saved queue; Resume may play this copy (resumeSaved).
     if (method === 'saveQueue') savedQueues.clear();
     const keep = method === 'savedQueue' ? savedQueues.reading(client) : null;
-    const result = yield* libraryCall(client, method, args);
+    const result = yield* libraryCall(client, method, value);
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
     keep?.(result.value as SavedQueue | null);
     rememberTracks(result.tracks);
@@ -793,6 +894,14 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
     if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); }
+    // Songs already queued stream at the new quality from the next one on. The one playing keeps its
+    // stream: switching it would start it again.
+    if (next.streamQuality !== previous.streamQuality && server && host !== null && state.player.engine === 'ready') {
+      const client = server, { queue, entryIds, currentIndex } = state.player;
+      const entries = queue.flatMap((track, index) => track.source === 'navidrome' && index !== currentIndex && entryIds[index]
+        ? [{ entryId: entryIds[index], item: playable(client, track) }] : []);
+      if (entries.length) yield* Effect.ignore(send({ type: 'queue-relocate', entries }));
+    }
     // Plays waiting to be reported go when reporting is turned off.
     if (!next.reportPlays) reports?.clear();
     // A new limit shows at once. Lowering it never removes anything kept.
@@ -854,6 +963,7 @@ function installHandlers() {
     reach.leave(); unverified = null;
     if (keeper) yield* Effect.promise(() => keeper!.forgetAll());
     reports?.clear();
+    yield* Effect.promise(() => lyricsCache?.clear() ?? Promise.resolve());
     keptPush();
     // Restart also removes authenticated stream URLs from the player's native playlist. Ends the
     // session again: one could have been adopted while the kept songs were forgotten.
@@ -1164,10 +1274,15 @@ app.whenReady().then(async () => {
   await Promise.all([settings.load(), windowState.load(), account.load()]);
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
   await playModes.load();
+  relay = await startStreamRelay(fetch, {
+    cacheDir: join(userData, 'song-cache'),
+    onEvent: ({ name, ...data }) => remote.event(name, { ...data }, name === 'stream.failed'),
+  }).catch(() => null);
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   // What is kept, and plays waiting, are read before reconnecting: they decide whether the app
   // opens away when the server doesn't answer.
   keptStore = new KeptStore(join(userData, 'kept'));
+  lyricsCache = new LyricsCache(join(userData, 'lyrics'));
   await keptStore.load().catch(() => undefined);
   playsStore = new JsonStore(join(userData, 'plays.json'), PlaysFileSchema, playsStore.value, { maxBytes: 256 * 1024, compact: true });
   await playsStore.load();

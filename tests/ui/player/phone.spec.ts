@@ -51,7 +51,7 @@ test.describe('phone', () => {
     // A whole record opens now playing over the page.
     await expect(app.deck).toHaveClass(/\bopen\b/);
     await app.deck.getByRole('button', { name: 'Hide' }).tap();
-    await card.locator('button:not(.play-over)').tap({ position: { x: 120, y: 40 } });
+    await card.locator(':scope > button:not(.play-over)').tap({ position: { x: 120, y: 40 } });
     await expect(app.heading).toHaveText('Quiet Harbor');
   });
 

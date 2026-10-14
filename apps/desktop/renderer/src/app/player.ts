@@ -47,8 +47,10 @@ export interface PlayerState {
   starting: boolean;
   volume: number; audio: AudioPath | null; devices: AudioDevice[]; device: string;
   // What was asked of the server for the current song. A request, not proof of what arrived.
-  // 'device': the player opened the copy kept on this device instead.
-  delivery: 'original-requested' | 'mp3-fallback' | 'device' | null;
+  // 'device': the player opened the copy kept on this device instead. 'reduced': the desktop asked
+  // for an MP3 of at most streamKbps (Settings › Streaming quality).
+  delivery: 'original-requested' | 'mp3-fallback' | 'reduced' | 'device' | null;
+  streamKbps: number | null;
   error: string | null; diagnostics: Diagnostics;
   // Radio keeps the queue topped up with songs like the last one.
   radio: { label: string } | null;
@@ -95,7 +97,7 @@ let state: PlayerState = {
   mode: desktop ? 'desktop' : android ? 'android' : 'web', engine: desktop ? 'starting' : 'ready', connected: false, serverName: null,
   sessionId: null, access: desktop ? 'open' : 'checking', pageConnection: false, choosingServer: false,
   queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, starting: false, volume: 100, audio: null,
-  devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, error: null, diagnostics: emptyDiagnostics(),
+  devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, streamKbps: null, error: null, diagnostics: emptyDiagnostics(),
   radio: null, radioStarting: null, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
   update: null,
@@ -239,9 +241,10 @@ if (desktop) {
       radio: p.radio?.label === state.radio?.label ? state.radio : p.radio,
       // A queue loaded some other way (a play key resumes the saved one) replaces the offer.
       resumable: p.queue.length ? null : state.resumable,
-      // The desktop asks Navidrome for the original file; the host doesn't verify what came back.
-      // A kept song says so only when the host really opened its file.
-      delivery: track?.source === 'navidrome' ? (p.fromDevice ? 'device' : 'original-requested') : null,
+      // The desktop asks Navidrome for the original file, or an MP3 at a lower quality; the host
+      // doesn't verify what came back. A kept song says so only when the host really opened its file.
+      delivery: track?.source === 'navidrome' ? (p.fromDevice ? 'device' : p.streamKbps ? 'reduced' : 'original-requested') : null,
+      streamKbps: p.streamKbps ?? null,
       reach: sameReach(state.reach, reach) ? state.reach : reach,
       queuedPlays: snapshot.server.queuedPlays ?? 0,
       error, diagnostics: snapshot.diagnostics,

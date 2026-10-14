@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
+import { Credits } from './credits';
 import { canDrag, carriesItems, readPayload, startDrag, type DragPayload } from './drag';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
@@ -96,7 +97,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     if (pending && positions.get(pending.key) === pending.to) {
       moving.current = null;
       setAnnouncement(`Moved ${pending.title} to position ${pending.to + 1} of ${keys.length}.`);
-      const row = table.current?.querySelector<HTMLElement>(`li[data-key="${CSS.escape(pending.key)}"] .track`);
+      const row = table.current?.querySelector<HTMLElement>(`li[data-key="${CSS.escape(pending.key)}"] .track-play`);
       row?.focus(); row?.scrollIntoView({ block: 'nearest' });
     }
   }, [positions]);
@@ -221,14 +222,22 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
           draggable={draggable} onContextMenu={event => menu(event, index)} onClick={event => rowTap(event, index, isNow)}
           onDragStart={event => dragStart(event, index)} onDragOver={event => dragOver(event, index)}
           onDrop={event => drop(event, index)} onDragEnd={() => setDrag(null)}>
-          <button type="button" className="track" onClick={event => click(event, index, isNow)}
-            aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selected.size ? isSelected : undefined}
-            aria-description={unavailable ? 'Not kept on this device' : undefined}>
+          {/* The row's button covers the whole row (CSS), and the artists and the record are links
+              above it: a button can't hold buttons. */}
+          <span className="track">
             <span className="n">{isNow ? <Wave playing={playing} /> : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1}</span>
-            <span className="title"><span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
-              {credit && <span className="credit">{credit}</span>}</span>
-            {showAlbum && <span className="album">{splitTitle(track.album).main}</span>}
-          </button>
+            <span className="title">
+              <button type="button" className="track-play" onClick={event => click(event, index, isNow)}
+                aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selected.size ? isSelected : undefined}
+                aria-description={unavailable ? 'Not kept on this device' : undefined}>
+                <span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
+              </button>
+              {credit && <span className="credit"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
+            </span>
+            {showAlbum && <span className="album">{track.albumId && !isStation(track)
+              ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button>
+              : splitTitle(track.album).main}</span>}
+          </span>
           {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
               and only while it's in reach; other rows keep the slot empty so the durations line up. */}
           <span className="row-rating">{track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>

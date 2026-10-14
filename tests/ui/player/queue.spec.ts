@@ -26,10 +26,10 @@ test.describe('queue', () => {
     await lyric.focus();
     await page.keyboard.press('Alt+ArrowDown');
     await expect.poll(() => app.titles()).toEqual(['Long Run', 'Short Stop', 'Lyric Line', 'Thirty Two', 'Tail Light']);
-    await expect(app.tracks().nth(2).locator('button.track')).toBeFocused();
+    await expect(app.tracks().nth(2).locator('button.track-play')).toBeFocused();
     await page.keyboard.press('Alt+ArrowDown');
     await expect.poll(() => app.titles()).toEqual(['Long Run', 'Short Stop', 'Thirty Two', 'Lyric Line', 'Tail Light']);
-    await expect(app.tracks().nth(3).locator('button.track')).toBeFocused();
+    await expect(app.tracks().nth(3).locator('button.track-play')).toBeFocused();
     await expect(app.main.getByText('Moved Lyric Line to position 4 of 5.')).toBeAttached();
     // Moving songs around it leaves the playing song playing.
     await expect(app.tracks().nth(0)).toHaveClass(/\bnow\b/);

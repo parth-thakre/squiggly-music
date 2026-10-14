@@ -5,7 +5,7 @@ import type { RadioStation } from '../../../../../packages/core/contracts';
 import { stationTrack } from '../../../../../packages/core/stations';
 import { sinkSentence } from '../../../../../packages/core/sinks';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
-import { buildMixes, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
+import { buildMixes, knownDecades, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, outputDescription, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
@@ -15,6 +15,7 @@ import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseD
 import { morph, nav, useRoute } from './route';
 import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from './settings';
 import { PLAY_COUNTS_AT, type PlayCountsAt } from '../../../../../packages/core/plays';
+import { STREAM_QUALITIES, type StreamQuality } from '../../../../../packages/core/streamQuality';
 import { Lyrics } from './lyrics';
 import { TrackTable, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
@@ -23,7 +24,7 @@ import { ExtensionsSettings } from './extensions';
 import { ExtensionSections } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
-import { invalidate, peek } from './library';
+import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
@@ -260,10 +261,11 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
         draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
         <span className="grid-name">{album.id === nowAlbum && <Wave playing={playing} />}<span>{splitTitle(album.name).main}</span></span>
-        <span className="grid-sub">{album.artist}</span>
         {/* After the name, so the card's accessible name still starts with the record's. */}
         <ContainerMark kind="album" id={album.id} />
       </button>
+      {/* Below the card's button, which can't hold the artists' links. */}
+      <span className="grid-sub"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} /></span>
     </li>)}
   </ul>;
 }
@@ -424,9 +426,10 @@ export function ArtistPage({ id }: { id: string }) {
     await player.play(shuffle ? shuffled(tracks.value) : tracks.value, 0);
     showNowPlaying();
   };
-  return <Pending result={result} waiting="Finding their records">{({ artist, albums }) => <>
-    <Head title={artist.name}>
-      <p className="byline"><span>{plural(albums.length, 'record')}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
+  return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => <>
+    <Head title={artist.name} cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
+      <p className="byline"><span>{albums.length || !appearsOn ? plural(albums.length, 'record')
+        : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play
@@ -440,7 +443,8 @@ export function ArtistPage({ id }: { id: string }) {
     </Head>
     {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
     {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
-    <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>
+    {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
+    {appearsOn && <section className="shelf-section"><h2>Appears on</h2><AlbumGrid albums={appearsOn.albums} /></section>}
     {info?.ok && info.value.similar.length > 0 && <SimilarArtists artists={info.value.similar} />}
   </>}</Pending>;
 }
@@ -617,7 +621,12 @@ function MixTile({ mix, tracks, large = false, travels = false }: { mix: Mix; tr
   const list = tracks ?? drawn ?? [];
   const covers = [...new Map(list.filter(t => t.coverArt).map(t => [t.albumId ?? t.coverArt, t.coverArt!])).values()].slice(0, 4);
   const classes = `cover mix-tile${large ? ' head-cover' : ''}${travels ? ' morph' : ''}`;
-  if (covers.length < 4) return <div ref={tile} className={`${classes} cover-type`} aria-hidden="true"><span>{mix.name}</span></div>;
+  // Four records' sleeves in a square; with fewer (a decade with little in it), the first record's
+  // whole; with none yet, or none at all, the mix's name.
+  if (!covers.length) return <div ref={tile} className={`${classes} cover-type`} aria-hidden="true"><span>{mix.name}</span></div>;
+  if (covers.length < 4) return <div ref={tile} className={`${classes} mosaic single`} aria-hidden="true">
+    <img src={api.coverUrl(covers[0], large ? 600 : 300)} alt="" loading="lazy" decoding="async" />
+  </div>;
   return <div ref={tile} className={`${classes} mosaic`} aria-hidden="true">
     {covers.map(id => <img key={id} src={api.coverUrl(id, large ? 300 : 80)} alt="" loading="lazy" decoding="async" />)}
   </div>;
@@ -778,7 +787,7 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt' | 'streamQuality'>, title: string, detail: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
     <span><strong>{title}</strong><span>{detail}</span></span>
   </label>;
@@ -807,6 +816,12 @@ export function SettingsView() {
           <select value={settings.outputDevice} onChange={event => void updateSettings({ outputDevice: event.target.value })}>
             {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${outputDescription(settings.outputDevice) ?? settings.outputDevice} (disconnected)`}</option>}
             {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
+          </select>
+        </label>
+        <label className="setting choice">
+          <span><strong>Streaming quality</strong><span>On a slow connection, Navidrome can send a smaller MP3 instead of the original file. A change applies from the next song; the one playing keeps its stream. Songs kept on this computer always play from their file.</span></span>
+          <select value={settings.streamQuality} onChange={event => void updateSettings({ streamQuality: event.target.value === 'original' ? 'original' : Number(event.target.value) as StreamQuality })}>
+            {STREAM_QUALITIES.map(quality => <option key={quality} value={quality}>{quality === 'original' ? 'Original file' : `MP3, ${quality} kbps`}</option>)}
           </select>
         </label>
         {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows and macOS support this; many Linux setups ignore it.')}
@@ -1182,8 +1197,7 @@ function HomeMixes() {
   const history = useResource(`albums:frequent:0:${SHELF}`, () => api.albums('frequent', 0, SHELF));
   // Wait for both, so the row doesn't reshuffle as they arrive.
   if (!genres || !history) return null;
-  const decades = peek<number[]>('decades');
-  const mixes = buildMixes(genres.ok ? genres.value : [], decades?.ok ? decades.value : [], history.ok && history.value.length > 0).slice(0, SHELF);
+  const mixes = buildMixes(genres.ok ? genres.value : [], knownDecades(), history.ok && history.value.length > 0).slice(0, SHELF);
   return <section className="shelf-section home-shelf" aria-labelledby="home-mixes">
     <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
     <ul className="grid">
@@ -1234,7 +1248,7 @@ const skipped = { artistCount: 0, albumCount: 0, songCount: 0 };
 const searchPage = (type: SearchType, offset: number, size: number): SearchOptions => type === 'artists' ? { ...skipped, artistCount: size, artistOffset: offset }
   : type === 'albums' ? { ...skipped, albumCount: size, albumOffset: offset } : { ...skipped, songCount: size, songOffset: offset };
 // What Enter in the search field focuses: the first song, record, or artist, in page order.
-const FIRST_RESULT = '.tracks .track, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
+const FIRST_RESULT = '.tracks .track-play, .grid li > button:not(.play-over), .names li > button:not(.play-over)';
 // Long lists render only the rows near the viewport, so the first one on the page may not be the
 // list's first: a song row knows its index, and a record grid pads the rows above the window.
 const listStart = (result: HTMLElement) => {

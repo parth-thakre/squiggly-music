@@ -1,5 +1,6 @@
 import type { Genre, Result, Track } from '../../../../../packages/core/contracts';
-import { albumDetails, api, load, onLibraryReset } from './library';
+import { albumDetails, api, libraryEpoch, load, onLibraryReset, peek, prime } from './library';
+import { signedInAccount } from './searches';
 import { shuffled } from './ui';
 
 // Automatic playlists, built from the library itself. They work on a fresh server with
@@ -38,10 +39,39 @@ export function buildMixes(genres: Genre[], decades: number[], history: boolean)
   return mixes;
 }
 
-// A decade qualifies when the server can find at least a handful of songs from it.
-// A lookup that fails is a failure, not a decade without songs: it isn't kept, and the next
-// visit asks again.
-export async function libraryDecades(): Promise<Result<number[]>> {
+// A decade qualifies when the server can find at least a handful of songs from it: nine
+// lookups, which take a second or two. So the decades found are kept in this browser's storage
+// for the account (server and username), shown at once next time, and looked for again in the
+// background; the fresh list takes their place when it differs. A lookup that fails is a failure,
+// not a decade without songs: with nothing kept it's shown, and the next visit asks again.
+const SAVED_DECADES = 'squiggly.decades';
+function savedDecades(): number[] | null {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SAVED_DECADES) ?? '{}') as { account?: unknown; decades?: unknown };
+    const account = signedInAccount();
+    if (!account || stored.account !== account || !Array.isArray(stored.decades)) return null;
+    return stored.decades.filter((value): value is number => Number.isInteger(value) && value % 10 === 0 && value >= 0 && value <= 9990);
+  } catch { return null; }
+}
+function saveDecades(decades: number[], account: string | null) {
+  if (!account || account !== signedInAccount()) return;
+  try { localStorage.setItem(SAVED_DECADES, JSON.stringify({ account, decades })); } catch { /* Looked for again next time. */ }
+}
+// For Home, which shows the decades it knows of without looking for them.
+export const knownDecades = (): number[] => {
+  const found = peek<number[]>('decades');
+  return found?.ok ? found.value : savedDecades() ?? [];
+};
+export function libraryDecades(): Promise<Result<number[]>> {
+  const saved = savedDecades(), account = signedInAccount(), session = libraryEpoch();
+  const asked = lookForDecades().then(result => { if (result.ok) saveDecades(result.value, account); return result; });
+  if (!saved) return asked;
+  void asked.then(result => {
+    if (result.ok && session === libraryEpoch() && result.value.join() !== saved.join()) prime('decades', result);
+  });
+  return Promise.resolve({ ok: true, value: saved });
+}
+async function lookForDecades(): Promise<Result<number[]>> {
   const candidates = Array.from({ length: 9 }, (_, i) => 1940 + i * 10);
   const results = await Promise.all(candidates.map(decade => api.randomSongs({ size: 8, fromYear: decade, toYear: decade + 9 })));
   const failed = results.find(result => !result.ok);
