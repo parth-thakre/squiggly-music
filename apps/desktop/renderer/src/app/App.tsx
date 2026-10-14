@@ -3,7 +3,7 @@ import { createContext, memo, useContext, useEffect, useRef, useState, useSyncEx
 import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
-import { Lyrics } from './lyrics';
+import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
@@ -282,6 +282,7 @@ const Deck = memo(function Deck() {
       {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
       {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
+      <DeckLyrics />
       <DeckLinks />
     </div>
   </aside>;

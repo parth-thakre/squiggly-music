@@ -65,7 +65,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       update: { mode: 'install', status: 'up-to-date', current: '0.1.0', version: null, percent: null, error: null, ...updatePatch },
     });
     const push = () => { const next = snapshot(); listeners.forEach(listener => listener(next)); };
-    const empty: Record<string, unknown> = { starred: { artists: [], albums: [], tracks: [] }, savedQueue: null };
+    const empty: Record<string, unknown> = { starred: { artists: [], albums: [], tracks: [] }, savedQueue: null, lyrics: null };
     // Tracks a window has been shown, as the main process remembers them for play-tracks.
     const known = new Map<string, Track>();
     const learn = (value: unknown, depth = 0): void => {

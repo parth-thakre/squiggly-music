@@ -1,10 +1,10 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { LyricLine, LyricWord, Lyrics as LyricsData, Track } from '../../../../../packages/core/contracts';
 import { timeWords } from '../../../../../packages/lyrics/words';
 import { api, useResource } from './library';
 import { current, getPlayer, livePosition, player, usePlayer } from './player';
-import { nav } from './route';
+import { nav, useRoute } from './route';
 import { updateSettings, useSettings } from './settings';
 import { reducedMotion } from './theme';
 import { splitTitle } from './ui';
@@ -50,17 +50,23 @@ function scrollerOf(element: HTMLElement) {
   return null;
 }
 
-function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
+// A song's lyrics, shared by the sheet and the deck (one lookup for both).
+function useLyrics(track: Track) {
   const { lyricsLookup } = useSettings();
   const result = useResource(`lyrics:${track.id}:${lyricsLookup}`, () => api.lyrics(
     { id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration }, lyricsLookup));
+  const raw = result?.ok ? result.value : null;
+  // Lyrics from an older bridge may lack word times; complete them the same way the server does.
+  const lyrics = useMemo((): LyricsData | null => raw && raw.wordTiming === undefined ? { ...raw, ...timeWords(raw) } : raw, [raw]);
+  return { result, lyrics, lyricsLookup };
+}
+
+function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
+  const { result, lyrics, lyricsLookup } = useLyrics(track);
   const playing = usePlayer(s => s.playing);
   // Only a paused position matters here; while playing, the loop below reads the live clock.
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
   const list = useRef<HTMLOListElement>(null);
-  const raw = result?.ok ? result.value : null;
-  // Lyrics from an older bridge may lack word times; complete them the same way the server does.
-  const lyrics = useMemo((): LyricsData | null => raw && raw.wordTiming === undefined ? { ...raw, ...timeWords(raw) } : raw, [raw]);
   const [active, setActive] = useState(-1);
   const [browsing, setBrowsing] = useState(false);
   const browseTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -166,3 +172,68 @@ const Line = memo(function Line({ index, line, synced, state, onSeek }: {
       : line.text || <span aria-hidden="true">&nbsp;</span>}
   </li>;
 });
+
+// The deck's lyrics: in the room the deck has spare under its controls, the synced lines around the
+// one being sung, that line in ink and centred. Clicking opens the lyric sheet. Nothing shows while
+// the sheet is open, for a station, for lyrics that aren't timed, or without room for three lines.
+export function DeckLyrics() {
+  const track = usePlayer(current);
+  const route = useRoute();
+  if (!track || isStation(track) || route.view === 'lyrics') return null;
+  return <DeckLines key={track.id} track={track} />;
+}
+const ROOM_LINES = 3, GAP = 18;
+function DeckLines({ track }: { track: Track }) {
+  const { lyrics } = useLyrics(track);
+  const playing = usePlayer(s => s.playing);
+  const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
+  const box = useRef<HTMLButtonElement>(null);
+  const list = useRef<HTMLOListElement>(null);
+  const [active, setActive] = useState(-1);
+  const [room, setRoom] = useState(false);
+  const synced = lyrics?.synced ? lyrics.lines : null;
+
+  // The current line, checked each frame while playing; a React update only when it changes.
+  useEffect(() => {
+    if (!synced) return;
+    let frame = 0;
+    const paint = () => {
+      frame = 0;
+      setActive(lineAt(synced, livePosition() + LEAD));
+      if (playing && !document.hidden) frame = requestAnimationFrame(paint);
+    };
+    paint();
+    const wake = () => { if (!frame && !document.hidden) paint(); };
+    document.addEventListener('visibilitychange', wake);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', wake); };
+  }, [synced, playing, pausedAt]);
+
+  // Whether three lines fit, and the list moved so the current line sits a little above the
+  // middle. Early on the first line stays at the top (GAP below the stars) rather than leaving
+  // the room above empty; the top fades only once lines have gone past it.
+  useLayoutEffect(() => {
+    const view = box.current, ol = list.current;
+    if (!view || !ol) return;
+    const place = () => {
+      const line = ol.children[Math.max(0, active)] as HTMLElement | undefined;
+      const height = (ol.children[0] as HTMLElement | undefined)?.offsetHeight ?? Infinity;
+      setRoom(view.clientHeight >= GAP + height * ROOM_LINES);
+      if (!line) return;
+      const shift = Math.min(GAP, Math.round(view.clientHeight * .42 - line.offsetTop - line.offsetHeight / 2));
+      ol.style.transform = `translateY(${shift}px)`;
+      view.classList.toggle('scrolled', shift < GAP);
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(view);
+    return () => observer.disconnect();
+  }, [active, synced]);
+
+  if (!synced) return null;
+  return <button ref={box} type="button" className={`deck-lyrics${room ? "" : " no-room"}`} aria-label="Open the lyrics" onClick={() => nav.go({ view: 'lyrics' })}>
+    <ol ref={list} aria-hidden="true">
+      {synced.map((line, i) => <li key={i} className={i === active ? 'current' : undefined}>{line.text || '\u00a0'}</li>)}
+    </ol>
+  </button>;
+}
+
