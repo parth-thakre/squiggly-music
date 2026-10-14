@@ -9,7 +9,7 @@ Squiggly plays your own music from Navidrome. It asks the server for the origina
 
 It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Linux (Fedora, Debian and Ubuntu, and other distributions as an AppImage), and on Android phones, and a browser version works on phones too. There is a macOS build as well, but it hasn't been tested on a Mac yet.
 
-![Squiggly in use: playing a record turns the window its colours and opens the queue, a search finds a song, and Ctrl+K opens its lyrics, filling in word by word](docs/screenshots/demo.gif)
+![Squiggly in use: a search for The Knife, the record's name in a song's row opens it, and Play turns the window the sleeve's pink and plum, opens the queue, and starts the lyrics under the deck; the artist's name opens their page, with their picture](docs/screenshots/demo.gif)
 
 ## What it does
 
@@ -34,11 +34,11 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Extensions can also put a line in the deck and the mini player, and a section on the Playlists page.
 - Keep records, playlists, and a mix's songs on the desktop or Android device. Kept songs play from the device, online or not, which also saves bandwidth. When your server is out of reach, Home shows what is kept and the rest of the app says so. The Kept page is also on the Playlists page and at G then K. The browser version can't keep songs.
 
-![Squiggly's library while a record plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's cover](docs/screenshots/desktop-records.webp)
+![Squiggly's Records page while The Polish Ambassador's Pushing Through The Pavement plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's sleeve](docs/screenshots/desktop-records.webp)
 
-![Synced lyrics filling in word by word](docs/screenshots/desktop-lyrics.webp)
+![Synced lyrics for Diablo Swing Orchestra's Velvet Embracer, the second line filling in word by word](docs/screenshots/desktop-lyrics.webp)
 
-![The browser version on a phone: the library with the playing song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet](docs/screenshots/phone.webp)
+![The browser version on a phone: a record's page with the saved song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet](docs/screenshots/phone.webp)
 
 The recording and screenshots use [Navidrome's demo server](https://demo.navidrome.org), whose music its artists released under Creative Commons and other free licences. Lyrics shown come from LRCLIB.
 
