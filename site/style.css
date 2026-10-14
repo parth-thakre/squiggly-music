@@ -78,12 +78,14 @@ dd {
 }
 
 img,
+video,
 svg {
   display: block;
   max-width: 100%;
 }
 
-img {
+img,
+video {
   height: auto;
 }
 
@@ -333,7 +335,7 @@ kbd {
 
 /* Pictures of the app */
 
-.shot img {
+.shot video {
   display: block;
   width: 100%;
   height: auto;
@@ -400,7 +402,7 @@ kbd {
   grid-column: 8 / 11;
 }
 
-.shot-phone img {
+.shot-phone video {
   border-radius: 22px;
 }
 
