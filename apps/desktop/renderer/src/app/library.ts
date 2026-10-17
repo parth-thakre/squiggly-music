@@ -17,6 +17,9 @@ const settled = new Map<string, Result<unknown>>();
 // Answers showing what the host kept because the server couldn't be asked (away, say): asked
 // again the next time they're wanted, while they keep showing.
 const stale = new Set<string>();
+// What has changed since the host kept it (a rating, a star, an edit: see invalidate): until
+// the server's answer comes, the kept one would show it as it was.
+const changed = new Set<string>();
 // Called with the key that changed, or '*' when everything did (a new session).
 const listeners = new Set<(key: string) => void>();
 const unreachable = <T,>(): Result<T> => ({ ok: false, error: 'Could not reach the library. Check your connection and try again.' });
@@ -28,6 +31,7 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   if (entry && stale.has(key)) { cache.delete(key); entry = undefined; }
   if (entry) { cache.delete(key); cache.set(key, entry); return entry as Promise<Result<T>>; }
   stale.delete(key);
+  if (kept && [...changed].some(prefix => key.startsWith(prefix))) kept = undefined;
   const asked = loader().catch(unreachable<T>);
   const session = epoch;
   const mine: Promise<Result<T>> = !kept ? asked : new Promise(resolve => {
@@ -64,6 +68,7 @@ async function albumSlot<T>(task: () => Promise<T>) {
 export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)), stored ? () => stored.album(id) : undefined);
 export const albumDetails = (ids: readonly string[]) => Promise.all(ids.map(albumDetail));
 export function invalidate(prefix: string) {
+  changed.add(prefix);
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); stale.delete(key); listeners.forEach(listener => listener(key)); }
   invalidations.forEach(listener => listener(prefix));
 }
@@ -86,7 +91,7 @@ export const onLibraryReset = (reset: () => void) => { resets.add(reset); return
 let epoch = 0;
 const epochListeners = new Set<() => void>();
 export function resetLibraryCaches() {
-  cache.clear(); settled.clear(); stale.clear();
+  cache.clear(); settled.clear(); stale.clear(); changed.clear();
   playlistEditors.clear();
   resets.forEach(reset => reset());
   epoch++;
