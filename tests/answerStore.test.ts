@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import type { Result } from '../packages/core/contracts';
 import { storedKey } from '../packages/core/stored';
 import { AnswerStore } from '../apps/desktop/main/answerStore';
-import { load, peek, resetLibraryCaches } from '../apps/desktop/renderer/src/app/library';
+import { invalidate, load, peek, resetLibraryCaches } from '../apps/desktop/renderer/src/app/library';
 
 let dir: string;
 beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'squiggly-answers-')); });
@@ -76,6 +76,12 @@ describe('pages showing kept answers', () => {
     await later(null, 30);
     expect(peek('k3')).toEqual(ok(['fresh']));
     expect(await load('k4', () => later(ok(['fresh']), 5), () => later<Result<string[]>>({ ok: false, error: 'Not kept' }, 1))).toEqual(ok(['fresh']));
+  });
+
+  it('waits for the server once the item has changed here, rather than show it as it was', async () => {
+    await load('album:a1', () => later(ok(['rated 0']), 5));
+    invalidate('album:a1');
+    expect(await load('album:a1', () => later(ok(['rated 4']), 20), () => later(ok(['rated 0']), 1))).toEqual(ok(['rated 4']));
   });
 
   it('keeps the kept answer while the server is away, and asks again next time', async () => {
