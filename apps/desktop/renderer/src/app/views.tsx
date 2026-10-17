@@ -1201,11 +1201,26 @@ function SeeAll({ what, go }: { what: string; go(): void }) {
   return <button type="button" className="text-button" onClick={go}>See all<span className="sr-only"> {what}</span></button>;
 }
 
+// A shelf still on its way, at its own height, so the shelves below don't move when it comes. One
+// that comes back empty still goes; next time the answer kept from this one says so at once.
+const WAITING_SLEEVES = 6;
+function ShelfWaiting({ id, title }: { id: string; title: string }) {
+  return <section className="shelf-section home-shelf" aria-labelledby={id} aria-busy="true">
+    <div className="section-head"><h2 id={id}>{title}</h2></div>
+    <ul className="grid" aria-hidden="true">
+      {Array.from({ length: WAITING_SLEEVES }, (_, i) => <li key={i}>
+        <div className="cover" /><span className="grid-name">&nbsp;</span><span className="grid-sub">&nbsp;</span>
+      </li>)}
+    </ul>
+  </section>;
+}
+
 // A row of sleeves from one of the Records sorts. See all opens Records in that sort.
 function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; title: string }) {
   const result = useKept(`albums:${type}:0:${SHELF}`, from => from.albums(type, 0, SHELF));
-  if (!result || (result.ok && !result.value.length)) return null;
   const id = `home-${type}`;
+  if (!result) return <ShelfWaiting id={id} title={title} />;
+  if (result.ok && !result.value.length) return null;
   return <section className="shelf-section home-shelf" aria-labelledby={id}>
     <div className="section-head">
       <h2 id={id}>{title}</h2>
@@ -1222,7 +1237,7 @@ function HomeMixes() {
   // The same list as Most played, so it costs nothing more.
   const history = useKept(`albums:frequent:0:${SHELF}`, from => from.albums('frequent', 0, SHELF));
   // Wait for both, so the row doesn't reshuffle as they arrive.
-  if (!genres || !history) return null;
+  if (!genres || !history) return <ShelfWaiting id="home-mixes" title="Your mixes" />;
   const mixes = buildMixes(genres.ok ? genres.value : [], knownDecades(), history.ok && history.value.length > 0).slice(0, SHELF);
   return <section className="shelf-section home-shelf" aria-labelledby="home-mixes">
     <div className="section-head"><h2 id="home-mixes">Your mixes</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>

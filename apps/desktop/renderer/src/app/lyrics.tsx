@@ -7,7 +7,7 @@ import { current, getPlayer, livePosition, player, usePlayer } from './player';
 import { nav, useRoute } from './route';
 import { updateSettings, useSettings } from './settings';
 import { reducedMotion } from './theme';
-import { splitTitle } from './ui';
+import { splitTitle, useWide } from './ui';
 
 // Lines and words light a moment early, so the change lands as the singing starts rather than just after.
 const LEAD = .1;
@@ -180,7 +180,9 @@ const Line = memo(function Line({ index, line, synced, state, onSeek }: {
 export function DeckLyrics() {
   const track = usePlayer(current);
   const route = useRoute();
-  if (!track || isStation(track) || route.view === 'lyrics') return null;
+  // A phone's deck has no room for them (app.css), so they aren't looked up or followed there.
+  const wide = useWide();
+  if (!wide || !track || isStation(track) || route.view === 'lyrics') return null;
   return <DeckLines key={track.id} track={track} />;
 }
 const ROOM_LINES = 3, GAP = 18;
