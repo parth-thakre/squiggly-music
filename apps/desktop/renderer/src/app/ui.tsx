@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, onLibraryReset } from './library';
 import { neutral, paletteFromImage, type Palette } from './palette';
 
@@ -18,11 +18,22 @@ export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'vo
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">{paths[kind]}</svg>;
 }
 
-// The squiggle is the app's one "playing" mark, at every size.
+// Wider than a phone (app.css's 760px layout). What a phone's layout hides isn't built there:
+// its rows' rating stars, the deck's lyrics.
+const wide = typeof matchMedia === 'function' ? matchMedia('(min-width: 761px)') : null;
+const onWidth = (listener: () => void) => { wide?.addEventListener('change', listener); return () => wide?.removeEventListener('change', listener); };
+export const useWide = () => useSyncExternalStore(onWidth, () => wide?.matches ?? true);
+
+// The squiggle is the app's one "playing" mark, at every size. The drawing is twice the mark's
+// width and slides inside it a wave at a time; moving the HTML box holding the picture, rather than
+// its path or the picture itself, lets the compositor animate it, so a playing row costs the page
+// nothing each frame.
 export function Wave({ playing }: { playing: boolean }) {
-  return <svg className={`wave${playing ? ' moving' : ''}`} viewBox="0 0 24 8" role="img" aria-label={playing ? 'Playing' : 'Paused'}>
-    <path d="M1 4 Q 4 0 7 4 T 13 4 T 19 4 T 25 4 T 31 4 T 37 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-  </svg>;
+  return <span className={`wave${playing ? ' moving' : ''}`} role="img" aria-label={playing ? 'Playing' : 'Paused'}>
+    <span className="wave-strip"><svg viewBox="0 0 48 8" aria-hidden="true">
+      <path d="M1 4 Q 4 0 7 4 T 13 4 T 19 4 T 25 4 T 31 4 T 37 4 T 43 4 T 49 4 T 55 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg></span>
+  </span>;
 }
 
 // Covers are requested near their displayed size; the library never loads full-size art for thumbnails.

@@ -71,20 +71,27 @@ const keepScroll = () => { if (!shown.overlay) remember(shown.id, scroller?.scro
 // Moving between places animates with the browser's View Transitions: the sleeve you touched
 // travels to where it lands, everything else crossfades. Skipped for reduced motion.
 const reduced = reducedMotion;
+const coarse = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null;
 // The record, playlist, or mix whose sleeve should travel on the next move.
 export const morph = { id: null as string | null };
 export function transition(update: () => void) {
   if (!document.startViewTransition || reduced.matches || document.hidden) { update(); return; }
   const view = document.startViewTransition(async () => {
     flushSync(update);
-    // Give a page whose data is still arriving a moment (at most 250 ms), so the sleeve has
-    // somewhere to land. Rendering is paused inside this callback, so wait on timers, not frames.
-    for (let wait = 0; wait < 10 && document.querySelector('.page .status.loading'); wait++) await new Promise(done => setTimeout(done, 25));
+    // Give a page whose data is still arriving a moment (at most 250 ms, 100 on a touch screen,
+    // where the press already asked for it: warm.ts), so the sleeve has somewhere to land.
+    // Rendering is paused inside this callback, so wait on timers, not frames.
+    const waits = coarse?.matches ? 4 : 10;
+    for (let wait = 0; wait < waits && document.querySelector('.page .status.loading'); wait++) await new Promise(done => setTimeout(done, 25));
   });
   moving = { view, shown: Infinity };
+  // From the start, while the old page still waits for the new one's data (and no animation runs
+  // yet), until the new page has slid in: for styles, and tests, that need to know.
+  const root = document.documentElement as HTMLElement | undefined;
+  if (root) root.dataset.moving = '';
   // A transition interrupted by the next one is expected, not an error.
   view.ready.then(() => { if (moving?.view === view) moving.shown = performance.now() + SHOWN; }, () => undefined);
-  view.finished.catch(() => undefined).finally(() => { if (moving?.view === view) moving = null; });
+  view.finished.catch(() => undefined).finally(() => { if (moving?.view === view) { moving = null; if (root) delete root.dataset.moving; } });
 }
 // While a transition runs, the page under it can't be touched: Chrome sends every tap and click
 // to the document itself, whatever the CSS says, so a song tapped as its record arrives would not

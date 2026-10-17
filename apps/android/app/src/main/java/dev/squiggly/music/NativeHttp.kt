@@ -24,6 +24,9 @@ import javax.net.ssl.SSLPeerUnverifiedException
 object NativeHttp {
     private val executor = Executors.newFixedThreadPool(6)
     private val active = ConcurrentHashMap<Int, HttpURLConnection>()
+    // Requests waiting for a thread. One the page gave up on (it moved on, or timed out) leaves
+    // this set and never starts, so it can't hold a thread from the requests that followed it.
+    private val waiting = ConcurrentHashMap.newKeySet<Int>()
 
     fun request(call: PluginCall) {
         val id = call.getInt("id") ?: 0
@@ -33,7 +36,9 @@ object NativeHttp {
         val body = call.getString("body")
         val timeout = (call.getInt("timeoutMs") ?: 15000).coerceIn(1000, 60000)
         val maxBytes = (call.getInt("maxBytes") ?: (9 * 1024 * 1024)).coerceIn(1024, 32 * 1024 * 1024)
+        waiting.add(id)
         executor.execute {
+            if (!waiting.remove(id)) return@execute call.reject("The request was canceled.")
             var connection: HttpURLConnection? = null
             var finished = false
             try {
@@ -77,6 +82,7 @@ object NativeHttp {
     }
 
     fun cancel(id: Int) {
+        waiting.remove(id)
         active.remove(id)?.disconnect()
     }
 
