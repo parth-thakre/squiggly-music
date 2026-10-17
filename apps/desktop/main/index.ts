@@ -642,6 +642,8 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     endRadio();
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear(); unverified = null;
+    // The answers kept switch with the client, so none of the last account's can answer for this one.
+    void answers?.bind(keyOf(candidate.baseUrl, connection.username));
     const session = ++connectionGeneration; resetSessionState();
     reach.leave();
     state.server = { ...state.server, connected: true, name: hostName(candidate, info.name), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
@@ -649,7 +651,6 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
     if (keptStore) yield* Effect.promise(() => keptStore!.bind(key).catch(() => undefined));
     if (lyricsCache) yield* Effect.promise(() => lyricsCache!.bind(key));
-    if (answers) yield* Effect.promise(() => answers!.bind(key));
     keptPush();
     reports?.bind(key);
     void reports?.flush();
@@ -664,12 +665,12 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
 function adoptAway(candidate: SubsonicClient, connection: Connection, key: string, probeNow: boolean) {
   endRadio();
   server = candidate; knownTracks.clear();
+  void answers?.bind(key);
   connectionGeneration++; resetSessionState();
   unverified = { connection };
   state.server = { ...state.server, connected: true, name: hostName(candidate), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnecting: false, reconnectError: null };
   reports?.bind(key);
   void lyricsCache?.bind(key);
-  void answers?.bind(key);
   reach.enter({ probeNow });
   updateTray(); updateMedia();
 }
@@ -732,7 +733,7 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
       const program = Effect.suspend(() => {
         // Requests queued before a disconnect or account switch must not run
         // against a later session, even when the album IDs happen to match.
-        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start', 'kept:keep'].includes(channel) || channel.startsWith('library:')) && generation !== connectionGeneration) {
+        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start', 'kept:keep'].includes(channel) || channel.startsWith('library:') || channel === 'library-stored') && generation !== connectionGeneration) {
           return Effect.fail(new Error('Server session changed. Try again.'));
         }
         return task(value, generation);
@@ -982,13 +983,15 @@ function installHandlers() {
     // Ends the session first, so a sign-in finishing while kept songs are forgotten below sees
     // that and doesn't save itself back (the connect handler's check before remember).
     connectionGeneration++;
+    // The answers kept go first, before anything below waits, so none is read for a signed-out account.
+    const forgetting = answers?.clear();
     // Nothing on the connect screen can reach kept songs, so they go with the sign-in, and so do
     // plays waiting to be reported.
     reach.leave(); unverified = null;
     if (keeper) yield* Effect.promise(() => keeper!.forgetAll());
     reports?.clear();
     yield* Effect.promise(() => lyricsCache?.clear() ?? Promise.resolve());
-    yield* Effect.promise(() => answers?.clear() ?? Promise.resolve());
+    yield* Effect.promise(() => forgetting ?? Promise.resolve());
     keptPush();
     // Restart also removes authenticated stream URLs from the player's native playlist. Ends the
     // session again: one could have been adopted while the kept songs were forgotten.

@@ -1,8 +1,8 @@
 import type { LibraryApi } from './contracts';
 
 // Library answers kept on the device by the connector's host (the desktop's main process, the
-// Android bridge), so a page opened before shows at once, after a restart and away from the
-// server too, while it's read again (useResource in the renderer's library.ts). Only answers that
+// Android bridge), so a page opened before shows at once, after a restart too, while it's read
+// again; away, where a page still opens (offline.ts), it shows what was kept (useResource in the renderer's library.ts). Only answers that
 // describe the library are kept, for the account signed in: nothing searched for, nobody else's
 // listening, and no random draw, which is never the same twice. Signing out, or another account,
 // removes them.
@@ -14,7 +14,8 @@ export type StoredLibrary = Pick<LibraryApi, StoredMethod>;
 
 // The name an answer is kept under: the request as the host received it. Null for one not kept.
 export function storedKey(method: string, args: readonly unknown[]): string | null {
-  if (!STORED.has(method) || (method === 'albums' && args[0] === 'random')) return null;
+  // Of album lists, the first page: what Home's shelves show. Records' later pages read afresh.
+  if (!STORED.has(method) || (method === 'albums' && (args[0] === 'random' || args[1] !== 0))) return null;
   return `${method}\n${JSON.stringify(args)}`;
 }
 // Answers kept per account, the least recently shown going first, and the largest one kept.

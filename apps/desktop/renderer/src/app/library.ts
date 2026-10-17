@@ -36,8 +36,12 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   const session = epoch;
   const mine: Promise<Result<T>> = !kept ? asked : new Promise(resolve => {
     let shown: Result<T> | null = null;
-    void kept().catch(unreachable<T>).then(answer => { if (!shown && answer.ok) resolve(shown = answer); });
-    void asked.then(fresh => {
+    const keeping = kept().catch(unreachable<T>);
+    void keeping.then(answer => { if (!shown && answer.ok) resolve(shown = answer); });
+    void asked.then(async fresh => {
+      // A failure that comes first (away answers at once) waits for what was kept, which shows
+      // instead and is asked for again next time.
+      if (!shown && !fresh.ok && (await keeping).ok) { stale.add(key); return; }
       if (!shown) { shown = fresh; resolve(fresh); return; }
       if (cache.get(key) !== mine || epoch !== session) return;
       if (!fresh.ok) stale.add(key);
@@ -103,7 +107,7 @@ export const libraryEpoch = () => epoch;
 export const useLibraryEpoch = () => useSyncExternalStore(listener => { epochListeners.add(listener); return () => { epochListeners.delete(listener); }; }, () => epoch);
 
 // useResource for a request the host may have kept an answer to (packages/core/stored.ts): a page
-// seen before, in this run or an earlier one, shows at once, and away from the server too.
+// seen before, in this run or an earlier one, shows at once, and keeps showing away from the server.
 export const loadKept = <T,>(key: string, ask: (from: StoredLibrary) => Promise<Result<T>>) =>
   load(key, () => ask(api), stored ? () => ask(stored) : undefined);
 export const useKept = <T,>(key: string | null, ask: (from: StoredLibrary) => Promise<Result<T>>) =>

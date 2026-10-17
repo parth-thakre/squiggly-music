@@ -22,6 +22,7 @@ describe('library answers kept on this computer', () => {
     expect(storedKey('artist', ['a1'])).toBe('artist\n["a1"]');
     expect(storedKey('albums', ['newest', 0, 12])).not.toBeNull();
     expect(storedKey('albums', ['random', 0, 12])).toBeNull();
+    expect(storedKey('albums', ['newest', 60, 60])).toBeNull();
     for (const method of ['search', 'randomSongs', 'nowPlaying', 'shares', 'star', 'savedQueue', 'playlist']) expect(storedKey(method, [])).toBeNull();
   });
 
@@ -82,6 +83,12 @@ describe('pages showing kept answers', () => {
     await load('album:a1', () => later(ok(['rated 0']), 5));
     invalidate('album:a1');
     expect(await load('album:a1', () => later(ok(['rated 4']), 20), () => later(ok(['rated 0']), 1))).toEqual(ok(['rated 4']));
+  });
+
+  it('shows the kept answer when the server fails before it comes', async () => {
+    const kept = ok(['old']);
+    expect(await load('k6', () => later<Result<string[]>>({ ok: false, error: 'Away' }, 1), () => later(kept, 10))).toBe(kept);
+    expect(await load('k7', () => later<Result<string[]>>({ ok: false, error: 'Away' }, 1), () => later<Result<string[]>>({ ok: false, error: 'Not kept' }, 10))).toEqual({ ok: false, error: 'Away' });
   });
 
   it('keeps the kept answer while the server is away, and asks again next time', async () => {
