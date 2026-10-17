@@ -5,10 +5,11 @@ import { shuffled } from './ui';
 
 // Automatic playlists, built from the library itself. They work on a fresh server with
 // no listening history; history-based ones appear once the server has something to say.
-export interface Mix { id: string; name: string; description: string; tracks(): Promise<Result<Track[]>> }
+// `covers`: sleeves for the mix's tile without drawing it, where the draw would read whole records.
+export interface Mix { id: string; name: string; description: string; tracks(): Promise<Result<Track[]>>; covers?(): Promise<Result<string[]>> }
 
 async function fromAlbums(type: 'newest' | 'frequent' | 'recent', count: number, mix: boolean): Promise<Result<Track[]>> {
-  const albums = await load(`albums:${type}:0:${count}`, () => api.albums(type, 0, count));
+  const albums = await albumList(type, count);
   if (!albums.ok) return albums;
   const details = await albumDetails(albums.value.map(album => album.id));
   const failed = details.find(detail => !detail.ok);
@@ -17,16 +18,22 @@ async function fromAlbums(type: 'newest' | 'frequent' | 'recent', count: number,
   return { ok: true, value: mix ? shuffled(tracks).slice(0, 80) : tracks };
 }
 
+const albumList = (type: 'newest' | 'frequent' | 'recent', count: number) => load(`albums:${type}:0:${count}`, () => api.albums(type, 0, count));
+async function albumCovers(type: 'newest' | 'frequent' | 'recent', count: number): Promise<Result<string[]>> {
+  const albums = await albumList(type, count);
+  return albums.ok ? { ok: true, value: albums.value.flatMap(album => album.coverArt ? [album.coverArt] : []) } : albums;
+}
+
 export function buildMixes(genres: Genre[], decades: number[], history: boolean): Mix[] {
   const mixes: Mix[] = [
     { id: 'everything', name: 'Everything, shuffled', description: 'Sixty songs from anywhere in your library.',
       tracks: () => api.randomSongs({ size: 60 }) },
     { id: 'recent', name: 'Recently added', description: 'Every song from the twelve newest records, newest first.',
-      tracks: () => fromAlbums('newest', 12, false) },
+      tracks: () => fromAlbums('newest', 12, false), covers: () => albumCovers('newest', 12) },
   ];
   if (history) mixes.push(
-    { id: 'repeat', name: 'On repeat', description: 'Songs from the records you play most, shuffled.', tracks: () => fromAlbums('frequent', 10, true) },
-    { id: 'lately', name: 'Lately', description: 'Songs from the records you played most recently, shuffled.', tracks: () => fromAlbums('recent', 10, true) },
+    { id: 'repeat', name: 'On repeat', description: 'Songs from the records you play most, shuffled.', tracks: () => fromAlbums('frequent', 10, true), covers: () => albumCovers('frequent', 10) },
+    { id: 'lately', name: 'Lately', description: 'Songs from the records you played most recently, shuffled.', tracks: () => fromAlbums('recent', 10, true), covers: () => albumCovers('recent', 10) },
   );
   for (const genre of genres.filter(g => g.songCount >= 12).sort((a, b) => b.songCount - a.songCount).slice(0, 6)) {
     mixes.push({ id: `genre:${genre.name}`, name: genre.name, description: `Fifty songs tagged ${genre.name}, shuffled.`,

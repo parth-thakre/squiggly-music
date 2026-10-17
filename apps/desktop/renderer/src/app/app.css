@@ -121,6 +121,8 @@ img:is(.deck-cover, .head-cover) {
 /* Page */
 .page { min-width: 0; overflow-y: auto; padding: 18px 48px 72px 36px; outline: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .status { margin: 0; padding: 20px 0; color: var(--soft); }
+/* Room for an artist's popular songs (ArtistPage): fewer than ten, often, in a personal library. */
+.popular-waiting { box-sizing: border-box; min-height: calc(var(--row-height, 44px) * 5); }
 .sentinel { height: 1px; }
 
 .head { margin-bottom: 26px; }
