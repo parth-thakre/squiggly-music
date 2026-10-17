@@ -1,8 +1,9 @@
 import type { Page } from '@playwright/test';
 import { expect, test } from '../fixtures/test';
 
-// Whether a page move's transition is still running.
-const sliding = (page: Page) => page.evaluate(() => document.getAnimations().some(animation => (animation.effect as KeyframeEffect | null)?.pseudoElement?.startsWith('::view-transition')));
+// Whether a page move's transition is still running, including the moment before it animates
+// while the new page's data arrives (route.ts marks the whole of it).
+const sliding = (page: Page) => page.evaluate(() => document.documentElement.hasAttribute('data-moving'));
 
 // The tabs along the bottom: all six on one line, none cut off, however narrow the phone.
 async function expectTabsFit(page: Page) {

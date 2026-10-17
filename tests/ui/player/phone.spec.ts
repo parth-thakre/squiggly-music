@@ -93,7 +93,7 @@ test.describe("a record's More", () => {
     await app.signIn();
     await app.openAlbum('Test Pressing');
     // Once the record has finished sliding in: until then a tap goes nowhere (route.ts).
-    await expect.poll(() => page.evaluate(() => document.getAnimations().some(animation => (animation.effect as KeyframeEffect | null)?.pseudoElement?.startsWith('::view-transition')))).toBe(false);
+    await expect.poll(() => page.evaluate(() => document.documentElement.hasAttribute('data-moving'))).toBe(false);
   });
 
   test('opens a sheet without moving the page or choosing what rose under the finger', async ({ app, page }) => {

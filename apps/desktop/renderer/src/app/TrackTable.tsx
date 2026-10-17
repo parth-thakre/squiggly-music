@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
 import { Credits } from './credits';
@@ -9,7 +9,7 @@ import { current, player, usePlayer } from './player';
 import { nav } from './route';
 import { RatingStars } from './ratings';
 import { useActiveTheme } from './theme';
-import { Glyph, splitTitle, time, Wave } from './ui';
+import { Glyph, splitTitle, time, useWide, Wave } from './ui';
 import { isKept, keptSupported, useKeptVersion } from './keptState';
 import { KeptMark } from './keptMark';
 import './kept.css';
@@ -67,6 +67,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   useKeptVersion();
   // Away, server songs that aren't kept can't play, and stars can't be changed.
   const away = usePlayer(s => s.reach.away);
+  const wide = useWide();
   const table = useRef<HTMLOListElement>(null);
   const [range, setRange] = useState<[number, number]>([0, Math.min(tracks.length, 60)]);
   const keys = useMemo(() => entryIds && entryIds.length === tracks.length ? entryIds : occurrenceKeys(tracks), [tracks, entryIds]);
@@ -186,6 +187,10 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     const payload = readPayload(event.dataTransfer);
     if (payload) onDropItems(payload, index);
   };
+  // The rows' handlers, current as of this render, behind one reference that doesn't change, so
+  // a row redraws only when what it shows does (TrackRow).
+  const handlers = useRef<RowHandlers>(null!);
+  handlers.current = { click, rowTap, menu, dragStart, dragOver, drop, dragEnd: () => setDrag(null) };
   const keyDown = (event: ReactKeyboardEvent) => {
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown') && onMove) {
       event.preventDefault();
@@ -209,47 +214,14 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const index = first + offset;
         const key = keys[index];
         const isNow = queue ? index === nowIndex : track.id === nowId;
-        const isSelected = selected.has(key) || menuRow === key;
-        const name = splitTitle(track.title, album);
-        const starred = isStarred(track.id, track.starred);
-        const credit = track.artist !== albumArtist ? track.artist : null;
         const kept = keptSupported && track.source === 'navidrome' && isKept(track.id);
-        const unavailable = away && keptSupported && track.source === 'navidrome' && !kept;
-        const classes = [isNow && 'now', isSelected && 'selected', unavailable && 'unavailable', drag && drag.to === index && drag.from !== index && (drag.from < index ? 'drop-after' : 'drop-before'),
-          !drag && into === index && 'drop-before'].filter(Boolean).join(' ');
+        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} playing={isNow && playing}
+          isSelected={selected.has(key) || menuRow === key} selecting={selected.size > 0} starred={isStarred(track.id, track.starred)}
+          kept={kept} unavailable={away && keptSupported && track.source === 'navidrome' && !kept} away={away} wide={wide}
+          drop={drag && drag.to === index && drag.from !== index ? (drag.from < index ? 'drop-after' : 'drop-before') : !drag && into === index ? 'drop-before' : null}
+          top={windowed ? slot(index) * ROW : null} draggable={draggable} album={album} albumArtist={albumArtist} showAlbum={showAlbum}
+          numbered={numbered} keptMarks={keptMarks} handlers={handlers} />;
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
-        const row = <li key={key} data-key={key} data-index={index} className={classes || undefined}
-          style={windowed ? { position: 'absolute', top: slot(index) * ROW, left: 0, right: 0 } : undefined}
-          draggable={draggable} onContextMenu={event => menu(event, index)} onClick={event => rowTap(event, index, isNow)}
-          onDragStart={event => dragStart(event, index)} onDragOver={event => dragOver(event, index)}
-          onDrop={event => drop(event, index)} onDragEnd={() => setDrag(null)}>
-          {/* The row's button covers the whole row (CSS), and the artists and the record are links
-              above it: a button can't hold buttons. */}
-          <span className="track">
-            <span className="n">{isNow ? <Wave playing={playing} /> : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1}</span>
-            <span className="title">
-              <button type="button" className="track-play" onClick={event => click(event, index, isNow)}
-                aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selected.size ? isSelected : undefined}
-                aria-description={unavailable ? 'Not kept on this device' : undefined}>
-                <span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
-              </button>
-              {credit && <span className="credit"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
-            </span>
-            {showAlbum && <span className="album">{track.albumId && !isStation(track)
-              ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button>
-              : splitTitle(track.album).main}</span>}
-          </span>
-          {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
-              and only while it's in reach; other rows keep the slot empty so the durations line up. */}
-          <span className="row-rating">{track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>
-          <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
-          {/* Beside the button, so the row's name stays "Play <title>". */}
-          {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
-          {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
-          {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
-            aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
-            onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>}
-        </li>;
         return group ? [<li key={`group-${index}`} className={`group-head${group.quiet ? ' quiet' : ''}`}
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
           <h2 title={group.label} aria-label={group.label}>{group.label}</h2></li>, row] : row;
@@ -258,3 +230,58 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     {onMove && <p className="sr-only" aria-live="polite">{announcement}</p>}
   </>;
 }
+
+interface RowHandlers {
+  click(event: ReactMouseEvent, index: number, isNow: boolean): void;
+  rowTap(event: ReactMouseEvent, index: number, isNow: boolean): void;
+  menu(event: ReactMouseEvent, index: number): void;
+  dragStart(event: ReactDragEvent, index: number): void;
+  dragOver(event: ReactDragEvent, index: number): void;
+  drop(event: ReactDragEvent, index: number): void;
+  dragEnd(): void;
+}
+// One song row. Everything it shows comes in as plain values, so playing, pausing, or moving to
+// the next song redraws the rows that changed rather than every row in the list.
+const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, playing, isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable, album, albumArtist, showAlbum, numbered, keptMarks, handlers }: {
+  track: Track; index: number; rowKey: string; isNow: boolean; playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
+  kept: boolean; unavailable: boolean; away: boolean; wide: boolean; drop: string | null; top: number | null; draggable: boolean;
+  album?: string; albumArtist?: string; showAlbum: boolean; numbered: 'position' | 'track'; keptMarks: boolean;
+  handlers: { current: RowHandlers };
+}) {
+  const name = splitTitle(track.title, album);
+  const credit = track.artist !== albumArtist ? track.artist : null;
+  const classes = [isNow && 'now', isSelected && 'selected', unavailable && 'unavailable', drop].filter(Boolean).join(' ');
+  return <li data-key={rowKey} data-index={index} className={classes || undefined}
+    style={top !== null ? { position: 'absolute', top, left: 0, right: 0 } : undefined}
+    draggable={draggable} onContextMenu={event => handlers.current.menu(event, index)} onClick={event => handlers.current.rowTap(event, index, isNow)}
+    onDragStart={event => handlers.current.dragStart(event, index)} onDragOver={event => handlers.current.dragOver(event, index)}
+    onDrop={event => handlers.current.drop(event, index)} onDragEnd={() => handlers.current.dragEnd()}>
+    {/* The row's button covers the whole row (CSS), and the artists and the record are links
+        above it: a button can't hold buttons. */}
+    <span className="track">
+      <span className="n">{isNow ? <Wave playing={playing} /> : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1}</span>
+      <span className="title">
+        <button type="button" className="track-play" onClick={event => handlers.current.click(event, index, isNow)}
+          aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selecting ? isSelected : undefined}
+          aria-description={unavailable ? 'Not kept on this device' : undefined}>
+          <span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
+        </button>
+        {credit && <span className="credit"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
+      </span>
+      {showAlbum && <span className="album">{track.albumId && !isStation(track)
+        ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button>
+        : splitTitle(track.album).main}</span>}
+    </span>
+    {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
+        and only while it's in reach; other rows keep the slot empty so the durations line up.
+        A phone's rows have no room for them (app.css): they're rated from the menu or the open deck. */}
+    {wide && <span className="row-rating">{track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>}
+    <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
+    {/* Beside the button, so the row's name stays "Play <title>". */}
+    {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
+    {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
+    {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
+      aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
+      onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>}
+  </li>;
+});

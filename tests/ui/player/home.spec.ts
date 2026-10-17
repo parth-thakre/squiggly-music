@@ -159,8 +159,11 @@ test.describe('home', () => {
     await app.signIn({ home: true });
     await expect(sleeves(app, 'Newest')).toHaveCount(12);
     await expect(shelf(app, 'Your mixes')).toBeVisible();
-    await expect(shelf(app, 'Played lately')).toHaveCount(0);
+    // Still on its way, it holds its place without sleeves, so the shelves below don't move.
+    await expect(shelf(app, 'Played lately')).toHaveAttribute('aria-busy', 'true');
+    await expect(shelf(app, 'Played lately').locator('img')).toHaveCount(0);
     await expect(sleeves(app, 'Played lately')).toHaveCount(1, { timeout: 5000 });
+    await expect(shelf(app, 'Played lately')).not.toHaveAttribute('aria-busy');
   });
 
   test('Your mixes waits for Most played, which says whether there is history', async ({ app, fake }) => {
@@ -170,8 +173,8 @@ test.describe('home', () => {
     await app.signIn({ home: true });
     await expect(sleeves(app, 'Newest')).toHaveCount(12);
     await expect.poll(() => fake.callsTo('genres').length).toBe(1);
-    await expect(shelf(app, 'Your mixes')).toHaveCount(0);
-    await expect(shelf(app, 'Most played')).toHaveCount(0);
+    await expect(shelf(app, 'Your mixes')).toHaveAttribute('aria-busy', 'true');
+    await expect(shelf(app, 'Most played')).toHaveAttribute('aria-busy', 'true');
     await expect(sleeves(app, 'Most played')).toHaveCount(1, { timeout: 5000 });
     await expect(shelf(app, 'Your mixes').locator('.grid-name')).toContainText(['On repeat', 'Lately']);
     // The shelf's list of twelve is asked for once; the On repeat tile's own draw asks for ten.
