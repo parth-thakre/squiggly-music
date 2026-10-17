@@ -2,28 +2,51 @@ import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import type { LibraryApi, Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { isStation } from '../../../../../packages/core/stations';
 import { previewLibrary } from '../bridge/previewLibrary';
+import type { StoredLibrary } from '../../../../../packages/core/stored';
 
 // The desktop's preload bridge, the Android app's bridge (apps/android/web/bridge.ts), or the browser build's host.
 export const api: LibraryApi = (typeof window !== 'undefined' && (window.squiggly?.library ?? window.squigglyAndroid?.library)) || previewLibrary;
+// The answers the host kept from earlier (packages/core/stored.ts), where it keeps them.
+const stored: StoredLibrary | null = (typeof window !== 'undefined' && (window.squiggly?.stored ?? window.squigglyAndroid?.stored)) || null;
 
-// A small bounded cache of library responses: going back is instant, memory stays flat.
-const LIMIT = 120;
+// A bounded cache of library responses: going back is instant, memory stays flat.
+const LIMIT = 240;
 const cache = new Map<string, Promise<Result<unknown>>>();
 // Answers that have already arrived, readable synchronously so revisits render at once.
 const settled = new Map<string, Result<unknown>>();
+// Answers showing what the host kept because the server couldn't be asked (away, say): asked
+// again the next time they're wanted, while they keep showing.
+const stale = new Set<string>();
 // Called with the key that changed, or '*' when everything did (a new session).
 const listeners = new Set<(key: string) => void>();
+const unreachable = <T,>(): Result<T> => ({ ok: false, error: 'Could not reach the library. Check your connection and try again.' });
 
-export function load<T>(key: string, loader: () => Promise<Result<T>>): Promise<Result<T>> {
+// `kept`: the same request answered with what the host kept, shown if it comes first; the
+// server's answer then takes its place when it differs.
+export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: () => Promise<Result<T>>): Promise<Result<T>> {
   let entry = cache.get(key);
+  if (entry && stale.has(key)) { cache.delete(key); entry = undefined; }
   if (entry) { cache.delete(key); cache.set(key, entry); return entry as Promise<Result<T>>; }
-  entry = loader().catch((): Result<T> => ({ ok: false, error: 'Could not reach the library. Check your connection and try again.' }));
+  stale.delete(key);
+  const asked = loader().catch(unreachable<T>);
+  const session = epoch;
+  const mine: Promise<Result<T>> = !kept ? asked : new Promise(resolve => {
+    let shown: Result<T> | null = null;
+    void kept().catch(unreachable<T>).then(answer => { if (!shown && answer.ok) resolve(shown = answer); });
+    void asked.then(fresh => {
+      if (!shown) { shown = fresh; resolve(fresh); return; }
+      if (cache.get(key) !== mine || epoch !== session) return;
+      if (!fresh.ok) stale.add(key);
+      else if (JSON.stringify(fresh.value) !== JSON.stringify((shown as { value: T }).value)) prime(key, fresh);
+    });
+  });
+  entry = mine;
   cache.set(key, entry);
   void entry.then(result => {
     if (cache.get(key) !== entry) return;
     if (result.ok) settled.set(key, result); else cache.delete(key);
   });
-  while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); }
+  while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); stale.delete(oldest); }
   return entry as Promise<Result<T>>;
 }
 // Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
@@ -37,10 +60,11 @@ async function albumSlot<T>(task: () => Promise<T>) {
   if (albumsReading < ALBUMS_AT_ONCE) albumsReading++; else await new Promise<void>(resolve => albumWaiting.push(resolve));
   try { return await task(); } finally { const next = albumWaiting.shift(); if (next) next(); else albumsReading--; }
 }
-export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)));
+// A record the host kept answers at once (an artist's Play, a mix), and is read again in turn.
+export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)), stored ? () => stored.album(id) : undefined);
 export const albumDetails = (ids: readonly string[]) => Promise.all(ids.map(albumDetail));
 export function invalidate(prefix: string) {
-  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); listeners.forEach(listener => listener(key)); }
+  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); stale.delete(key); listeners.forEach(listener => listener(key)); }
   invalidations.forEach(listener => listener(prefix));
 }
 // For state built from answers but kept outside the cache, such as the pages of Records and Tracks.
@@ -62,7 +86,7 @@ export const onLibraryReset = (reset: () => void) => { resets.add(reset); return
 let epoch = 0;
 const epochListeners = new Set<() => void>();
 export function resetLibraryCaches() {
-  cache.clear(); settled.clear();
+  cache.clear(); settled.clear(); stale.clear();
   playlistEditors.clear();
   resets.forEach(reset => reset());
   epoch++;
@@ -73,7 +97,14 @@ export function resetLibraryCaches() {
 export const libraryEpoch = () => epoch;
 export const useLibraryEpoch = () => useSyncExternalStore(listener => { epochListeners.add(listener); return () => { epochListeners.delete(listener); }; }, () => epoch);
 
-export function useResource<T>(key: string | null, loader: () => Promise<Result<T>>): Result<T> | undefined {
+// useResource for a request the host may have kept an answer to (packages/core/stored.ts): a page
+// seen before, in this run or an earlier one, shows at once, and away from the server too.
+export const loadKept = <T,>(key: string, ask: (from: StoredLibrary) => Promise<Result<T>>) =>
+  load(key, () => ask(api), stored ? () => ask(stored) : undefined);
+export const useKept = <T,>(key: string | null, ask: (from: StoredLibrary) => Promise<Result<T>>) =>
+  useResource(key, () => ask(api), stored ? () => ask(stored) : undefined);
+
+export function useResource<T>(key: string | null, loader: () => Promise<Result<T>>, kept?: () => Promise<Result<T>>): Result<T> | undefined {
   const [value, setValue] = useState<{ key: string; result: Result<T> } | null>(null);
   const [version, setVersion] = useState(0);
   useEffect(() => {
@@ -87,7 +118,7 @@ export function useResource<T>(key: string | null, loader: () => Promise<Result<
     };
     listeners.add(listener);
     let live = true;
-    void load(key, loader).then(result => { if (live) setValue({ key, result }); });
+    void load(key, loader, kept).then(result => { if (live) setValue({ key, result }); });
     return () => { live = false; listeners.delete(listener); };
   }, [key, version]);
   if (value && value.key === key) return value.result;

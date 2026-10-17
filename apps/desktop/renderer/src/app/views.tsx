@@ -4,7 +4,7 @@ import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/
 import type { RadioStation } from '../../../../../packages/core/contracts';
 import { stationTrack } from '../../../../../packages/core/stations';
 import { sinkSentence } from '../../../../../packages/core/sinks';
-import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
+import { api, load, onInvalidate, onLibraryReset, playlistEditor, useKept, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, knownDecades, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, outputDescription, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -32,6 +32,7 @@ import { exportM3u } from './exports';
 import { SharesSettings } from './share';
 import { ContainerMark, KeepButton, KeptSection, KeptSettings } from './kept';
 import { keptSupported } from './keptState';
+import { TOP_SONGS } from './warm';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -256,7 +257,7 @@ export function AlbumGrid({ albums }: { albums: Album[] }) {
   return <ul ref={list} className="grid" style={active ? { paddingTop: first * active.stride, paddingBottom: (rows - last) * active.stride } : undefined}>
     {shown.map(album => <li key={album.id} className="playable">
       <PlayOver label={splitTitle(album.name).main} play={() => playTarget({ kind: 'album', album })} />
-      <button type="button" onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
+      <button type="button" data-warm={`album:${album.id}`} onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
         onContextMenu={event => openMenu(event, { kind: 'album', album })}
         draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
         <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
@@ -283,7 +284,7 @@ function PlayOver({ label, play, small = false }: { label: string; play(): Promi
 // Album --------------------------------------------------------------------------------
 
 export function AlbumPage({ id }: { id: string }) {
-  const result = useResource(`album:${id}`, () => api.album(id));
+  const result = useKept(`album:${id}`, from => from.album(id));
   const playingHere = usePlayer(s => current(s)?.albumId === id);
   return <Pending result={result} waiting="Reading the tracklist">{({ album, tracks, discTitles }) => {
     const title = splitTitle(album.name);
@@ -328,7 +329,7 @@ function MoreButton({ target }: { target: Parameters<typeof openMenu>[1] }) {
 // Artists ------------------------------------------------------------------------------
 
 export function Artists() {
-  const result = useResource('artists', () => api.artists());
+  const result = useKept('artists', from => from.artists());
   return <>
     <Head title="Artists" />
     <Pending result={result} waiting="Gathering artists">{artists => <ArtistIndex artists={artists} />}</Pending>
@@ -398,7 +399,7 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
         : <ul key={`${row.letter}-${first + i}`} className="name-row" aria-label={row.letter}
           style={{ gridTemplateColumns: `repeat(${shape!.columns}, minmax(0, 1fr))` }}>
           {row.artists.map(artist => <li key={artist.id} className="playable">
-            <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
+            <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
               onContextMenu={event => openMenu(event, { kind: 'artist', artist })}
               draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
               <span className="artist-name">{artist.name}</span> <span>{artist.albumCount}</span>
@@ -410,10 +411,26 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
   </>;
 }
 
+// An artist's page asks for three things, which reaching for a link to it asks for early (warm.ts).
+// Whether any artist has had popular songs this run: a server whose agents find none (no Last.fm,
+// say) never has, and its pages don't keep room for them.
+let popularFound: boolean | null = null;
+// How long the rest of a page waits for the about and popular songs above its records, so they
+// don't push the records down when they arrive.
+const TOGETHER_MS = 700;
 export function ArtistPage({ id }: { id: string }) {
-  const result = useResource(`artist:${id}`, () => api.artist(id));
-  const top = useResource(`top:${id}`, () => api.topSongs(id, 10));
-  const info = useResource(`artistInfo:${id}`, () => api.artistInfo(id));
+  const result = useKept(`artist:${id}`, from => from.artist(id));
+  const top = useKept(`top:${id}`, from => from.topSongs(id, TOP_SONGS));
+  const info = useKept(`artistInfo:${id}`, from => from.artistInfo(id));
+  if (top?.ok) popularFound = popularFound || top.value.length > 0;
+  const [waited, setWaited] = useState<string | null>(null);
+  const arrived = !!result;
+  useEffect(() => {
+    if (!arrived) return;
+    const timer = setTimeout(() => setWaited(id), TOGETHER_MS);
+    return () => clearTimeout(timer);
+  }, [arrived, id]);
+  const together = waited === id || (top !== undefined && info !== undefined);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Every record is loaded first; if any fails, nothing plays and the reason is shown.
@@ -441,11 +458,16 @@ export function ArtistPage({ id }: { id: string }) {
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>
-    {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
-    {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
-    {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
-    {appearsOn && <section className="shelf-section"><h2>Appears on</h2><AlbumGrid albums={appearsOn.albums} /></section>}
-    {info?.ok && info.value.similar.length > 0 && <SimilarArtists artists={info.value.similar} />}
+    {!together ? <p className="status loading">Finding their songs</p> : <>
+      {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
+      {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
+      {/* Still on its way: room for it, so the records below stay put when it comes. */}
+      {top === undefined && popularFound !== false && <section className="shelf-section" aria-busy="true"><h2>Popular</h2>
+        <p className="status loading popular-waiting">Finding their popular songs</p></section>}
+      {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
+      {appearsOn && <section className="shelf-section"><h2>Appears on</h2><AlbumGrid albums={appearsOn.albums} /></section>}
+      {info?.ok && info.value.similar.length > 0 && <SimilarArtists artists={info.value.similar} />}
+    </>}
   </>}</Pending>;
 }
 
@@ -518,10 +540,10 @@ function playlistNote(playlist: Playlist) {
 
 const PLAYLIST_MIXES = 8;
 export function Playlists() {
-  const playlists = useResource('playlists', () => api.playlists());
-  const genres = useResource('genres', () => api.genres());
+  const playlists = useKept('playlists', from => from.playlists());
+  const genres = useKept('genres', from => from.genres());
   const decades = useResource('decades', libraryDecades);
-  const history = useResource('albums:frequent:0:1', () => api.albums('frequent', 0, 1));
+  const history = useKept('albums:frequent:0:1', from => from.albums('frequent', 0, 1));
   const mixes = useMemo(() => buildMixes(genres?.ok ? genres.value : [], decades?.ok ? decades.value : [], !!(history?.ok && history.value.length)),
     [genres, decades, history]);
   return <>
@@ -605,6 +627,7 @@ function NewPlaylist() {
 // and kept for the session, so the tile always matches what the page will play.
 function MixTile({ mix, tracks, large = false, travels = false }: { mix: Mix; tracks?: Track[] | null; large?: boolean; travels?: boolean }) {
   const [drawn, setDrawn] = useState<Track[] | null>(null);
+  const [sleeves, setSleeves] = useState<string[] | null>(null);
   const tile = useRef<HTMLDivElement>(null);
   const session = useLibraryEpoch();
   useEffect(() => {
@@ -613,13 +636,16 @@ function MixTile({ mix, tracks, large = false, travels = false }: { mix: Mix; tr
     const observer = new IntersectionObserver(entries => {
       if (!entries[0].isIntersecting) return;
       observer.disconnect();
-      void mixTracks(mix).then(result => { if (live && result.ok) setDrawn(result.value); });
+      // A mix of whole records shows their sleeves from the list of them, not from a draw that
+      // reads every record's songs.
+      if (mix.covers) void mix.covers().then(result => { if (live && result.ok) setSleeves(result.value); });
+      else void mixTracks(mix).then(result => { if (live && result.ok) setDrawn(result.value); });
     }, { root: nav.scroller, rootMargin: '200px' });
     observer.observe(tile.current);
     return () => { live = false; observer.disconnect(); };
   }, [mix.id, tracks, session]);
   const list = tracks ?? drawn ?? [];
-  const covers = [...new Map(list.filter(t => t.coverArt).map(t => [t.albumId ?? t.coverArt, t.coverArt!])).values()].slice(0, 4);
+  const covers = (tracks === undefined && sleeves ? [...new Set(sleeves)] : [...new Map(list.filter(t => t.coverArt).map(t => [t.albumId ?? t.coverArt, t.coverArt!])).values()]).slice(0, 4);
   const classes = `cover mix-tile${large ? ' head-cover' : ''}${travels ? ' morph' : ''}`;
   // Four records' sleeves in a square; with fewer (a decade with little in it), the first record's
   // whole; with none yet, or none at all, the mix's name.
@@ -721,7 +747,7 @@ export function MixPage({ id }: { id: string }) {
 // Favorites, search, queue --------------------------------------------------------------
 
 export function Favorites() {
-  const result = useResource('starred', () => api.starred());
+  const result = useKept('starred', from => from.starred());
   return <>
     <Head title="Favorites" />
     <Pending result={result} waiting="Collecting favorites">{({ tracks, albums, artists }) => !tracks.length && !albums.length && !artists.length
@@ -737,7 +763,7 @@ export function Favorites() {
 function ArtistNames({ artists }: { artists: Artist[] }) {
   const drags = canDrag();
   return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
-    <button type="button" onClick={() => nav.go({ view: 'artist', id: artist.id })}
+    <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
       draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name} <span>{artist.albumCount}</span></button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
@@ -1023,7 +1049,7 @@ function SimilarArtists({ artists }: { artists: ArtistInfo['similar'] }) {
   return <section className="shelf-section" aria-labelledby="similar-artists">
     <h2 id="similar-artists">Similar artists</h2>
     <ul className="similar">{artists.map(artist => <li key={artist.id}>
-      <button type="button" className="link" onClick={() => nav.go({ view: 'artist', id: artist.id })}>{artist.name}</button>
+      <button type="button" className="link" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}>{artist.name}</button>
     </li>)}</ul>
   </section>;
 }
@@ -1069,7 +1095,7 @@ function Decades({ sort, decade }: { sort: AlbumListType | undefined; decade: nu
 
 const bySongs = (a: Genre, b: Genre) => b.songCount - a.songCount || a.name.localeCompare(b.name);
 export function Genres() {
-  const result = useResource('genres', () => api.genres());
+  const result = useKept('genres', from => from.genres());
   return <>
     <Head title="Genres" />
     <Pending result={result} waiting="Gathering genres">{genres => genres.length ? <GenreList genres={genres} />
@@ -1118,7 +1144,7 @@ const GENRE_PAGE = 200;
 export function GenrePage({ name }: { name: string }) {
   const tracks = usePaged<Track>(`genre:${name}`, GENRE_PAGE, offset => [`genre:${name}:${offset}:${GENRE_PAGE}`, () => api.songsByGenre(name, offset, GENRE_PAGE)]);
   const sentinel = useMore(tracks.more, tracks.items.length);
-  const genres = useResource('genres', () => api.genres());
+  const genres = useKept('genres', from => from.genres());
   const genre = genres?.ok ? genres.value.find(g => g.name === name) : undefined;
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1177,7 +1203,7 @@ function SeeAll({ what, go }: { what: string; go(): void }) {
 
 // A row of sleeves from one of the Records sorts. See all opens Records in that sort.
 function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; title: string }) {
-  const result = useResource(`albums:${type}:0:${SHELF}`, () => api.albums(type, 0, SHELF));
+  const result = useKept(`albums:${type}:0:${SHELF}`, from => from.albums(type, 0, SHELF));
   if (!result || (result.ok && !result.value.length)) return null;
   const id = `home-${type}`;
   return <section className="shelf-section home-shelf" aria-labelledby={id}>
@@ -1192,9 +1218,9 @@ function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; 
 // The automatic playlists, as the Playlists page lists them. The decades appear once something
 // has found them (Records' Decade, the Playlists page, or Mixes): looking for them takes nine requests.
 function HomeMixes() {
-  const genres = useResource('genres', () => api.genres());
+  const genres = useKept('genres', from => from.genres());
   // The same list as Most played, so it costs nothing more.
-  const history = useResource(`albums:frequent:0:${SHELF}`, () => api.albums('frequent', 0, SHELF));
+  const history = useKept(`albums:frequent:0:${SHELF}`, from => from.albums('frequent', 0, SHELF));
   // Wait for both, so the row doesn't reshuffle as they arrive.
   if (!genres || !history) return null;
   const mixes = buildMixes(genres.ok ? genres.value : [], knownDecades(), history.ok && history.value.length > 0).slice(0, SHELF);
@@ -1223,7 +1249,7 @@ function Elsewhere() {
     <ul className="elsewhere">
       {result.value.slice(0, SHELF).map(({ username, track }) => <li key={`${username}/${track.id}`}>
         <span className="elsewhere-user">{username}</span>{' · '}
-        {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.title, track.album).main}</button>
+        {track.albumId ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.title, track.album).main}</button>
           : splitTitle(track.title, track.album).main} by {track.artist}
       </li>)}
     </ul>
@@ -1368,7 +1394,7 @@ async function playStation(station: RadioStation) {
   showNowPlaying();
 }
 function Stations() {
-  const stations = useResource('radioStations', () => api.radioStations());
+  const stations = useKept('radioStations', from => from.radioStations());
   return <section className="shelf-section" aria-labelledby="stations">
     <h2 id="stations">Stations</h2>
     <p className="section-note">Internet radio from your server. Stations play live, so there is nothing to skip through.</p>
@@ -1396,8 +1422,8 @@ function Stations() {
 // Playlists page and Records' Decade use), and their group appears once they're found.
 const historyMixes = new Set(['repeat', 'lately']);
 export function Mixes() {
-  const genres = useResource('genres', () => api.genres());
-  const history = useResource('albums:frequent:0:1', () => api.albums('frequent', 0, 1));
+  const genres = useKept('genres', from => from.genres());
+  const history = useKept('albums:frequent:0:1', from => from.albums('frequent', 0, 1));
   const decades = useResource('decades', libraryDecades);
   // Wait for the genres and the history, so the groups don't shift as they arrive. The decades
   // come last on the page, so they join whenever they're ready.

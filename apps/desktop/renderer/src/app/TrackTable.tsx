@@ -235,7 +235,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
               {credit && <span className="credit"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
             </span>
             {showAlbum && <span className="album">{track.albumId && !isStation(track)
-              ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button>
+              ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button>
               : splitTitle(track.album).main}</span>}
           </span>
           {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
