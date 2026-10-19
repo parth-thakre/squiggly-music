@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { LyricLine, LyricWord, Lyrics as LyricsData, Track } from '../../../../../packages/core/contracts';
 import { timeWords } from '../../../../../packages/lyrics/words';
@@ -229,6 +229,14 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
   const line = synced?.[active];
   const words = line?.words?.length ? line.words : null;
   const box = useRef<HTMLSpanElement>(null);
+  // A new line scrolls in from below as the last one scrolls out above (app.css). The last one is
+  // kept, as it was sung, until its way out has played; reduced motion simply swaps them.
+  const [shown, setShown] = useState<{ index: number; line: LyricLine | undefined }>({ index: active, line });
+  const [leaving, setLeaving] = useState<{ index: number; line: LyricLine } | null>(null);
+  if (shown.index !== active) {
+    setShown({ index: active, line });
+    setLeaving(shown.line?.text && !reducedMotion.matches ? { index: shown.index, line: shown.line } : null);
+  }
   useEffect(() => {
     const element = box.current;
     if (!words || !element) return;
@@ -256,10 +264,19 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
   }, [words, playing, pausedAt]);
   if (!synced) return null;
   const text = line?.text ?? '';
-  return <p className={`mini-lyric${below ? ' below' : ''}`} aria-hidden="true" title={text || undefined}><span key={active} ref={box}>{words ? words.map((word, k) => {
+  return <p className={`mini-lyric${below ? ' below' : ''}`} aria-hidden="true" title={text || undefined}>
+    {leaving && <span key={`leaving-${leaving.index}`} className="leaving" onAnimationEnd={() => setLeaving(null)}>{sungWords(leaving.line, true)}</span>}
+    <span key={active} ref={box}>{sungWords(line, false)}</span>
+  </p>;
+}
+// A line's words as spans for the fill (--p), all of them full for a line already sung; its text
+// where it has no words.
+function sungWords(line: LyricLine | undefined, sung: boolean) {
+  if (!line?.words?.length) return line?.text ?? '';
+  return line.words.map((word, k) => {
     const [, said, space] = /^([\s\S]*?)(\s*)$/.exec(word.text)!;
-    return <Fragment key={k}><span className="word">{said}</span>{space}</Fragment>;
-  }) : text}</span></p>;
+    return <Fragment key={k}><span className="word" style={sung ? { '--p': 1 } as CSSProperties : undefined}>{said}</span>{space}</Fragment>;
+  });
 }
 
 const ROOM_LINES = 3, GAP = 18;

@@ -5,8 +5,8 @@ import { expect, test } from '../fixtures/test';
 // The mini player's window, with a song playing whose lyrics are timed: a line every 3 s.
 const song = { id: 'song-lyric', title: 'Lyric Line', artist: 'Ada Brass', album: 'Test Pressing', duration: 30, source: 'navidrome', coverArt: null };
 type Line = { start: number | null; end?: number; text: string; words?: { start: number; end: number; text: string }[] };
-async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines, wordTiming: 'exact' | 'estimated' | null | 'left out' = null) {
-  await installDesktopBridge(page, { mini: true, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 30, playing: false, position } });
+async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines, wordTiming: 'exact' | 'estimated' | null | 'left out' = null, moving = false) {
+  await installDesktopBridge(page, { mini: true, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 30, playing: moving, position } });
   // The fake bridge has no lyrics; this song's are the fixture library's.
   await page.addInitScript(({ lines, timed, wordTiming, given }) => {
     const bridge = (window as unknown as { squiggly: { library: Record<string, unknown> } }).squiggly;
@@ -214,5 +214,32 @@ test.describe('mini player', () => {
     for (const word of await line.locator('.word').all()) await expect(word).toBeVisible();
     const [first, last] = await Promise.all([line.locator('.word').first().boundingBox(), line.locator('.word').last().boundingBox()]);
     expect(last!.x).toBeGreaterThan(first!.x + 40);
+  });
+
+  test('a new line scrolls in as the last one scrolls out, which then goes', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    // Playing from 5.7 s: line 3 starts at 6 s.
+    await playing(page, 5.7, true, lyricLines, null, true);
+    // Every line seen leaving, with how it left.
+    await page.addInitScript(() => {
+      const seen: string[] = [];
+      (window as unknown as { left: string[] }).left = seen;
+      new MutationObserver(() => {
+        for (const element of document.querySelectorAll<HTMLElement>('.mini-lyric > .leaving')) {
+          const entry = `${element.textContent}|${getComputedStyle(element).animationName}`;
+          if (!seen.includes(entry)) seen.push(entry);
+        }
+      }).observe(document, { childList: true, subtree: true });
+    });
+    await page.goto('/');
+    const line = page.locator('.mini .mini-lyric');
+    await expect(line.locator('span:not(.leaving)')).toHaveText('Line 3 of the lyric', { timeout: 3000 });
+    // On its way out, the last line rises and fades; the new one rises in.
+    const names = await line.evaluate(element => [...element.children].map(child => [child.className, child.textContent, getComputedStyle(child).animationName]));
+    expect(names).toContainEqual(['', 'Line 3 of the lyric', 'lyric-in']);
+    expect(await page.evaluate(() => (window as unknown as { left: string[] }).left)).toEqual(['Line 2 of the lyric|lyric-out']);
+    // Once out, it's gone.
+    await expect(line.locator('.leaving')).toHaveCount(0, { timeout: 2000 });
+    await expect(line).toHaveText('Line 3 of the lyric');
   });
 });
