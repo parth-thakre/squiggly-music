@@ -578,10 +578,11 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-foot { grid-column: 2 / -1; grid-row: 3; display: flex; align-items: center; gap: 10px; }
 .mini-position { flex: 1; min-width: 0; }
 .mini .squiggle-rail { height: 22px; }
-.mini-window { display: flex; gap: 2px; margin-right: -4px; }
-.mini-window .icon-button { width: 28px; height: 28px; }
-.mini-window .icon-button svg { width: 16px; height: 16px; }
-.mini-window .icon-button[aria-pressed='true'] { color: var(--accent); background: none; }
+.mini-window, .mini-modes .play-modes { display: flex; gap: 2px; }
+.mini-window { margin-right: -4px; }
+.mini-foot .icon-button { width: 28px; height: 28px; }
+.mini-foot .icon-button svg { width: 16px; height: 16px; }
+.mini-foot .icon-button[aria-pressed='true'] { color: var(--accent); background: none; }
 /* Wide, with timed lyrics: the line being sung, between the song and the buttons. Each new line
    fades in; between lines the space stays empty. */
 .mini:has(.mini-lyric) { grid-template-columns: 100vh minmax(0, 1fr) minmax(0, 1fr) auto; }
@@ -592,7 +593,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) { .mini-lyric span { animation: none; } }
 html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric span { animation: none; }
 /* Narrow: Previous goes, so the song keeps some room. */
-@media (max-width: 379px) { .mini-controls .glyph:first-child { display: none; } }
+@media (max-width: 379px) { .mini-controls .glyph:first-child, .mini-modes { display: none; } }
 /* Tall: a larger play button, and a little air between the lines. */
 @media (min-height: 170px) {
   .mini .play { width: 54px; height: 54px; }

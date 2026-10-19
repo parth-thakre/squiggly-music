@@ -53,4 +53,26 @@ test.describe('mini player', () => {
     await page.waitForTimeout(300);
     await expect(page.locator('.mini .mini-lyric')).toHaveCount(0);
   });
+
+  test('shuffle and repeat sit on the bottom line, and give way in a narrow window', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 112 });
+    await playing(page, 4);
+    await page.goto('/');
+    const mini = page.locator('.mini');
+    const shuffle = mini.getByRole('button', { name: 'Shuffle' });
+    const repeat = mini.getByRole('button', { name: 'Repeat' });
+    await expect(shuffle).toBeVisible();
+    await expect(repeat).toBeVisible();
+    const squiggle = (await mini.locator('.squiggle').boundingBox())!;
+    const pin = (await mini.getByRole('button', { name: 'Keep on top' }).boundingBox())!;
+    const box = (await shuffle.boundingBox())!;
+    // Between the squiggle and the window's buttons, on their line.
+    expect(box.x).toBeGreaterThanOrEqual(squiggle.x + squiggle.width);
+    expect(box.x + box.width).toBeLessThanOrEqual(pin.x);
+    expect(Math.abs(box.y + box.height / 2 - (pin.y + pin.height / 2))).toBeLessThanOrEqual(1);
+    await page.setViewportSize({ width: 340, height: 96 });
+    await expect(shuffle).toBeHidden();
+    await expect(repeat).toBeHidden();
+    await expect(mini.getByRole('button', { name: 'Keep on top' })).toBeVisible();
+  });
 });

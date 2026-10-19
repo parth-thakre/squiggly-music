@@ -2,7 +2,7 @@ import { useState, useSyncExternalStore } from 'react';
 import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
-import { paletteStyle, Position, TransportButtons, useByline, useRoomPalette } from './transport';
+import { paletteStyle, PlayModes, Position, TransportButtons, useByline, useRoomPalette } from './transport';
 import { Cover, splitTitle } from './ui';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
@@ -59,9 +59,11 @@ export function Mini() {
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>
-    {/* The squiggle and the window's own buttons share the last line, across the whole width. */}
+    {/* The squiggle, shuffle and repeat, and the window's own buttons share the last line, across
+        the whole width. */}
     <div className="mini-foot">
       {track ? <div className="mini-position"><Position track={track} palette={palette} /></div> : <span className="mini-position" />}
+      <span className="mini-modes"><PlayModes /></span>
       <div className="mini-window">
         <button type="button" className="icon-button" aria-pressed={onTop} aria-label="Keep on top" title={onTop ? 'Kept above other windows' : 'Keep above other windows'} onClick={() => void pin()}>
           <Pin aria-hidden="true" />
