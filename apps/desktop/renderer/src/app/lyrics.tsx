@@ -223,7 +223,9 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
   const playing = usePlayer(s => s.playing);
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
   const synced = !isStation(track) && lyrics?.synced ? lyrics.lines : null;
-  const active = useLineNow(synced, playing, pausedAt, true);
+  // A line goes when it ends only where the lyrics timed their words: otherwise its end is an
+  // estimate from its words (timeWords), and a slow song holds a line well past it.
+  const active = useLineNow(synced, playing, pausedAt, lyrics?.wordTiming === 'exact');
   const line = synced?.[active];
   const words = line?.words?.length ? line.words : null;
   const box = useRef<HTMLSpanElement>(null);

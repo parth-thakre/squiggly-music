@@ -5,16 +5,16 @@ import { expect, test } from '../fixtures/test';
 // The mini player's window, with a song playing whose lyrics are timed: a line every 3 s.
 const song = { id: 'song-lyric', title: 'Lyric Line', artist: 'Ada Brass', album: 'Test Pressing', duration: 30, source: 'navidrome', coverArt: null };
 type Line = { start: number | null; end?: number; text: string; words?: { start: number; end: number; text: string }[] };
-async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines) {
+async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines, wordTiming: 'exact' | 'estimated' | null = null) {
   await installDesktopBridge(page, { mini: true, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 30, playing: false, position } });
   // The fake bridge has no lyrics; this song's are the fixture library's.
-  await page.addInitScript(({ lines, timed }) => {
+  await page.addInitScript(({ lines, timed, wordTiming }) => {
     const bridge = (window as unknown as { squiggly: { library: Record<string, unknown> } }).squiggly;
     const library = bridge.library;
     bridge.library = new Proxy(library, { get: (target, method: string) => method === 'lyrics'
-      ? async () => ({ ok: true, value: { synced: timed, lines, wordTiming: null, source: 'server' } })
+      ? async () => ({ ok: true, value: { synced: timed, lines, wordTiming, source: 'server' } })
       : (target as Record<string, unknown>)[method] });
-  }, { lines: given.map(line => ({ ...line, start: timed ? line.start : null })), timed });
+  }, { lines: given.map(line => ({ ...line, start: timed ? line.start : null })), timed, wordTiming });
 }
 
 test.describe('mini player', () => {
@@ -120,13 +120,22 @@ test.describe('mini player', () => {
     }
   });
 
-  test('the line goes once it has been sung, through a break, until the next starts', async ({ page }) => {
+  test('with word times, the line goes once it has been sung, through a break, until the next starts', async ({ page }) => {
     await page.setViewportSize({ width: 700, height: 140 });
-    // Line 2 is sung from 3 s to 3.5 s; the next starts at 6 s.
-    await playing(page, 4, true, lyricLines.map(line => ({ ...line, end: (line.start ?? 0) + .5 })));
+    // Line 2 is sung from 3 s to 3.5 s, word by word; the next starts at 6 s.
+    const sung = (start: number) => [{ start, end: start + .5, text: 'sung' }];
+    await playing(page, 4, true, lyricLines.map(line => ({ ...line, end: (line.start ?? 0) + .5, words: sung(line.start ?? 0) })), 'exact');
     await page.goto('/');
     await expect(page.locator('.mini .mini-title')).toHaveText('Lyric Line');
     await expect(page.locator('.mini .mini-lyric')).toHaveText('');
+  });
+
+  test('with only line times, a line stays until the next starts, however short its estimated end', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    // As timeWords estimates them: line 2 "ends" at 3.5 s, long before a slow song moves on at 6 s.
+    await playing(page, 4, true, lyricLines.map(line => ({ ...line, end: (line.start ?? 0) + .5 })), 'estimated');
+    await page.goto('/');
+    await expect(page.locator('.mini .mini-lyric')).toHaveText('Line 2 of the lyric');
   });
 
   test('a long line wraps rather than being cut short, and moves nothing else', async ({ page }) => {
