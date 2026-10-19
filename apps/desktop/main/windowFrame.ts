@@ -26,10 +26,11 @@ export async function paintFrame(window: BrowserWindow, ground: string) {
   return call(hwnd, DWMWA_CAPTION_COLOR, Uint32Array.of(colorref(ground)), 4) === 0;
 }
 
-// The mini player has no title bar at all (frame: false), so the caption colour may not reach the
-// line Windows 11 draws around it; that line is the window's border colour. Both take the room's
-// ground. Windows' answer to each (0 for taken, an HRESULT otherwise), so a diagnostics build can
-// say which one did it.
+// The mini player's frame on Windows: its strip takes the caption colour, as the main window's
+// does, and the line Windows 11 draws around a window its border colour; both the room's ground.
+// Windows' answer to each (0 for taken, an HRESULT otherwise), for a diagnostics build to report.
+// Both were taken while the mini player had no frame at all (frame: false), and its strip stayed
+// light: that strip was Electron's own, which is why it now keeps a hidden title bar instead.
 const DWMWA_BORDER_COLOR = 34;
 export async function paintEdges(window: BrowserWindow, ground: string) {
   if (process.platform !== 'win32' || window.isDestroyed()) return null;

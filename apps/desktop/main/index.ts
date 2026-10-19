@@ -931,7 +931,7 @@ function installHandlers() {
   }), 'settings');
   const paintedMini = new WeakSet<BrowserWindow>();
   // The main window's buttons take the room's ink as the palette changes. The mini player, which
-  // has no frame on any system, sends its colours only for the frame's strip on Windows.
+  // has no window buttons, sends its colours only for the frame's strip on Windows.
   ipcMain.handle('squiggly:window:tint-controls', (event, value, groundValue) => {
     assertSender(event);
     const target = BrowserWindow.fromWebContents(event.sender);
@@ -1041,7 +1041,12 @@ function createWindow(mini: boolean) {
   const target = new BrowserWindow({
     ...(mini ? {
       ...miniBounds(), minWidth: 320, minHeight: 96, maxWidth: 900, maxHeight: 240,
-      frame: false, maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
+      // On Windows, a hidden title bar like the main window's rather than no frame: a window with
+      // no frame gets Electron's own light strip along its edges, which no frame colour reaches;
+      // this one keeps the system's frame, whose strip takes the room's ground (windowFrame.ts).
+      // With no titleBarOverlay it shows no window buttons. Elsewhere, no frame at all.
+      ...(process.platform === 'win32' ? { titleBarStyle: 'hidden' as const } : { frame: false }),
+      maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
     } : {
       width: 1440, height: 940, minWidth: 850, minHeight: 650,
       ...(FRAMELESS ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: '#1c1b18', height: CONTROLS_HEIGHT } } : {}),

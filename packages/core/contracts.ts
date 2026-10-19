@@ -500,7 +500,7 @@ export interface DesktopBridge {
     // The main window has no title bar on Windows and Linux: the system's window buttons sit over
     // the top of the page, and tintControls gives them the room's ink colour (#rrggbb). On Windows
     // the frame's strip along the other edges takes the room's ground. The mini player calls it
-    // too, for that strip only (it has no buttons to tint, and is frameless everywhere).
+    // too, for that strip only: it has no window buttons to tint.
     frameless: boolean; tintControls(ink: string, ground: string): Promise<Result>;
     // A hidden window gets no snapshots until it's shown. On, it keeps getting them: the sleep
     // timer's "after this song" asks for this while it waits, even in the tray.
