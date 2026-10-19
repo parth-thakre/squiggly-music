@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useSyncExternalStore } from 'react';
 import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
@@ -6,6 +6,12 @@ import { paletteStyle, Position, TransportButtons, useByline, useRoomPalette } f
 import { Cover, splitTitle } from './ui';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
+import { SungLine } from './lyrics';
+
+// Wide enough to have room between the song and the buttons for the line being sung.
+const roomy = typeof matchMedia === 'function' ? matchMedia('(min-width: 640px)') : null;
+const onRoom = (listener: () => void) => { roomy?.addEventListener('change', listener); return () => roomy?.removeEventListener('change', listener); };
+const useRoomForLyric = () => useSyncExternalStore(onRoom, () => roomy?.matches ?? false);
 
 // The mini player: its own small window, for when another app owns the screen.
 // The window is dragged by its background; the controls opt out of dragging.
@@ -32,6 +38,7 @@ export function Mini() {
   const failed = engine === 'unavailable' || engine === 'crashed';
   const problem = failed ? error ?? 'The audio engine stopped.' : error ?? pinError;
   const name = track ? splitTitle(track.title, track.album).main : null;
+  const lyricRoom = useRoomForLyric();
   return <div className="mini" style={paletteStyle(palette)}>
     {/* The sleeve is the window's left edge, its full height, and a handle to drag it by. */}
     {track ? <Cover key={track.id} id={track.coverArt} name={track.album} size={300} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
@@ -48,6 +55,7 @@ export function Mini() {
         <span className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></span>
       </p>}
     </div>
+    {track && lyricRoom && <SungLine key={track.id} track={track} />}
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>

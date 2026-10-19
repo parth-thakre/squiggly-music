@@ -185,8 +185,11 @@ export function DeckLyrics() {
 // The synced line being sung, looked at again when the next one is due to start rather than every
 // frame: a song plays for minutes and its lines change every few seconds. While playing it also
 // looks every CHECK_MS, so a seek shows its line that soon. A React update only when it changes.
+// `ends`: past a line's end (where the lyrics give one) none is being sung until the next starts,
+// so the mini player's one line goes quiet through an instrumental break. The deck keeps the last
+// line lit, with the lines around it to place it.
 const CHECK_MS = 250;
-function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pausedAt: number) {
+function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pausedAt: number, ends = false) {
   const [active, setActive] = useState(-1);
   useEffect(() => {
     if (!synced) return;
@@ -195,17 +198,33 @@ function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pause
       timer = undefined;
       const now = livePosition() + LEAD;
       const at = lineAt(synced, now);
-      setActive(at);
+      const end = ends ? synced[at]?.end ?? null : null;
+      const over = end !== null && now >= end;
+      setActive(over ? -1 : at);
       if (!playing || document.hidden) return;
-      const next = synced[at + 1]?.start;
-      timer = setTimeout(check, next == null ? CHECK_MS : Math.min(CHECK_MS, Math.max(0, (next - now) * 1000) + 5));
+      const due = [synced[at + 1]?.start ?? null, over ? null : end].filter((time): time is number => time !== null);
+      timer = setTimeout(check, due.length ? Math.min(CHECK_MS, Math.max(0, (Math.min(...due) - now) * 1000) + 5) : CHECK_MS);
     };
     check();
     const wake = () => { if (!timer && !document.hidden) check(); };
     document.addEventListener('visibilitychange', wake);
     return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
-  }, [synced, playing, pausedAt]);
+  }, [synced, playing, pausedAt, ends]);
   return active;
+}
+
+// The mini player's one line: the synced line being sung, nothing between lines or before the
+// first, and nothing at all for a station or lyrics that aren't timed. It's there to glance at,
+// so assistive tech isn't told each line; the lyric sheet in the full window has them all.
+export function SungLine({ track }: { track: Track }) {
+  const { lyrics } = useLyrics(track);
+  const playing = usePlayer(s => s.playing);
+  const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
+  const synced = !isStation(track) && lyrics?.synced ? lyrics.lines : null;
+  const active = useLineNow(synced, playing, pausedAt, true);
+  if (!synced) return null;
+  const text = synced[active]?.text ?? '';
+  return <p className="mini-lyric" aria-hidden="true" title={text || undefined}><span key={active}>{text}</span></p>;
 }
 
 const ROOM_LINES = 3, GAP = 18;
