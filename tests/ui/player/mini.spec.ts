@@ -125,4 +125,23 @@ test.describe('mini player', () => {
     await expect(page.locator('.mini .mini-title')).toHaveText('Lyric Line');
     await expect(page.locator('.mini .mini-lyric')).toHaveText('');
   });
+
+  test('a long line wraps rather than being cut short, and moves nothing else', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    const long = 'And every word of this one carries on past where one line stops';
+    await playing(page, 4, true, lyricLines.map((line, i) => i === 1 ? { ...line, text: long } : line));
+    await page.goto('/');
+    const mini = page.locator('.mini');
+    const line = mini.locator('.mini-lyric span');
+    await expect(line).toHaveText(long);
+    // Whole: more than one line, with nothing hidden past its edge.
+    const fits = await line.evaluate(element => ({ lines: Math.round(element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight)), hidden: element.scrollHeight > element.clientHeight + 1 }));
+    expect(fits.lines).toBeGreaterThan(1);
+    expect(fits.hidden).toBe(false);
+    // Without the line, the song, the squiggle, and the buttons stay where they were.
+    const where = () => mini.evaluate(element => ['.mini-title', '.squiggle', '.mini-controls'].map(selector => { const r = element.querySelector(selector)!.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }));
+    const before = await where();
+    await page.addStyleTag({ content: '.mini-lyric span { display: none !important; }' });
+    expect(await where()).toEqual(before);
+  });
 });

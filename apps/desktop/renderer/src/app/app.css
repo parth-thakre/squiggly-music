@@ -586,12 +586,17 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-foot .icon-button { width: 28px; height: 28px; }
 .mini-foot .icon-button svg { width: 16px; height: 16px; }
 .mini-foot .icon-button[aria-pressed='true'] { color: var(--accent); background: none; }
-/* Wide, with timed lyrics: the line being sung, between the song and the buttons. Each new line
-   fades in; between lines the space stays empty. */
-.mini:has(.mini-lyric) { grid-template-columns: var(--sleeve) minmax(0, 1fr) minmax(0, 1fr) auto; }
-.mini-lyric { grid-column: 3; grid-row: 2; align-self: center; margin: 0; min-width: 0; color: var(--soft); font: var(--display-weight) calc(clamp(14px, 7.5vh, 19px) * var(--display-size))/1.3 var(--font-display); }
-/* The line and its ellipsis fade in together. */
-.mini-lyric span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: lyric-in .35s ease; }
+/* Wide, with timed lyrics: the line being sung, between the song and the buttons, with the larger
+   share of the room (a line usually runs longer than the song's name). It sits over its cell
+   rather than sizing it, so a long line never moves the song, the buttons, or the squiggle: two
+   lines in a short window, three in a taller one, balanced, and cut only past that. Each new line
+   fades in, its ellipsis with it; between lines the space stays empty. */
+.mini:has(.mini-lyric) { grid-template-columns: var(--sleeve) minmax(0, 1fr) minmax(0, 1.5fr) auto; }
+.mini-lyric { grid-column: 3; grid-row: 2; align-self: stretch; position: relative; margin: 0; min-width: 0; color: var(--soft);
+  font: var(--display-weight) calc(clamp(13px, 7vh, 18px) * var(--display-size))/1.25 var(--font-display); }
+.mini-lyric span { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: balance; animation: lyric-in .35s ease; }
+@media (min-height: 130px) { .mini-lyric span { -webkit-line-clamp: 3; } }
 @keyframes lyric-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mini-lyric span { animation: none; } }
 html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric span { animation: none; }
