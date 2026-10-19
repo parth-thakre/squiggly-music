@@ -5,16 +5,16 @@ import { expect, test } from '../fixtures/test';
 // The mini player's window, with a song playing whose lyrics are timed: a line every 3 s.
 const song = { id: 'song-lyric', title: 'Lyric Line', artist: 'Ada Brass', album: 'Test Pressing', duration: 30, source: 'navidrome', coverArt: null };
 type Line = { start: number | null; end?: number; text: string; words?: { start: number; end: number; text: string }[] };
-async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines, wordTiming: 'exact' | 'estimated' | null = null) {
+async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines, wordTiming: 'exact' | 'estimated' | null | 'left out' = null) {
   await installDesktopBridge(page, { mini: true, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 30, playing: false, position } });
   // The fake bridge has no lyrics; this song's are the fixture library's.
-  await page.addInitScript(({ lines, timed, wordTiming }) => {
+  await page.addInitScript(({ lines, timed, wordTiming, given }) => {
     const bridge = (window as unknown as { squiggly: { library: Record<string, unknown> } }).squiggly;
     const library = bridge.library;
     bridge.library = new Proxy(library, { get: (target, method: string) => method === 'lyrics'
-      ? async () => ({ ok: true, value: { synced: timed, lines, wordTiming, source: 'server' } })
+      ? async () => ({ ok: true, value: { synced: timed, lines, ...(given ? {} : { wordTiming }), source: 'server' } })
       : (target as Record<string, unknown>)[method] });
-  }, { lines: given.map(line => ({ ...line, start: timed ? line.start : null })), timed, wordTiming });
+  }, { lines: given.map(line => ({ ...line, start: timed ? line.start : null })), timed, wordTiming: wordTiming === 'left out' ? null : wordTiming, given: wordTiming === 'left out' });
 }
 
 test.describe('mini player', () => {
@@ -166,6 +166,14 @@ test.describe('mini player', () => {
     await page.goto('/');
     const spans = page.locator('.mini .mini-lyric .word');
     await expect(spans).toHaveText(['sung', 'half', 'later']);
+    // Shown, in reading order on the line, inside it (each word laid out on its own, not over the others).
+    const boxes = await spans.evaluateAll(elements => elements.map(element => { const r = element.getBoundingClientRect(); return { x: r.x, width: r.width, height: r.height }; }));
+    const line = (await page.locator('.mini .mini-lyric').boundingBox())!;
+    for (const box of boxes) { expect(box.width).toBeGreaterThan(10); expect(box.height).toBeGreaterThan(10); }
+    expect(boxes[0].x).toBeLessThan(boxes[1].x);
+    expect(boxes[1].x).toBeLessThan(boxes[2].x);
+    expect(boxes[0].x).toBeGreaterThanOrEqual(line.x - 4);
+    await expect(spans.first()).toBeVisible();
     const fill = await spans.evaluateAll(elements => elements.map(element => Number(element.style.getPropertyValue('--p') || 0)));
     expect(fill[0]).toBe(1);
     expect(fill[1]).toBeGreaterThan(0.3);
@@ -193,5 +201,18 @@ test.describe('mini player', () => {
     const last = await page.evaluate(() => (window as unknown as { resized: { width: number; height: number }[] }).resized.at(-1));
     expect(last?.width).toBeGreaterThan(470);
     expect(last?.height).toBe(await page.evaluate(() => window.outerHeight));
+  });
+
+  test('lyrics as LRCLIB gives them, line times only, show as words the page times itself', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    // No word times and no wordTiming: the page estimates words (timeWords), as for most lyrics.
+    await playing(page, 4, true, lyricLines, 'left out');
+    await page.goto('/');
+    const line = page.locator('.mini .mini-lyric');
+    await expect(line).toHaveText('Line 2 of the lyric');
+    await expect(line.locator('.word')).toHaveCount(5);
+    for (const word of await line.locator('.word').all()) await expect(word).toBeVisible();
+    const [first, last] = await Promise.all([line.locator('.word').first().boundingBox(), line.locator('.word').last().boundingBox()]);
+    expect(last!.x).toBeGreaterThan(first!.x + 40);
   });
 });
