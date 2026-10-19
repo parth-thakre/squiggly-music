@@ -8,6 +8,7 @@ import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
+import { asHex } from './palette';
 import { following } from '../../../../../packages/core/playOrder';
 import { isStation } from '../../../../../packages/core/stations';
 import { resampledNote } from '../../../../../packages/core/sinks';
@@ -420,13 +421,6 @@ function SignalPath({ track }: { track: Track }) {
   return line ? <p className="signal">{line}</p> : null;
 }
 
-// Any CSS colour as #rrggbb, which is what the window's buttons take. A canvas normalises it.
-function asHex(color: string) {
-  const context = document.createElement('canvas').getContext('2d');
-  if (!context) return color;
-  context.fillStyle = '#000'; context.fillStyle = color;
-  return context.fillStyle;
-}
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The server login on every build. The desktop's main process, the Android bridge, or the
 // browser build's host keeps it. Embedded, it stands in for a library page while songs from this

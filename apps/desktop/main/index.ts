@@ -929,11 +929,16 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
-  // The main window's buttons take the room's ink as the palette changes.
+  // The main window's buttons take the room's ink as the palette changes. The mini player, which
+  // has no frame on any system, sends its colours only for the frame's strip on Windows.
   ipcMain.handle('squiggly:window:tint-controls', (event, value, groundValue) => {
     assertSender(event);
     const target = BrowserWindow.fromWebContents(event.sender);
     const colour = Schema.decodeUnknownEither(Schema.Struct({ ink: HexColour, ground: HexColour }))({ ink: value, ground: groundValue });
+    if (target && target === windows.mini && Either.isRight(colour)) {
+      if (process.platform === 'win32') void paintFrame(target, colour.right.ground);
+      return { ok: true, value: undefined };
+    }
     if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(colour)) return { ok: false, error: 'Invalid window colour.' };
     const { ink, ground } = colour.right;
     target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink, height: CONTROLS_HEIGHT });

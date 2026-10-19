@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
@@ -7,6 +7,7 @@ import { Cover, splitTitle } from './ui';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
 import { SungLine } from './lyrics';
+import { asHex } from './palette';
 
 // Wide enough to have room between the song and the buttons for the line being sung.
 const roomy = typeof matchMedia === 'function' ? matchMedia('(min-width: 640px)') : null;
@@ -22,6 +23,9 @@ export function Mini() {
   const error = usePlayer(s => s.error);
   const palette = useRoomPalette(track?.coverArt);
   useMiniCommandKeys();
+  // On Windows the system keeps a thin strip of the window's frame along its left, right, and
+  // bottom edges (windowFrame.ts): it takes the room's ground, or it shows as a light border.
+  useEffect(() => { void window.squiggly?.window.tintControls(asHex(palette.ink), asHex(palette.ground)); }, [palette.ink, palette.ground]);
   const byline = useByline(track);
   // The stored preference until this window changes it; the main process applies it when the
   // window opens, so nothing is written here until the listener asks.

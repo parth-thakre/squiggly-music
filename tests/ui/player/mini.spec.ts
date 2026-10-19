@@ -75,4 +75,14 @@ test.describe('mini player', () => {
     await expect(repeat).toBeHidden();
     await expect(mini.getByRole('button', { name: 'Keep on top' })).toBeVisible();
   });
+
+  test('the window frame takes the room\'s ground, for the strip Windows keeps along its edges', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 112 });
+    await playing(page, 4);
+    await page.goto('/');
+    await expect(page.locator('.mini .mini-title')).toHaveText('Lyric Line');
+    const ground = await page.locator('.mini').evaluate(element => getComputedStyle(element).backgroundColor);
+    const hex = '#' + (ground.match(/\d+/g) ?? []).slice(0, 3).map(n => Number(n).toString(16).padStart(2, '0')).join('');
+    await expect.poll(() => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls.filter(call => call.startsWith('tint:')).at(-1))).toMatch(new RegExp(`:${hex}$`));
+  });
 });
