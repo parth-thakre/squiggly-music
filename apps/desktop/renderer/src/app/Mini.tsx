@@ -9,10 +9,12 @@ import { DeckSlots, ExtensionNotices } from './extensions';
 import { SungLine } from './lyrics';
 import { asHex } from './palette';
 
-// Wide enough to have room between the song and the buttons for the line being sung.
-const roomy = typeof matchMedia === 'function' ? matchMedia('(min-width: 640px)') : null;
-const onRoom = (listener: () => void) => { roomy?.addEventListener('change', listener); return () => roomy?.removeEventListener('change', listener); };
-const useRoomForLyric = () => useSyncExternalStore(onRoom, () => roomy?.matches ?? false);
+// Room between the song and the buttons for the line being sung: what the window has beside the
+// sleeve, which is as wide as the window is tall up to a third or so of its width (app.css).
+const LYRIC_ROOM = 460;
+const roomForLyric = () => typeof innerWidth === 'number' && innerWidth - Math.min(innerHeight, innerWidth * .36) >= LYRIC_ROOM;
+const onResize = (listener: () => void) => { addEventListener('resize', listener); return () => removeEventListener('resize', listener); };
+const useRoomForLyric = () => useSyncExternalStore(onResize, roomForLyric);
 
 // The mini player: its own small window, for when another app owns the screen.
 // The window is dragged by its background; the controls opt out of dragging.
