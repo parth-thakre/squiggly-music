@@ -4,7 +4,7 @@ import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Result } from '../packages/core/contracts';
-import { storedKey } from '../packages/core/stored';
+import { STORED_ANSWERS, storedKey } from '../packages/core/stored';
 import { AnswerStore } from '../apps/desktop/main/answerStore';
 import { invalidate, load, peek, resetLibraryCaches } from '../apps/desktop/renderer/src/app/library';
 
@@ -33,6 +33,16 @@ describe('library answers kept on this computer', () => {
     const again = await store();
     expect(await again.read('artist\n["a1"]')).toEqual({ artist: { id: 'a1' }, albums: [] });
     expect(await again.read('artist\n["a2"]')).toBeUndefined();
+  });
+
+  it('trims past the limit when bound, however few each session wrote', async () => {
+    const answers = await store();
+    for (let i = 0; i < STORED_ANSWERS + 5; i++) await answers.write(`album\n["${i}"]`, { album: { id: i } });
+    const folder = join(dir, 'library', (await readdir(join(dir, 'library')))[0]);
+    expect((await readdir(folder)).length).toBe(STORED_ANSWERS + 5);
+    // The next launch.
+    await store();
+    expect((await readdir(folder)).length).toBe(STORED_ANSWERS);
   });
 
   it('passes over what another version wrote', async () => {

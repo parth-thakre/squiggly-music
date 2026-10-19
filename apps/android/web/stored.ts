@@ -18,8 +18,11 @@ function done(transaction: IDBTransaction) {
 
 export function createAnswers() {
   let opened: Promise<IDBDatabase | null> | null = null;
-  // The account answers are kept for now, and the one the database holds (read when it opens).
+  // The account answers are kept for, and the one the database is known to hold only that
+  // account's answers for: nothing is read or written until the two agree. If clearing the last
+  // account's answers fails, they never do, and this session keeps nothing.
   let account: string | null = null;
+  let bound: string | null = null;
   let binding: Promise<void> = Promise.resolve();
   let writes = 0;
   const database = () => opened ??= new Promise<IDBDatabase | null>(resolve => {
@@ -58,16 +61,20 @@ export function createAnswers() {
   return {
     // Answers are kept for this account from now on; another account's are removed.
     bind(next: string) {
-      account = next;
+      account = next; bound = null;
       binding = binding.then(async () => {
         const db = await database();
         if (!db || account !== next) return;
-        const owner = await request(db.transaction('meta').objectStore('meta').get('account')).catch(() => null);
+        const owner = await request(db.transaction('meta').objectStore('meta').get('account'));
         if (owner !== next) await wipe(db, next);
+        if (account !== next) return;
+        bound = next;
+        // Past the limit from earlier sessions too, not only after this one's writes.
+        await trim(db);
       }).catch(() => undefined);
     },
     clear() {
-      account = null;
+      account = null; bound = null;
       binding = binding.then(async () => { const db = await database(); if (db) await wipe(db, null); }).catch(() => undefined);
       return binding;
     },
@@ -75,7 +82,7 @@ export function createAnswers() {
       const mine = account;
       await binding;
       const db = mine && await database();
-      if (!db || account !== mine) return undefined;
+      if (!db || account !== mine || bound !== mine) return undefined;
       try {
         const entry = await request(db.transaction('answers').objectStore('answers').get(key)) as Entry | undefined;
         // Shown again, it's asked for again too, and the fresh answer's write marks it recent.
@@ -86,7 +93,7 @@ export function createAnswers() {
       const mine = account;
       await binding;
       const db = mine && await database();
-      if (!db || account !== mine) return;
+      if (!db || account !== mine || bound !== mine) return;
       try {
         const transaction = db.transaction('answers', 'readwrite');
         transaction.objectStore('answers').put({ key, version: VERSION, value, at: Date.now() } satisfies Entry);

@@ -23,6 +23,8 @@ export class AnswerStore {
     for (const other of await readdir(this.base).catch(() => [] as string[])) {
       if (other !== name) await rm(join(this.base, other), { recursive: true, force: true }).catch(() => undefined);
     }
+    // Past the limit from earlier sessions too, not only after this one's writes.
+    await this.trim();
   }
   async clear() {
     this.folder = null;
