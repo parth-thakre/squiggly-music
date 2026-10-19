@@ -34,23 +34,30 @@ test.describe('mini player', () => {
     expect(box.x + box.width).toBeLessThanOrEqual(controls.x);
   });
 
-  test('a narrow window shows no line, and a wider one does', async ({ page }) => {
+  test('without room beside the song, the line takes a row of its own under it', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 112 });
     await playing(page, 4);
     await page.goto('/');
     const mini = page.locator('.mini');
-    await expect(mini.locator('.mini-title')).toHaveText('Lyric Line');
-    await expect(mini.locator('.mini-lyric')).toHaveCount(0);
+    const line = mini.locator('.mini-lyric');
+    await expect(line).toHaveText('Line 2 of the lyric');
+    await expect(line).toHaveClass(/\bbelow\b/);
+    // Under the song and the buttons, above the squiggle, across the width.
+    const [title, controls, squiggle, box] = await Promise.all(['.mini-title', '.mini-controls', '.squiggle', '.mini-lyric'].map(async selector => (await mini.locator(selector).boundingBox())!));
+    expect(box.y).toBeGreaterThanOrEqual(Math.max(title.y + title.height, controls.y + controls.height) - 1);
+    expect(box.y + box.height).toBeLessThanOrEqual(squiggle.y + 1);
+    expect(box.x).toBeCloseTo(title.x, 0);
+    expect(box.x + box.width).toBeGreaterThan(controls.x);
     // Elsewhere the system's frame resizes the window: no handles of its own.
     await expect(mini.locator('.mini-edge')).toHaveCount(0);
-    // Wider, it comes.
+    // Wider, it moves beside the song.
     await page.setViewportSize({ width: 700, height: 112 });
-    await expect(mini.locator('.mini-lyric')).toHaveText('Line 2 of the lyric');
-    // As wide but tall, the sleeve takes the room it had.
+    await expect(line).not.toHaveClass(/\bbelow\b/);
+    // As wide but tall, the sleeve takes the room beside it: below again.
     await page.setViewportSize({ width: 640, height: 240 });
-    await expect(mini.locator('.mini-lyric')).toHaveCount(0);
+    await expect(line).toHaveClass(/\bbelow\b/);
     await page.setViewportSize({ width: 900, height: 240 });
-    await expect(mini.locator('.mini-lyric')).toHaveText('Line 2 of the lyric');
+    await expect(line).not.toHaveClass(/\bbelow\b/);
   });
 
   test('lyrics without times show no line', async ({ page }) => {
@@ -91,16 +98,20 @@ test.describe('mini player', () => {
     const mini = page.locator('.mini');
     await expect(mini.locator('.mini-title')).toHaveText('Lyric Line');
     // The window's limits (main/index.ts): 320 to 900 wide, 96 to 240 tall, and between.
-    for (const [width, height] of [[320, 96], [320, 240], [380, 240], [420, 240], [420, 112], [640, 240], [900, 96], [900, 240]] as const) {
+    for (const [width, height] of [[320, 96], [320, 240], [380, 240], [420, 240], [420, 112], [570, 108], [640, 240], [900, 96], [900, 240]] as const) {
       await page.setViewportSize({ width, height });
       const sizes = await mini.evaluate(element => {
         const box = (selector: string) => element.querySelector(selector)?.getBoundingClientRect() ?? null;
         const buttons = [...element.querySelectorAll('button')].filter(button => button.checkVisibility() && button.closest('[aria-hidden="true"]') === null)
           .map(button => { const r = button.getBoundingClientRect(); return { name: button.getAttribute('aria-label') ?? button.textContent, right: r.right, bottom: r.bottom, width: r.width }; });
-        return { title: box('.mini-title')?.width ?? 0, rail: box('.squiggle-rail')?.width ?? 0, buttons };
+        const line = box('.mini-lyric');
+        return { title: box('.mini-title')?.width ?? 0, rail: box('.squiggle-rail')?.width ?? 0, buttons, line: line && { width: line.width, bottom: line.bottom } };
       });
       expect(sizes.title, `title at ${width}x${height}`).toBeGreaterThanOrEqual(40);
       expect(sizes.rail, `squiggle at ${width}x${height}`).toBeGreaterThanOrEqual(30);
+      // The sung line shows at every size, inside the window.
+      expect(sizes.line?.width ?? 0, `lyric at ${width}x${height}`).toBeGreaterThanOrEqual(100);
+      expect(sizes.line?.bottom ?? Infinity, `lyric at ${width}x${height}`).toBeLessThanOrEqual(height + 0.5);
       for (const button of sizes.buttons) {
         expect(button.width, `${button.name} at ${width}x${height}`).toBeGreaterThan(0);
         expect(button.right, `${button.name} at ${width}x${height}`).toBeLessThanOrEqual(width + 0.5);

@@ -218,7 +218,7 @@ function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pause
 // so assistive tech isn't told each line; the lyric sheet in the full window has them all. With
 // word times it fills word by word as the sheet does: while the line is sung (and only then), each
 // word's progress goes straight to its span as --p once a frame, and nothing re-renders.
-export function SungLine({ track }: { track: Track }) {
+export function SungLine({ track, below = false }: { track: Track; below?: boolean }) {
   const { lyrics } = useLyrics(track);
   const playing = usePlayer(s => s.playing);
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
@@ -254,7 +254,7 @@ export function SungLine({ track }: { track: Track }) {
   }, [words, playing, pausedAt]);
   if (!synced) return null;
   const text = line?.text ?? '';
-  return <p className="mini-lyric" aria-hidden="true" title={text || undefined}><span key={active} ref={box}>{words ? words.map((word, k) => {
+  return <p className={`mini-lyric${below ? ' below' : ''}`} aria-hidden="true" title={text || undefined}><span key={active} ref={box}>{words ? words.map((word, k) => {
     const [, said, space] = /^([\s\S]*?)(\s*)$/.exec(word.text)!;
     return <Fragment key={k}><span className="word">{said}</span>{space}</Fragment>;
   }) : text}</span></p>;

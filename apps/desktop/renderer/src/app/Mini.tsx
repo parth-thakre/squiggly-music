@@ -8,8 +8,9 @@ import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
 import { SungLine } from './lyrics';
 
-// Room between the song and the buttons for the line being sung: what the window has beside the
+// Room for the line being sung between the song and the buttons: what the window has beside the
 // sleeve, which is as wide as the window is tall up to a third or so of its width (app.css).
+// Without it the line takes a row of its own under them, across the width.
 const LYRIC_ROOM = 460;
 const roomForLyric = () => typeof innerWidth === 'number' && innerWidth - Math.min(innerHeight, innerWidth * .36) >= LYRIC_ROOM;
 const onResize = (listener: () => void) => { addEventListener('resize', listener); return () => removeEventListener('resize', listener); };
@@ -57,7 +58,7 @@ export function Mini() {
         <span className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></span>
       </p>}
     </div>
-    {track && lyricRoom && <SungLine key={track.id} track={track} />}
+    {track && <SungLine key={track.id} track={track} below={!lyricRoom} />}
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>
