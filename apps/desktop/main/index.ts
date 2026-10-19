@@ -484,7 +484,6 @@ async function launchPlayer() {
     env: {
       // An undefined value leaves the variable out, so a packaged host never inherits these.
       // NODE_OPTIONS and NODE_PATH could load other code into it before the app's own.
-      // NODE_COMPILE_CACHE (boot.ts) stays: it only says where compiled code is kept.
       ...process.env, SQUIGGLY_LIBMPV_PATH: libmpvPath,
       ...(packaged ? { NODE_OPTIONS: undefined, NODE_PATH: undefined } : {}),
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',

@@ -44,8 +44,6 @@ export default defineConfig({
     define: diagnosticsDefines(),
     plugins: [externalizeDepsPlugin(), moduleTypeMarker],
     build: { rollupOptions: { input: {
-      // The entry (package.json's main): it turns on Node's code cache, then loads index.
-      boot: resolve('apps/desktop/main/boot.ts'),
       index: resolve('apps/desktop/main/index.ts'),
       player: resolve('packages/player-mpv/host.ts'),
     } } },
