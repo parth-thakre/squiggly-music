@@ -221,10 +221,15 @@ const radio = new Radio<SubsonicClient>({
   append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }),
   // Already one request at a time, so it never takes a sync permit from the final queue save.
   background: task => Effect.runPromise(Effect.either(metrics.measure('sync.radio-top-up', task))),
-  changed: () => { state.player = { ...state.player, radio: radio.view }; },
+  // The next host snapshot carries the change to the windows (several a second while playing).
+  changed: () => { state.player = { ...state.player, radio: radio.view, autoplay: radio.autoplayView }; },
+  autoplay: () => settings.value.autoplay && !sleepsAfterSong(),
 }, QUEUE_LIMIT);
 // Starting any other playback, or losing the engine or session, ends radio. The queue stays.
 const endRadio = () => radio.end();
+// A window's sleep timer is waiting for the song playing to end: the only reason a window follows
+// the player while hidden (see followingHidden). Autoplay holds off meanwhile.
+const sleepsAfterSong = () => appWindows().some(target => followingHidden.has(target.webContents));
 // What the audio host loads for a library track. A station's stream address comes from the
 // server's station list (the connector keeps it) and, like a song's, never reaches a window.
 const playableOf = (client: SubsonicClient, track: Track) => track.source === 'station'
@@ -380,7 +385,7 @@ function broadcast() {
 function observePlayer() {
   const player = state.player;
   updateTray(); updateMedia(); updateSystemMedia();
-  // Radio needs the server; it waits while it's away.
+  // Radio and autoplay need the server; they wait while it's away.
   if (!away()) void radio.topUp();
   // While the server is away the queue isn't saved, but a change is remembered and saved once it's back.
   queueSync.observe(player, connectionGeneration, !settings.value.syncQueue || server === null ? false : away() ? 'held' : true);
@@ -495,7 +500,8 @@ async function launchPlayer() {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
     messages++; bytes += Buffer.byteLength(JSON.stringify(message));
     if (message.type === 'snapshot') {
-      state.player = { ...message.player, radio: radio.view, audio: { ...message.player.audio, sink: sinks.view(message.player.audio) } }; hostResources = message.resources; broadcast(); observePlayer();
+      state.player = { ...message.player, radio: radio.view, autoplay: radio.observe(message.player), audio: { ...message.player.audio, sink: sinks.view(message.player.audio) } };
+      hostResources = message.resources; broadcast(); observePlayer();
       remote.hostSnapshot(state.player);
       if (message.player.engine === 'crashed') {
         // The host publishes its reason before native teardown. Enforce a bound
@@ -910,6 +916,8 @@ function installHandlers() {
     if (next.diagnostics !== previous.diagnostics) { remote.setActive(next.diagnostics); tray?.setToolTip(`Squiggly Music${remote.titleSuffix}`); }
     applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
     if (next.checkForUpdates && !previous.checkForUpdates) updates.check();
+    // Turned on during the last song: that song's turn starts now.
+    if (next.autoplay && !previous.autoplay && !away()) void radio.topUp();
     return settings.value;
   }), 'settings');
   handle('window:toggle-mini', () => Effect.sync(toggleMini), 'window');

@@ -210,6 +210,7 @@ export interface Settings {
   checkForUpdates: boolean;   // ask GitHub for new releases at launch and every six hours
   keptLimitMb: number;        // how much room songs kept on this device may take, in MB (1024 * 1024 bytes)
   diagnostics: boolean;       // betas with remote diagnostics built in: send them (off: nothing sent or written)
+  autoplay: boolean;          // at the queue's last song, add songs like it so the music keeps going (core/autoplay.ts)
 }
 export interface QueueApi {
   // A number inserts before the entry at that index.
@@ -222,6 +223,9 @@ export interface QueueApi {
   // so a queue that changed underneath the click is refused rather than playing the wrong song.
   jump(index: number, entryId: string): Promise<Result>;
 }
+// Autoplay (Settings, packages/core/autoplay.ts): the queue entries it added, which the queue marks,
+// and the last entry it found nothing new to follow, so the page can say why the music stops there.
+export interface AutoplayView { added: string[]; missed: string | null }
 export type RadioSeed = { kind: 'song'; trackId: string; label: string } | { kind: 'album' | 'artist'; id: string; label: string };
 export interface RadioApi {
   // Replaces the queue with the seed and similar songs, then keeps it topped up.
@@ -290,6 +294,9 @@ export interface PlayerSnapshot {
   playId: string;
   // Radio is owned by the main process so it keeps going while the main window is hidden.
   radio: { label: string } | null;
+  // Autoplay is owned by the main process too, for the same reason. Absent from the audio host's
+  // own snapshots, which the main process completes.
+  autoplay?: AutoplayView;
   devices: AudioDevice[];
   audio: AudioPath;
   // Queue behaviour, never the signal: what follows the last song (repeat), and whether the songs

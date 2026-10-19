@@ -192,6 +192,8 @@ export class FakeNavidrome {
   unreachable = false;
   /** Song streams the audio server was asked for, by track id (browser playback and keeping). */
   streamed: string[] = [];
+  /** false: getSimilarSongs finds nothing, as on a server without artist information. */
+  similar = true;
   private issued = 0;
   private http: SubsonicClient | null = null;
 
@@ -205,7 +207,7 @@ export class FakeNavidrome {
     this.recent = []; this.frequent = []; this.listening = [];
     this.shareList = []; this.sharing = true; this.sharesMade = 0;
     this.stationStreams = []; this.listedStations.clear();
-    this.unreachable = false; this.streamed = [];
+    this.unreachable = false; this.streamed = []; this.similar = true;
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -338,7 +340,7 @@ export class FakeNavidrome {
     deletePlaylist: (id: string) => this.op('deletePlaylist', [id], () =>
       this.editable(id).pipe(Effect.map(p => { this.playlists = this.playlists.filter(other => other !== p); }))),
     similarSongs: (id: string, count: number) => this.op('similarSongs', [id, count], () =>
-      Effect.succeed(catalog.tracks.filter(t => t.id !== id && t.albumId !== special.album).slice(0, count).map(t => this.track(t.id)))),
+      Effect.succeed(!this.similar ? [] : catalog.tracks.filter(t => t.id !== id && t.albumId !== special.album).slice(0, count).map(t => this.track(t.id)))),
     topSongs: (artistId: string, count: number) => this.op('topSongs', [artistId, count], () =>
       Effect.succeed(catalog.tracks.filter(t => t.artistId === artistId).slice(0, count).map(t => this.track(t.id)))),
     lyrics: (query: LyricsQuery, lookup: boolean) => this.op('lyrics', [query, lookup], () =>

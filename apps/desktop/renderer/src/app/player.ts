@@ -1,7 +1,8 @@
 import { useSyncExternalStore } from 'react';
-import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
+import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, AutoplayView, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, noAutoplay } from '../../../../../packages/core/autoplay';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
 import { OUT_OF_REACH } from '../../../../../packages/core/reach';
 import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
@@ -12,7 +13,7 @@ import { isKept, keptSupported } from './keptState';
 import { VolumeCommandCoalescer } from '../volumeCommands';
 import { api, resetLibraryCaches } from './library';
 import { clearSearches, searchesFor } from './searches';
-import { getSettings } from './settings';
+import { getSettings, subscribeSettings } from './settings';
 
 // One small store for playback. Views subscribe with selectors so the frequent position
 // snapshots only re-render the deck, never the library.
@@ -56,6 +57,9 @@ export interface PlayerState {
   radio: { label: string } | null;
   // A station being put together (it can take several seconds on a slow server).
   radioStarting: string | null;
+  // Autoplay (Settings): the entries it added, and the last entry it found nothing new to follow.
+  // The desktop's main process runs it; the browser and Android run it here.
+  autoplay: AutoplayView;
   // A queue saved on the server, offered once at startup when nothing is playing.
   resumable: SavedQueue | null;
   // Desktop and Android: the saved sign-in and reconnecting with it at launch.
@@ -98,7 +102,7 @@ let state: PlayerState = {
   sessionId: null, access: desktop ? 'open' : 'checking', pageConnection: false, choosingServer: false,
   queue: [], entryIds: [], playId: '', index: -1, playing: false, position: 0, duration: 0, buffering: false, starting: false, volume: 100, audio: null,
   devices: [{ name: 'auto', description: 'System default' }], device: 'auto', delivery: null, streamKbps: null, error: null, diagnostics: emptyDiagnostics(),
-  radio: null, radioStarting: null, resumable: null,
+  radio: null, radioStarting: null, autoplay: noAutoplay, resumable: null,
   signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null },
   update: null,
   ...(local ? storedModes() : { repeat: 'off', shuffle: false }),
@@ -127,7 +131,7 @@ const set = (patch: Partial<PlayerState>) => {
   // The native player gets every change to the queue, before any command that names an entry.
   if (android && state.entryIds !== before.entryIds) android.player.sync(state.queue, state.entryIds);
   listeners.forEach(listener => listener());
-  if (local && (state.index !== before.index || state.queue !== before.queue)) topUpRadio();
+  if (local && (state.index !== before.index || state.queue !== before.queue)) topUp();
 };
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
 export const getPlayer = () => state;
@@ -239,6 +243,7 @@ if (desktop) {
       volume: p.volume, audio: sameFields(state.audio, p.audio) ? state.audio : p.audio,
       devices: !p.devices.length || sameList(state.devices, p.devices, sameFields) ? state.devices : p.devices, device: p.audio.requestedDevice,
       radio: p.radio?.label === state.radio?.label ? state.radio : p.radio,
+      autoplay: !p.autoplay ? noAutoplay : sameList(state.autoplay.added, p.autoplay.added, Object.is) && state.autoplay.missed === p.autoplay.missed ? state.autoplay : p.autoplay,
       // A queue loaded some other way (a play key resumes the saved one) replaces the offer.
       resumable: p.queue.length ? null : state.resumable,
       // The desktop asks Navidrome for the original file, or an MP3 at a lower quality; the host
@@ -398,19 +403,24 @@ function saveNow() {
   if (state.queue.length > QUEUE_LIMIT || state.queue.some(t => t.source !== 'navidrome')) return;
   void api.saveQueue(state.queue.map(t => t.id), state.index, (web ? plays.startAt || web.active.currentTime : livePosition()) || 0);
 }
-// Appends at the end, making room by dropping songs already played from the front.
-function webAppend(tracks: Track[]) {
+// Appends at the end, making room by dropping songs already played from the front. Returns the
+// new entries' ids, and sets `patch` with them.
+function webAppend(tracks: Track[], patch: (entries: string[]) => Partial<PlayerState> = () => ({})): string[] {
   let { queue, entryIds, index } = state;
   const over = queue.length + tracks.length - QUEUE_LIMIT;
   if (over > 0) { const drop = Math.min(over, Math.max(0, index)); queue = queue.slice(drop); entryIds = entryIds.slice(drop); index -= drop; }
   const adding = tracks.slice(0, QUEUE_LIMIT - queue.length);
-  if (adding.length) { set({ queue: [...queue, ...adding], entryIds: [...entryIds, ...mint(adding.length)], index }); saveSoon(); }
+  if (!adding.length) return [];
+  const entries = mint(adding.length);
+  set({ queue: [...queue, ...adding], entryIds: [...entryIds, ...entries], index, ...patch(entries) }); saveSoon();
+  return entries;
 }
 
-// Radio (browser) -----------------------------------------------------------------------
+// Radio and autoplay (browser) ------------------------------------------------------------
 // The desktop main process runs radio itself so it keeps going in the tray. In the browser,
 // when three or fewer songs remain, fetch songs like the last one and append the new ones.
 let topping = -1;
+const topUp = () => { if (state.radio) topUpRadio(); else void autoplay(); };
 function topUpRadio() {
   if (!state.radio || topping === station || state.index < 0 || state.queue.length - state.index > 3) return;
   const last = state.queue[state.queue.length - 1];
@@ -423,6 +433,46 @@ function topUpRadio() {
     const fresh = result.value.filter(t => !seen.has(t.id)).slice(0, 20);
     if (fresh.length) webAppend(fresh);
   });
+}
+// Autoplay as the main process runs it (Radio in main/radio.ts, with packages/core/autoplay.ts):
+// once the queue's last song plays, up to ten songs like it that aren't queued go on the end.
+// One turn at a time; a failed one is tried again in a minute, and an entry that found nothing
+// isn't asked again. A queue that already finished stays finished, and so does one the sleep
+// timer is waiting to stop after this song. On Android the page has to be awake for it, as for radio.
+let autoplaying = -1;
+let autoplayTried: { entry: string; at: number } | null = null;
+let autoplayRetry: ReturnType<typeof setTimeout> | undefined;
+let sleepsAfterSong = false;
+async function autoplay() {
+  if (!local || autoplaying === station || !getSettings().autoplay || sleepsAfterSong || !state.connected || state.reach.away) return;
+  if (web?.active.ended || native?.ended) return;
+  const turn = autoplayTurn({ queue: state.queue, entryIds: state.entryIds, index: state.index, repeat: state.repeat, radio: !!state.radio });
+  if (!turn || state.autoplay.missed === turn.entry) return;
+  if (autoplayTried?.entry === turn.entry && Date.now() - autoplayTried.at < 60_000) return;
+  const mine = autoplaying = station;
+  autoplayTried = { entry: turn.entry, at: Date.now() };
+  // Other playback began, the queue gained another last entry or moved off it or finished, repeat
+  // or radio came on, the sleep timer began waiting, or autoplay was turned off: the answer no
+  // longer belongs here.
+  const current = () => mine === station && !state.radio && state.repeat === 'off' && getSettings().autoplay && !sleepsAfterSong
+    && state.index === state.queue.length - 1 && state.entryIds.at(-1) === turn.entry && !(web?.active.ended || native?.ended);
+  try {
+    const taken = new Set(state.queue.map(t => t.id));
+    const fresh: Track[] = [];
+    for (const seed of turn.seeds) {
+      if (fresh.length >= AUTOPLAY_SONGS) break;
+      const result = await api.similarSongs(seed.id, AUTOPLAY_ASK);
+      if (!current()) return;
+      if (!result.ok) { clearTimeout(autoplayRetry); autoplayRetry = setTimeout(topUp, 61_000); return; }
+      fresh.push(...freshSongs(result.value, taken, AUTOPLAY_SONGS - fresh.length));
+    }
+    // Songs queued by hand while the server answered aren't added again.
+    const queuedIds = new Set(state.queue.map(t => t.id));
+    const adding = fresh.filter(t => !queuedIds.has(t.id));
+    const queued = keepQueued(state.autoplay, state.entryIds);
+    if (!adding.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
+    webAppend(adding, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
+  } finally { if (autoplaying === mine) autoplaying = -1; }
 }
 
 // Lock screen, notification shade, headphones, and the Flip's cover screen.
@@ -502,7 +552,7 @@ function disconnected() {
   searchesFor(null);
   set({
     connected: false, pageConnection: false, serverName: null, choosingServer: false, queue: [], entryIds: [], index: -1,
-    playing: false, buffering: false, position: 0, duration: 0, radio: null, radioStarting: null, resumable: null, delivery: null, error: null,
+    playing: false, buffering: false, position: 0, duration: 0, radio: null, radioStarting: null, autoplay: noAutoplay, resumable: null, delivery: null, error: null,
   });
 }
 // Checked when a stream fails, since media elements can't report a lost session or connection.
@@ -568,6 +618,8 @@ function nativePlayback(playback: AndroidPlayback) {
       ?? awayError(track, 'This song could not be played here. Try another, or check the connection.');
   }
   set(patch);
+  // The page asked before the native player had left the finished queue's end; now it has.
+  if (before?.ended && !playback.ended) topUp();
 }
 function nativeSession(next: AndroidSession) {
   const was = state.connected;
@@ -588,14 +640,14 @@ function nativeSession(next: AndroidSession) {
 // changed meanwhile is saved, and an empty one is offered the saved queue.
 function reachChanged(before: Reachability, after: Reachability) {
   if (!local || !before.away || after.away) return;
-  if (!state.queue.length) void offerResume(); else saveSoon();
+  if (!state.queue.length) void offerResume(); else { saveSoon(); topUp(); }
 }
 if (web) webReach.subscribe(next => { const before = state.reach; set({ reach: next }); reachChanged(before, next); });
 if (android) {
   android.player.subscribe(nativePlayback);
   android.player.onReset(() => {
     station++; native = null;
-    set({ queue: [], entryIds: [], index: -1, playing: false, buffering: false, position: 0, duration: 0, radio: null, resumable: null, error: null, delivery: null });
+    set({ queue: [], entryIds: [], index: -1, playing: false, buffering: false, position: 0, duration: 0, radio: null, autoplay: noAutoplay, resumable: null, error: null, delivery: null });
   });
   android.session.subscribe(nativeSession);
   nativeSession(android.session.get());
@@ -650,6 +702,9 @@ async function startStation(seed: RadioStart) {
   // keeps adding songs, so a station turns repeat off, and turning repeat on stops the station.
   if (state.radio && state.repeat !== 'off') player.repeat('off');
 }
+
+// Turned on during the last song: that song's turn starts now.
+if (local) subscribeSettings(topUp);
 
 const volumeCommands = desktop ? new VolumeCommandCoalescer(percent => desktop.command({ type: 'volume', percent }), error => set({ error })) : null;
 export const optimisticVolume = volumeCommands;
@@ -856,6 +911,10 @@ export const player = {
   // Android: the native player keeps the sleep timer too, so it still pauses once the app is swiped
   // away and the page's own timers are gone. `afterPlay` is a PlayerState.playId.
   sleepNatively(at: number | null, afterPlay: string | null) {
+    // The page's own autoplay holds off while the timer waits for this song to end. The desktop's
+    // main process knows from the window following it while hidden (sleep.ts).
+    const after = afterPlay !== null;
+    if (local && after !== sleepsAfterSong) { sleepsAfterSong = after; if (!after) topUp(); }
     if (!android) return;
     android.player.sleepAt(at);
     android.player.sleepAfterPlay(afterPlay?.startsWith('android.') ? Number(afterPlay.slice('android.'.length)) : null);
@@ -891,6 +950,8 @@ export const player = {
     set({ repeat: mode, ...(mode !== 'off' && state.radio ? { radio: null } : {}) });
     android?.player.repeat(mode);
     saveModes();
+    // Repeat off on the last song: autoplay may follow it now.
+    if (mode === 'off') topUp();
   },
   // Shuffle on puts the songs after the current one in random order; the current song and the
   // ones before it stay where they are. Off leaves the queue as it is, as on the desktop (the

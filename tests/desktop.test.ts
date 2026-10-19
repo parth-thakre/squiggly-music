@@ -101,7 +101,7 @@ describe('desktop request schemas', () => {
   });
 
   it('fills missing settings with defaults and rejects wrong types', () => {
-    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', streamQuality: 'original', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true });
+    expect(defaultSettings()).toEqual({ lyricsLookup: false, exclusiveOutput: false, closeToTray: process.platform !== 'linux', syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', streamQuality: 'original', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true, autoplay: false });
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ lyricsLookup: true, unknown: 1 })).toEqual({ ...defaultSettings(), lyricsLookup: true });
     // A file written before the mini player's pin became a setting keeps it pinned.
     expect(Schema.decodeUnknownSync(SettingsFileSchema)({ syncQueue: false }).miniOnTop).toBe(true);
@@ -708,6 +708,7 @@ describe('main-process radio', () => {
       }),
     } satisfies RadioClient;
     let session: typeof client | null = client;
+    let autoplay = false;
     const log: string[] = [];
     const radio: Radio<typeof client> = new Radio({
       client: () => session, player: () => player, known: id => known.get(id), remember: tracks => { for (const item of tracks) known.set(item.id, item); },
@@ -726,9 +727,11 @@ describe('main-process radio', () => {
       }),
       background: task => Effect.runPromise(Effect.either(task)),
       changed: () => log.push(`radio ${radio.view?.label ?? 'off'}`),
+      autoplay: () => autoplay,
     });
     return {
-      radio, client, known, log, pending,
+      radio, client, known, log, pending, autoplay: (on: boolean) => { autoplay = on; },
+      set: (changes: Partial<PlayerSnapshot>) => { player = { ...player, ...changes }; },
       respond: (id: string, tracks: Track[]) => { pending.get(id)!(tracks); pending.delete(id); },
       setSimilar: (next: (id: string) => Track[] | null) => { similar = next; },
       player: () => player, play: (currentIndex: number) => { player = { ...player, currentIndex }; },
@@ -850,7 +853,7 @@ describe('main-process radio', () => {
     const radio: Radio<typeof client> = new Radio({
       client: () => client, player: () => snapshot(), known: () => undefined, remember: () => undefined,
       replace: () => Effect.sync(() => radio.end()), follow: () => Effect.void, append: () => Effect.void,
-      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined,
+      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined, autoplay: () => false,
     });
     expect(await Effect.runPromise(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }))).toBe(false);
     expect(radio.view).toBeNull();
@@ -875,6 +878,97 @@ describe('main-process radio', () => {
     expect(radio.view).toEqual({ label: 'Second' });
     radio.end();
     expect(log).toEqual(['replace top1 s2', 'radio Second', 'radio off']);
+  });
+
+  const many = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => track(`${prefix}${index}`));
+  it('autoplay waits for the last song, then adds ten new songs like it and marks their entries', async () => {
+    const { radio, client, log, autoplay, load, play, player, setSimilar } = fixture();
+    setSimilar(id => id === 'c' ? [...songs('a', 'c'), ...many('n', 15)] : null);
+    load(['a', 'b', 'c'], 1);
+    autoplay(true);
+    // Songs still to come: nothing to do.
+    expect(radio.topUp()).toBeNull();
+    play(2);
+    autoplay(false);
+    expect(radio.topUp()).toBeNull();
+    autoplay(true);
+    await radio.topUp();
+    expect(client.similarSongs.mock.calls).toEqual([['c', 30]]);
+    expect(log).toEqual([`append ${many('n', 10).map(item => item.id).join(' ')}`]);
+    // The host names the new entries; the next snapshot shows them, and they are marked.
+    const view = radio.observe(player());
+    expect(view).toEqual({ added: player().entryIds.slice(3), missed: null });
+    // An unchanged snapshot keeps the same view, and an entry that leaves the queue loses its mark.
+    expect(radio.observe(player())).toBe(view);
+    const removed = player().entryIds[4];
+    expect(radio.observe({ queue: player().queue.slice(0, 4), entryIds: player().entryIds.slice(0, 4) }).added).toEqual([player().entryIds[3]]);
+    expect(radio.autoplayView.added).not.toContain(removed);
+  });
+
+  it('autoplay asks about earlier songs when the last one\'s are queued, and says when there is nothing new', async () => {
+    const { radio, client, log, autoplay, load, player, setSimilar } = fixture();
+    autoplay(true);
+    setSimilar(id => id === 'c' ? songs('a', 'b') : id === 'b' ? songs('c', 'n1') : []);
+    load(['a', 'b', 'c'], 2);
+    await radio.topUp();
+    expect(client.similarSongs.mock.calls.map(call => call[0])).toEqual(['c', 'b', 'a']);
+    expect(log).toEqual(['append n1']);
+    // Nothing new at all: nothing is added, the view names the entry, and it isn't asked again.
+    setSimilar(id => songs(id));
+    load(['a', 'b', 'c'], 2);
+    client.similarSongs.mockClear();
+    await radio.topUp(1000);
+    expect(log).toEqual(['append n1', 'radio off']);
+    expect(radio.autoplayView.missed).toBe(player().entryIds[2]);
+    expect(radio.topUp(120_000)).toBeNull();
+    expect(client.similarSongs).toHaveBeenCalledTimes(3);
+  });
+
+  it('autoplay leaves alone repeat, radio, files and stations, and a queue that changed while it asked', async () => {
+    const { radio, client, log, autoplay, load, set, player, respond, setSimilar } = fixture();
+    autoplay(true);
+    load(['a', 'b'], 1);
+    set({ repeat: 'all' });
+    expect(radio.topUp()).toBeNull();
+    set({ repeat: 'one' });
+    expect(radio.topUp()).toBeNull();
+    set({ repeat: 'off', queue: [track('a'), track('f', 'local')] });
+    expect(radio.topUp()).toBeNull();
+    set({ queue: [track('a'), track('st', 'station')] });
+    expect(radio.topUp()).toBeNull();
+    expect(client.similarSongs).not.toHaveBeenCalled();
+    // Answers that come back after other playback, after a song joined the end, after the queue
+    // finished (the host then has no current entry), or after autoplay was turned off are dropped.
+    for (const change of ['play', 'add', 'finish', 'off'] as const) {
+      autoplay(true);
+      load(['a', 'b'], 1);
+      const late = radio.topUp()!;
+      if (change === 'play') radio.end();
+      else if (change === 'add') set({ queue: [...player().queue, track('mine')], entryIds: [...player().entryIds, 'mine'] });
+      else if (change === 'finish') set({ currentIndex: -1, playing: false });
+      else autoplay(false);
+      respond('b', songs('late'));
+      await late;
+    }
+    // A station tops up as radio does, never as autoplay.
+    setSimilar(id => songs(`${id}-like`, 'x1', 'x2'));
+    await run(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }));
+    expect(log.filter(entry => entry.startsWith('append'))).toEqual([]);
+    expect(radio.autoplayView.added).toEqual([]);
+  });
+
+  it('autoplay leaves out a song queued by hand while the server answered', async () => {
+    const { radio, log, autoplay, load, set, player, respond, setSimilar } = fixture();
+    autoplay(true);
+    // The song before the last one, asked about next, finds nothing more.
+    setSimilar(id => id === 'a' ? [] : null);
+    load(['a', 'b'], 1);
+    const turn = radio.topUp()!;
+    // Queued before the song playing, so the last entry is still the one asked about.
+    set({ queue: [track('a'), track('x'), track('b')], entryIds: [player().entryIds[0], 'by-hand', player().entryIds[1]], currentIndex: 2 });
+    respond('b', songs('x', 'y'));
+    await turn;
+    expect(log).toEqual(['append y']);
   });
 });
 

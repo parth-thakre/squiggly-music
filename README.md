@@ -20,6 +20,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Drag records, artists, songs, and playlists onto the queue or a playlist, and drop audio files from your computer onto the desktop app's window to play them.
 - Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).
 - Start a radio station from any song, record, or artist.
+- Keep the music going when the queue runs out: with autoplay on (Settings, off at first), up to ten songs like the last one join the queue as it starts.
 - Export a playlist or the queue as an M3U file, and share songs, records, and playlists as public links when the server allows sharing.
 - Listen to the internet radio stations your server lists, from the Playlists page. They play live, and on the desktop the line under the station says what it's playing when the station says.
 - Star the playing song from the controls or with F. G then C opens its record, and G then . its artist.

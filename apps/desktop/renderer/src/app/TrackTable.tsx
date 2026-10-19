@@ -36,8 +36,9 @@ function occurrenceKeys(tracks: Track[]) {
 // selection) drag onto the queue and playlists (drag.ts). Where the list is editable, rows drag to reorder, Alt+Up and Alt+Down move the
 // focused or selected song, and Delete removes the selection. With `onDropItems`, records,
 // artists, and songs from elsewhere drop between rows, before the row under the pointer.
-// A heading between rows (a record's discs): it sits above the row at index `at`.
-export interface TrackGroup { at: number; label: string }
+// A heading between rows (a record's discs): it sits above the row at index `at`. A quiet one is
+// a small note rather than a title (songs autoplay added to the queue).
+export interface TrackGroup { at: number; label: string; quiet?: boolean }
 const noGroups: TrackGroup[] = [];
 
 export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, onDropItems, groups = noGroups, keptMarks = true }: {
@@ -249,7 +250,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
             aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
             onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>}
         </li>;
-        return group ? [<li key={`group-${index}`} className="group-head"
+        return group ? [<li key={`group-${index}`} className={`group-head${group.quiet ? ' quiet' : ''}`}
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
           <h2 title={group.label} aria-label={group.label}>{group.label}</h2></li>, row] : row;
       })}

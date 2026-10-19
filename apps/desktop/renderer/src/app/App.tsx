@@ -209,6 +209,9 @@ const Deck = memo(function Deck() {
   const engine = usePlayer(s => s.engine);
   const radio = usePlayer(s => s.radio);
   const starting = usePlayer(s => s.radioStarting);
+  // Autoplay asked about the last song, playing now, and found nothing new to follow it.
+  const autoplayOn = useSettings().autoplay;
+  const missed = usePlayer(s => s.index === s.queue.length - 1 && s.autoplay.missed !== null && s.autoplay.missed === s.entryIds[s.index]) && autoplayOn;
   // A station's byline: what it says is on, when it says (see useByline).
   const announced = usePlayer(s => s.stationTitle);
   const [expanded, setExpanded] = useState(false);
@@ -277,6 +280,7 @@ const Deck = memo(function Deck() {
       <DeckSlots placement="quiet-line" track={track} />
       <SleepNote />
       {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
+      {!upNext && missed && <p className="up-next">Autoplay found nothing new like this song.</p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
       {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
