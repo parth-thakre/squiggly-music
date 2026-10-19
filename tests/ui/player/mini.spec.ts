@@ -262,4 +262,18 @@ test.describe('mini player', () => {
       if (room.clipped) expect(room.margin, `row at ${width}x${height}`).toBeGreaterThanOrEqual(.25);
     }
   });
+
+  test('a new song replaces the sleeve rather than piling another on it', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    const songs = ['a', 'b', 'c', 'd'].map(id => ({ ...song, id: `song-${id}`, title: `Song ${id}`, coverArt: `cover-${id}` }));
+    await installDesktopBridge(page, { mini: true, player: { queue: songs, entryIds: songs.map((_, i) => `e${i}`), currentIndex: 0, duration: 30, playing: true, position: 1 } });
+    await page.goto('/');
+    const mini = page.locator('.mini');
+    for (let i = 1; i < 4; i++) {
+      await page.evaluate(i => (window as unknown as { setPlayer(patch: object): void }).setPlayer({ currentIndex: i }), i);
+      await expect(mini.locator('.mini-title')).toHaveText(`Song ${'abcd'[i]}`);
+      // One sleeve, and one sung line: the two once shared a key, and every song left a sleeve behind.
+      await expect(mini.locator('.mini-cover')).toHaveCount(1);
+    }
+  });
 });

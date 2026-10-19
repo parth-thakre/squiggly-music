@@ -1,9 +1,10 @@
-import { useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
 import { paletteStyle, PlayModes, Position, TransportButtons, useByline, useRoomPalette } from './transport';
-import { Cover, splitTitle } from './ui';
+import { Cover, splitTitle, useNextCover } from './ui';
+import { api } from './library';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
 import { SungLine } from './lyrics';
@@ -42,9 +43,13 @@ export function Mini() {
   const problem = failed ? error ?? 'The audio engine stopped.' : error ?? pinError;
   const name = track ? splitTitle(track.title, track.album).main : null;
   const lyricRoom = useRoomForLyric();
+  // The main window, hidden while this one shows, gets no snapshots and fetches nothing ahead:
+  // the next song's sleeve and palette are fetched early from here.
+  useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), SLEEVE);
+  const sleeve = useArrivedCover(track?.coverArt ?? null);
   return <div className="mini" style={paletteStyle(palette)}>
     {/* The sleeve is the window's left edge, its full height, and a handle to drag it by. */}
-    {track ? <Cover key={track.id} id={track.coverArt} name={track.album} size={300} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
+    {track ? <Cover id={sleeve} name={track.album} size={SLEEVE} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
     <div className="mini-text">
       <p className="mini-title">{name ?? 'Nothing playing'}</p>
       {/* One line either way: the artist (and extensions' quiet lines), or what went wrong (in
@@ -58,7 +63,7 @@ export function Mini() {
         <span className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></span>
       </p>}
     </div>
-    {track && <SungLine key={track.id} track={track} below={!lyricRoom} />}
+    {track && <SungLine key={`lyrics:${track.id}`} track={track} below={!lyricRoom} />}
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>
@@ -79,6 +84,25 @@ export function Mini() {
     <ExtensionNotices />
     {window.squiggly?.window.ownResize && <ResizeEdges />}
   </div>;
+}
+
+// The sleeve to show: the playing song's once its image is ready, the last one's until then, so a
+// new song never leaves the window's edge blank while its sleeve arrives.
+const SLEEVE = 300;
+function useArrivedCover(coverArt: string | null) {
+  const [shown, setShown] = useState(coverArt);
+  useEffect(() => {
+    if (!coverArt) { setShown(null); return; }
+    let live = true;
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = api.coverUrl(coverArt, SLEEVE);
+    // A sleeve that fails to load still replaces the last one; Cover shows the record's name.
+    const show = () => { if (live) setShown(coverArt); };
+    void image.decode().then(show, show);
+    return () => { live = false; };
+  }, [coverArt]);
+  return shown;
 }
 
 // On Windows the mini player has no system frame (main/index.ts), so it resizes from these: thin
