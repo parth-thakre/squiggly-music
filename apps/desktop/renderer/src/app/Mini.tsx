@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
 import { paletteStyle, Position, TransportButtons, useByline, useRoomPalette } from './transport';
@@ -32,25 +33,35 @@ export function Mini() {
   const problem = failed ? error ?? 'The audio engine stopped.' : error ?? pinError;
   const name = track ? splitTitle(track.title, track.album).main : null;
   return <div className="mini" style={paletteStyle(palette)}>
-    {track ? <Cover key={track.id} id={track.coverArt} name={track.album} size={200} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
+    {/* The sleeve is the window's left edge, its full height, and a handle to drag it by. */}
+    {track ? <Cover key={track.id} id={track.coverArt} name={track.album} size={300} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
     <div className="mini-text">
       <p className="mini-title">{name ?? 'Nothing playing'}</p>
-      {/* One line either way: the artist, or what went wrong (in full on hover). */}
-      {problem ? <p className="mini-sub" role="alert" title={problem}>{problem}</p>
-        : <p className="mini-sub">{track ? byline : 'Pick something in the full window.'}</p>}
-      {track && <Position track={track} palette={palette} />}
+      {/* One line either way: the artist (and extensions' quiet lines), or what went wrong (in
+          full on hover) with what to do about it. */}
+      {problem ? <p className="mini-sub" role="alert">
+        <span title={problem}>{problem}</span>
+        {failed ? <button type="button" className="link" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
+          : <button type="button" className="link" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
+      </p> : <p className={`mini-sub${track ? '' : ' waiting'}`}>
+        <span>{track ? byline : 'Pick something in the full window.'}</span>
+        <span className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></span>
+      </p>}
     </div>
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>
-    <div className="mini-window">
-      {/* Extensions' quiet lines, all on this one line beside the buttons, so they take no room from
-          the song. The other deck placements need more room than this window has. */}
-      <div className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></div>
-      {failed ? <button type="button" className="text-button" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
-        : problem && <button type="button" className="text-button" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
-      <button type="button" className="text-button" aria-pressed={onTop} title="Keep the mini player above other windows" onClick={() => void pin()}>{onTop ? 'Unpin' : 'Pin'}</button>
-      <button type="button" className="text-button" onClick={() => void window.squiggly?.window.toggleMini()}>Full window</button>
+    {/* The squiggle and the window's own buttons share the last line, across the whole width. */}
+    <div className="mini-foot">
+      {track ? <div className="mini-position"><Position track={track} palette={palette} /></div> : <span className="mini-position" />}
+      <div className="mini-window">
+        <button type="button" className="icon-button" aria-pressed={onTop} aria-label="Keep on top" title={onTop ? 'Kept above other windows' : 'Keep above other windows'} onClick={() => void pin()}>
+          <Pin aria-hidden="true" />
+        </button>
+        <button type="button" className="icon-button" aria-label="Full window" title="Full window" onClick={() => void window.squiggly?.window.toggleMini()}>
+          <Maximize2 aria-hidden="true" />
+        </button>
+      </div>
     </div>
     <ExtensionNotices />
   </div>;

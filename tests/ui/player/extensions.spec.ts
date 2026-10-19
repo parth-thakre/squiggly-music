@@ -219,7 +219,7 @@ test.describe('deck slots and sections', { tag: '@slots' }, () => {
     await expect(page.getByText('Marked in the mini window.')).toBeVisible();
   });
 
-  test('quiet lines in the mini player leave the song, the squiggle, and the window buttons their room', async ({ page }) => {
+  test('quiet lines in the mini player follow the artist and leave the song, the squiggle, and the window buttons their room', async ({ page }) => {
     await withSlots(page, true, ['deck-note', 'lines']);
     const mini = page.locator('.mini');
     const box = async (locator: import('@playwright/test').Locator) => (await locator.boundingBox())!;
@@ -229,22 +229,26 @@ test.describe('deck slots and sections', { tag: '@slots' }, () => {
       if (page.url() === 'about:blank') await page.goto('/');
       const slots = mini.locator('.deck-slot.quiet-line');
       await expect(slots).toHaveCount(4);
-      await expect(mini.getByText('From 1977.')).toBeVisible();
+      // At the default size there's room for them beside the artist.
+      if (width === 420) await expect(mini.getByText('From 1977.')).toBeVisible();
       const title = await box(mini.locator('.mini-title'));
+      const artist = await box(mini.locator('.mini-sub > span').first());
       const squiggle = await box(mini.locator('.squiggle'));
-      const pin = await box(mini.getByRole('button', { name: 'Pin' }));
+      const pin = await box(mini.getByRole('button', { name: 'Keep on top' }));
+      const controls = await box(mini.locator('.mini-controls'));
       expect(title.y).toBeGreaterThanOrEqual(0);
-      if (width === 420) expect(squiggle.y + squiggle.height).toBeLessThanOrEqual(pin.y);
-      // The slots share the window buttons' line, left of them and inside the window.
+      expect(squiggle.y + squiggle.height).toBeLessThanOrEqual(height);
+      // The slots follow the artist on its line, short of the play buttons.
       const line = await box(mini.locator('.mini-slots'));
-      expect(line.y).toBeGreaterThanOrEqual(pin.y - 1);
-      expect(line.y + line.height).toBeLessThanOrEqual(Math.min(pin.y + pin.height + 1, height));
-      expect(line.x + line.width).toBeLessThanOrEqual(pin.x);
-      // Taking the slots away moves nothing else: they took no room from the song.
+      expect(Math.abs(line.y - artist.y)).toBeLessThanOrEqual(2);
+      expect(line.x).toBeGreaterThanOrEqual(artist.x + artist.width);
+      expect(line.x + line.width).toBeLessThanOrEqual(controls.x);
+      // Taking the slots away moves nothing else, and the artist isn't cut short for them.
       await page.addStyleTag({ content: '.mini .deck-slot { display: none !important; }' });
       expect(await box(mini.locator('.mini-title'))).toEqual(title);
+      expect(await box(mini.locator('.mini-sub > span').first())).toEqual(artist);
       expect(await box(mini.locator('.squiggle'))).toEqual(squiggle);
-      expect(await box(mini.getByRole('button', { name: 'Pin' }))).toEqual(pin);
+      expect(await box(mini.getByRole('button', { name: 'Keep on top' }))).toEqual(pin);
       await page.evaluate(() => document.head.lastElementChild!.remove());
     }
   });

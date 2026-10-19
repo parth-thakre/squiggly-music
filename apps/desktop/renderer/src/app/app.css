@@ -550,22 +550,46 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .resume-label { margin: 0 0 6px; font-size: calc(12.5px * var(--text)); color: var(--soft); }
 .resume-actions { display: flex; align-items: center; gap: 18px; margin: 16px 0 0; }
 
-/* Mini player window */
+/* Mini player window. The sleeve runs the window's full height at its left edge; beside it the
+   song and the buttons, with the squiggle under both across the rest of the width. The window
+   is 96 to 240 pixels tall (main/index.ts), and everything scales with it. */
 .mini {
-  height: 100vh; display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto; align-items: center; gap: 2px 14px;
-  padding: 12px 14px; background: var(--ground); color: var(--ink); transition: background-color .6s, color .6s; -webkit-app-region: drag; user-select: none;
+  height: 100vh; display: grid; grid-template-columns: 100vh minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) auto auto minmax(0, 1fr);
+  column-gap: 14px; padding-right: 10px; background: var(--ground); color: var(--ink); transition: background-color .6s, color .6s;
+  -webkit-app-region: drag; user-select: none;
 }
 .mini button, .mini input { -webkit-app-region: no-drag; }
-.mini-cover { grid-row: 1 / 3; width: 84px; height: 84px; aspect-ratio: 1; }
-.mini-text { min-width: 0; }
-.mini-title { margin: 0; font: var(--display-weight) calc(17px * var(--display-size))/1.2 var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mini-sub { margin: 1px 0 0; font-size: calc(12.5px * var(--text)); color: var(--soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mini .squiggle { margin-top: 2px; }
-.mini .squiggle-rail { height: 22px; }
-.mini-controls { display: flex; align-items: center; gap: 2px; }
+.mini-cover { grid-column: 1; grid-row: 1 / -1; width: 100vh; height: 100vh; }
+.mini-cover.cover-type span { font-size: calc(clamp(13px, 9vh, 22px) * var(--display-size)); }
+.mini-text { grid-column: 2; grid-row: 2; min-width: 0; }
+.mini-title { margin: 0; font: var(--display-weight) calc(clamp(16px, 9.5vh, 24px) * var(--display-size))/1.2 var(--font-display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-sub { display: flex; align-items: center; gap: 10px; margin: 1px 0 0; font-size: calc(12.5px * var(--text)); color: var(--soft); }
+.mini-sub > span:first-child { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mini-sub .link { flex: none; font-size: inherit; }
+/* Nothing playing: no squiggle under it, so the hint may take two lines. */
+.mini-sub.waiting > span:first-child { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.mini-sub > span:first-child { flex: 0 1 auto; }
+/* Extensions' quiet lines follow the artist on its line and give way first: the artist is only
+   ever cut short for want of room of its own. */
+.mini-slots { flex: 0 100000 auto; min-width: 0; height: 1.45em; line-height: 1.45; overflow: hidden; white-space: nowrap; }
+.mini-slots:empty { display: none; }
+.mini-controls { grid-column: 3; grid-row: 2; display: flex; align-items: center; gap: 2px; }
 .mini .play { width: 44px; height: 44px; }
-.mini-window { grid-column: 2 / 4; display: flex; justify-content: flex-end; gap: 14px; }
-.mini-window .text-button { font-size: calc(12px * var(--text)); color: var(--soft); }
+.mini-foot { grid-column: 2 / 4; grid-row: 3; display: flex; align-items: center; gap: 10px; }
+.mini-position { flex: 1; min-width: 0; }
+.mini .squiggle-rail { height: 22px; }
+.mini-window { display: flex; gap: 2px; margin-right: -4px; }
+.mini-window .icon-button { width: 28px; height: 28px; }
+.mini-window .icon-button svg { width: 16px; height: 16px; }
+.mini-window .icon-button[aria-pressed='true'] { color: var(--accent); background: none; }
+/* Narrow: Previous goes, so the song keeps some room. */
+@media (max-width: 379px) { .mini-controls .glyph:first-child { display: none; } }
+/* Tall: a larger play button, and a little air between the lines. */
+@media (min-height: 170px) {
+  .mini .play { width: 54px; height: 54px; }
+  .mini-sub { margin-top: 4px; font-size: calc(14px * var(--text)); }
+  .mini-foot { margin-top: 8px; }
+}
 
 /* Phones (built around the Galaxy Z Flip 7's 411px-wide main screen): search on top, the
    section row at the bottom under the thumb, the deck as a strip that opens into a sheet. */
