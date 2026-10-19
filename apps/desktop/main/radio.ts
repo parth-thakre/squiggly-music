@@ -123,7 +123,8 @@ export class Radio<C extends RadioClient> {
   // about the songs before it too when its own don't make ten. One turn at a time. A turn that
   // failed is not tried again for a minute; one that found nothing new is not tried again for that
   // entry, and the view says so. An answer is dropped if, meanwhile, other playback began, the
-  // queue gained another last entry, repeat or radio started, or autoplay was turned off.
+  // queue gained another last entry or moved off it or finished, repeat or radio started, or
+  // autoplay was turned off or held.
   private autoplay(now: number): Promise<unknown> | null {
     const client = this.shell.client(); const player = this.shell.player();
     if (this.autoplaying || !client || player.engine !== 'ready' || player.queue.length >= this.limit || !this.shell.autoplay()) return null;
@@ -135,7 +136,7 @@ export class Radio<C extends RadioClient> {
     const current = () => {
       const latest = radio.shell.player();
       return generation === radio.generation && !radio.station && radio.shell.client() === client && radio.shell.autoplay()
-        && latest.repeat === 'off' && latest.entryIds.at(-1) === turn.entry;
+        && latest.repeat === 'off' && latest.currentIndex === latest.queue.length - 1 && latest.entryIds.at(-1) === turn.entry;
     };
     const task = Effect.gen(function* () {
       const taken = new Set(radio.shell.player().queue.map(track => track.id));
@@ -147,10 +148,14 @@ export class Radio<C extends RadioClient> {
         if (!current()) return;
         fresh.push(...freshSongs(similar, taken, room - fresh.length));
       }
-      if (!fresh.length) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); return; }
-      radio.shell.remember(fresh);
-      radio.marking = { before: new Set(radio.shell.player().entryIds), ids: new Set(fresh.map(track => track.id)) };
-      yield* radio.shell.append(client, fresh).pipe(Effect.tapError(() => Effect.sync(() => { radio.marking = null; })));
+      // Songs queued by hand while the server answered aren't added again.
+      const latest = radio.shell.player();
+      const queued = new Set(latest.queue.map(track => track.id));
+      const adding = fresh.filter(track => !queued.has(track.id)).slice(0, radio.limit - latest.queue.length);
+      if (!adding.length) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); return; }
+      radio.shell.remember(adding);
+      radio.marking = { before: new Set(latest.entryIds), ids: new Set(adding.map(track => track.id)) };
+      yield* radio.shell.append(client, adding).pipe(Effect.tapError(() => Effect.sync(() => { radio.marking = null; })));
     });
     return this.shell.background(task).finally(() => { this.autoplaying = false; });
   }

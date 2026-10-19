@@ -70,6 +70,22 @@ test.describe('autoplay', () => {
     await app.openSettings();
     await expect(app.main.getByRole('checkbox', { name: /^Keep playing similar songs/ })).toBeChecked();
   });
+  test('a sleep timer set while the server answers stops what the answer would have added', async ({ app, fake, page }) => {
+    await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
+    await app.signIn();
+    fake.delay('similarSongs', 1500);
+    await app.play('Test Pressing', 'Tail Light');
+    await expect.poll(() => fake.callsTo('similarSongs').length).toBe(1);
+    await page.keyboard.press('Control+k');
+    const palette = page.getByRole('dialog', { name: 'Commands' });
+    await palette.getByRole('combobox', { name: 'Find a command' }).fill('Sleep after this song');
+    await page.keyboard.press('Enter');
+    await expect(app.deck.getByText('Sleeps after this song')).toBeVisible();
+    await page.waitForTimeout(2000);
+    await app.openQueue();
+    expect(await app.titles()).toEqual(record);
+    expect(fake.callsTo('similarSongs')).toHaveLength(1);
+  });
 });
 
 test('the desktop marks the entries its main process says autoplay added', async ({ page }) => {

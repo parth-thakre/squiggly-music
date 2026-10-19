@@ -436,11 +436,12 @@ function topUpRadio() {
 }
 // Autoplay as the main process runs it (Radio in main/radio.ts, with packages/core/autoplay.ts):
 // once the queue's last song plays, up to ten songs like it that aren't queued go on the end.
-// One turn at a time; a failed one waits a minute, and an entry that found nothing isn't asked
-// again. A queue that already finished stays finished, and so does one the sleep timer is waiting
-// to stop after this song. On Android the page has to be awake for it, as for radio.
+// One turn at a time; a failed one is tried again in a minute, and an entry that found nothing
+// isn't asked again. A queue that already finished stays finished, and so does one the sleep
+// timer is waiting to stop after this song. On Android the page has to be awake for it, as for radio.
 let autoplaying = -1;
 let autoplayTried: { entry: string; at: number } | null = null;
+let autoplayRetry: ReturnType<typeof setTimeout> | undefined;
 let sleepsAfterSong = false;
 async function autoplay() {
   if (!local || autoplaying === station || !getSettings().autoplay || sleepsAfterSong || !state.connected || state.reach.away) return;
@@ -450,21 +451,27 @@ async function autoplay() {
   if (autoplayTried?.entry === turn.entry && Date.now() - autoplayTried.at < 60_000) return;
   const mine = autoplaying = station;
   autoplayTried = { entry: turn.entry, at: Date.now() };
-  // Other playback began, the queue gained another last entry, repeat or radio came on, or
-  // autoplay was turned off: the answer no longer belongs here.
-  const current = () => mine === station && !state.radio && state.repeat === 'off' && getSettings().autoplay && state.entryIds.at(-1) === turn.entry;
+  // Other playback began, the queue gained another last entry or moved off it or finished, repeat
+  // or radio came on, the sleep timer began waiting, or autoplay was turned off: the answer no
+  // longer belongs here.
+  const current = () => mine === station && !state.radio && state.repeat === 'off' && getSettings().autoplay && !sleepsAfterSong
+    && state.index === state.queue.length - 1 && state.entryIds.at(-1) === turn.entry && !(web?.active.ended || native?.ended);
   try {
     const taken = new Set(state.queue.map(t => t.id));
     const fresh: Track[] = [];
     for (const seed of turn.seeds) {
       if (fresh.length >= AUTOPLAY_SONGS) break;
       const result = await api.similarSongs(seed.id, AUTOPLAY_ASK);
-      if (!current() || !result.ok) return;
+      if (!current()) return;
+      if (!result.ok) { clearTimeout(autoplayRetry); autoplayRetry = setTimeout(topUp, 61_000); return; }
       fresh.push(...freshSongs(result.value, taken, AUTOPLAY_SONGS - fresh.length));
     }
+    // Songs queued by hand while the server answered aren't added again.
+    const queuedIds = new Set(state.queue.map(t => t.id));
+    const adding = fresh.filter(t => !queuedIds.has(t.id));
     const queued = keepQueued(state.autoplay, state.entryIds);
-    if (!fresh.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
-    webAppend(fresh, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
+    if (!adding.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
+    webAppend(adding, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
   } finally { if (autoplaying === mine) autoplaying = -1; }
 }
 
@@ -611,6 +618,8 @@ function nativePlayback(playback: AndroidPlayback) {
       ?? awayError(track, 'This song could not be played here. Try another, or check the connection.');
   }
   set(patch);
+  // The page asked before the native player had left the finished queue's end; now it has.
+  if (before?.ended && !playback.ended) topUp();
 }
 function nativeSession(next: AndroidSession) {
   const was = state.connected;
@@ -631,7 +640,7 @@ function nativeSession(next: AndroidSession) {
 // changed meanwhile is saved, and an empty one is offered the saved queue.
 function reachChanged(before: Reachability, after: Reachability) {
   if (!local || !before.away || after.away) return;
-  if (!state.queue.length) void offerResume(); else saveSoon();
+  if (!state.queue.length) void offerResume(); else { saveSoon(); topUp(); }
 }
 if (web) webReach.subscribe(next => { const before = state.reach; set({ reach: next }); reachChanged(before, next); });
 if (android) {

@@ -937,14 +937,15 @@ describe('main-process radio', () => {
     set({ queue: [track('a'), track('st', 'station')] });
     expect(radio.topUp()).toBeNull();
     expect(client.similarSongs).not.toHaveBeenCalled();
-    // Answers that come back after other playback, after a song joined the end, or after
-    // autoplay was turned off are dropped.
-    for (const change of ['play', 'add', 'off'] as const) {
+    // Answers that come back after other playback, after a song joined the end, after the queue
+    // finished (the host then has no current entry), or after autoplay was turned off are dropped.
+    for (const change of ['play', 'add', 'finish', 'off'] as const) {
       autoplay(true);
       load(['a', 'b'], 1);
       const late = radio.topUp()!;
       if (change === 'play') radio.end();
       else if (change === 'add') set({ queue: [...player().queue, track('mine')], entryIds: [...player().entryIds, 'mine'] });
+      else if (change === 'finish') set({ currentIndex: -1, playing: false });
       else autoplay(false);
       respond('b', songs('late'));
       await late;
@@ -954,6 +955,20 @@ describe('main-process radio', () => {
     await run(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }));
     expect(log.filter(entry => entry.startsWith('append'))).toEqual([]);
     expect(radio.autoplayView.added).toEqual([]);
+  });
+
+  it('autoplay leaves out a song queued by hand while the server answered', async () => {
+    const { radio, log, autoplay, load, set, player, respond, setSimilar } = fixture();
+    autoplay(true);
+    // The song before the last one, asked about next, finds nothing more.
+    setSimilar(id => id === 'a' ? [] : null);
+    load(['a', 'b'], 1);
+    const turn = radio.topUp()!;
+    // Queued before the song playing, so the last entry is still the one asked about.
+    set({ queue: [track('a'), track('x'), track('b')], entryIds: [player().entryIds[0], 'by-hand', player().entryIds[1]], currentIndex: 2 });
+    respond('b', songs('x', 'y'));
+    await turn;
+    expect(log).toEqual(['append y']);
   });
 });
 
