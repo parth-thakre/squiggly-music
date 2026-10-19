@@ -242,4 +242,24 @@ test.describe('mini player', () => {
     await expect(line.locator('.leaving')).toHaveCount(0, { timeout: 2000 });
     await expect(line).toHaveText('Line 3 of the lyric');
   });
+
+  test('the lyric box leaves room above and below its lines for marks that rise past them', async ({ page }) => {
+    // Devanagari's vowel signs and headline reach past a line's box; the clip that cuts a long
+    // line short must not cut them. Beside the song and in its own row under it.
+    for (const [width, height] of [[700, 140], [420, 112]] as const) {
+      await page.setViewportSize({ width, height });
+      await playing(page, 4, true, [{ start: 0, text: 'या निज़ामुद्दीन औलिया' }, { start: 3, text: 'कुन फ़या कुन, जब कहीं पे कुछ नहीं' }]);
+      await page.goto('/');
+      const room = await page.locator('.mini .mini-lyric').evaluate(element => {
+        const box = element.firstElementChild as HTMLElement, style = getComputedStyle(box), outer = getComputedStyle(element);
+        const size = parseFloat(style.fontSize);
+        return { above: parseFloat(style.paddingTop) / size, below: parseFloat(style.paddingBottom) / size,
+          clipped: outer.overflowY !== 'visible', margin: parseFloat(outer.overflowClipMargin || '0') / size };
+      });
+      expect(room.above, `above at ${width}x${height}`).toBeGreaterThanOrEqual(.25);
+      expect(room.below, `below at ${width}x${height}`).toBeGreaterThanOrEqual(.25);
+      // Where the row itself clips, it lets that room show.
+      if (room.clipped) expect(room.margin, `row at ${width}x${height}`).toBeGreaterThanOrEqual(.25);
+    }
+  });
 });
