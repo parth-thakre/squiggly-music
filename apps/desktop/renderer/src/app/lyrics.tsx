@@ -182,6 +182,32 @@ export function DeckLyrics() {
   if (!track || isStation(track) || route.view === 'lyrics') return null;
   return <DeckLines key={track.id} track={track} />;
 }
+// The synced line being sung, looked at again when the next one is due to start rather than every
+// frame: a song plays for minutes and its lines change every few seconds. While playing it also
+// looks every CHECK_MS, so a seek shows its line that soon. A React update only when it changes.
+const CHECK_MS = 250;
+function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pausedAt: number) {
+  const [active, setActive] = useState(-1);
+  useEffect(() => {
+    if (!synced) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const check = () => {
+      timer = undefined;
+      const now = livePosition() + LEAD;
+      const at = lineAt(synced, now);
+      setActive(at);
+      if (!playing || document.hidden) return;
+      const next = synced[at + 1]?.start;
+      timer = setTimeout(check, next == null ? CHECK_MS : Math.min(CHECK_MS, Math.max(0, (next - now) * 1000) + 5));
+    };
+    check();
+    const wake = () => { if (!timer && !document.hidden) check(); };
+    document.addEventListener('visibilitychange', wake);
+    return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
+  }, [synced, playing, pausedAt]);
+  return active;
+}
+
 const ROOM_LINES = 3, GAP = 18;
 function DeckLines({ track }: { track: Track }) {
   const { lyrics } = useLyrics(track);
@@ -189,24 +215,10 @@ function DeckLines({ track }: { track: Track }) {
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
   const box = useRef<HTMLButtonElement>(null);
   const list = useRef<HTMLOListElement>(null);
-  const [active, setActive] = useState(-1);
   const [room, setRoom] = useState(false);
   const synced = lyrics?.synced ? lyrics.lines : null;
 
-  // The current line, checked each frame while playing; a React update only when it changes.
-  useEffect(() => {
-    if (!synced) return;
-    let frame = 0;
-    const paint = () => {
-      frame = 0;
-      setActive(lineAt(synced, livePosition() + LEAD));
-      if (playing && !document.hidden) frame = requestAnimationFrame(paint);
-    };
-    paint();
-    const wake = () => { if (!frame && !document.hidden) paint(); };
-    document.addEventListener('visibilitychange', wake);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', wake); };
-  }, [synced, playing, pausedAt]);
+  const active = useLineNow(synced, playing, pausedAt);
 
   // Whether three lines fit, and the list moved so the current line sits a little above the
   // middle. Early on the first line stays at the top (GAP below the stars) rather than leaving

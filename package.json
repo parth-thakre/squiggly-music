@@ -4,7 +4,7 @@
   "private": true,
   "description": "An inspectable, audiophile-first desktop music player",
   "type": "module",
-  "main": "out/main/index.js",
+  "main": "out/main/boot.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
