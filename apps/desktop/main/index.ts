@@ -224,6 +224,7 @@ const radio = new Radio<SubsonicClient>({
   // The next host snapshot carries the change to the windows (several a second while playing).
   changed: () => { state.player = { ...state.player, radio: radio.view, autoplay: radio.autoplayView }; },
   autoplay: () => settings.value.autoplay && !sleepsAfterSong(),
+  next: () => transport({ type: 'next' }),
 }, QUEUE_LIMIT);
 // Starting any other playback, or losing the engine or session, ends radio. The queue stays.
 const endRadio = () => radio.end();
@@ -758,6 +759,8 @@ function installHandlers() {
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
     if (command.type === 'play' && canResume()) { yield* resumeSaved(); return; }
     if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
+    // Next on the last song while autoplay finds what follows: it moves on when the songs are in.
+    if (command.type === 'next' && radio.holdNext()) return;
     // The host checks again against a fresh list; this keeps an unlisted name from leaving main.
     if (command.type === 'device' && !listedDevice(command.id, state.player.devices)) return yield* Effect.fail(new Error('That output device is not connected.'));
     yield* send(command);

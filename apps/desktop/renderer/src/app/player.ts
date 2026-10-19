@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, AutoplayView, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, noAutoplay } from '../../../../../packages/core/autoplay';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../../../packages/core/autoplay';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
 import { OUT_OF_REACH } from '../../../../../packages/core/reach';
 import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
@@ -435,13 +435,15 @@ function topUpRadio() {
   });
 }
 // Autoplay as the main process runs it (Radio in main/radio.ts, with packages/core/autoplay.ts):
-// once the queue's last song plays, up to ten songs like it that aren't queued go on the end.
+// once the queue's last song or the one before it plays, up to ten songs like it that aren't
+// queued go on the end. Next on the last song while a turn is out moves on when they're in.
 // One turn at a time; a failed one is tried again in a minute, and an entry that found nothing
 // isn't asked again. A queue that already finished stays finished, and so does one the sleep
 // timer is waiting to stop after this song. On Android the page has to be awake for it, as for radio.
 let autoplaying = -1;
 let autoplayTried: { entry: string; at: number } | null = null;
 let autoplayRetry: ReturnType<typeof setTimeout> | undefined;
+let skipWhenAdded = false;
 let sleepsAfterSong = false;
 async function autoplay() {
   if (!local || autoplaying === station || !getSettings().autoplay || sleepsAfterSong || !state.connected || state.reach.away) return;
@@ -455,7 +457,7 @@ async function autoplay() {
   // or radio came on, the sleep timer began waiting, or autoplay was turned off: the answer no
   // longer belongs here.
   const current = () => mine === station && !state.radio && state.repeat === 'off' && getSettings().autoplay && !sleepsAfterSong
-    && state.index === state.queue.length - 1 && state.entryIds.at(-1) === turn.entry && !(web?.active.ended || native?.ended);
+    && nearEnd(state.index, state.queue.length) && state.entryIds.at(-1) === turn.entry && !(web?.active.ended || native?.ended);
   try {
     const taken = new Set(state.queue.map(t => t.id));
     const fresh: Track[] = [];
@@ -471,8 +473,11 @@ async function autoplay() {
     const adding = fresh.filter(t => !queuedIds.has(t.id));
     const queued = keepQueued(state.autoplay, state.entryIds);
     if (!adding.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
+    const last = state.index === state.queue.length - 1;
     webAppend(adding, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
-  } finally { if (autoplaying === mine) autoplaying = -1; }
+    // Next was held for these: on to the first of them.
+    if (skipWhenAdded && last && state.index + 1 < state.queue.length) webLoad(state.index + 1);
+  } finally { if (autoplaying === mine) { autoplaying = -1; skipWhenAdded = false; } }
 }
 
 // Lock screen, notification shade, headphones, and the Flip's cover screen.
@@ -929,7 +934,13 @@ export const player = {
   },
   // Next moves on under repeat one too, and wraps to the first song under repeat all.
   next() {
-    if (local) { const next = following(state.index, state.queue.length, state.repeat, 'skip'); if (next >= 0) webLoad(next); return; }
+    if (local) {
+      const next = following(state.index, state.queue.length, state.repeat, 'skip');
+      if (next >= 0) webLoad(next);
+      // The last song, with autoplay finding what follows it: on to its first song when it's in.
+      else if (autoplaying === station && state.repeat === 'off') skipWhenAdded = true;
+      return;
+    }
     void desktop!.command({ type: 'next' }).then(report);
   },
   previous() {

@@ -8,11 +8,13 @@ const track = (id: string, source: Track['source'] = 'navidrome'): Track => ({
 const queue = (...ids: string[]) => ({ queue: ids.map(id => track(id)), entryIds: ids.map((_, i) => `e${i}`), repeat: 'off' as const, radio: false });
 
 describe('autoplay', () => {
-  it('takes a turn only once the last entry is the one playing', () => {
-    expect(autoplayTurn({ ...queue('a', 'b', 'c'), index: 1 })).toBeNull();
-    expect(autoplayTurn({ ...queue('a', 'b', 'c'), index: -1 })).toBeNull();
+  it('takes a turn once the next-to-last or the last entry is the one playing, for the last entry', () => {
+    expect(autoplayTurn({ ...queue('a', 'b', 'c', 'd'), index: 1 })).toBeNull();
+    expect(autoplayTurn({ ...queue('a', 'b', 'c', 'd'), index: -1 })).toBeNull();
     expect(autoplayTurn({ ...queue(), index: -1 })).toBeNull();
-    expect(autoplayTurn({ ...queue('a', 'b', 'c'), index: 2 })).toEqual({ entry: 'e2', seeds: [track('c'), track('b'), track('a')] });
+    const turn = { entry: 'e3', seeds: [track('d'), track('c'), track('b')] };
+    expect(autoplayTurn({ ...queue('a', 'b', 'c', 'd'), index: 2 })).toEqual(turn);
+    expect(autoplayTurn({ ...queue('a', 'b', 'c', 'd'), index: 3 })).toEqual(turn);
   });
 
   it('never runs under repeat or radio, after a file or a station, and seeds from server songs only', () => {

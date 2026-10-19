@@ -1,5 +1,5 @@
 import { Effect } from 'effect';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, noAutoplay } from '../../../packages/core/autoplay';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../packages/core/autoplay';
 import type { AlbumDetail, AutoplayView, PlayerSnapshot, RadioSeed, Track } from '../../../packages/core/contracts';
 
 export interface RadioClient {
@@ -23,6 +23,8 @@ export interface RadioShell<C extends RadioClient> {
   // Whether autoplay may add songs now: on in Settings, and no sleep timer waiting for this song
   // to end (its listener wants the music to stop there).
   autoplay(): boolean;
+  // Moves on to the next song (Next, held while autoplay was finding it one).
+  next(): void;
 }
 const distinct = (tracks: readonly Track[]) => [...new Map(tracks.map(track => [track.id, track])).values()];
 
@@ -36,6 +38,8 @@ export class Radio<C extends RadioClient> {
   private station: { generation: number; view: { label: string }; topping: boolean; tried: { entry: string; at: number } | null } | null = null;
   private autoplaying = false;
   private autoplayTried: { entry: string; at: number } | null = null;
+  // Next was pressed on the last song while a turn was out: it moves on once the songs are in.
+  private skipping = false;
   private autoplayed: AutoplayView = noAutoplay;
   // Songs appended and not yet seen in a snapshot: the audio host names their entries, and its
   // reply can come before the snapshot that shows them.
@@ -44,6 +48,15 @@ export class Radio<C extends RadioClient> {
 
   get view(): { label: string } | null { return this.station?.view ?? null; }
   get autoplayView(): AutoplayView { return this.autoplayed; }
+  // Next on the queue's last song while a turn is finding what follows it: true when this holds the
+  // press until the songs are in, rather than the engine refusing it. Repeat or radio, or no turn
+  // out, leave it to the engine.
+  holdNext(): boolean {
+    const player = this.shell.player();
+    if (!this.autoplaying || this.station || player.repeat !== 'off' || player.currentIndex !== player.queue.length - 1) return false;
+    this.skipping = true;
+    return true;
+  }
 
   // Called with every host snapshot before it is published. Finds the entries autoplay's last
   // songs became, and forgets entries that have left the queue. Returns the view to publish.
@@ -119,7 +132,7 @@ export class Radio<C extends RadioClient> {
     return this.shell.background(task).finally(() => { station.topping = false; });
   }
 
-  // Once the queue's last entry plays, appends up to ten songs like it that are not queued, asking
+  // Once the queue's last entry or the one before it plays, appends up to ten songs like it that are not queued, asking
   // about the songs before it too when its own don't make ten. One turn at a time. A turn that
   // failed is not tried again for a minute; one that found nothing new is not tried again for that
   // entry, and the view says so. An answer is dropped if, meanwhile, other playback began, the
@@ -136,7 +149,7 @@ export class Radio<C extends RadioClient> {
     const current = () => {
       const latest = radio.shell.player();
       return generation === radio.generation && !radio.station && radio.shell.client() === client && radio.shell.autoplay()
-        && latest.repeat === 'off' && latest.currentIndex === latest.queue.length - 1 && latest.entryIds.at(-1) === turn.entry;
+        && latest.repeat === 'off' && nearEnd(latest.currentIndex, latest.queue.length) && latest.entryIds.at(-1) === turn.entry;
     };
     const task = Effect.gen(function* () {
       const taken = new Set(radio.shell.player().queue.map(track => track.id));
@@ -155,8 +168,11 @@ export class Radio<C extends RadioClient> {
       if (!adding.length) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); return; }
       radio.shell.remember(adding);
       radio.marking = { before: new Set(latest.entryIds), ids: new Set(adding.map(track => track.id)) };
+      const onLast = latest.currentIndex === latest.queue.length - 1;
       yield* radio.shell.append(client, adding).pipe(Effect.tapError(() => Effect.sync(() => { radio.marking = null; })));
+      // Next was held for these: on to the first of them.
+      if (radio.skipping && onLast) radio.shell.next();
     });
-    return this.shell.background(task).finally(() => { this.autoplaying = false; });
+    return this.shell.background(task).finally(() => { this.autoplaying = false; this.skipping = false; });
   }
 }

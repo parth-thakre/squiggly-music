@@ -728,6 +728,7 @@ describe('main-process radio', () => {
       background: task => Effect.runPromise(Effect.either(task)),
       changed: () => log.push(`radio ${radio.view?.label ?? 'off'}`),
       autoplay: () => autoplay,
+      next: () => { log.push('next'); player = { ...player, currentIndex: player.currentIndex + 1 }; },
     });
     return {
       radio, client, known, log, pending, autoplay: (on: boolean) => { autoplay = on; },
@@ -853,7 +854,7 @@ describe('main-process radio', () => {
     const radio: Radio<typeof client> = new Radio({
       client: () => client, player: () => snapshot(), known: () => undefined, remember: () => undefined,
       replace: () => Effect.sync(() => radio.end()), follow: () => Effect.void, append: () => Effect.void,
-      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined, autoplay: () => false,
+      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined, autoplay: () => false, next: () => undefined,
     });
     expect(await Effect.runPromise(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }))).toBe(false);
     expect(radio.view).toBeNull();
@@ -881,27 +882,27 @@ describe('main-process radio', () => {
   });
 
   const many = (prefix: string, count: number) => Array.from({ length: count }, (_, index) => track(`${prefix}${index}`));
-  it('autoplay waits for the last song, then adds ten new songs like it and marks their entries', async () => {
+  it('autoplay waits for the next-to-last song, then adds ten new songs like the last and marks their entries', async () => {
     const { radio, client, log, autoplay, load, play, player, setSimilar } = fixture();
-    setSimilar(id => id === 'c' ? [...songs('a', 'c'), ...many('n', 15)] : null);
-    load(['a', 'b', 'c'], 1);
+    setSimilar(id => id === 'd' ? [...songs('a', 'd'), ...many('n', 15)] : null);
+    load(['a', 'b', 'c', 'd'], 1);
     autoplay(true);
-    // Songs still to come: nothing to do.
+    // More songs still to come: nothing to do.
     expect(radio.topUp()).toBeNull();
     play(2);
     autoplay(false);
     expect(radio.topUp()).toBeNull();
     autoplay(true);
     await radio.topUp();
-    expect(client.similarSongs.mock.calls).toEqual([['c', 30]]);
+    expect(client.similarSongs.mock.calls).toEqual([['d', 30]]);
     expect(log).toEqual([`append ${many('n', 10).map(item => item.id).join(' ')}`]);
     // The host names the new entries; the next snapshot shows them, and they are marked.
     const view = radio.observe(player());
-    expect(view).toEqual({ added: player().entryIds.slice(3), missed: null });
+    expect(view).toEqual({ added: player().entryIds.slice(4), missed: null });
     // An unchanged snapshot keeps the same view, and an entry that leaves the queue loses its mark.
     expect(radio.observe(player())).toBe(view);
-    const removed = player().entryIds[4];
-    expect(radio.observe({ queue: player().queue.slice(0, 4), entryIds: player().entryIds.slice(0, 4) }).added).toEqual([player().entryIds[3]]);
+    const removed = player().entryIds[5];
+    expect(radio.observe({ queue: player().queue.slice(0, 5), entryIds: player().entryIds.slice(0, 5) }).added).toEqual([player().entryIds[4]]);
     expect(radio.autoplayView.added).not.toContain(removed);
   });
 
@@ -955,6 +956,39 @@ describe('main-process radio', () => {
     await run(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }));
     expect(log.filter(entry => entry.startsWith('append'))).toEqual([]);
     expect(radio.autoplayView.added).toEqual([]);
+  });
+
+  it('autoplay holds Next on the last song while it finds what follows, then moves on to it', async () => {
+    const { radio, log, autoplay, load, set, player, respond, setSimilar } = fixture();
+    autoplay(true);
+    // The song before the last one, asked about next, finds nothing more.
+    setSimilar(id => id === 'a' ? [] : null);
+    load(['a', 'b'], 0);
+    // Out from the next-to-last song; the listener skips to the last and presses Next again.
+    const turn = radio.topUp()!;
+    expect(radio.holdNext()).toBe(false);
+    set({ currentIndex: 1 });
+    expect(radio.holdNext()).toBe(true);
+    respond('b', songs('n1', 'n2'));
+    await turn;
+    expect(log).toEqual(['append n1 n2', 'next']);
+    expect(player().queue[player().currentIndex].id).toBe('n1');
+    // With no turn out, or under repeat, Next is the engine's to answer.
+    expect(radio.holdNext()).toBe(false);
+    load(['a', 'b'], 1);
+    set({ repeat: 'all' });
+    expect(radio.holdNext()).toBe(false);
+  });
+
+  it('autoplay\'s songs land without a held Next moving anything', async () => {
+    const { radio, log, autoplay, load, respond, setSimilar } = fixture();
+    autoplay(true);
+    setSimilar(id => id === 'a' ? [] : null);
+    load(['a', 'b'], 0);
+    const turn = radio.topUp()!;
+    respond('b', songs('n1'));
+    await turn;
+    expect(log).toEqual(['append n1']);
   });
 
   it('autoplay leaves out a song queued by hand while the server answered', async () => {

@@ -1,7 +1,7 @@
 import { installDesktopBridge } from '../fixtures/desktop';
 import { allTracks, expect, special, test, trackOf } from '../fixtures/test';
 
-// Autoplay: songs like the last one join the queue once it plays, when turned on. Playing
+// Autoplay: songs like the last one join the queue once it or the one before it plays, when turned on. Playing
 // "Tail Light" from its record queues the record with it last. The fake server's similar songs are
 // the library's songs off that record, in order.
 const record = ['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light'];
@@ -70,6 +70,23 @@ test.describe('autoplay', () => {
     await app.openSettings();
     await expect(app.main.getByRole('checkbox', { name: /^Keep playing similar songs/ })).toBeChecked();
   });
+  test('it asks on the next-to-last song, and Next on the last while it asks moves on when the songs are in', async ({ app, fake, page }) => {
+    await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
+    await app.signIn();
+    // A server slow to answer, as one asking Last.fm can be.
+    fake.delay('similarSongs', 1500);
+    await app.play('Test Pressing', 'Thirty Two');
+    // Asked about the last song while the one before it plays.
+    await expect.poll(() => fake.callsTo('similarSongs').map(call => call.args)).toEqual([[special.tailLight, 30]]);
+    // Skipping through: on to the last song, then Next again before the answer is in.
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.expectPlaying('Tail Light');
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.expectPlaying(similar[0], { timeout: 5000 });
+    await app.openQueue();
+    expect(await app.titles()).toEqual([...record, ...similar.slice(0, 10)]);
+  });
+
   test('a sleep timer set while the server answers stops what the answer would have added', async ({ app, fake, page }) => {
     await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
     await app.signIn();
