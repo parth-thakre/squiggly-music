@@ -215,16 +215,49 @@ function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pause
 
 // The mini player's one line: the synced line being sung, nothing between lines or before the
 // first, and nothing at all for a station or lyrics that aren't timed. It's there to glance at,
-// so assistive tech isn't told each line; the lyric sheet in the full window has them all.
+// so assistive tech isn't told each line; the lyric sheet in the full window has them all. With
+// word times it fills word by word as the sheet does: while the line is sung (and only then), each
+// word's progress goes straight to its span as --p once a frame, and nothing re-renders.
 export function SungLine({ track }: { track: Track }) {
   const { lyrics } = useLyrics(track);
   const playing = usePlayer(s => s.playing);
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
   const synced = !isStation(track) && lyrics?.synced ? lyrics.lines : null;
   const active = useLineNow(synced, playing, pausedAt, true);
+  const line = synced?.[active];
+  const words = line?.words?.length ? line.words : null;
+  const box = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const element = box.current;
+    if (!words || !element) return;
+    const spans = Array.from(element.querySelectorAll<HTMLElement>('.word'));
+    const values: number[] = [];
+    let frame = 0;
+    const paint = () => {
+      frame = 0;
+      const now = livePosition() + LEAD, whole = reducedMotion.matches;
+      let sung = true;
+      for (let k = 0; k < words.length && k < spans.length; k++) {
+        const p = progressOf(words[k], now, whole);
+        if (p < 1) sung = false;
+        if (p === values[k]) continue;
+        values[k] = p;
+        spans[k].style.setProperty('--p', String(p));
+      }
+      // The last word filled: nothing more to draw until the next line.
+      if (playing && !document.hidden && !sung) frame = requestAnimationFrame(paint);
+    };
+    paint();
+    const wake = () => { if (!frame && !document.hidden) paint(); };
+    document.addEventListener('visibilitychange', wake);
+    return () => { cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', wake); };
+  }, [words, playing, pausedAt]);
   if (!synced) return null;
-  const text = synced[active]?.text ?? '';
-  return <p className="mini-lyric" aria-hidden="true" title={text || undefined}><span key={active}>{text}</span></p>;
+  const text = line?.text ?? '';
+  return <p className="mini-lyric" aria-hidden="true" title={text || undefined}><span key={active} ref={box}>{words ? words.map((word, k) => {
+    const [, said, space] = /^([\s\S]*?)(\s*)$/.exec(word.text)!;
+    return <Fragment key={k}><span className="word">{said}</span>{space}</Fragment>;
+  }) : text}</span></p>;
 }
 
 const ROOM_LINES = 3, GAP = 18;

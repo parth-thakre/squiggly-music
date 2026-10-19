@@ -4,7 +4,7 @@ import { expect, test } from '../fixtures/test';
 
 // The mini player's window, with a song playing whose lyrics are timed: a line every 3 s.
 const song = { id: 'song-lyric', title: 'Lyric Line', artist: 'Ada Brass', album: 'Test Pressing', duration: 30, source: 'navidrome', coverArt: null };
-type Line = { start: number | null; end?: number; text: string };
+type Line = { start: number | null; end?: number; text: string; words?: { start: number; end: number; text: string }[] };
 async function playing(page: import('@playwright/test').Page, position: number, timed = true, given: Line[] = lyricLines) {
   await installDesktopBridge(page, { mini: true, player: { queue: [song], entryIds: ['entry-1'], currentIndex: 0, duration: 30, playing: false, position } });
   // The fake bridge has no lyrics; this song's are the fixture library's.
@@ -41,6 +41,8 @@ test.describe('mini player', () => {
     const mini = page.locator('.mini');
     await expect(mini.locator('.mini-title')).toHaveText('Lyric Line');
     await expect(mini.locator('.mini-lyric')).toHaveCount(0);
+    // Elsewhere the system's frame resizes the window: no handles of its own.
+    await expect(mini.locator('.mini-edge')).toHaveCount(0);
     // Wider, it comes.
     await page.setViewportSize({ width: 700, height: 112 });
     await expect(mini.locator('.mini-lyric')).toHaveText('Line 2 of the lyric');
@@ -80,16 +82,6 @@ test.describe('mini player', () => {
     await expect(shuffle).toBeHidden();
     await expect(repeat).toBeHidden();
     await expect(mini.getByRole('button', { name: 'Keep on top' })).toBeVisible();
-  });
-
-  test('the window frame takes the room\'s ground, for the strip Windows keeps along its edges', async ({ page }) => {
-    await page.setViewportSize({ width: 420, height: 112 });
-    await playing(page, 4);
-    await page.goto('/');
-    await expect(page.locator('.mini .mini-title')).toHaveText('Lyric Line');
-    const ground = await page.locator('.mini').evaluate(element => getComputedStyle(element).backgroundColor);
-    const hex = '#' + (ground.match(/\d+/g) ?? []).slice(0, 3).map(n => Number(n).toString(16).padStart(2, '0')).join('');
-    await expect.poll(() => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls.filter(call => call.startsWith('tint:')).at(-1))).toMatch(new RegExp(`:${hex}$`));
   });
 
   test('every size the window allows leaves the song, the squiggle, and every button room', async ({ page }) => {
@@ -143,5 +135,43 @@ test.describe('mini player', () => {
     const before = await where();
     await page.addStyleTag({ content: '.mini-lyric span { display: none !important; }' });
     expect(await where()).toEqual(before);
+  });
+
+  test('a line with word times fills word by word, as the lyric sheet does', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    // Line 2, from 3 s: "sung" from 3 to 3.4, "half" from 3.4 to 4.4, "later" from 6 to 7. Paused at
+    // 3.8 s (read 0.1 s ahead, as the sheet does), "sung" is full, "half" halfway, "later" not begun.
+    const words = [{ start: 3, end: 3.4, text: 'sung ' }, { start: 3.4, end: 4.4, text: 'half ' }, { start: 6, end: 7, text: 'later' }];
+    await playing(page, 3.8, true, lyricLines.map((line, i) => i === 1 ? { ...line, end: 8, text: 'sung half later', words } : line));
+    await page.goto('/');
+    const spans = page.locator('.mini .mini-lyric .word');
+    await expect(spans).toHaveText(['sung', 'half', 'later']);
+    const fill = await spans.evaluateAll(elements => elements.map(element => Number(element.style.getPropertyValue('--p') || 0)));
+    expect(fill[0]).toBe(1);
+    expect(fill[1]).toBeGreaterThan(0.3);
+    expect(fill[1]).toBeLessThan(0.7);
+    expect(fill[2]).toBe(0);
+  });
+
+  test('on Windows, with no system frame, the window resizes from its own edges', async ({ page }) => {
+    await page.setViewportSize({ width: 420, height: 112 });
+    await playing(page, 4);
+    await page.addInitScript(() => {
+      const shell = (window as unknown as { squiggly: { window: Record<string, unknown> }; resized: object[] });
+      shell.resized = [];
+      shell.squiggly.window.ownResize = true;
+      shell.squiggly.window.resizeMini = async (bounds: object) => { shell.resized.push(bounds); return { ok: true, value: undefined }; };
+    });
+    await page.goto('/');
+    const edge = page.locator('.mini-edge.e');
+    await expect(page.locator('.mini-edge')).toHaveCount(8);
+    const box = (await edge.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 82, box.y + box.height / 2, { steps: 4 });
+    await page.mouse.up();
+    const last = await page.evaluate(() => (window as unknown as { resized: { width: number; height: number }[] }).resized.at(-1));
+    expect(last?.width).toBeGreaterThan(470);
+    expect(last?.height).toBe(await page.evaluate(() => window.outerHeight));
   });
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from 'react';
+import { useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
 import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
@@ -7,7 +7,6 @@ import { Cover, splitTitle } from './ui';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
 import { SungLine } from './lyrics';
-import { asHex } from './palette';
 
 // Room between the song and the buttons for the line being sung: what the window has beside the
 // sleeve, which is as wide as the window is tall up to a third or so of its width (app.css).
@@ -25,9 +24,6 @@ export function Mini() {
   const error = usePlayer(s => s.error);
   const palette = useRoomPalette(track?.coverArt);
   useMiniCommandKeys();
-  // On Windows the system keeps a thin strip of the window's frame along its left, right, and
-  // bottom edges (windowFrame.ts): it takes the room's ground, or it shows as a light border.
-  useEffect(() => { void window.squiggly?.window.tintControls(asHex(palette.ink), asHex(palette.ground)); }, [palette.ink, palette.ground]);
   const byline = useByline(track);
   // The stored preference until this window changes it; the main process applies it when the
   // window opens, so nothing is written here until the listener asks.
@@ -80,5 +76,46 @@ export function Mini() {
       </div>
     </div>
     <ExtensionNotices />
+    {window.squiggly?.window.ownResize && <ResizeEdges />}
   </div>;
+}
+
+// On Windows the mini player has no system frame (main/index.ts), so it resizes from these: thin
+// handles along its edges and at its corners. A drag sends the new bounds once a frame; the main
+// process holds the window to the sizes it allows, which these follow so a left or top edge
+// stops where the size does rather than pushing the window along.
+const EDGES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const;
+const WIDTHS = [320, 900] as const, HEIGHTS = [96, 240] as const;
+const within = (value: number, [low, high]: readonly [number, number]) => Math.min(high, Math.max(low, value));
+type Bounds = { x: number; y: number; width: number; height: number };
+function ResizeEdges() {
+  const drag = useRef<{ edge: (typeof EDGES)[number]; x: number; y: number; from: Bounds } | null>(null);
+  const frame = useRef(0);
+  const next = useRef<Bounds | null>(null);
+  const send = () => {
+    frame.current = 0;
+    const bounds = next.current;
+    next.current = null;
+    if (bounds) void window.squiggly?.window.resizeMini?.(bounds);
+  };
+  const down = (edge: (typeof EDGES)[number]) => (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { edge, x: event.screenX, y: event.screenY, from: { x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight } };
+  };
+  const move = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const held = drag.current;
+    if (!held) return;
+    const { edge, from } = held, dx = event.screenX - held.x, dy = event.screenY - held.y;
+    const width = within(from.width + (edge.includes('e') ? dx : edge.includes('w') ? -dx : 0), WIDTHS);
+    const height = within(from.height + (edge.includes('s') ? dy : edge.includes('n') ? -dy : 0), HEIGHTS);
+    next.current = {
+      x: Math.round(edge.includes('w') ? from.x + from.width - width : from.x), y: Math.round(edge.includes('n') ? from.y + from.height - height : from.y),
+      width: Math.round(width), height: Math.round(height),
+    };
+    if (!frame.current) frame.current = requestAnimationFrame(send);
+  };
+  const up = () => { drag.current = null; };
+  return <>{EDGES.map(edge => <div key={edge} className={`mini-edge ${edge}`} aria-hidden="true"
+    onPointerDown={down(edge)} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />)}</>;
 }

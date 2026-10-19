@@ -597,9 +597,25 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .mini-lyric span { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; text-wrap: balance; animation: lyric-in .35s ease; }
 @media (min-height: 130px) { .mini-lyric span { -webkit-line-clamp: 3; } }
+/* Word by word where the lyrics have word times, as the sheet fills them: soft until sung. */
+.mini-lyric .word {
+  --edge: .12em; --at: calc(var(--p, 0) * (100% + 2 * var(--edge)) - var(--edge));
+  display: inline-block; padding: .2em .18em; margin: -.2em -.18em;
+  color: transparent; -webkit-background-clip: text; background-clip: text;
+  background-image: linear-gradient(90deg, var(--ink) calc(var(--at) - var(--edge)), var(--soft) calc(var(--at) + var(--edge)));
+}
 @keyframes lyric-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .mini-lyric span { animation: none; } }
 html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric span { animation: none; }
+/* Windows: the edges and corners the window resizes from (Mini.tsx), over everything, and kept
+   out of the drag that moves the window. */
+.mini-edge { position: fixed; z-index: 5; -webkit-app-region: no-drag; }
+.mini-edge.n, .mini-edge.s { left: 10px; right: 10px; height: 5px; cursor: ns-resize; }
+.mini-edge.e, .mini-edge.w { top: 10px; bottom: 10px; width: 5px; cursor: ew-resize; }
+.mini-edge.n { top: 0; } .mini-edge.s { bottom: 0; } .mini-edge.e { right: 0; } .mini-edge.w { left: 0; }
+.mini-edge.ne, .mini-edge.nw, .mini-edge.se, .mini-edge.sw { width: 10px; height: 10px; }
+.mini-edge.ne { top: 0; right: 0; cursor: nesw-resize; } .mini-edge.sw { bottom: 0; left: 0; cursor: nesw-resize; }
+.mini-edge.nw { top: 0; left: 0; cursor: nwse-resize; } .mini-edge.se { bottom: 0; right: 0; cursor: nwse-resize; }
 /* Narrow: Previous goes, so the song keeps some room. */
 @media (max-width: 379px) { .mini-controls .glyph:first-child { display: none; } }
 /* Shuffle and repeat give way when the line they share with the squiggle is short, which depends

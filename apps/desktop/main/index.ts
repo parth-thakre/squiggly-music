@@ -43,7 +43,7 @@ import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { KeptStore } from './keptStore';
 import { LyricsCache } from './lyricsCache';
-import { paintEdges, paintFrame } from './windowFrame';
+import { paintFrame, roundCorners, windowRect } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
 import { startKept } from './keptBridge';
 import { remote } from './remoteDiagnostics';
@@ -929,20 +929,21 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
-  const paintedMini = new WeakSet<BrowserWindow>();
-  // The main window's buttons take the room's ink as the palette changes. The mini player, which
-  // has no window buttons, sends its colours only for the frame's strip on Windows.
+  // The mini player's own edge handles on Windows (Mini.tsx), which have no system frame to
+  // resize from. Electron holds the window to its minimum and maximum size.
+  ipcMain.handle('squiggly:window:resize-mini', (event, value) => {
+    assertSender(event);
+    const target = BrowserWindow.fromWebContents(event.sender);
+    const bounds = Schema.decodeUnknownEither(Schema.Struct({ x: Schema.Int, y: Schema.Int, width: Schema.Int, height: Schema.Int }))(value);
+    if (!target || target !== windows.mini || Either.isLeft(bounds)) return { ok: false, error: 'Invalid window size.' };
+    target.setBounds(bounds.right);
+    return { ok: true, value: undefined };
+  });
+  // The main window's buttons take the room's ink as the palette changes.
   ipcMain.handle('squiggly:window:tint-controls', (event, value, groundValue) => {
     assertSender(event);
     const target = BrowserWindow.fromWebContents(event.sender);
     const colour = Schema.decodeUnknownEither(Schema.Struct({ ink: HexColour, ground: HexColour }))({ ink: value, ground: groundValue });
-    if (target && target === windows.mini && Either.isRight(colour)) {
-      if (process.platform === 'win32') void paintEdges(target, colour.right.ground).then(answer => {
-        // Once a window, for diagnostics: which colour Windows took.
-        if (answer && !paintedMini.has(target)) { paintedMini.add(target); console.info(`Mini player edges: caption ${answer.caption}, border ${answer.border}`); }
-      });
-      return { ok: true, value: undefined };
-    }
     if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(colour)) return { ok: false, error: 'Invalid window colour.' };
     const { ink, ground } = colour.right;
     target.setTitleBarOverlay({ color: '#00000000', symbolColor: ink, height: CONTROLS_HEIGHT });
@@ -1041,11 +1042,10 @@ function createWindow(mini: boolean) {
   const target = new BrowserWindow({
     ...(mini ? {
       ...miniBounds(), minWidth: 320, minHeight: 96, maxWidth: 900, maxHeight: 240,
-      // On Windows, a hidden title bar like the main window's rather than no frame: a window with
-      // no frame gets Electron's own light strip along its edges, which no frame colour reaches;
-      // this one keeps the system's frame, whose strip takes the room's ground (windowFrame.ts).
-      // With no titleBarOverlay it shows no window buttons. Elsewhere, no frame at all.
-      ...(process.platform === 'win32' ? { titleBarStyle: 'hidden' as const } : { frame: false }),
+      // No frame. On Windows not even the system's resizing frame, whose strip along three edges
+      // stayed light whatever colour it was given (windowFrame.ts): the window rounds its corners
+      // and resizes from handles of its own instead.
+      frame: false, ...(process.platform === 'win32' ? { thickFrame: false } : {}),
       maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
     } : {
       width: 1440, height: 940, minWidth: 850, minHeight: 650,
@@ -1060,6 +1060,7 @@ function createWindow(mini: boolean) {
       // Only the main window, which lives as long as the app, hosts the system media session.
       additionalArguments: [
         ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
+        ...(mini && process.platform === 'win32' ? ['--squiggly-own-resize'] : []),
         ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
         ...(remote.enabled ? ['--squiggly-diagnostics'] : []),
         `--squiggly-config=${configDirectory(app.isPackaged)}`,
@@ -1117,6 +1118,13 @@ function createMiniWindow() {
     }, 500);
   };
   mini.on('move', remember); mini.on('resize', remember);
+  // Rounded corners without the system frame, and for diagnostics, the window's rectangle as
+  // Windows has it beside Electron's: equal means nothing of a frame shows outside the page.
+  if (process.platform === 'win32') mini.webContents.once('did-finish-load', () => void Promise.all([roundCorners(mini), windowRect(mini)]).then(([corners, rect]) => {
+    if (mini.isDestroyed()) return;
+    const bounds = screen.dipToScreenRect(mini, mini.getBounds());
+    console.info(`Mini player window: corners ${corners}, Windows ${rect ? `${rect.left},${rect.top} ${rect.right - rect.left}x${rect.bottom - rect.top}` : 'unknown'}, Electron ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`);
+  }));
   // Closing the mini player returns to the full window rather than quitting.
   mini.on('close', event => { if (quitting) return; event.preventDefault(); showMain(); });
   mini.on('closed', () => { clearTimeout(timer); if (windows.mini === mini) windows.mini = null; });
