@@ -8,7 +8,7 @@ import { getThemes, onThemesChange, selectTheme } from '../theme';
 import { splitTitle } from '../ui';
 import { openConfigFolder } from '../config';
 import { setRating } from '../ratings';
-import { diagnosticsBuilt, getSettings } from '../settings';
+import { diagnosticsBuilt, getSettings, updateSettings } from '../settings';
 import { following, nextRepeat } from '../../../../../../packages/core/playOrder';
 import { onCommandError } from './keymap';
 import { togglePalette } from './palette-state';
@@ -116,6 +116,9 @@ add({
     fail(await exportM3u(`Queue, ${date}`, getPlayer().queue));
   },
 });
+// Autoplay (Settings › Keep playing similar songs), as the queue's own link turns it on and off.
+add({ id: 'autoplay-on', title: 'Turn autoplay on', category: 'Queue', when: () => !getSettings().autoplay, run: () => updateSettings({ autoplay: true }) });
+add({ id: 'autoplay-off', title: 'Turn autoplay off', category: 'Queue', when: () => getSettings().autoplay, run: () => updateSettings({ autoplay: false }) });
 
 // Radio
 add({

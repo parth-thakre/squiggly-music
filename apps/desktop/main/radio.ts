@@ -1,5 +1,6 @@
 import { Effect } from 'effect';
-import type { AlbumDetail, PlayerSnapshot, RadioSeed, Track } from '../../../packages/core/contracts';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, noAutoplay } from '../../../packages/core/autoplay';
+import type { AlbumDetail, AutoplayView, PlayerSnapshot, RadioSeed, Track } from '../../../packages/core/contracts';
 
 export interface RadioClient {
   topSongs(artistId: string, count: number): Effect.Effect<Track[], Error>;
@@ -19,18 +20,41 @@ export interface RadioShell<C extends RadioClient> {
   // Runs a background top-up (a bounded lane, with metrics).
   background(task: Effect.Effect<void, Error>): Promise<unknown>;
   changed(): void;
+  // Whether autoplay may add songs now: on in Settings, and no sleep timer waiting for this song
+  // to end (its listener wants the music to stop there).
+  autoplay(): boolean;
 }
 const distinct = (tracks: readonly Track[]) => [...new Map(tracks.map(track => [track.id, track])).values()];
 
 // Radio lives in the main process, not in a window, so it keeps topping up while every window
 // is hidden. Each station has a generation. Starting a station or any other playback bumps the
-// counter, so a start or top-up that finishes late never touches a newer queue.
+// counter, so a start or top-up that finishes late never touches a newer queue. Autoplay
+// (packages/core/autoplay.ts) is the same machinery for an ordinary queue: it adds songs like the
+// last one once that is playing, under the same counter.
 export class Radio<C extends RadioClient> {
   private generation = 0;
   private station: { generation: number; view: { label: string }; topping: boolean; tried: { entry: string; at: number } | null } | null = null;
+  private autoplaying = false;
+  private autoplayTried: { entry: string; at: number } | null = null;
+  private autoplayed: AutoplayView = noAutoplay;
+  // Songs appended and not yet seen in a snapshot: the audio host names their entries, and its
+  // reply can come before the snapshot that shows them.
+  private marking: { before: Set<string>; ids: Set<string> } | null = null;
   constructor(private shell: RadioShell<C>, private limit = 1000) {}
 
   get view(): { label: string } | null { return this.station?.view ?? null; }
+  get autoplayView(): AutoplayView { return this.autoplayed; }
+
+  // Called with every host snapshot before it is published. Finds the entries autoplay's last
+  // songs became, and forgets entries that have left the queue. Returns the view to publish.
+  observe(player: Pick<PlayerSnapshot, 'queue' | 'entryIds'>): AutoplayView {
+    const marking = this.marking;
+    if (marking) {
+      const added = player.entryIds.filter((entry, i) => !marking.before.has(entry) && marking.ids.has(player.queue[i]?.id));
+      if (added.length) { this.marking = null; this.autoplayed = { ...this.autoplayed, added: [...this.autoplayed.added, ...added] }; }
+    }
+    return this.autoplayed = keepQueued(this.autoplayed, player.entryIds);
+  }
 
   // Call just before any other playback replaces the queue, and when the engine or session goes away.
   end() {
@@ -71,9 +95,11 @@ export class Radio<C extends RadioClient> {
   // Called for every player snapshot. When three or fewer entries follow the current one, appends
   // up to 20 songs like the last entry that are not already queued. One request at a time; a last
   // entry that added nothing is not asked again for a minute. Returns the request, if one started.
+  // Without a station, autoplay takes the snapshot instead.
   topUp(now = Date.now()): Promise<unknown> | null {
     const station = this.station; const client = this.shell.client(); const player = this.shell.player();
-    if (!station || station.topping || !client || player.engine !== 'ready' || player.currentIndex < 0) return null;
+    if (!station) return this.autoplay(now);
+    if (station.topping || !client || player.engine !== 'ready' || player.currentIndex < 0) return null;
     if (player.queue.length - 1 - player.currentIndex > 3 || player.queue.length >= this.limit) return null;
     const last = player.queue.at(-1); const entry = player.entryIds.at(-1);
     if (!last || !entry || last.source !== 'navidrome') return null;
@@ -91,5 +117,41 @@ export class Radio<C extends RadioClient> {
       yield* radio.shell.append(client, fresh);
     });
     return this.shell.background(task).finally(() => { station.topping = false; });
+  }
+
+  // Once the queue's last entry plays, appends up to ten songs like it that are not queued, asking
+  // about the songs before it too when its own don't make ten. One turn at a time. A turn that
+  // failed is not tried again for a minute; one that found nothing new is not tried again for that
+  // entry, and the view says so. An answer is dropped if, meanwhile, other playback began, the
+  // queue gained another last entry, repeat or radio started, or autoplay was turned off.
+  private autoplay(now: number): Promise<unknown> | null {
+    const client = this.shell.client(); const player = this.shell.player();
+    if (this.autoplaying || !client || player.engine !== 'ready' || player.queue.length >= this.limit || !this.shell.autoplay()) return null;
+    const turn = autoplayTurn({ queue: player.queue, entryIds: player.entryIds, index: player.currentIndex, repeat: player.repeat, radio: false });
+    if (!turn || this.autoplayed.missed === turn.entry) return null;
+    if (this.autoplayTried?.entry === turn.entry && now - this.autoplayTried.at < 60_000) return null;
+    this.autoplaying = true; this.autoplayTried = { entry: turn.entry, at: now };
+    const radio = this; const generation = this.generation;
+    const current = () => {
+      const latest = radio.shell.player();
+      return generation === radio.generation && !radio.station && radio.shell.client() === client && radio.shell.autoplay()
+        && latest.repeat === 'off' && latest.entryIds.at(-1) === turn.entry;
+    };
+    const task = Effect.gen(function* () {
+      const taken = new Set(radio.shell.player().queue.map(track => track.id));
+      const room = Math.min(AUTOPLAY_SONGS, radio.limit - radio.shell.player().queue.length);
+      const fresh: Track[] = [];
+      for (const seed of turn.seeds) {
+        if (fresh.length >= room) break;
+        const similar = yield* client.similarSongs(seed.id, AUTOPLAY_ASK);
+        if (!current()) return;
+        fresh.push(...freshSongs(similar, taken, room - fresh.length));
+      }
+      if (!fresh.length) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); return; }
+      radio.shell.remember(fresh);
+      radio.marking = { before: new Set(radio.shell.player().entryIds), ids: new Set(fresh.map(track => track.id)) };
+      yield* radio.shell.append(client, fresh).pipe(Effect.tapError(() => Effect.sync(() => { radio.marking = null; })));
+    });
+    return this.shell.background(task).finally(() => { this.autoplaying = false; });
   }
 }

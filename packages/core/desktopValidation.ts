@@ -43,13 +43,15 @@ export const SettingsFileSchema = Schema.Struct({
   keptLimitMb: Schema.optionalWith(KeptLimitSchema(), { default: () => DEFAULT_KEPT_LIMIT_MB }),
   // Only betas with remote diagnostics built in read it; everywhere else it does nothing.
   diagnostics: setting(true),
+  // Songs nobody picked joining the queue would surprise anyone who didn't ask for them.
+  autoplay: setting(false),
 });
 export const defaultSettings = (): Settings => Schema.decodeUnknownSync(SettingsFileSchema)({});
 // Renderer changes: known keys only, never undefined. Decode with onExcessProperty: 'error'.
 export const SettingsPatchSchema = Schema.partialWith(Schema.Struct({
   lyricsLookup: Schema.Boolean, exclusiveOutput: Schema.Boolean, closeToTray: Schema.Boolean, syncQueue: Schema.Boolean, reportPlays: Schema.Boolean,
   miniOnTop: Schema.Boolean, playCountsAt: PlayCountsAtSchema, outputDevice: DeviceSchema, streamQuality: StreamQualitySchema, checkForUpdates: Schema.Boolean,
-  keptLimitMb: KeptLimitSchema(), diagnostics: Schema.Boolean,
+  keptLimitMb: KeptLimitSchema(), diagnostics: Schema.Boolean, autoplay: Schema.Boolean,
 }), { exact: true });
 
 const CoordinateSchema = Schema.Number.pipe(Schema.int(), Schema.between(-100_000, 100_000));

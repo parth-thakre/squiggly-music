@@ -4,6 +4,7 @@ import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/
 import type { RadioStation } from '../../../../../packages/core/contracts';
 import { stationTrack } from '../../../../../packages/core/stations';
 import { sinkSentence } from '../../../../../packages/core/sinks';
+import { addedRuns } from '../../../../../packages/core/autoplay';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, knownDecades, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, outputDescription, player, playRequests, usePlayer } from './player';
@@ -745,11 +746,17 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
 
 export function Queue() {
   const queue = usePlayer(s => s.queue);
+  const entryIds = usePlayer(s => s.entryIds);
   const index = usePlayer(s => s.index);
   const radio = usePlayer(s => s.radio);
   const repeat = usePlayer(s => s.repeat);
   const shuffle = usePlayer(s => s.shuffle);
+  const autoplay = usePlayer(s => s.autoplay);
+  const away = usePlayer(s => s.reach.away);
+  const settings = useSettings();
   const [saved, setSaved] = useState<string | null>(null);
+  // Songs autoplay added sit under a quiet note, one above each run of them.
+  const groups = useMemo<TrackGroup[]>(() => addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true })), [autoplay, entryIds]);
   // Records, artists, songs, and playlists dropped on the page join the end of the queue; onto
   // the list, before that song.
   const drop = useDropTarget(payload => void dropOnQueue(payload));
@@ -758,11 +765,20 @@ export function Queue() {
   const upcoming = queue.length - index - 1;
   const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
   const modes = shuffle ? (repeats ? `Shuffled, and ${repeats}.` : 'Shuffled.') : repeats && `${repeats[0].toUpperCase()}${repeats.slice(1)}.`;
+  // Autoplay can follow an ordinary queue that ends on a song from the server. Where it would,
+  // the queue says so with a way to turn it off; where it's off, the last song offers it.
+  const follows = !radio && repeat === 'off';
+  const endsOnSong = follows && upcoming === 0 && queue.at(-1)?.source === 'navidrome';
+  const missed = endsOnSong && autoplay.missed === entryIds.at(-1);
   return <div className={area} {...drop.handlers}>
     <Head title="Queue">
       <p className="byline"><span>{upcoming > 0 ? `${plural(upcoming, 'song')} up next, ${length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}` : 'This is the last song.'}</span>
-        {modes && <>{upcoming > 0 ? '. ' : ' '}<span>{modes}</span></>}</p>
+        {modes && <>{upcoming > 0 ? '. ' : ' '}<span>{modes}</span></>}
+        {endsOnSong && !settings.autoplay && !away && <> <button type="button" className="link" onClick={() => void updateSettings({ autoplay: true })}>Keep playing similar songs</button></>}</p>
       {radio && <p className="note">Radio from {radio.label}. Songs like these are added as you listen. <button type="button" className="link" onClick={player.stopRadio}>Stop radio</button></p>}
+      {follows && settings.autoplay && (endsOnSong || groups.length > 0) && <p className="note">
+        {missed ? 'Autoplay found nothing new like this song on your server, so the queue ends here.' : 'Autoplay adds songs like the last one when the queue runs out.'}
+        {' '}<button type="button" className="link" onClick={() => void updateSettings({ autoplay: false })}>Turn off autoplay</button></p>}
       <div className="actions">
         <button type="button" className="text-button" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
         <button type="button" className="text-button" onClick={async () => {
@@ -774,7 +790,7 @@ export function Queue() {
       <p className="note hint">Drag to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>
     </Head>
     <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
-      onDropItems={(payload, at) => void dropOnQueue(payload, at)} />
+      onDropItems={(payload, at) => void dropOnQueue(payload, at)} groups={groups} />
   </div>;
 }
 
@@ -796,6 +812,8 @@ export function SettingsView() {
     <section className="settings">
       <h2>Lyrics</h2>
       {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Lyrics in your files always come first. For songs without them, the song\'s title, artist, and album are sent to lrclib.net.')}
+      <h2>Queue</h2>
+      {row('autoplay', 'Keep playing similar songs', 'When the last song in the queue starts, up to ten songs like it from your server are added after it. Not while radio plays or the queue repeats.')}
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
       {settings.reportPlays && <label className="setting choice">

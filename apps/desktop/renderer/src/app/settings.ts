@@ -3,7 +3,7 @@ import type { Settings } from '../../../../../packages/core/contracts';
 
 // Desktop settings live in the main process; the browser build keeps its own in localStorage.
 // Exclusive output, the tray, and the mini player only exist on the desktop.
-const defaults: Settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: true, syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', streamQuality: 'original', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true };
+const defaults: Settings = { lyricsLookup: false, exclusiveOutput: false, closeToTray: true, syncQueue: true, reportPlays: true, playCountsAt: 50, miniOnTop: true, outputDevice: 'auto', streamQuality: 'original', checkForUpdates: true, keptLimitMb: 4096, diagnostics: true, autoplay: false };
 const KEY = 'squiggly.settings';
 const desktop = window.squiggly;
 // Desktop betas with remote diagnostics built in (the preload offers sendDiagnostics only there).
@@ -20,8 +20,10 @@ const emit = () => listeners.forEach(listener => listener());
 if (desktop) void desktop.settings().then(value => { settings = value; emit(); });
 
 export const getSettings = () => settings;
-export const useSettings = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => settings);
-export const useSettingsError = () => useSyncExternalStore(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }, () => error);
+// For code outside components that follows the settings, such as autoplay in player.ts.
+export const subscribeSettings = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
+export const useSettings = () => useSyncExternalStore(subscribeSettings, () => settings);
+export const useSettingsError = () => useSyncExternalStore(subscribeSettings, () => error);
 
 export async function updateSettings(changes: Partial<Settings>) {
   const previous = settings;

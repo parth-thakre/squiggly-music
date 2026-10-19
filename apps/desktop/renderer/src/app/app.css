@@ -922,6 +922,8 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
 /* One line, however long the disc's title: the row's height is fixed, so a second line would
    rise into the song above. The whole title is in the heading's tooltip. */
 .group-head h2 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--display-weight) calc(19px * var(--display-size))/1.2 var(--font-display); }
+/* Songs autoplay added to the queue: a quiet note above them, not a title. */
+.group-head.quiet h2 { font: 500 calc(13px * var(--text))/1.2 var(--font-body); color: var(--soft); }
 /* Decade, at the end of the Records sorts: it opens a row of decades under them. */
 .choices .decade-toggle.on { color: var(--ink); font-weight: 600; }
 .decades { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 20px; }
