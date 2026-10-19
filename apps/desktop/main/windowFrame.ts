@@ -25,3 +25,17 @@ export async function paintFrame(window: BrowserWindow, ground: string) {
   const hwnd = window.getNativeWindowHandle().readBigInt64LE(0);
   return call(hwnd, DWMWA_CAPTION_COLOR, Uint32Array.of(colorref(ground)), 4) === 0;
 }
+
+// The mini player has no title bar at all (frame: false), so the caption colour may not reach the
+// line Windows 11 draws around it; that line is the window's border colour. Both take the room's
+// ground. Windows' answer to each (0 for taken, an HRESULT otherwise), so a diagnostics build can
+// say which one did it.
+const DWMWA_BORDER_COLOR = 34;
+export async function paintEdges(window: BrowserWindow, ground: string) {
+  if (process.platform !== 'win32' || window.isDestroyed()) return null;
+  const call = await load();
+  if (!call || window.isDestroyed()) return null;
+  const hwnd = window.getNativeWindowHandle().readBigInt64LE(0);
+  const colour = Uint32Array.of(colorref(ground));
+  return { caption: call(hwnd, DWMWA_CAPTION_COLOR, colour, 4), border: call(hwnd, DWMWA_BORDER_COLOR, colour, 4) };
+}

@@ -43,7 +43,7 @@ import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { KeptStore } from './keptStore';
 import { LyricsCache } from './lyricsCache';
-import { paintFrame } from './windowFrame';
+import { paintEdges, paintFrame } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
 import { startKept } from './keptBridge';
 import { remote } from './remoteDiagnostics';
@@ -929,6 +929,7 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
+  const paintedMini = new WeakSet<BrowserWindow>();
   // The main window's buttons take the room's ink as the palette changes. The mini player, which
   // has no frame on any system, sends its colours only for the frame's strip on Windows.
   ipcMain.handle('squiggly:window:tint-controls', (event, value, groundValue) => {
@@ -936,7 +937,10 @@ function installHandlers() {
     const target = BrowserWindow.fromWebContents(event.sender);
     const colour = Schema.decodeUnknownEither(Schema.Struct({ ink: HexColour, ground: HexColour }))({ ink: value, ground: groundValue });
     if (target && target === windows.mini && Either.isRight(colour)) {
-      if (process.platform === 'win32') void paintFrame(target, colour.right.ground);
+      if (process.platform === 'win32') void paintEdges(target, colour.right.ground).then(answer => {
+        // Once a window, for diagnostics: which colour Windows took.
+        if (answer && !paintedMini.has(target)) { paintedMini.add(target); console.info(`Mini player edges: caption ${answer.caption}, border ${answer.border}`); }
+      });
       return { ok: true, value: undefined };
     }
     if (!FRAMELESS || !target || target !== windows.main || Either.isLeft(colour)) return { ok: false, error: 'Invalid window colour.' };
