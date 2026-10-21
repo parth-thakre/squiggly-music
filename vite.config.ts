@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
 import { androidNotices } from './scripts/android-notices';
@@ -18,8 +19,11 @@ const androidEntry: Plugin = {
 // The browser build talks to the library through scripts/navidrome-preview.ts. Both servers
 // listen on 127.0.0.1 unless `--host` says otherwise; see that file before exposing them.
 const allowedHosts = [hostname(), ...(process.env.SQUIGGLY_PREVIEW_HOST ? [process.env.SQUIGGLY_PREVIEW_HOST] : [])];
+// Library answers kept on the phone are only shown by the version that wrote them (apps/android/web/stored.ts).
+const version = JSON.parse(readFileSync('package.json', 'utf8')).version as string;
 export default defineConfig(({ mode }) => mode === 'android' ? {
   root: 'apps/desktop/renderer', plugins: [react(), androidEntry, androidNotices(), devServerCsp()],
+  define: { __SQUIGGLY_VERSION__: JSON.stringify(version) },
   build: { outDir: resolve('out/android-web'), emptyOutDir: true },
 } : {
   root: 'apps/desktop/renderer', plugins: [react(), navidromePreview(), devServerCsp()],

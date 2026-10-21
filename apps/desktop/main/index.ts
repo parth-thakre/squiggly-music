@@ -23,10 +23,11 @@ import {
 import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, PlaysFileSchema } from '../../../packages/core/desktopValidation';
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { stationIdOf } from '../../../packages/core/stations';
+import { NOT_STORED, storedKey } from '../../../packages/core/stored';
 import type { AppSnapshot, Connection, Lyrics, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
-import { SubsonicClient, libraryCall, libraryMethods, reachOf, resolveServerAddress, ServerError, Unreachable } from '../../../packages/adapter-opensubsonic/client';
+import { SubsonicClient, isLibraryMethod, libraryCall, libraryMethods, libraryTracks, reachOf, resolveServerAddress, ServerError, Unreachable, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
 import { JsonStore } from './store';
 import { PlayTracker, type PlayEvent } from './plays';
 import { QueueSync } from './queueSync';
@@ -43,7 +44,8 @@ import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { KeptStore } from './keptStore';
 import { LyricsCache } from './lyricsCache';
-import { paintFrame } from './windowFrame';
+import { AnswerStore } from './answerStore';
+import { paintFrame, roundCorners, windowRect } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
 import { startKept } from './keptBridge';
 import { remote } from './remoteDiagnostics';
@@ -105,8 +107,12 @@ const semaphores = {
   audio: Effect.runSync(Effect.makeSemaphore(1)),
   server: Effect.runSync(Effect.makeSemaphore(1)),
   dialog: Effect.runSync(Effect.makeSemaphore(1)),
-  // Library reads may overlap each other; session checks guard every result.
-  library: Effect.runSync(Effect.makeSemaphore(4)),
+  // Library reads may overlap each other; session checks guard every result. As many as the
+  // Android app's native requests (NativeHttp.kt), so a slow one (popular songs ask Last.fm)
+  // doesn't hold up the page's others.
+  library: Effect.runSync(Effect.makeSemaphore(6)),
+  // Answers kept on this computer, read from disk while the library's requests are out.
+  stored: Effect.runSync(Effect.makeSemaphore(8)),
   art: Effect.runSync(Effect.makeSemaphore(6)),
   settings: Effect.runSync(Effect.makeSemaphore(1)),
   window: Effect.runSync(Effect.makeSemaphore(1)),
@@ -137,6 +143,8 @@ let finalSession: { generation: number; client: SubsonicClient } | null = null;
 // Songs kept on this computer (<userData>/kept), and their downloads. Created at ready.
 let keptStore: KeptStore | null = null;
 let lyricsCache: LyricsCache | null = null;
+// Library answers kept for the account (<userData>/library), shown while they're read again. Created at ready.
+let answers: AnswerStore | null = null;
 // Makes songs streamed at a lower quality seekable (streamRelay.ts). Null until started, or if it couldn't.
 let relay: StreamRelay | null = null;
 let keeper: KeepManager | null = null;
@@ -654,6 +662,8 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     endRadio();
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear(); unverified = null;
+    // The answers kept switch with the client, so none of the last account's can answer for this one.
+    void answers?.bind(keyOf(candidate.baseUrl, connection.username));
     const session = ++connectionGeneration; resetSessionState();
     reach.leave();
     state.server = { ...state.server, connected: true, name: hostName(candidate, info.name), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
@@ -675,6 +685,7 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
 function adoptAway(candidate: SubsonicClient, connection: Connection, key: string, probeNow: boolean) {
   endRadio();
   server = candidate; knownTracks.clear();
+  void answers?.bind(key);
   connectionGeneration++; resetSessionState();
   unverified = { connection };
   state.server = { ...state.server, connected: true, name: hostName(candidate), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnecting: false, reconnectError: null };
@@ -742,7 +753,7 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
       const program = Effect.suspend(() => {
         // Requests queued before a disconnect or account switch must not run
         // against a later session, even when the album IDs happen to match.
-        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start', 'kept:keep'].includes(channel) || channel.startsWith('library:')) && generation !== connectionGeneration) {
+        if ((['connect', 'play-tracks', 'queue:add', 'resume-queue', 'radio:start', 'kept:keep'].includes(channel) || channel.startsWith('library:') || channel === 'library-stored') && generation !== connectionGeneration) {
           return Effect.fail(new Error('Server session changed. Try again.'));
         }
         return task(value, generation);
@@ -831,8 +842,22 @@ function installHandlers() {
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
     keep?.(result.value as SavedQueue | null);
     rememberTracks(result.tracks);
+    const key = storedKey(method, value as unknown[]);
+    if (key) void answers?.write(key, result.value);
     return result.value;
   }), 'library');
+  // The last answer to a library request kept for this account, shown while it's asked again.
+  // Its songs may be played like those of any answer this process was given.
+  handle('library-stored', value => Effect.gen(function* () {
+    const [method, args] = Array.isArray(value) ? value : [];
+    const key = typeof method === 'string' && isLibraryMethod(method) && Array.isArray(args) ? storedKey(method, args) : null;
+    const store = answers, client = server;
+    if (!key || !store || !client) return yield* Effect.fail(new Error(NOT_STORED));
+    const kept = yield* Effect.promise(() => store.read(key));
+    if (kept === undefined || server !== client) return yield* Effect.fail(new Error(NOT_STORED));
+    rememberTracks(libraryTracks(method as LibraryMethod, kept));
+    return kept;
+  }), 'stored');
   handle('play-tracks', value => Effect.gen(function* () {
     const [ids, startIndex] = yield* Schema.decodeUnknown(PlayTracksSchema)(value).pipe(Effect.mapError(() => new Error('Invalid track selection.')));
     if (startIndex >= ids.length) return yield* Effect.fail(new Error('Invalid track selection.'));
@@ -945,6 +970,16 @@ function installHandlers() {
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save the window setting.') });
     applyMiniOnTop();
   }), 'settings');
+  // The mini player's own edge handles on Windows (Mini.tsx), which have no system frame to
+  // resize from. Electron holds the window to its minimum and maximum size.
+  ipcMain.handle('squiggly:window:resize-mini', (event, value) => {
+    assertSender(event);
+    const target = BrowserWindow.fromWebContents(event.sender);
+    const bounds = Schema.decodeUnknownEither(Schema.Struct({ x: Schema.Int, y: Schema.Int, width: Schema.Int, height: Schema.Int }))(value);
+    if (!target || target !== windows.mini || Either.isLeft(bounds)) return { ok: false, error: 'Invalid window size.' };
+    target.setBounds(bounds.right);
+    return { ok: true, value: undefined };
+  });
   // The main window's buttons take the room's ink as the palette changes.
   ipcMain.handle('squiggly:window:tint-controls', (event, value, groundValue) => {
     assertSender(event);
@@ -982,12 +1017,15 @@ function installHandlers() {
     // Ends the session first, so a sign-in finishing while kept songs are forgotten below sees
     // that and doesn't save itself back (the connect handler's check before remember).
     connectionGeneration++;
+    // The answers kept go first, before anything below waits, so none is read for a signed-out account.
+    const forgetting = answers?.clear();
     // Nothing on the connect screen can reach kept songs, so they go with the sign-in, and so do
     // plays waiting to be reported.
     reach.leave(); unverified = null;
     if (keeper) yield* Effect.promise(() => keeper!.forgetAll());
     reports?.clear();
     yield* Effect.promise(() => lyricsCache?.clear() ?? Promise.resolve());
+    yield* Effect.promise(() => forgetting ?? Promise.resolve());
     keptPush();
     // Restart also removes authenticated stream URLs from the player's native playlist. Ends the
     // session again: one could have been adopted while the kept songs were forgotten.
@@ -1048,7 +1086,11 @@ function createWindow(mini: boolean) {
   const target = new BrowserWindow({
     ...(mini ? {
       ...miniBounds(), minWidth: 320, minHeight: 96, maxWidth: 900, maxHeight: 240,
-      frame: false, maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
+      // No frame. On Windows not even the system's resizing frame, whose strip along three edges
+      // stayed light whatever colour it was given (windowFrame.ts): the window rounds its corners
+      // and resizes from handles of its own instead.
+      frame: false, ...(process.platform === 'win32' ? { thickFrame: false } : {}),
+      maximizable: false, fullscreenable: false, show: false, alwaysOnTop: settings.value.miniOnTop,
     } : {
       width: 1440, height: 940, minWidth: 850, minHeight: 650,
       ...(FRAMELESS ? { titleBarStyle: 'hidden' as const, titleBarOverlay: { color: '#00000000', symbolColor: '#1c1b18', height: CONTROLS_HEIGHT } } : {}),
@@ -1062,6 +1104,7 @@ function createWindow(mini: boolean) {
       // Only the main window, which lives as long as the app, hosts the system media session.
       additionalArguments: [
         ...(mini ? ['--squiggly-mini'] : process.platform !== 'linux' ? ['--squiggly-media-session'] : []),
+        ...(mini && process.platform === 'win32' ? ['--squiggly-own-resize'] : []),
         ...(!mini && FRAMELESS ? ['--squiggly-frameless'] : []),
         ...(remote.enabled ? ['--squiggly-diagnostics'] : []),
         `--squiggly-config=${configDirectory(app.isPackaged)}`,
@@ -1119,6 +1162,13 @@ function createMiniWindow() {
     }, 500);
   };
   mini.on('move', remember); mini.on('resize', remember);
+  // Rounded corners without the system frame, and for diagnostics, the window's rectangle as
+  // Windows has it beside Electron's: equal means nothing of a frame shows outside the page.
+  if (process.platform === 'win32') mini.webContents.once('did-finish-load', () => void Promise.all([roundCorners(mini), windowRect(mini)]).then(([corners, rect]) => {
+    if (mini.isDestroyed()) return;
+    const bounds = screen.dipToScreenRect(mini, mini.getBounds());
+    console.info(`Mini player window: corners ${corners}, Windows ${rect ? `${rect.left},${rect.top} ${rect.right - rect.left}x${rect.bottom - rect.top}` : 'unknown'}, Electron ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`);
+  }));
   // Closing the mini player returns to the full window rather than quitting.
   mini.on('close', event => { if (quitting) return; event.preventDefault(); showMain(); });
   mini.on('closed', () => { clearTimeout(timer); if (windows.mini === mini) windows.mini = null; });
@@ -1307,6 +1357,7 @@ app.whenReady().then(async () => {
   // opens away when the server doesn't answer.
   keptStore = new KeptStore(join(userData, 'kept'));
   lyricsCache = new LyricsCache(join(userData, 'lyrics'));
+  answers = new AnswerStore(join(userData, 'library'), app.getVersion());
   await keptStore.load().catch(() => undefined);
   playsStore = new JsonStore(join(userData, 'plays.json'), PlaysFileSchema, playsStore.value, { maxBytes: 256 * 1024, compact: true });
   await playsStore.load();

@@ -10,7 +10,7 @@ export const firstArtistId = (item: { artistId?: string | null; artists?: Artist
 // its separators, "&" or ",") stays as written; the names it lists separately, with their own
 // pages, become links inside it. A credit the server keeps whole links to its one artist.
 export function Credits({ text, artistId, artists, strong = false }: { text: string; artistId?: string | null; artists?: ArtistRef[]; strong?: boolean }) {
-  const link = (id: string, name: string) => <button key={id} type="button" className="link" onClick={() => nav.go({ view: 'artist', id })}>{name}</button>;
+  const link = (id: string, name: string) => <button key={id} type="button" className="link" data-warm={`artist:${id}`} onClick={() => nav.go({ view: 'artist', id })}>{name}</button>;
   if (!artists || artists.length < 2) return artistId ? link(artistId, text) : strong ? <strong>{text}</strong> : <>{text}</>;
   const parts: ReactNode[] = [];
   let at = 0;

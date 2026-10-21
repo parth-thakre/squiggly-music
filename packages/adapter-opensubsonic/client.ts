@@ -569,9 +569,12 @@ export class SubsonicClient {
     });
   }
   ping() {
-    return this.request('ping', StatusSchema).pipe(Effect.map(result => ({
-      name: result.type?.toLowerCase() === 'navidrome' ? 'Navidrome' : 'OpenSubsonic',
-    })));
+    return this.request('ping', StatusSchema).pipe(Effect.map(result => {
+      const navidrome = result.type?.toLowerCase() === 'navidrome';
+      // Tracks asks the same, so the first visit there needn't ping again.
+      this.#native ??= navidrome;
+      return { name: navidrome ? 'Navidrome' : 'OpenSubsonic' };
+    }));
   }
   albumList(type: AlbumListType, offset: number, size: number, years?: AlbumYears) {
     const count = clamp(size, 1, 500);
@@ -835,8 +838,9 @@ export class SubsonicClient {
   topSongs(artistId: string, count: number) {
     const size = clamp(count, 1, 200);
     const top = (params: Params) => this.request('getTopSongs', TopSongsSchema, { ...params, count: String(size) }).pipe(Effect.flatMap(result => songList(result.topSongs.song, size)));
-    return this.supports('topSongsByArtistId').pipe(Effect.flatMap(byId => byId ? top({ id: artistId }) : this.artist(artistId).pipe(
-      Effect.flatMap(({ artist }) => top({ artist: artist.name })),
+    // Only the name is needed, so not artist(), which looks for an artist without records' songs too.
+    return this.supports('topSongsByArtistId').pipe(Effect.flatMap(byId => byId ? top({ id: artistId }) : this.request('getArtist', ArtistResponseSchema, { id: artistId }).pipe(
+      Effect.flatMap(({ artist }) => artist.id === artistId ? top({ artist: artist.name }) : Effect.succeed<Track[]>([])),
       Effect.map(tracks => tracks.filter(track => !track.artistId || track.artistId === artistId)),
       Effect.catchAll(() => Effect.succeed<Track[]>([])),
     )));
@@ -1084,6 +1088,9 @@ const library = {
 } satisfies { [K in LibraryMethod]: LibraryEntry<any, LibraryValue<K>> };
 export const libraryMethods = Object.keys(library) as LibraryMethod[];
 export const isLibraryMethod = (method: string): method is LibraryMethod => Object.hasOwn(library, method);
+
+// Every track in an answer to method, as libraryCall gives them (for an answer kept on the device).
+export const libraryTracks = (method: LibraryMethod, value: unknown): readonly Track[] => (library[method] as LibraryEntry<unknown, unknown>).tracks(value);
 
 // Decodes positional LibraryApi arguments from an untrusted caller and runs the matching
 // connector request. `tracks` lists every track in the value, for callers that queue by ID.

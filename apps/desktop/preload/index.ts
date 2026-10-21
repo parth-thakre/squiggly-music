@@ -1,8 +1,10 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
+import type { StoredLibrary } from '../../../packages/core/stored';
 import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, KeptApi, KeptProgress, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
-const call = (method: Exclude<keyof LibraryApi, 'coverUrl'>, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
+type Method = Exclude<keyof LibraryApi, 'coverUrl'>;
+const call = (method: Method, ...args: unknown[]) => ipcRenderer.invoke(`squiggly:library:${method}`, args);
 const library: LibraryApi = {
   albums: (type, offset, size, years) => call('albums', type, offset, size, ...(years ? [years] : [])),
   album: id => call('album', id),
@@ -39,6 +41,22 @@ const library: LibraryApi = {
   shares: () => call('shares'),
   deleteShare: id => call('deleteShare', id),
   radioStations: () => call('radioStations'),
+};
+// The same requests, answered with what the main process kept from the last time (answerStore.ts).
+// The arguments go as library's do, so they name the same answer.
+const keptAnswer = (method: Method, ...args: unknown[]) => ipcRenderer.invoke('squiggly:library-stored', [method, args]);
+const stored: StoredLibrary = {
+  albums: (type, offset, size, years) => keptAnswer('albums', type, offset, size, ...(years ? [years] : [])),
+  album: id => keptAnswer('album', id),
+  artists: () => keptAnswer('artists'),
+  artist: id => keptAnswer('artist', id),
+  playlists: () => keptAnswer('playlists'),
+  genres: () => keptAnswer('genres'),
+  starred: () => keptAnswer('starred'),
+  topSongs: (artistId, count) => keptAnswer('topSongs', artistId, count),
+  lyrics: (track, lookup) => keptAnswer('lyrics', track, lookup),
+  artistInfo: artistId => keptAnswer('artistInfo', artistId),
+  radioStations: () => keptAnswer('radioStations'),
 };
 // Push channels from the main process, as subscribe functions.
 function listen<T>(channel: string, listener: (value: T) => void) {
@@ -116,6 +134,7 @@ const bridge: DesktopBridge = {
     stop: () => ipcRenderer.invoke('squiggly:radio:stop'),
   },
   library,
+  stored,
   config,
   extensions,
   media,
@@ -129,6 +148,8 @@ const bridge: DesktopBridge = {
     isMini: process.argv.includes('--squiggly-mini'),
     frameless: process.argv.includes('--squiggly-frameless'),
     tintControls: (ink, ground) => ipcRenderer.invoke('squiggly:window:tint-controls', ink, ground),
+    ownResize: process.argv.includes('--squiggly-own-resize'),
+    resizeMini: bounds => ipcRenderer.invoke('squiggly:window:resize-mini', bounds),
     followWhileHidden: on => ipcRenderer.invoke('squiggly:window:follow-while-hidden', on),
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),

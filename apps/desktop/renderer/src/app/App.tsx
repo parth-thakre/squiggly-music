@@ -8,6 +8,7 @@ import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
+import { asHex } from './palette';
 import { following } from '../../../../../packages/core/playOrder';
 import { isStation } from '../../../../../packages/core/stations';
 import { resampledNote } from '../../../../../packages/core/sinks';
@@ -30,6 +31,7 @@ import { keptCount, keptSupported, useKeptVersion } from './keptState';
 import { pageFor, serverPages } from './offline';
 import { DiagnosticsSwitch, showDiagnosticsSetting } from './views';
 import { diagnosticsBuilt, useSettings } from './settings';
+import { startWarming } from './warm';
 
 onMenuError(message => player.showError(message));
 
@@ -57,6 +59,7 @@ export function App() {
   useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), 600);
   useCommandKeys();
   useFileDrops();
+  useEffect(startWarming, []);
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
   // Without a title bar, the window's own buttons take the room's ink, and its edges the ground.
@@ -254,7 +257,7 @@ const Deck = memo(function Deck() {
             <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
             {track.album && <>
               {' on '}
-              {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
+              {track.albumId ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
             </>}
           </>}
         </p>
@@ -420,13 +423,6 @@ function SignalPath({ track }: { track: Track }) {
   return line ? <p className="signal">{line}</p> : null;
 }
 
-// Any CSS colour as #rrggbb, which is what the window's buttons take. A canvas normalises it.
-function asHex(color: string) {
-  const context = document.createElement('canvas').getContext('2d');
-  if (!context) return color;
-  context.fillStyle = '#000'; context.fillStyle = color;
-  return context.fillStyle;
-}
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The server login on every build. The desktop's main process, the Android bridge, or the
 // browser build's host keeps it. Embedded, it stands in for a library page while songs from this
