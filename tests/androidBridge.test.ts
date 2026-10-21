@@ -29,7 +29,7 @@ const fake = vi.hoisted(() => {
     setServer: vi.fn(async () => undefined),
     addListener: vi.fn(async () => ({ remove: async () => undefined })),
     restore: vi.fn(async () => ({ items: held, playback: {
-      seq: 4, entryId: held[0]?.id ?? null, playId: 1, playing: false, buffering: false, ended: false, position: 0, duration: 0, fallback: false, error: null,
+      seq: 4, entryId: held[0]?.id ?? null, playId: 1, playing: false, buffering: false, ended: false, position: 0, duration: 0, fallback: false, error: null, pressed: 3,
     } })),
     edit: vi.fn(async ({ ops, seq }: { ops: NativeOp[]; seq: number }) => {
       edits.push({ ops, seq }); order.push('edit');
@@ -55,6 +55,12 @@ vi.mock('../apps/android/web/plugin', () => ({ Squiggly: fake.plugin }));
 vi.mock('../apps/android/web/http', () => ({ nativeFetch: fake.fetch }));
 
 describe('Android bridge', () => {
+  it('restores an empty queue with the presses the player has counted, so the page has them to compare', async () => {
+    const { androidBridge: bridge } = await import('../apps/android/web/bridge');
+    const restored = await bridge.player.restore();
+    expect(restored).toMatchObject({ queue: [], index: -1, playback: { pressed: 3 } });
+  });
+
   it('replays a station restored after a relaunch with its stream, before the station list has been opened', async () => {
     // The player kept playing the station after the app was swiped away; the page is new.
     const night = stationTrack({ id: '1', name: 'Night Signal', homePageUrl: null });

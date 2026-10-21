@@ -590,6 +590,9 @@ if (web) {
 // apps/android/web/bridge.ts). It moves between songs, and takes the notification's and lock
 // screen's buttons, on its own; the page follows its reports. Sign-in works as on the desktop.
 let native: AndroidPlayback | null = null;
+// The native player's count of presses from the notification, lock screen, and headphones
+// (AndroidPlayback.pressed) as the page last saw it: from restore() at launch, then each report.
+let pressedSeen: number | undefined;
 // Away, a kept song that fails anyway: its file is the trouble, not the connection. The native
 // player says "network" when the file couldn't be opened, and "unplayable" when it couldn't be played.
 const keptFailed = (track: Track, error: string) => state.reach.away && keptSupported && track.source === 'navidrome' && isKept(track.id)
@@ -610,7 +613,8 @@ function nativePlayback(playback: AndroidPlayback) {
   };
   // Paused, or a press on the notification, lock screen, or headphones: a Next held in the page is
   // let go, as a press in the page would. The page's own loads and seeks count as neither.
-  if (held && (!playback.playing || (before && playback.pressed !== before.pressed))) held = null;
+  if (held && (!playback.playing || (pressedSeen !== undefined && playback.pressed !== pressedSeen))) held = null;
+  pressedSeen = playback.pressed;
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
     plays.instance++; plays.track = track; plays.listened = 0; plays.lastPosition = playback.position; plays.startAt = 0;
@@ -666,10 +670,11 @@ if (android) {
   // The native player wraps the queue or repeats a song itself, so it does so with the page asleep.
   android.player.repeat(state.repeat);
   // The app was swiped away while playing and the player kept going: show what it holds.
-  void android.player.restore().then(held => {
-    if (!held || state.queue.length) return;
-    set({ queue: held.queue, entryIds: held.entryIds, index: held.index, resumable: null });
-    nativePlayback(held.playback);
+  void android.player.restore().then(restored => {
+    if (restored) pressedSeen ??= restored.playback.pressed;
+    if (!restored?.queue.length || state.queue.length) return;
+    set({ queue: restored.queue, entryIds: restored.entryIds, index: restored.index, resumable: null });
+    nativePlayback(restored.playback);
   });
   setInterval(() => { if (state.playing) saveSoon(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });

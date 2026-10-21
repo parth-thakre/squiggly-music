@@ -28,7 +28,9 @@ async function fixture({ initialReport = true, twoSongs = false } = {}) {
   const load = vi.fn();
   vi.stubGlobal('window', { squigglyAndroid: {
     session: { get: () => session, subscribe: vi.fn() },
-    player: { subscribe: (listener: typeof report) => { report = listener; }, onReset: vi.fn(), restore: async () => null,
+    player: { subscribe: (listener: typeof report) => { report = listener; }, onReset: vi.fn(), // Nothing held from before: an empty queue, and no presses yet.
+      restore: async () => ({ queue: [], entryIds: [], index: -1, playback: { entryId: null, playId: 0, playing: false, buffering: false, ended: false,
+        position: 0, duration: 0, fallback: false, error: null, pressed: 0 } }),
       sync: vi.fn(), load, repeat: vi.fn(), pause: vi.fn(), play: vi.fn(), seek: vi.fn() },
   } });
   vi.stubGlobal('document', { addEventListener: vi.fn() });
@@ -85,6 +87,15 @@ describe('a Next held in the page on Android', () => {
     const f = await fixture();
     f.player.next();
     f.report({ ...f.playback, playing: false });
+    await appended(f);
+    expect(f.load).toHaveBeenCalledTimes(1);
+    expect(f.getPlayer().index).toBe(0);
+  });
+
+  it('is let go by a press carried by the first report of the page\'s own load', async () => {
+    const f = await fixture({ initialReport: false });
+    f.player.next();
+    f.report({ ...f.playback, position: 100, pressed: 1 });
     await appended(f);
     expect(f.load).toHaveBeenCalledTimes(1);
     expect(f.getPlayer().index).toBe(0);

@@ -298,7 +298,7 @@ async function restore(): Promise<AndroidQueueSnapshot | null> {
   }
   mirrored = held.items.map(entry => entry.id);
   const index = held.playback.entryId ? entryIds.indexOf(held.playback.entryId) : -1;
-  if (!queue.length || index < 0) return null;
+  if (!queue.length || index < 0) return { queue: [], entryIds: [], index: -1, playback: playback(held.playback) };
   return { queue, entryIds, index, playback: playback(held.playback) };
 }
 

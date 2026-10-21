@@ -599,7 +599,7 @@ export interface AndroidBridge {
   };
   player: {
     // What the native player still holds from before the page loaded (the app was swiped away
-    // while it played), or null.
+    // while it played): an empty queue when it holds nothing, null when it can't say.
     restore(): Promise<AndroidQueueSnapshot | null>;
     // Makes the native queue match these entries, keeping the one playing where it is.
     sync(queue: readonly Track[], entryIds: readonly string[]): void;
