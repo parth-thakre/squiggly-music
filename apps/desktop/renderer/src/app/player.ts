@@ -541,7 +541,7 @@ function signedOut() {
   // session may be followed by someone else's, so its queue goes now. The host's configured
   // server is the same account after signing in again, so its queue waits, paused.
   if (state.pageConnection) disconnected();
-  web.active.pause();
+  web.active.pause(); held = null;
   resetLibraryCaches();
   searchesFor(null);
   set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null, choosingServer: false });
@@ -608,6 +608,9 @@ function nativePlayback(playback: AndroidPlayback) {
     duration: playback.duration > 0 ? playback.duration : track.duration ?? 0,
     stationTitle: isStation(track) ? playback.stationTitle ?? null : null,
   };
+  // Paused, started over, or moved back from the notification or headphones: a Next held in the
+  // page is let go, as a press in the page would.
+  if (held && (!playback.playing || before?.playId !== playback.playId || playback.position + 1 < (before?.position ?? 0))) held = null;
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
     plays.instance++; plays.track = track; plays.listened = 0; plays.lastPosition = playback.position; plays.startAt = 0;
@@ -988,6 +991,7 @@ export const player = {
     const track = current(state);
     // A station is live: there is no position to seek to.
     if (!track || isStation(track) || (entryId !== undefined && entryId !== currentEntry(state))) return;
+    held = null;
     if (android) {
       android.player.seek(currentEntry(state)!, seconds);
       plays.lastPosition = seconds; set({ position: seconds }); saveSoon(); return;

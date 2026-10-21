@@ -24,8 +24,8 @@ export interface RadioShell<C extends RadioClient> {
   // to end (its listener wants the music to stop there).
   autoplay(): boolean;
   // Moves on to the next song (Next, held while autoplay was finding it one), if `still` says so
-  // when the engine takes it: other commands can be waiting ahead of it.
-  next(still: () => boolean): void;
+  // when the engine takes it: other commands can be waiting ahead of it. False when it wasn't taken.
+  next(still: () => boolean): boolean;
 }
 type HeldNext = { turn: number; generation: number; entry: string };
 const distinct = (tracks: readonly Track[]) => [...new Map(tracks.map(track => [track.id, track])).values()];
@@ -185,8 +185,7 @@ export class Radio<C extends RadioClient> {
       // Next was held for these: on to the first of them, if it still stands when the engine takes it.
       const held = radio.held;
       if (held?.turn === mine && radio.holds(held)) {
-        moving = true;
-        radio.shell.next(() => { const still = radio.holds(held); if (radio.held === held) radio.held = null; return still; });
+        moving = radio.shell.next(() => { const still = radio.holds(held); if (radio.held === held) radio.held = null; return still; });
       }
     });
     return this.shell.background(task).finally(() => { this.autoplaying = false; if (!moving && this.held?.turn === mine) this.held = null; });

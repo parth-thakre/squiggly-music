@@ -569,14 +569,16 @@ function heldNext(type: string) {
 // Transport from the tray, media keys, and MPRIS. Failures surface through the player snapshot.
 // Bounded, so a client dragging an MPRIS position slider cannot queue unlimited seeks. `still`,
 // for a held Next autoplay sends, is asked again once the command's turn on the audio lane comes.
+// Returns whether the command was taken.
 let shellPending = 0;
 function transport(action: HostRequest['action'], still?: () => boolean) {
-  if (!still && heldNext(action.type)) return;
-  if (shellPending >= 8) return;
+  if (!still && heldNext(action.type)) return true;
+  if (shellPending >= 8) return false;
   shellPending++;
   const command = Effect.suspend(() => !still || still() ? send(action) : Effect.void);
   void Effect.runPromise(Effect.either(metrics.measure('shell.command', semaphores.audio.withPermits(1)(command))))
     .then(() => { shellPending--; broadcast(); });
+  return true;
 }
 // Repeat and shuffle, from a window, MPRIS, or radio starting. The host applies the mode, then it
 // is saved for the next launch. Radio keeps topping up the queue, which doesn't sit well with

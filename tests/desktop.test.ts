@@ -712,7 +712,7 @@ describe('main-process radio', () => {
     const log: string[] = [];
     // An append the host hasn't acknowledged yet, and a held Next waiting for the audio lane.
     let appendGate: Promise<void> | null = null;
-    let laneBusy = false;
+    let laneBusy = false, laneFull = false;
     const lane: (() => boolean)[] = [];
     const take = (still: () => boolean) => {
       if (!still()) { log.push('next let go'); return; }
@@ -736,7 +736,7 @@ describe('main-process radio', () => {
       background: task => Effect.runPromise(Effect.either(task)),
       changed: () => log.push(`radio ${radio.view?.label ?? 'off'}`),
       autoplay: () => autoplay,
-      next: still => laneBusy ? lane.push(still) : take(still),
+      next: still => { if (laneFull) return false; if (laneBusy) lane.push(still); else take(still); return true; },
     });
     return {
       radio, client, known, log, pending, autoplay: (on: boolean) => { autoplay = on; },
@@ -750,6 +750,8 @@ describe('main-process radio', () => {
       holdAppends: () => { let ack!: () => void; appendGate = new Promise(done => { ack = done; }); return () => { appendGate = null; ack(); }; },
       // Commands ahead on the audio lane: a held Next waits until `free` runs it.
       busyLane: () => { laneBusy = true; return () => { laneBusy = false; for (const still of lane.splice(0)) take(still); }; },
+      // The lane refuses more commands (transport's bound).
+      fullLane: (full: boolean) => { laneFull = full; },
     };
   }
   const run = (effect: Effect.Effect<void, Error>) => Effect.runPromise(Effect.either(effect));
@@ -866,7 +868,7 @@ describe('main-process radio', () => {
     const radio: Radio<typeof client> = new Radio({
       client: () => client, player: () => snapshot(), known: () => undefined, remember: () => undefined,
       replace: () => Effect.sync(() => radio.end()), follow: () => Effect.void, append: () => Effect.void,
-      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined, autoplay: () => false, next: () => undefined,
+      background: task => Effect.runPromise(Effect.either(task)), changed: () => undefined, autoplay: () => false, next: () => true,
     });
     expect(await Effect.runPromise(radio.start({ kind: 'artist', id: 'ar1', label: 'A' }))).toBe(false);
     expect(radio.view).toBeNull();
@@ -1064,6 +1066,25 @@ describe('main-process radio', () => {
     free();
     expect(log).toEqual(['append m1', 'next let go']);
     expect(player().queue[player().currentIndex].id).toBe('d');
+  });
+
+  it('a held Next the audio lane refuses is let go, not left for a later turn', async () => {
+    const { radio, log, autoplay, load, respond, setSimilar, fullLane } = fixture();
+    autoplay(true);
+    setSimilar(id => id === 'a' || id === 'c' ? [] : null);
+    load(['a', 'b'], 1);
+    let turn = radio.topUp()!;
+    expect(radio.holdNext()).toBe(true);
+    fullLane(true);
+    respond('b', songs('n1'));
+    await turn;
+    fullLane(false);
+    // The same entry plays at the end of a new turn later: nothing moves without a new Next.
+    load(['c', 'd'], 1);
+    turn = radio.topUp()!;
+    respond('d', songs('m1'));
+    await turn;
+    expect(log).toEqual(['append n1', 'append m1']);
   });
 
   it('autoplay\'s songs land without a held Next moving anything', async () => {

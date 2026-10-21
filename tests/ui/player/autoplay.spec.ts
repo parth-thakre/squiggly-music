@@ -126,6 +126,37 @@ test.describe('autoplay', () => {
     await app.expectPlaying('Short Stop');
   });
 
+  test('a held Next is let go by a seek, and by signing out', async ({ app, page }) => {
+    await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
+    // Each answer is fetched at once, while signed in, and handed to the page when the test says.
+    const asked: { route: Route; json: unknown }[] = [];
+    await page.route('**/api/similarSongs', async route => { asked.push({ route, json: await (await route.fetch()).json() }); });
+    await app.signIn();
+    await app.openAlbum('Test Pressing');
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await app.expectPlaying('Tail Light');
+    await expect.poll(() => asked.length).toBe(1);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.seek.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(5);
+    await asked[0].route.fulfill({ json: asked[0].json });
+    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await app.expectPlaying('Tail Light');
+
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await expect.poll(() => asked.length).toBe(2);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.deck.getByRole('button', { name: 'Sign out' }).click();
+    await expect(app.signInPassword).toBeVisible();
+    await asked[1].route.fulfill({ json: asked[1].json });
+    // Signed in again on the same page, the queue waits at the song it was on.
+    await app.signInPassword.fill('squiggly test password');
+    await app.signInPassword.press('Enter');
+    await expect(app.signInPassword).toBeHidden();
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Tail Light');
+  });
+
   test('a sleep timer set while the server answers stops what the answer would have added', async ({ app, fake, page }) => {
     await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
     await app.signIn();
