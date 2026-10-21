@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, AutoplayView, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, noAutoplay } from '../../../../../packages/core/autoplay';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../../../packages/core/autoplay';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
 import { OUT_OF_REACH } from '../../../../../packages/core/reach';
 import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
@@ -303,7 +303,7 @@ function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = f
 function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play?: boolean; startAt?: number; patch?: Partial<PlayerState> } = {}) {
   const queue = patch.queue ?? state.queue, entryIds = patch.entryIds ?? state.entryIds;
   const track = queue[index], entry = entryIds[index];
-  heard = null;
+  heard = null; held = null;
   if (android && track && entry) {
     // set() sends the queue to the native player before the load that names the entry. The new
     // play instance begins when the player reports the entry started (see nativePlayback).
@@ -437,13 +437,17 @@ function topUpRadio() {
   });
 }
 // Autoplay as the main process runs it (Radio in main/radio.ts, with packages/core/autoplay.ts):
-// once the queue's last song plays, up to ten songs like it that aren't queued go on the end.
+// once the queue's last song or the one before it plays, up to ten songs like it that aren't
+// queued go on the end. Next on the last song while a turn is out moves on when they're in.
 // One turn at a time; a failed one is tried again in a minute, and an entry that found nothing
 // isn't asked again. A queue that already finished stays finished, and so does one the sleep
 // timer is waiting to stop after this song. On Android the page has to be awake for it, as for radio.
 let autoplaying = -1;
 let autoplayTried: { entry: string; at: number } | null = null;
 let autoplayRetry: ReturnType<typeof setTimeout> | undefined;
+// Next pressed on the last song while a turn was out: the queue and entry it was pressed on. Only
+// that queue's turn moves on from it, and only while that entry plays; any other playback lets go.
+let held: { station: number; entry: string } | null = null;
 let sleepsAfterSong = false;
 async function autoplay() {
   if (!local || autoplaying === station || !getSettings().autoplay || sleepsAfterSong || !state.connected || state.reach.away) return;
@@ -457,7 +461,7 @@ async function autoplay() {
   // or radio came on, the sleep timer began waiting, or autoplay was turned off: the answer no
   // longer belongs here.
   const current = () => mine === station && !state.radio && state.repeat === 'off' && getSettings().autoplay && !sleepsAfterSong
-    && state.index === state.queue.length - 1 && state.entryIds.at(-1) === turn.entry && !(web?.active.ended || native?.ended);
+    && nearEnd(state.index, state.queue.length) && state.entryIds.at(-1) === turn.entry && !(web?.active.ended || native?.ended);
   try {
     const taken = new Set(state.queue.map(t => t.id));
     const fresh: Track[] = [];
@@ -474,7 +478,12 @@ async function autoplay() {
     const queued = keepQueued(state.autoplay, state.entryIds);
     if (!adding.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
     webAppend(adding, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
-  } finally { if (autoplaying === mine) autoplaying = -1; }
+    // Next was held for these: on to the first of them.
+    if (held?.station === mine && mine === station && currentEntry(state) === held.entry && state.index + 1 < state.queue.length) webLoad(state.index + 1);
+  } finally {
+    if (autoplaying === mine) autoplaying = -1;
+    if (held?.station === mine) held = null;
+  }
 }
 
 // Lock screen, notification shade, headphones, and the Flip's cover screen.
@@ -534,7 +543,7 @@ function signedOut() {
   // session may be followed by someone else's, so its queue goes now. The host's configured
   // server is the same account after signing in again, so its queue waits, paused.
   if (state.pageConnection) disconnected();
-  web.active.pause();
+  web.active.pause(); held = null;
   resetLibraryCaches();
   searchesFor(null);
   set({ access: 'sign-in', connected: false, playing: false, buffering: false, resumable: null, choosingServer: false });
@@ -583,6 +592,9 @@ if (web) {
 // apps/android/web/bridge.ts). It moves between songs, and takes the notification's and lock
 // screen's buttons, on its own; the page follows its reports. Sign-in works as on the desktop.
 let native: AndroidPlayback | null = null;
+// The native player's count of presses from the notification, lock screen, and headphones
+// (AndroidPlayback.pressed) as the page last saw it: from restore() at launch, then each report.
+let pressedSeen: number | undefined;
 // Away, a kept song that fails anyway: its file is the trouble, not the connection. The native
 // player says "network" when the file couldn't be opened, and "unplayable" when it couldn't be played.
 const keptFailed = (track: Track, error: string) => state.reach.away && keptSupported && track.source === 'navidrome' && isKept(track.id)
@@ -601,6 +613,10 @@ function nativePlayback(playback: AndroidPlayback) {
     duration: playback.duration > 0 ? playback.duration : track.duration ?? 0,
     stationTitle: isStation(track) ? playback.stationTitle ?? null : null,
   };
+  // Paused, or a press on the notification, lock screen, or headphones: a Next held in the page is
+  // let go, as a press in the page would. The page's own loads and seeks count as neither.
+  if (held && (!playback.playing || (pressedSeen !== undefined && playback.pressed !== pressedSeen))) held = null;
+  pressedSeen = playback.pressed;
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
     plays.instance++; plays.track = track; plays.listened = 0; plays.lastPosition = playback.position; plays.startAt = 0;
@@ -656,10 +672,11 @@ if (android) {
   // The native player wraps the queue or repeats a song itself, so it does so with the page asleep.
   android.player.repeat(state.repeat);
   // The app was swiped away while playing and the player kept going: show what it holds.
-  void android.player.restore().then(held => {
-    if (!held || state.queue.length) return;
-    set({ queue: held.queue, entryIds: held.entryIds, index: held.index, resumable: null });
-    nativePlayback(held.playback);
+  void android.player.restore().then(restored => {
+    if (restored) pressedSeen ??= restored.playback.pressed;
+    if (!restored?.queue.length || state.queue.length) return;
+    set({ queue: restored.queue, entryIds: restored.entryIds, index: restored.index, resumable: null });
+    nativePlayback(restored.playback);
   });
   setInterval(() => { if (state.playing) saveSoon(); }, 30000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') saveNow(); });
@@ -878,6 +895,7 @@ export const player = {
   // as play, so pausing would leave it paused by surprise. pause() still stops it.
   toggle() {
     if (state.starting) return;
+    held = null;
     if (android) {
       if (state.index < 0) return;
       // A song that already ended starts over as a new play, as in the browser.
@@ -899,6 +917,7 @@ export const player = {
   // session's, and the sleep timer's. Unlike toggle, it never starts anything, and it doesn't
   // trust the page's copy of the state (a hidden desktop window gets no snapshots).
   pause() {
+    held = null;
     if (android) { if (state.index >= 0) android.player.pause(); return; }
     if (web) {
       // A song still starting (or retrying as MP3) stays stopped, and the deck stops waiting for it.
@@ -931,10 +950,17 @@ export const player = {
   },
   // Next moves on under repeat one too, and wraps to the first song under repeat all.
   next() {
-    if (local) { const next = following(state.index, state.queue.length, state.repeat, 'skip'); if (next >= 0) webLoad(next); return; }
+    if (local) {
+      const next = following(state.index, state.queue.length, state.repeat, 'skip');
+      if (next >= 0) webLoad(next);
+      // The last song, with autoplay finding what follows it: on to its first song when it's in.
+      else if (autoplaying === station && state.repeat === 'off' && getSettings().autoplay && currentEntry(state)) held = { station, entry: currentEntry(state)! };
+      return;
+    }
     void desktop!.command({ type: 'next' }).then(report);
   },
   previous() {
+    held = null;
     if (local) {
       const previous = preceding(state.index, state.queue.length, state.repeat);
       // A station has no start to go back to: Previous only moves back in the queue.
@@ -972,6 +998,7 @@ export const player = {
     const track = current(state);
     // A station is live: there is no position to seek to.
     if (!track || isStation(track) || (entryId !== undefined && entryId !== currentEntry(state))) return;
+    held = null;
     if (android) {
       android.player.seek(currentEntry(state)!, seconds);
       plays.lastPosition = seconds; set({ position: seconds }); saveSoon(); return;

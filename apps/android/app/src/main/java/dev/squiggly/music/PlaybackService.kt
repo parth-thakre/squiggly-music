@@ -3,6 +3,7 @@ package dev.squiggly.music
 import android.app.PendingIntent
 import android.content.Intent
 import android.os.Process
+import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.datasource.DataSourceBitmapLoader
@@ -31,7 +32,7 @@ class PlaybackService : MediaSessionService() {
             Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val created = MediaSession.Builder(this, Playback.player)
+        val created = MediaSession.Builder(this, Pressed(Playback.player))
             .setSessionActivity(open)
             .setBitmapLoader(CacheBitmapLoader(CoverProxy.Bitmaps(DataSourceBitmapLoader.Builder(this).build())))
             .setCallback(Controllers)
@@ -48,6 +49,24 @@ class PlaybackService : MediaSessionService() {
         session?.release()
         session = null
         super.onDestroy()
+    }
+
+    /** The session's player: Playback's, with each press from a controller counted (Playback.pressed). */
+    private class Pressed(player: Player) : ForwardingPlayer(player) {
+        override fun play() { Playback.pressed(); super.play() }
+        override fun pause() { Playback.pressed(); super.pause() }
+        override fun setPlayWhenReady(playWhenReady: Boolean) { Playback.pressed(); super.setPlayWhenReady(playWhenReady) }
+        override fun stop() { Playback.pressed(); super.stop() }
+        override fun seekTo(positionMs: Long) { Playback.pressed(); super.seekTo(positionMs) }
+        override fun seekTo(mediaItemIndex: Int, positionMs: Long) { Playback.pressed(); super.seekTo(mediaItemIndex, positionMs) }
+        override fun seekToDefaultPosition() { Playback.pressed(); super.seekToDefaultPosition() }
+        override fun seekToDefaultPosition(mediaItemIndex: Int) { Playback.pressed(); super.seekToDefaultPosition(mediaItemIndex) }
+        override fun seekBack() { Playback.pressed(); super.seekBack() }
+        override fun seekForward() { Playback.pressed(); super.seekForward() }
+        override fun seekToPrevious() { Playback.pressed(); super.seekToPrevious() }
+        override fun seekToPreviousMediaItem() { Playback.pressed(); super.seekToPreviousMediaItem() }
+        override fun seekToNext() { Playback.pressed(); super.seekToNext() }
+        override fun seekToNextMediaItem() { Playback.pressed(); super.seekToNextMediaItem() }
     }
 
     /**

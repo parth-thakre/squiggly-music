@@ -65,6 +65,9 @@ object Playback {
     private var stationTitle: String? = null
     // The page's repeat mode. ExoPlayer's own is this, except repeat one is off while a station plays.
     private var repeatMode = "off"
+    // Presses from the notification, lock screen, and headphones (PlaybackService's session), as a
+    // count the page compares between reports: a Next it holds gives way to any of them.
+    private var pressed = 0
 
     /** Receives every state report while a page is listening. */
     var listener: ((JSObject) -> Unit)? = null
@@ -245,6 +248,8 @@ object Playback {
 
     // State ------------------------------------------------------------------------------------
 
+    fun pressed() { pressed++; report() }
+
     fun state(): JSObject {
         val state = player.playbackState
         val duration = player.duration
@@ -252,6 +257,7 @@ object Playback {
             .put("seq", lastSeq)
             .put("entryId", player.currentMediaItem?.mediaId ?: JSONObject.NULL)
             .put("playId", playId)
+            .put("pressed", pressed)
             // Waiting for data with play pressed counts as playing, as it does in the browser.
             .put("playing", player.isPlaying || (player.playWhenReady && state == Player.STATE_BUFFERING))
             .put("buffering", player.playWhenReady && state == Player.STATE_BUFFERING)

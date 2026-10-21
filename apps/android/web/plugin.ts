@@ -25,6 +25,8 @@ export interface NativePlayback {
   // command the page has since sent describe a queue position the page has already left.
   seq: number;
   entryId: string | null; playId: number;
+  // Presses from the notification, lock screen, and headphones so far (absent from older players).
+  pressed?: number;
   playing: boolean; buffering: boolean; ended: boolean;
   position: number; duration: number; fallback: boolean; error: string | null;
   // A station playing: the title its stream announces (ICY), or null.

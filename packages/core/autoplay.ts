@@ -17,14 +17,21 @@ export const AUTOPLAY_ASK = 30;
 // the turn has its ten.
 const SEEDS = 3;
 export const noAutoplay: AutoplayView = { added: [], missed: null };
+// A turn starts on the queue's next-to-last song, not its last: a server asking Last.fm can take
+// ten seconds to answer, and the songs should be there before the last one ends, or before anyone
+// skipping through gets to it.
+export const AUTOPLAY_AHEAD = 2;
+// Whether `index` is among the last AUTOPLAY_AHEAD entries of a queue of `length`.
+export const nearEnd = (index: number, length: number) => index >= 0 && index < length && index >= length - AUTOPLAY_AHEAD;
 
 export interface AutoplayQueue { queue: readonly Track[]; entryIds: readonly string[]; index: number; repeat: RepeatMode; radio: boolean }
-// What a turn follows: the queue's last entry, once it is the one playing, and the songs to ask
-// about. Null when there's nothing to do: radio, repeat, songs still to come, or a last entry
-// that isn't a song from the server (a file from this computer, or a station, which never ends).
+// What a turn follows: the queue's last entry, once it or the one before it is playing, and the
+// songs to ask about. Null when there's nothing to do: radio, repeat, more songs still to come,
+// or a last entry that isn't a song from the server (a file from this computer, or a station,
+// which never ends).
 export function autoplayTurn({ queue, entryIds, index, repeat, radio }: AutoplayQueue): { entry: string; seeds: Track[] } | null {
   const last = queue.at(-1), entry = entryIds.at(-1);
-  if (radio || repeat !== 'off' || index < 0 || index !== queue.length - 1 || !last || !entry || last.source !== 'navidrome') return null;
+  if (radio || repeat !== 'off' || !nearEnd(index, queue.length) || !last || !entry || last.source !== 'navidrome') return null;
   const seeds: Track[] = [];
   for (let i = queue.length - 1; i >= 0 && seeds.length < SEEDS; i--) {
     const track = queue[i];

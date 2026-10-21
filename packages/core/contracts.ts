@@ -581,6 +581,9 @@ export interface AndroidPlayback {
   stationTitle?: string | null;
   // The entry playing is a kept file on the phone, not the stream.
   local?: boolean;
+  // Presses from the notification, lock screen, and headphones so far: one more than the last
+  // report's means the listener acted outside the page.
+  pressed?: number;
 }
 export interface AndroidQueueSnapshot { queue: Track[]; entryIds: string[]; index: number; playback: AndroidPlayback }
 export interface AndroidBridge {
@@ -604,7 +607,7 @@ export interface AndroidBridge {
   };
   player: {
     // What the native player still holds from before the page loaded (the app was swiped away
-    // while it played), or null.
+    // while it played): an empty queue when it holds nothing, null when it can't say.
     restore(): Promise<AndroidQueueSnapshot | null>;
     // Makes the native queue match these entries, keeping the one playing where it is.
     sync(queue: readonly Track[], entryIds: readonly string[]): void;

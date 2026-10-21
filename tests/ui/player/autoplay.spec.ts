@@ -1,12 +1,19 @@
+import type { Route } from '@playwright/test';
 import { installDesktopBridge } from '../fixtures/desktop';
 import { allTracks, expect, special, test, trackOf } from '../fixtures/test';
 
-// Autoplay: songs like the last one join the queue once it plays, when turned on. Playing
+// Autoplay: songs like the last one join the queue once it or the one before it plays, when turned on. Playing
 // "Tail Light" from its record queues the record with it last. The fake server's similar songs are
 // the library's songs off that record, in order.
 const record = ['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light'];
 const similar = allTracks.filter(track => track.albumId !== special.album).map(track => track.title);
 // Autoplay on, and repeat all, as the browser keeps them. Set once: a reload keeps what the page changed.
+// Holds every similar-songs answer from the page until the test continues it.
+async function holdAnswers(page: import('@playwright/test').Page) {
+  const asked: Route[] = [];
+  await page.route('**/api/similarSongs', route => { asked.push(route); });
+  return asked;
+}
 const stored = () => {
   if (sessionStorage.getItem('stored')) return;
   sessionStorage.setItem('stored', '1');
@@ -70,6 +77,86 @@ test.describe('autoplay', () => {
     await app.openSettings();
     await expect(app.main.getByRole('checkbox', { name: /^Keep playing similar songs/ })).toBeChecked();
   });
+  test('it asks on the next-to-last song, and Next on the last while it asks moves on when the songs are in', async ({ app, fake, page }) => {
+    await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
+    // A server slow to answer, as one asking Last.fm can be: the answer waits until the test lets it go.
+    const asked = await holdAnswers(page);
+    await app.signIn();
+    await app.play('Test Pressing', 'Thirty Two');
+    // Asked about the last song while the one before it plays.
+    await expect.poll(() => asked.length).toBe(1);
+    // Skipping through: on to the last song, then Next again before the answer is in.
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.expectPlaying('Tail Light');
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.expectPlaying('Tail Light');
+    await asked[0].continue();
+    await app.expectPlaying(similar[0]);
+    expect(fake.callsTo('similarSongs').map(call => call.args)).toEqual([[special.tailLight, 30]]);
+    await app.openQueue();
+    expect(await app.titles()).toEqual([...record, ...similar.slice(0, 10)]);
+  });
+
+  test('a held Next is let go by Previous, and never moves a queue played since', async ({ app, page }) => {
+    await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
+    const asked = await holdAnswers(page);
+    await app.signIn();
+    await app.openAlbum('Test Pressing');
+    // Tail Light on its own, so Previous starts it over.
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await app.expectPlaying('Tail Light');
+    await expect.poll(() => asked.length).toBe(1);
+    // Next while it asks, then Previous: the songs come, and Tail Light plays on.
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.deck.getByRole('button', { name: 'Previous', exact: true }).click();
+    await asked[0].continue();
+    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await app.expectPlaying('Tail Light');
+
+    // Next while it asks, then another song played: that song's answer, in first, moves nothing.
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await expect.poll(() => asked.length).toBe(2);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.chooseFromMenu(app.row('Short Stop'), 'Play');
+    await app.expectPlaying('Short Stop');
+    await expect.poll(() => asked.length).toBe(3);
+    await asked[2].continue();
+    await asked[1].continue();
+    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await app.expectPlaying('Short Stop');
+  });
+
+  test('a held Next is let go by a seek, and by signing out', async ({ app, page }) => {
+    await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
+    // Each answer is fetched at once, while signed in, and handed to the page when the test says.
+    const asked: { route: Route; json: unknown }[] = [];
+    await page.route('**/api/similarSongs', async route => { asked.push({ route, json: await (await route.fetch()).json() }); });
+    await app.signIn();
+    await app.openAlbum('Test Pressing');
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await app.expectPlaying('Tail Light');
+    await expect.poll(() => asked.length).toBe(1);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.seek.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(5);
+    await asked[0].route.fulfill({ json: asked[0].json });
+    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await app.expectPlaying('Tail Light');
+
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await expect.poll(() => asked.length).toBe(2);
+    await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
+    await app.deck.getByRole('button', { name: 'Sign out' }).click();
+    await expect(app.signInPassword).toBeVisible();
+    await asked[1].route.fulfill({ json: asked[1].json });
+    // Signed in again on the same page, the queue waits at the song it was on.
+    await app.signInPassword.fill('squiggly test password');
+    await app.signInPassword.press('Enter');
+    await expect(app.signInPassword).toBeHidden();
+    await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Tail Light');
+  });
+
   test('a sleep timer set while the server answers stops what the answer would have added', async ({ app, fake, page }) => {
     await page.addInitScript(() => { localStorage.setItem('squiggly.settings', JSON.stringify({ autoplay: true })); });
     await app.signIn();
