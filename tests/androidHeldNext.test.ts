@@ -16,9 +16,9 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals()
 const song = (id: string): Track => ({ id, title: id, artist: 'artist', album: 'album', duration: 200,
   source: 'navidrome', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null });
 
-// The page's player on Android, its native player faked: Next on the last song while autoplay
-// asks, then what the native player reports before the answer comes.
-async function fixture() {
+// The page's player on Android, its native player faked: what the native player reports while
+// autoplay asks, with Next held on the last song.
+async function fixture({ initialReport = true, twoSongs = false } = {}) {
   vi.useFakeTimers();
   let report!: (value: AndroidPlayback) => void;
   let answer!: (value: Result<Track[]>) => void;
@@ -34,41 +34,71 @@ async function fixture() {
   vi.stubGlobal('document', { addEventListener: vi.fn() });
   vi.stubGlobal('localStorage', { getItem: () => null, setItem: vi.fn() });
   const { player, getPlayer } = await import('../apps/desktop/renderer/src/app/player');
-  await player.play([song('old')], 0);
+  await player.play(twoSongs ? [song('old'), song('tail')] : [song('old')], 0);
   const entryId = getPlayer().entryIds[0];
   const playback: AndroidPlayback = { entryId, playId: 1, playing: true, buffering: false, ended: false,
-    position: 42, duration: 200, fallback: false, error: null };
-  report(playback);
-  player.next();
+    position: 42, duration: 200, fallback: false, error: null, pressed: 0 };
+  if (initialReport) report(playback);
   return { player, getPlayer, load, report, playback,
-    answer: (songs = Array.from({ length: 10 }, (_, i) => song(`new-${i}`))) => answer({ ok: true, value: songs }),
-    fail: () => answer({ ok: false, error: 'server failed' }),
+    answer: () => answer({ ok: true, value: Array.from({ length: 10 }, (_, i) => song(`new-${i}`)) }),
   };
 }
 
+async function appended(f: Awaited<ReturnType<typeof fixture>>, count = 11) {
+  f.answer();
+  await vi.waitFor(() => expect(f.getPlayer().queue).toHaveLength(count));
+}
+
 describe('a Next held in the page on Android', () => {
-  it('moves on once the songs are in', async () => {
+  it('moves on once the songs are in, through buffering and the reports between', async () => {
     const f = await fixture();
-    f.answer();
-    await vi.waitFor(() => expect(f.getPlayer().index).toBe(1));
+    f.player.next();
+    f.report({ ...f.playback, buffering: true, position: 42.5 });
+    f.report({ ...f.playback, position: 75 });
+    await appended(f);
+    expect(f.getPlayer().index).toBe(1);
     expect(f.load).toHaveBeenCalledTimes(2);
+  });
+
+  it('survives the native player starting the page\'s own load', async () => {
+    // Pressed before the first report of the song the page loaded.
+    let f = await fixture({ initialReport: false });
+    f.player.next();
+    f.report({ ...f.playback, position: 0, buffering: true });
+    f.report({ ...f.playback, position: 0.2 });
+    await appended(f);
+    expect(f.getPlayer().index).toBe(1);
+    vi.clearAllTimers(); vi.unstubAllGlobals(); vi.resetModules();
+    // Next twice from the song before the last: the second waits while the first loads.
+    f = await fixture({ twoSongs: true });
+    f.player.next();
+    const tail = f.getPlayer().entryIds[1];
+    f.player.next();
+    f.report({ ...f.playback, entryId: tail, playId: 2, position: 0, buffering: true });
+    f.report({ ...f.playback, entryId: tail, playId: 2, position: 0.2 });
+    await appended(f, 12);
+    expect(f.getPlayer().index).toBe(2);
+    expect(f.load).toHaveBeenCalledTimes(3);
   });
 
   it('is let go by a pause from the notification or headphones', async () => {
     const f = await fixture();
+    f.player.next();
     f.report({ ...f.playback, playing: false });
-    f.answer();
-    await vi.waitFor(() => expect(f.getPlayer().queue).toHaveLength(11));
+    await appended(f);
     expect(f.load).toHaveBeenCalledTimes(1);
     expect(f.getPlayer().index).toBe(0);
   });
 
-  it('is let go when the notification\'s Previous starts the song over', async () => {
-    const f = await fixture();
-    f.report({ ...f.playback, position: 0 });
-    f.answer();
-    await vi.waitFor(() => expect(f.getPlayer().queue).toHaveLength(11));
-    expect(f.load).toHaveBeenCalledTimes(1);
-    expect(f.getPlayer().index).toBe(0);
-  });
+  for (const [press, position] of [['a seek forward', 100], ['Previous, early in the song', 0]] as const) {
+    it(`is let go by ${press} from the notification`, async () => {
+      const f = await fixture();
+      f.report({ ...f.playback, position: 0.7 });
+      f.player.next();
+      f.report({ ...f.playback, position, pressed: 1 });
+      await appended(f);
+      expect(f.load).toHaveBeenCalledTimes(1);
+      expect(f.getPlayer().index).toBe(0);
+    });
+  }
 });

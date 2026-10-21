@@ -608,9 +608,9 @@ function nativePlayback(playback: AndroidPlayback) {
     duration: playback.duration > 0 ? playback.duration : track.duration ?? 0,
     stationTitle: isStation(track) ? playback.stationTitle ?? null : null,
   };
-  // Paused, started over, or moved back from the notification or headphones: a Next held in the
-  // page is let go, as a press in the page would.
-  if (held && (!playback.playing || before?.playId !== playback.playId || playback.position + 1 < (before?.position ?? 0))) held = null;
+  // Paused, or a press on the notification, lock screen, or headphones: a Next held in the page is
+  // let go, as a press in the page would. The page's own loads and seeks count as neither.
+  if (held && (!playback.playing || (before && playback.pressed !== before.pressed))) held = null;
   if (!before || before.playId !== playback.playId) {
     // The entry started from its beginning: a new play, as a load is in the browser.
     plays.instance++; plays.track = track; plays.listened = 0; plays.lastPosition = playback.position; plays.startAt = 0;

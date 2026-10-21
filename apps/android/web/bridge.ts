@@ -280,7 +280,7 @@ async function clearPlayer() {
 
 function playback(native: NativePlayback): AndroidPlayback {
   const { entryId, playId, playing, buffering, ended, position, duration, fallback, error } = native;
-  return { entryId, playId, playing, buffering, ended, position, duration, fallback, error, stationTitle: native.stationTitle ?? null, local: native.local === true };
+  return { entryId, playId, playing, buffering, ended, position, duration, fallback, error, stationTitle: native.stationTitle ?? null, local: native.local === true, pressed: native.pressed ?? 0 };
 }
 void Squiggly.addListener('playback', native => {
   if (native.seq < seq) return;
