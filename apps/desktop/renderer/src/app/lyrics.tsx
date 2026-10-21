@@ -1,4 +1,4 @@
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { LyricLine, LyricWord, Lyrics as LyricsData, Track } from '../../../../../packages/core/contracts';
 import { timeWords } from '../../../../../packages/lyrics/words';
@@ -185,8 +185,11 @@ export function DeckLyrics() {
 // The synced line being sung, looked at again when the next one is due to start rather than every
 // frame: a song plays for minutes and its lines change every few seconds. While playing it also
 // looks every CHECK_MS, so a seek shows its line that soon. A React update only when it changes.
+// `ends`: past a line's end (where the lyrics give one) none is being sung until the next starts,
+// so the mini player's one line goes quiet through an instrumental break. The deck keeps the last
+// line lit, with the lines around it to place it.
 const CHECK_MS = 250;
-function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pausedAt: number) {
+function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pausedAt: number, ends = false) {
   const [active, setActive] = useState(-1);
   useEffect(() => {
     if (!synced) return;
@@ -195,17 +198,86 @@ function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pause
       timer = undefined;
       const now = livePosition() + LEAD;
       const at = lineAt(synced, now);
-      setActive(at);
+      const end = ends ? synced[at]?.end ?? null : null;
+      const over = end !== null && now >= end;
+      setActive(over ? -1 : at);
       if (!playing || document.hidden) return;
-      const next = synced[at + 1]?.start;
-      timer = setTimeout(check, next == null ? CHECK_MS : Math.min(CHECK_MS, Math.max(0, (next - now) * 1000) + 5));
+      const due = [synced[at + 1]?.start ?? null, over ? null : end].filter((time): time is number => time !== null);
+      timer = setTimeout(check, due.length ? Math.min(CHECK_MS, Math.max(0, (Math.min(...due) - now) * 1000) + 5) : CHECK_MS);
     };
     check();
     const wake = () => { if (!timer && !document.hidden) check(); };
     document.addEventListener('visibilitychange', wake);
     return () => { clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
-  }, [synced, playing, pausedAt]);
+  }, [synced, playing, pausedAt, ends]);
   return active;
+}
+
+// The mini player's one line: the synced line being sung, nothing between lines or before the
+// first, and nothing at all for a station or lyrics that aren't timed. It's there to glance at,
+// so assistive tech isn't told each line; the lyric sheet in the full window has them all. With
+// word times it fills word by word as the sheet does: while the line is sung (and only then), each
+// word's progress goes straight to its span as --p once a frame, and nothing re-renders. Once the
+// last word is full it looks only every CHECK_MS, so a seek back into the line fills it again.
+export function SungLine({ track, below = false }: { track: Track; below?: boolean }) {
+  const { lyrics } = useLyrics(track);
+  const playing = usePlayer(s => s.playing);
+  const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
+  const synced = !isStation(track) && lyrics?.synced ? lyrics.lines : null;
+  // A line goes when it ends only where the lyrics timed their words: otherwise its end is an
+  // estimate from its words (timeWords), and a slow song holds a line well past it.
+  const active = useLineNow(synced, playing, pausedAt, lyrics?.wordTiming === 'exact');
+  const line = synced?.[active];
+  const words = line?.words?.length ? line.words : null;
+  const box = useRef<HTMLSpanElement>(null);
+  // A new line scrolls in from below as the last one scrolls out above (app.css). The last one is
+  // kept, as it was sung, until its way out has played; reduced motion simply swaps them.
+  const [shown, setShown] = useState<{ index: number; line: LyricLine | undefined }>({ index: active, line });
+  const [leaving, setLeaving] = useState<{ index: number; line: LyricLine } | null>(null);
+  if (shown.index !== active) {
+    setShown({ index: active, line });
+    setLeaving(shown.line?.text && !reducedMotion.matches ? { index: shown.index, line: shown.line } : null);
+  }
+  useEffect(() => {
+    const element = box.current;
+    if (!words || !element) return;
+    const spans = Array.from(element.querySelectorAll<HTMLElement>('.word'));
+    const values: number[] = [];
+    let frame = 0, timer: ReturnType<typeof setTimeout> | undefined;
+    const paint = () => {
+      frame = 0; timer = undefined;
+      const now = livePosition() + LEAD, whole = reducedMotion.matches;
+      let sung = true;
+      for (let k = 0; k < words.length && k < spans.length; k++) {
+        const p = progressOf(words[k], now, whole);
+        if (p < 1) sung = false;
+        if (p === values[k]) continue;
+        values[k] = p;
+        spans[k].style.setProperty('--p', String(p));
+      }
+      if (!playing || document.hidden) return;
+      if (sung) timer = setTimeout(paint, CHECK_MS); else frame = requestAnimationFrame(paint);
+    };
+    paint();
+    const wake = () => { if (!frame && !timer && !document.hidden) paint(); };
+    document.addEventListener('visibilitychange', wake);
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
+  }, [words, playing, pausedAt]);
+  if (!synced) return null;
+  const text = line?.text ?? '';
+  return <p className={`mini-lyric${below ? ' below' : ''}`} aria-hidden="true" title={text || undefined}>
+    {leaving && <span key={`leaving-${leaving.index}`} className="leaving" onAnimationEnd={() => setLeaving(null)}>{sungWords(leaving.line, true)}</span>}
+    <span key={active} ref={box}>{sungWords(line, false)}</span>
+  </p>;
+}
+// A line's words as spans for the fill (--p), all of them full for a line already sung; its text
+// where it has no words.
+function sungWords(line: LyricLine | undefined, sung: boolean) {
+  if (!line?.words?.length) return line?.text ?? '';
+  return line.words.map((word, k) => {
+    const [, said, space] = /^([\s\S]*?)(\s*)$/.exec(word.text)!;
+    return <Fragment key={k}><span className="word" style={sung ? { '--p': 1 } as CSSProperties : undefined}>{said}</span>{space}</Fragment>;
+  });
 }
 
 const ROOM_LINES = 3, GAP = 18;

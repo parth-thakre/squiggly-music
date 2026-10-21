@@ -501,6 +501,9 @@ export interface DesktopBridge {
     // the top of the page, and tintControls gives them the room's ink colour (#rrggbb). On Windows
     // the frame's strip along the other edges takes the room's ground.
     frameless: boolean; tintControls(ink: string, ground: string): Promise<Result>;
+    // The mini player on Windows has no system frame, so it resizes from edge handles of its own:
+    // ownResize says so, and resizeMini moves and sizes it (DIP, as screenX and outerWidth are).
+    ownResize?: boolean; resizeMini?(bounds: { x: number; y: number; width: number; height: number }): Promise<Result>;
     // A hidden window gets no snapshots until it's shown. On, it keeps getting them: the sleep
     // timer's "after this song" asks for this while it waits, even in the tray.
     followWhileHidden(on: boolean): Promise<Result>;

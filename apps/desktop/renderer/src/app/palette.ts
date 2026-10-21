@@ -120,3 +120,11 @@ export async function paletteFromImage(url: string): Promise<Palette> {
   context.drawImage(image, 0, 0, 48, 48);
   return paletteFromPixels(context.getImageData(0, 0, 48, 48).data);
 }
+
+// Any CSS colour as #rrggbb, which is what the window's buttons and frame take. A canvas normalises it.
+export function asHex(color: string) {
+  const context = document.createElement('canvas').getContext('2d');
+  if (!context) return color;
+  context.fillStyle = '#000'; context.fillStyle = color;
+  return context.fillStyle;
+}
