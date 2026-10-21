@@ -1,10 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
+import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
-import { paletteStyle, Position, TransportButtons, useByline, useRoomPalette } from './transport';
-import { Cover, splitTitle } from './ui';
+import { paletteStyle, PlayModes, Position, TransportButtons, useByline, useRoomPalette } from './transport';
+import { Cover, splitTitle, useNextCover } from './ui';
+import { api } from './library';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
+import { SungLine } from './lyrics';
+
+// Room for the line being sung between the song and the buttons: what the window has beside the
+// sleeve, which is as wide as the window is tall up to a third or so of its width (app.css).
+// Without it the line takes a row of its own under them, across the width.
+const LYRIC_ROOM = 460;
+const roomForLyric = () => typeof innerWidth === 'number' && innerWidth - Math.min(innerHeight, innerWidth * .36) >= LYRIC_ROOM;
+const onResize = (listener: () => void) => { addEventListener('resize', listener); return () => removeEventListener('resize', listener); };
+const useRoomForLyric = () => useSyncExternalStore(onResize, roomForLyric);
 
 // The mini player: its own small window, for when another app owns the screen.
 // The window is dragged by its background; the controls opt out of dragging.
@@ -31,27 +42,105 @@ export function Mini() {
   const failed = engine === 'unavailable' || engine === 'crashed';
   const problem = failed ? error ?? 'The audio engine stopped.' : error ?? pinError;
   const name = track ? splitTitle(track.title, track.album).main : null;
+  const lyricRoom = useRoomForLyric();
+  // The main window, hidden while this one shows, gets no snapshots and fetches nothing ahead:
+  // the next song's sleeve and palette are fetched early from here.
+  useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), SLEEVE);
+  const sleeve = useArrivedCover(track?.coverArt ?? null);
   return <div className="mini" style={paletteStyle(palette)}>
-    {track ? <Cover key={track.id} id={track.coverArt} name={track.album} size={200} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
+    {/* The sleeve is the window's left edge, its full height, and a handle to drag it by. */}
+    {track ? <Cover id={sleeve} name={track.album} size={SLEEVE} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
     <div className="mini-text">
       <p className="mini-title">{name ?? 'Nothing playing'}</p>
-      {/* One line either way: the artist, or what went wrong (in full on hover). */}
-      {problem ? <p className="mini-sub" role="alert" title={problem}>{problem}</p>
-        : <p className="mini-sub">{track ? byline : 'Pick something in the full window.'}</p>}
-      {track && <Position track={track} palette={palette} />}
+      {/* One line either way: the artist (and extensions' quiet lines), or what went wrong (in
+          full on hover) with what to do about it. */}
+      {problem ? <p className="mini-sub" role="alert">
+        <span title={problem}>{problem}</span>
+        {failed ? <button type="button" className="link" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
+          : <button type="button" className="link" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
+      </p> : <p className={`mini-sub${track ? '' : ' waiting'}`}>
+        <span>{track ? byline : 'Pick something in the full window.'}</span>
+        <span className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></span>
+      </p>}
     </div>
+    {track && <SungLine key={`lyrics:${track.id}`} track={track} below={!lyricRoom} />}
     <div className="mini-controls">
       <TransportButtons playing={playing} />
     </div>
-    <div className="mini-window">
-      {/* Extensions' quiet lines, all on this one line beside the buttons, so they take no room from
-          the song. The other deck placements need more room than this window has. */}
-      <div className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></div>
-      {failed ? <button type="button" className="text-button" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
-        : problem && <button type="button" className="text-button" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
-      <button type="button" className="text-button" aria-pressed={onTop} title="Keep the mini player above other windows" onClick={() => void pin()}>{onTop ? 'Unpin' : 'Pin'}</button>
-      <button type="button" className="text-button" onClick={() => void window.squiggly?.window.toggleMini()}>Full window</button>
+    {/* The squiggle, shuffle and repeat, and the window's own buttons share the last line, across
+        the whole width. */}
+    <div className="mini-foot">
+      {track ? <div className="mini-position"><Position track={track} palette={palette} /></div> : <span className="mini-position" />}
+      <span className="mini-modes"><PlayModes /></span>
+      <div className="mini-window">
+        <button type="button" className="icon-button" aria-pressed={onTop} aria-label="Keep on top" title={onTop ? 'Kept above other windows' : 'Keep above other windows'} onClick={() => void pin()}>
+          <Pin aria-hidden="true" />
+        </button>
+        <button type="button" className="icon-button" aria-label="Full window" title="Full window" onClick={() => void window.squiggly?.window.toggleMini()}>
+          <Maximize2 aria-hidden="true" />
+        </button>
+      </div>
     </div>
     <ExtensionNotices />
+    {window.squiggly?.window.ownResize && <ResizeEdges />}
   </div>;
+}
+
+// The sleeve to show: the playing song's once its image is ready, the last one's until then, so a
+// new song never leaves the window's edge blank while its sleeve arrives.
+const SLEEVE = 300;
+function useArrivedCover(coverArt: string | null) {
+  const [shown, setShown] = useState(coverArt);
+  useEffect(() => {
+    if (!coverArt) { setShown(null); return; }
+    let live = true;
+    const image = new Image();
+    image.decoding = 'async';
+    image.src = api.coverUrl(coverArt, SLEEVE);
+    // A sleeve that fails to load still replaces the last one; Cover shows the record's name.
+    const show = () => { if (live) setShown(coverArt); };
+    void image.decode().then(show, show);
+    return () => { live = false; };
+  }, [coverArt]);
+  return shown;
+}
+
+// On Windows the mini player has no system frame (main/index.ts), so it resizes from these: thin
+// handles along its edges and at its corners. A drag sends the new bounds once a frame; the main
+// process holds the window to the sizes it allows, which these follow so a left or top edge
+// stops where the size does rather than pushing the window along.
+const EDGES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'] as const;
+const WIDTHS = [320, 900] as const, HEIGHTS = [96, 240] as const;
+const within = (value: number, [low, high]: readonly [number, number]) => Math.min(high, Math.max(low, value));
+type Bounds = { x: number; y: number; width: number; height: number };
+function ResizeEdges() {
+  const drag = useRef<{ edge: (typeof EDGES)[number]; x: number; y: number; from: Bounds } | null>(null);
+  const frame = useRef(0);
+  const next = useRef<Bounds | null>(null);
+  const send = () => {
+    frame.current = 0;
+    const bounds = next.current;
+    next.current = null;
+    if (bounds) void window.squiggly?.window.resizeMini?.(bounds);
+  };
+  const down = (edge: (typeof EDGES)[number]) => (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { edge, x: event.screenX, y: event.screenY, from: { x: window.screenX, y: window.screenY, width: window.outerWidth, height: window.outerHeight } };
+  };
+  const move = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const held = drag.current;
+    if (!held) return;
+    const { edge, from } = held, dx = event.screenX - held.x, dy = event.screenY - held.y;
+    const width = within(from.width + (edge.includes('e') ? dx : edge.includes('w') ? -dx : 0), WIDTHS);
+    const height = within(from.height + (edge.includes('s') ? dy : edge.includes('n') ? -dy : 0), HEIGHTS);
+    next.current = {
+      x: Math.round(edge.includes('w') ? from.x + from.width - width : from.x), y: Math.round(edge.includes('n') ? from.y + from.height - height : from.y),
+      width: Math.round(width), height: Math.round(height),
+    };
+    if (!frame.current) frame.current = requestAnimationFrame(send);
+  };
+  const up = () => { drag.current = null; };
+  return <>{EDGES.map(edge => <div key={edge} className={`mini-edge ${edge}`} aria-hidden="true"
+    onPointerDown={down(edge)} onPointerMove={move} onPointerUp={up} onPointerCancel={up} />)}</>;
 }

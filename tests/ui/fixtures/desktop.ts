@@ -238,6 +238,7 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       library,
       window: {
         isMini: mini, toggleMini: async () => ({ ok: true }), setAlwaysOnTop: async () => ({ ok: true }),
+        frameless: false, tintControls: async (ink: string, ground: string) => { calls.push(`tint:${ink}:${ground}`); return { ok: true, value: undefined }; },
         followWhileHidden: async (on: boolean) => { calls.push(`follow-while-hidden:${on}`); return { ok: true, value: undefined }; },
       },
       extensions: {

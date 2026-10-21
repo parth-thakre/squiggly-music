@@ -148,6 +148,8 @@ const bridge: DesktopBridge = {
     isMini: process.argv.includes('--squiggly-mini'),
     frameless: process.argv.includes('--squiggly-frameless'),
     tintControls: (ink, ground) => ipcRenderer.invoke('squiggly:window:tint-controls', ink, ground),
+    ownResize: process.argv.includes('--squiggly-own-resize'),
+    resizeMini: bounds => ipcRenderer.invoke('squiggly:window:resize-mini', bounds),
     followWhileHidden: on => ipcRenderer.invoke('squiggly:window:follow-while-hidden', on),
   },
   disconnect: () => ipcRenderer.invoke('squiggly:disconnect'),
