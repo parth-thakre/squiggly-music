@@ -224,7 +224,7 @@ const radio = new Radio<SubsonicClient>({
   // The next host snapshot carries the change to the windows (several a second while playing).
   changed: () => { state.player = { ...state.player, radio: radio.view, autoplay: radio.autoplayView }; },
   autoplay: () => settings.value.autoplay && !sleepsAfterSong(),
-  next: () => transport({ type: 'next' }),
+  next: still => transport({ type: 'next' }, still),
 }, QUEUE_LIMIT);
 // Starting any other playback, or losing the engine or session, ends radio. The queue stays.
 const endRadio = () => radio.end();
@@ -558,13 +558,24 @@ function send(action: HostRequest['action']) {
   });
 }
 
+// Next on the last song while autoplay finds what follows waits for its songs (Radio.holdNext),
+// from a window or the system's controls alike. Any other playback command lets go of a Next held
+// that way; the volume, the output device, and the queue's modes leave it be.
+function heldNext(type: string) {
+  if (type === 'next') return radio.holdNext();
+  if (type !== 'volume' && type !== 'device' && type !== 'repeat' && type !== 'shuffle') radio.letGo();
+  return false;
+}
 // Transport from the tray, media keys, and MPRIS. Failures surface through the player snapshot.
-// Bounded, so a client dragging an MPRIS position slider cannot queue unlimited seeks.
+// Bounded, so a client dragging an MPRIS position slider cannot queue unlimited seeks. `still`,
+// for a held Next autoplay sends, is asked again once the command's turn on the audio lane comes.
 let shellPending = 0;
-function transport(action: HostRequest['action']) {
+function transport(action: HostRequest['action'], still?: () => boolean) {
+  if (!still && heldNext(action.type)) return;
   if (shellPending >= 8) return;
   shellPending++;
-  void Effect.runPromise(Effect.either(metrics.measure('shell.command', semaphores.audio.withPermits(1)(send(action)))))
+  const command = Effect.suspend(() => !still || still() ? send(action) : Effect.void);
+  void Effect.runPromise(Effect.either(metrics.measure('shell.command', semaphores.audio.withPermits(1)(command))))
     .then(() => { shellPending--; broadcast(); });
 }
 // Repeat and shuffle, from a window, MPRIS, or radio starting. The host applies the mode, then it
@@ -755,12 +766,11 @@ function installHandlers() {
   ipcMain.handle('squiggly:get-snapshot', event => { assertSender(event); return state; });
   handle('command', value => Effect.gen(function* () {
     const command = yield* Schema.decodeUnknown(CommandSchema)(value).pipe(Effect.mapError(() => new Error('Invalid player command.')));
+    if (heldNext(command.type)) return;
     if (command.type === 'restart') { yield* Effect.tryPromise(() => launchPlayer()); return; }
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
     if (command.type === 'play' && canResume()) { yield* resumeSaved(); return; }
     if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
-    // Next on the last song while autoplay finds what follows: it moves on when the songs are in.
-    if (command.type === 'next' && radio.holdNext()) return;
     // The host checks again against a fresh list; this keeps an unlisted name from leaving main.
     if (command.type === 'device' && !listedDevice(command.id, state.player.devices)) return yield* Effect.fail(new Error('That output device is not connected.'));
     yield* send(command);
@@ -871,6 +881,7 @@ function installHandlers() {
   handle('queue:clear', () => Effect.suspend(() => { endRadio(); return send({ type: 'queue-clear' }); }));
   handle('queue:jump', value => Effect.gen(function* () {
     const [index, entryId] = yield* Schema.decodeUnknown(QueueJumpSchema)(value).pipe(Effect.mapError(() => new Error('Invalid queue position.')));
+    radio.letGo();
     yield* send({ type: 'queue-jump', index, entryId });
   }));
   handle('radio:start', value => Effect.gen(function* () {

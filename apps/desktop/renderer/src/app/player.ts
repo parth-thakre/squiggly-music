@@ -301,7 +301,7 @@ function prepare(element: HTMLAudioElement, track: Track, entry: string, mp3 = f
 function webLoad(index: number, { play = true, startAt = 0, patch = {} }: { play?: boolean; startAt?: number; patch?: Partial<PlayerState> } = {}) {
   const queue = patch.queue ?? state.queue, entryIds = patch.entryIds ?? state.entryIds;
   const track = queue[index], entry = entryIds[index];
-  heard = null;
+  heard = null; held = null;
   if (android && track && entry) {
     // set() sends the queue to the native player before the load that names the entry. The new
     // play instance begins when the player reports the entry started (see nativePlayback).
@@ -443,7 +443,9 @@ function topUpRadio() {
 let autoplaying = -1;
 let autoplayTried: { entry: string; at: number } | null = null;
 let autoplayRetry: ReturnType<typeof setTimeout> | undefined;
-let skipWhenAdded = false;
+// Next pressed on the last song while a turn was out: the queue and entry it was pressed on. Only
+// that queue's turn moves on from it, and only while that entry plays; any other playback lets go.
+let held: { station: number; entry: string } | null = null;
 let sleepsAfterSong = false;
 async function autoplay() {
   if (!local || autoplaying === station || !getSettings().autoplay || sleepsAfterSong || !state.connected || state.reach.away) return;
@@ -473,11 +475,13 @@ async function autoplay() {
     const adding = fresh.filter(t => !queuedIds.has(t.id));
     const queued = keepQueued(state.autoplay, state.entryIds);
     if (!adding.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
-    const last = state.index === state.queue.length - 1;
     webAppend(adding, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
     // Next was held for these: on to the first of them.
-    if (skipWhenAdded && last && state.index + 1 < state.queue.length) webLoad(state.index + 1);
-  } finally { if (autoplaying === mine) { autoplaying = -1; skipWhenAdded = false; } }
+    if (held?.station === mine && mine === station && currentEntry(state) === held.entry && state.index + 1 < state.queue.length) webLoad(state.index + 1);
+  } finally {
+    if (autoplaying === mine) autoplaying = -1;
+    if (held?.station === mine) held = null;
+  }
 }
 
 // Lock screen, notification shade, headphones, and the Flip's cover screen.
@@ -881,6 +885,7 @@ export const player = {
   // as play, so pausing would leave it paused by surprise. pause() still stops it.
   toggle() {
     if (state.starting) return;
+    held = null;
     if (android) {
       if (state.index < 0) return;
       // A song that already ended starts over as a new play, as in the browser.
@@ -902,6 +907,7 @@ export const player = {
   // session's, and the sleep timer's. Unlike toggle, it never starts anything, and it doesn't
   // trust the page's copy of the state (a hidden desktop window gets no snapshots).
   pause() {
+    held = null;
     if (android) { if (state.index >= 0) android.player.pause(); return; }
     if (web) {
       // A song still starting (or retrying as MP3) stays stopped, and the deck stops waiting for it.
@@ -938,12 +944,13 @@ export const player = {
       const next = following(state.index, state.queue.length, state.repeat, 'skip');
       if (next >= 0) webLoad(next);
       // The last song, with autoplay finding what follows it: on to its first song when it's in.
-      else if (autoplaying === station && state.repeat === 'off') skipWhenAdded = true;
+      else if (autoplaying === station && state.repeat === 'off' && getSettings().autoplay && currentEntry(state)) held = { station, entry: currentEntry(state)! };
       return;
     }
     void desktop!.command({ type: 'next' }).then(report);
   },
   previous() {
+    held = null;
     if (local) {
       const previous = preceding(state.index, state.queue.length, state.repeat);
       // A station has no start to go back to: Previous only moves back in the queue.

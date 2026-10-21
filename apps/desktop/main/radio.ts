@@ -23,9 +23,11 @@ export interface RadioShell<C extends RadioClient> {
   // Whether autoplay may add songs now: on in Settings, and no sleep timer waiting for this song
   // to end (its listener wants the music to stop there).
   autoplay(): boolean;
-  // Moves on to the next song (Next, held while autoplay was finding it one).
-  next(): void;
+  // Moves on to the next song (Next, held while autoplay was finding it one), if `still` says so
+  // when the engine takes it: other commands can be waiting ahead of it.
+  next(still: () => boolean): void;
 }
+type HeldNext = { turn: number; generation: number; entry: string };
 const distinct = (tracks: readonly Track[]) => [...new Map(tracks.map(track => [track.id, track])).values()];
 
 // Radio lives in the main process, not in a window, so it keeps topping up while every window
@@ -38,8 +40,10 @@ export class Radio<C extends RadioClient> {
   private station: { generation: number; view: { label: string }; topping: boolean; tried: { entry: string; at: number } | null } | null = null;
   private autoplaying = false;
   private autoplayTried: { entry: string; at: number } | null = null;
-  // Next was pressed on the last song while a turn was out: it moves on once the songs are in.
-  private skipping = false;
+  // Next was pressed on the last song while a turn was out: it moves on from that entry once the
+  // songs are in. Only that turn's songs take it, and any other playback lets go of it.
+  private held: HeldNext | null = null;
+  private turns = 0;
   private autoplayed: AutoplayView = noAutoplay;
   // Songs appended and not yet seen in a snapshot: the audio host names their entries, and its
   // reply can come before the snapshot that shows them.
@@ -52,10 +56,18 @@ export class Radio<C extends RadioClient> {
   // press until the songs are in, rather than the engine refusing it. Repeat or radio, or no turn
   // out, leave it to the engine.
   holdNext(): boolean {
-    const player = this.shell.player();
-    if (!this.autoplaying || this.station || player.repeat !== 'off' || player.currentIndex !== player.queue.length - 1) return false;
-    this.skipping = true;
+    const player = this.shell.player(); const entry = player.entryIds[player.currentIndex];
+    if (!this.autoplaying || this.station || !this.shell.autoplay() || player.repeat !== 'off' || !entry || player.currentIndex !== player.queue.length - 1) return false;
+    this.held = { turn: this.turns, generation: this.generation, entry };
     return true;
+  }
+  // Previous, pause, a jump, or any other playback command from the listener: a held Next is let go.
+  letGo() { this.held = null; }
+  // A held Next still stands: nothing let go of it, the queue is the same, and its entry still plays.
+  private holds(held: HeldNext) {
+    const player = this.shell.player();
+    return this.held === held && held.generation === this.generation && !this.station && player.repeat === 'off'
+      && player.entryIds[player.currentIndex] === held.entry;
   }
 
   // Called with every host snapshot before it is published. Finds the entries autoplay's last
@@ -71,7 +83,7 @@ export class Radio<C extends RadioClient> {
 
   // Call just before any other playback replaces the queue, and when the engine or session goes away.
   end() {
-    this.generation++;
+    this.generation++; this.held = null;
     if (this.station) { this.station = null; this.shell.changed(); }
   }
 
@@ -145,7 +157,8 @@ export class Radio<C extends RadioClient> {
     if (!turn || this.autoplayed.missed === turn.entry) return null;
     if (this.autoplayTried?.entry === turn.entry && now - this.autoplayTried.at < 60_000) return null;
     this.autoplaying = true; this.autoplayTried = { entry: turn.entry, at: now };
-    const radio = this; const generation = this.generation;
+    const radio = this; const generation = this.generation; const mine = ++this.turns;
+    let moving = false;
     const current = () => {
       const latest = radio.shell.player();
       return generation === radio.generation && !radio.station && radio.shell.client() === client && radio.shell.autoplay()
@@ -168,11 +181,14 @@ export class Radio<C extends RadioClient> {
       if (!adding.length) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); return; }
       radio.shell.remember(adding);
       radio.marking = { before: new Set(latest.entryIds), ids: new Set(adding.map(track => track.id)) };
-      const onLast = latest.currentIndex === latest.queue.length - 1;
       yield* radio.shell.append(client, adding).pipe(Effect.tapError(() => Effect.sync(() => { radio.marking = null; })));
-      // Next was held for these: on to the first of them.
-      if (radio.skipping && onLast) radio.shell.next();
+      // Next was held for these: on to the first of them, if it still stands when the engine takes it.
+      const held = radio.held;
+      if (held?.turn === mine && radio.holds(held)) {
+        moving = true;
+        radio.shell.next(() => { const still = radio.holds(held); if (radio.held === held) radio.held = null; return still; });
+      }
     });
-    return this.shell.background(task).finally(() => { this.autoplaying = false; this.skipping = false; });
+    return this.shell.background(task).finally(() => { this.autoplaying = false; if (!moving && this.held?.turn === mine) this.held = null; });
   }
 }

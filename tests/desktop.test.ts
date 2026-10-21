@@ -710,6 +710,14 @@ describe('main-process radio', () => {
     let session: typeof client | null = client;
     let autoplay = false;
     const log: string[] = [];
+    // An append the host hasn't acknowledged yet, and a held Next waiting for the audio lane.
+    let appendGate: Promise<void> | null = null;
+    let laneBusy = false;
+    const lane: (() => boolean)[] = [];
+    const take = (still: () => boolean) => {
+      if (!still()) { log.push('next let go'); return; }
+      log.push('next'); player = { ...player, currentIndex: player.currentIndex + 1 };
+    };
     const radio: Radio<typeof client> = new Radio({
       client: () => session, player: () => player, known: id => known.get(id), remember: tracks => { for (const item of tracks) known.set(item.id, item); },
       replace: (_client, tracks) => Effect.sync(() => {
@@ -724,11 +732,11 @@ describe('main-process radio', () => {
       append: (_client, tracks) => Effect.sync(() => {
         log.push(`append ${tracks.map(item => item.id).join(' ')}`);
         player = { ...player, queue: [...player.queue, ...tracks], entryIds: [...player.entryIds, ...tracks.map(() => `e${++entries}`)] };
-      }),
+      }).pipe(Effect.zipRight(Effect.promise(() => appendGate ?? Promise.resolve()))),
       background: task => Effect.runPromise(Effect.either(task)),
       changed: () => log.push(`radio ${radio.view?.label ?? 'off'}`),
       autoplay: () => autoplay,
-      next: () => { log.push('next'); player = { ...player, currentIndex: player.currentIndex + 1 }; },
+      next: still => laneBusy ? lane.push(still) : take(still),
     });
     return {
       radio, client, known, log, pending, autoplay: (on: boolean) => { autoplay = on; },
@@ -738,6 +746,10 @@ describe('main-process radio', () => {
       player: () => player, play: (currentIndex: number) => { player = { ...player, currentIndex }; },
       load: (ids: string[], currentIndex: number) => { player = snapshot({ queue: songs(...ids), entryIds: ids.map(() => `e${++entries}`), currentIndex, playing: true, position: 42 }); },
       disconnect: () => { session = null; },
+      // The host acknowledges appends only when `ack` is called.
+      holdAppends: () => { let ack!: () => void; appendGate = new Promise(done => { ack = done; }); return () => { appendGate = null; ack(); }; },
+      // Commands ahead on the audio lane: a held Next waits until `free` runs it.
+      busyLane: () => { laneBusy = true; return () => { laneBusy = false; for (const still of lane.splice(0)) take(still); }; },
     };
   }
   const run = (effect: Effect.Effect<void, Error>) => Effect.runPromise(Effect.either(effect));
@@ -978,6 +990,80 @@ describe('main-process radio', () => {
     load(['a', 'b'], 1);
     set({ repeat: 'all' });
     expect(radio.holdNext()).toBe(false);
+  });
+
+  it('a held Next is let go by Previous, and isn\'t held with autoplay off', async () => {
+    const { radio, log, autoplay, load, set, respond, setSimilar } = fixture();
+    autoplay(true);
+    setSimilar(id => id === 'a' ? [] : null);
+    load(['a', 'b'], 1);
+    const turn = radio.topUp()!;
+    expect(radio.holdNext()).toBe(true);
+    // Previous starts the song over: the same entry, but the Next no longer stands.
+    radio.letGo();
+    set({ position: 0 });
+    respond('b', songs('n1'));
+    await turn;
+    expect(log).toEqual(['append n1']);
+    load(['c', 'd'], 1);
+    const off = radio.topUp()!;
+    autoplay(false);
+    expect(radio.holdNext()).toBe(false);
+    respond('d', []);
+    await off;
+  });
+
+  it('a held Next doesn\'t carry over to a new queue, or to the next turn', async () => {
+    const { radio, log, autoplay, load, respond, setSimilar, player } = fixture();
+    autoplay(true);
+    setSimilar(id => id === 'a' || id === 'x' ? [] : null);
+    load(['a', 'b'], 1);
+    const first = radio.topUp()!;
+    expect(radio.holdNext()).toBe(true);
+    // Another queue, whose own turn is out when the first answer lands.
+    radio.end();
+    respond('b', songs('n1'));
+    await first;
+    load(['x', 'y'], 1);
+    const second = radio.topUp()!;
+    respond('y', songs('m1'));
+    await second;
+    expect(log).toEqual(['append m1']);
+    expect(player().queue[player().currentIndex].id).toBe('y');
+  });
+
+  it('a held Next waits for the host to take the songs, and then for its turn on the audio lane', async () => {
+    const { radio, log, autoplay, load, respond, setSimilar, player, holdAppends, busyLane } = fixture();
+    autoplay(true);
+    setSimilar(id => id === 'a' ? [] : null);
+    // Other playback begins while the host is taking the songs: nothing moves.
+    load(['a', 'b'], 1);
+    let ack = holdAppends();
+    let turn = radio.topUp()!;
+    expect(radio.holdNext()).toBe(true);
+    respond('b', songs('n1'));
+    await vi.waitFor(() => expect(log).toEqual(['append n1']));
+    radio.end();
+    load(['p', 'q'], 0);
+    ack();
+    await turn;
+    expect(log).toEqual(['append n1']);
+    expect(player().queue[player().currentIndex].id).toBe('p');
+    // Previous queued on the lane ahead of the held Next: the Next is let go when its turn comes.
+    log.length = 0;
+    setSimilar(id => id === 'c' ? [] : null);
+    load(['c', 'd'], 1);
+    ack = holdAppends();
+    const free = busyLane();
+    turn = radio.topUp()!;
+    expect(radio.holdNext()).toBe(true);
+    respond('d', songs('m1'));
+    ack();
+    await turn;
+    radio.letGo();
+    free();
+    expect(log).toEqual(['append m1', 'next let go']);
+    expect(player().queue[player().currentIndex].id).toBe('d');
   });
 
   it('autoplay\'s songs land without a held Next moving anything', async () => {
