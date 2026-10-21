@@ -60,9 +60,20 @@ test.describe('autoplay', () => {
     await app.deck.getByRole('button', { name: 'Repeat one', exact: true }).click();
     await expect.poll(() => app.titles()).toEqual([...record, ...similar.slice(0, 10)]);
 
-    // A server with nothing similar: nothing is added, and the deck and the queue say so. The
-    // menu's Play queues the song alone.
+    // A server with nothing similar, as one without artist information: songs at random from the
+    // song's genre instead. The menu's Play queues the song alone.
     fake.similar = false;
+    await app.deck.getByRole('button', { name: 'Test Pressing', exact: true }).click();
+    await expect(app.heading).toHaveText('Test Pressing');
+    await app.chooseFromMenu(app.row('Tail Light'), 'Play');
+    await expect(app.deck.getByText('Next:')).toBeVisible();
+    expect(fake.callsTo('randomSongs').at(-1)?.args).toEqual([{ size: 30, genre: 'Folk' }]);
+    await app.openQueue();
+    await expect.poll(() => app.titles()).toHaveLength(11);
+    await expect(app.main.getByRole('heading', { name: 'Added by autoplay' })).toHaveCount(1);
+
+    // A server with nothing at all: nothing is added, and the deck and the queue say so.
+    fake.random = false;
     await app.deck.getByRole('button', { name: 'Test Pressing', exact: true }).click();
     await expect(app.heading).toHaveText('Test Pressing');
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
@@ -71,9 +82,9 @@ test.describe('autoplay', () => {
     await expect(app.main.getByText('Autoplay found nothing new like this song on your server, so the queue ends here.')).toBeVisible();
     expect(await app.titles()).toEqual(['Tail Light']);
     // Asked once, and not again for that entry.
-    expect(fake.callsTo('similarSongs').slice(1).map(call => call.args)).toEqual([[special.tailLight, 30]]);
+    expect(fake.callsTo('similarSongs').slice(2).map(call => call.args)).toEqual([[special.tailLight, 30]]);
     await app.page.waitForTimeout(500);
-    expect(fake.callsTo('similarSongs')).toHaveLength(2);
+    expect(fake.callsTo('similarSongs')).toHaveLength(3);
     await app.openSettings();
     await expect(app.main.getByRole('checkbox', { name: /^Keep playing similar songs/ })).toBeChecked();
   });

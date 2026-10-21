@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Effect, Either, Schema } from 'effect';
-import { emptyPlayer, type PlayerSnapshot, type Track } from '../packages/core/contracts';
+import { emptyPlayer, type PlayerSnapshot, type RandomSongOptions, type Track } from '../packages/core/contracts';
 import { OpenPathsSchema } from '../packages/core/desktopValidation';
 import { checkAudioPaths } from '../apps/desktop/main/localFiles';
 import { KeepRequestSchema, KeptIdSchema } from '../packages/core/desktopValidation';
@@ -699,6 +699,8 @@ describe('main-process radio', () => {
     // Pending similar-song requests by seed, resolved by the test.
     const pending = new Map<string, (tracks: Track[]) => void>();
     let similar: (id: string) => Track[] | null = () => null;
+    // The server's random songs, by the options asked with: none unless the test says.
+    let random: (options: RandomSongOptions) => Track[] = () => [];
     const client = {
       topSongs: vi.fn((_id: string, _count: number) => Effect.succeed(songs('top1', 'top2'))),
       album: vi.fn((_id: string) => Effect.succeed({ album, tracks: songs('al1', 'al2') })),
@@ -706,6 +708,7 @@ describe('main-process radio', () => {
         const ready = similar(id);
         return ready ? Effect.succeed(ready) : Effect.promise(() => new Promise<Track[]>(done => pending.set(id, done)));
       }),
+      randomSongs: vi.fn((options: RandomSongOptions) => Effect.succeed(random(options))),
     } satisfies RadioClient;
     let session: typeof client | null = client;
     let autoplay = false;
@@ -743,6 +746,7 @@ describe('main-process radio', () => {
       set: (changes: Partial<PlayerSnapshot>) => { player = { ...player, ...changes }; },
       respond: (id: string, tracks: Track[]) => { pending.get(id)!(tracks); pending.delete(id); },
       setSimilar: (next: (id: string) => Track[] | null) => { similar = next; },
+      setRandom: (next: (options: RandomSongOptions) => Track[]) => { random = next; },
       player: () => player, play: (currentIndex: number) => { player = { ...player, currentIndex }; },
       load: (ids: string[], currentIndex: number) => { player = snapshot({ queue: songs(...ids), entryIds: ids.map(() => `e${++entries}`), currentIndex, playing: true, position: 42 }); },
       disconnect: () => { session = null; },
@@ -864,7 +868,7 @@ describe('main-process radio', () => {
   it('says no station began when other playback took over while the queue was replaced', async () => {
     // Turning repeat on ends radio (setPlayMode in main/index.ts), even while the queue is replaced;
     // radio:start then leaves repeat alone.
-    const client = { topSongs: () => Effect.succeed(songs('top1')), album: () => Effect.die('unused'), similarSongs: () => Effect.succeed(songs('s1', 's2')) };
+    const client = { topSongs: () => Effect.succeed(songs('top1')), album: () => Effect.die('unused'), similarSongs: () => Effect.succeed(songs('s1', 's2')), randomSongs: () => Effect.succeed([]) };
     const radio: Radio<typeof client> = new Radio({
       client: () => client, player: () => snapshot(), known: () => undefined, remember: () => undefined,
       replace: () => Effect.sync(() => radio.end()), follow: () => Effect.void, append: () => Effect.void,
@@ -937,6 +941,51 @@ describe('main-process radio', () => {
     expect(radio.autoplayView.missed).toBe(player().entryIds[2]);
     expect(radio.topUp(120_000)).toBeNull();
     expect(client.similarSongs).toHaveBeenCalledTimes(3);
+  });
+
+  it('autoplay falls back to songs at random from the last song\'s genre, then from anywhere, when nothing is like it', async () => {
+    const { radio, client, log, autoplay, load, set, player, setSimilar, setRandom } = fixture();
+    autoplay(true);
+    setSimilar(() => []);
+    setRandom(options => options.genre === 'Ghazal' ? [...songs('a'), ...many('g', 15)] : many('r', 15));
+    load(['a'], 0);
+    set({ queue: [{ ...player().queue[0], genre: 'Ghazal' }] });
+    await radio.topUp();
+    expect(client.randomSongs.mock.calls).toEqual([[{ size: 30, genre: 'Ghazal' }]]);
+    expect(log).toEqual([`append ${many('g', 10).map(item => item.id).join(' ')}`]);
+    // A genre with nothing new, or a song without one: anywhere on the server.
+    log.length = 0; client.randomSongs.mockClear();
+    setRandom(options => options.genre ? [] : many('r', 15));
+    load(['b'], 0);
+    set({ queue: [{ ...player().queue[0], genre: 'Sufi' }] });
+    await radio.topUp();
+    expect(client.randomSongs.mock.calls).toEqual([[{ size: 30, genre: 'Sufi' }], [{ size: 30 }]]);
+    expect(log).toEqual([`append ${many('r', 10).map(item => item.id).join(' ')}`]);
+    // A genre longer than a request may carry: anywhere at once.
+    log.length = 0; client.randomSongs.mockClear();
+    load(['d'], 0);
+    set({ queue: [{ ...player().queue[0], genre: 'x'.repeat(257) }] });
+    await radio.topUp();
+    expect(client.randomSongs.mock.calls).toEqual([[{ size: 30 }]]);
+    // Random songs that were all queued already: nothing is added, the queue doesn't say it ends,
+    // and the turn is tried again a minute on.
+    log.length = 0;
+    setRandom(() => songs('e'));
+    load(['e'], 0);
+    await radio.topUp(0);
+    expect(log).toEqual([]);
+    expect(radio.autoplayView.missed).toBeNull();
+    expect(radio.topUp(30_000)).toBeNull();
+    setRandom(() => many('r', 15));
+    await radio.topUp(61_000);
+    expect(log).toEqual([`append ${many('r', 10).map(item => item.id).join(' ')}`]);
+    // Only when the server has nothing at all does the queue end there.
+    log.length = 0;
+    setRandom(() => []);
+    load(['c'], 0);
+    await radio.topUp();
+    expect(log).toEqual(['radio off']);
+    expect(radio.autoplayView.missed).toBe(player().entryIds[0]);
   });
 
   it('autoplay leaves alone repeat, radio, files and stations, and a queue that changed while it asked', async () => {

@@ -194,6 +194,8 @@ export class FakeNavidrome {
   streamed: string[] = [];
   /** false: getSimilarSongs finds nothing, as on a server without artist information. */
   similar = true;
+  /** false: getRandomSongs finds nothing, as on an empty server. */
+  random = true;
   private issued = 0;
   private http: SubsonicClient | null = null;
 
@@ -207,7 +209,7 @@ export class FakeNavidrome {
     this.recent = []; this.frequent = []; this.listening = [];
     this.shareList = []; this.sharing = true; this.sharesMade = 0;
     this.stationStreams = []; this.listedStations.clear();
-    this.unreachable = false; this.streamed = []; this.similar = true;
+    this.unreachable = false; this.streamed = []; this.similar = true; this.random = true;
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
@@ -292,7 +294,7 @@ export class FakeNavidrome {
       tracks: catalog.tracks.filter(t => this.starred.has(t.id)).map(t => this.track(t.id)),
     })),
     randomSongs: (options: RandomSongOptions) => this.op('randomSongs', [options], () => Effect.succeed(this.songs()
-      .filter(t => (!options.genre || t.genre === options.genre) && (options.fromYear === undefined || (t.year ?? 0) >= options.fromYear)
+      .filter(t => this.random && (!options.genre || t.genre === options.genre) && (options.fromYear === undefined || (t.year ?? 0) >= options.fromYear)
         && (options.toYear === undefined || (t.year ?? 0) <= options.toYear))
       .slice(0, options.size).map(t => this.track(t.id)))),
     // The real connector, over HTTP to native.ts: Navidrome's own API, or search3 without it.

@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, AutoplayView, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../../../packages/core/autoplay';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, fallbackAsks, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../../../packages/core/autoplay';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
 import { OUT_OF_REACH } from '../../../../../packages/core/reach';
 import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
@@ -472,11 +472,24 @@ async function autoplay() {
       if (!result.ok) { clearTimeout(autoplayRetry); autoplayRetry = setTimeout(topUp, 61_000); return; }
       fresh.push(...freshSongs(result.value, taken, AUTOPLAY_SONGS - fresh.length));
     }
+    let drawn = 0;
+    for (const ask of fallbackAsks(turn.seeds[0])) {
+      if (fresh.length) break;
+      const result = await api.randomSongs(ask);
+      if (!current()) return;
+      if (!result.ok) { clearTimeout(autoplayRetry); autoplayRetry = setTimeout(topUp, 61_000); return; }
+      drawn += result.value.length;
+      fresh.push(...freshSongs(result.value, taken, AUTOPLAY_SONGS));
+    }
     // Songs queued by hand while the server answered aren't added again.
     const queuedIds = new Set(state.queue.map(t => t.id));
     const adding = fresh.filter(t => !queuedIds.has(t.id));
     const queued = keepQueued(state.autoplay, state.entryIds);
-    if (!adding.length) { set({ autoplay: { ...queued, missed: turn.entry } }); return; }
+    // Random songs all queued already: tried again in a minute, not given up on.
+    if (!adding.length) {
+      if (drawn) { clearTimeout(autoplayRetry); autoplayRetry = setTimeout(topUp, 61_000); } else set({ autoplay: { ...queued, missed: turn.entry } });
+      return;
+    }
     webAppend(adding, entries => ({ autoplay: { ...queued, added: [...queued.added, ...entries] } }));
     // Next was held for these: on to the first of them.
     if (held?.station === mine && mine === station && currentEntry(state) === held.entry && state.index + 1 < state.queue.length) webLoad(state.index + 1);
