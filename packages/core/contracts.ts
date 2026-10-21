@@ -1,6 +1,7 @@
 import type { Schema } from 'effect';
 import type { CommandSchema, ConnectionSchema } from './validation';
 import type { StreamQuality } from './streamQuality';
+import type { StoredLibrary } from './stored';
 
 export type PlayerCommand = Schema.Schema.Type<typeof CommandSchema>;
 export type Connection = Schema.Schema.Type<typeof ConnectionSchema>;
@@ -470,6 +471,8 @@ export interface SystemMediaApi {
 
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
+  // Library answers kept on this computer (packages/core/stored.ts). Absent from older bridges.
+  stored?: StoredLibrary;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
   command(command: PlayerCommand): Promise<Result>;
   openFiles(): Promise<Result>;
@@ -582,6 +585,8 @@ export interface AndroidPlayback {
 export interface AndroidQueueSnapshot { queue: Track[]; entryIds: string[]; index: number; playback: AndroidPlayback }
 export interface AndroidBridge {
   library: LibraryApi;
+  // Library answers kept on the phone (packages/core/stored.ts).
+  stored?: StoredLibrary;
   // Songs kept on the phone. Absent from older bridges.
   kept?: KeptApi;
   session: {

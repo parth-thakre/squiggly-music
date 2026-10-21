@@ -2,12 +2,12 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { isStation } from '../../../../../packages/core/stations';
 import type { LyricLine, LyricWord, Lyrics as LyricsData, Track } from '../../../../../packages/core/contracts';
 import { timeWords } from '../../../../../packages/lyrics/words';
-import { api, useResource } from './library';
+import { useKept } from './library';
 import { current, getPlayer, livePosition, player, usePlayer } from './player';
 import { nav, useRoute } from './route';
 import { updateSettings, useSettings } from './settings';
 import { reducedMotion } from './theme';
-import { splitTitle } from './ui';
+import { splitTitle, useWide } from './ui';
 
 // Lines and words light a moment early, so the change lands as the singing starts rather than just after.
 const LEAD = .1;
@@ -53,7 +53,8 @@ function scrollerOf(element: HTMLElement) {
 // A song's lyrics, shared by the sheet and the deck (one lookup for both).
 function useLyrics(track: Track) {
   const { lyricsLookup } = useSettings();
-  const result = useResource(`lyrics:${track.id}:${lyricsLookup}`, () => api.lyrics(
+  // The desktop keeps lyrics itself (lyricsCache.ts); the phone keeps them with its other answers.
+  const result = useKept(`lyrics:${track.id}:${lyricsLookup}`, from => from.lyrics(
     { id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration }, lyricsLookup));
   const raw = result?.ok ? result.value : null;
   // Lyrics from an older bridge may lack word times; complete them the same way the server does.
@@ -179,7 +180,9 @@ const Line = memo(function Line({ index, line, synced, state, onSeek }: {
 export function DeckLyrics() {
   const track = usePlayer(current);
   const route = useRoute();
-  if (!track || isStation(track) || route.view === 'lyrics') return null;
+  // A phone's deck has no room for them (app.css), so they aren't looked up or followed there.
+  const wide = useWide();
+  if (!wide || !track || isStation(track) || route.view === 'lyrics') return null;
   return <DeckLines key={track.id} track={track} />;
 }
 // The synced line being sung, looked at again when the next one is due to start rather than every

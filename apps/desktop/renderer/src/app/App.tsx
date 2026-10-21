@@ -31,6 +31,7 @@ import { keptCount, keptSupported, useKeptVersion } from './keptState';
 import { pageFor, serverPages } from './offline';
 import { DiagnosticsSwitch, showDiagnosticsSetting } from './views';
 import { diagnosticsBuilt, useSettings } from './settings';
+import { startWarming } from './warm';
 
 onMenuError(message => player.showError(message));
 
@@ -58,6 +59,7 @@ export function App() {
   useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), 600);
   useCommandKeys();
   useFileDrops();
+  useEffect(startWarming, []);
   // On phones the status bar takes the room colour too.
   useEffect(() => { document.querySelector('meta[name="theme-color"]')?.setAttribute('content', palette.ground); }, [palette.ground]);
   // Without a title bar, the window's own buttons take the room's ink, and its edges the ground.
@@ -255,7 +257,7 @@ const Deck = memo(function Deck() {
             <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
             {track.album && <>
               {' on '}
-              {track.albumId ? <button type="button" className="link" onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
+              {track.albumId ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
             </>}
           </>}
         </p>

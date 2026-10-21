@@ -9,6 +9,8 @@ import { keyOf } from '../../../packages/core/kept';
 import { LAUNCH_WAIT, OUT_OF_REACH, PROBE_TIMEOUT, Reach, type ProbeOutcome } from '../../../packages/core/reach';
 import { SubsonicClient, libraryCall, reachOf, resolveServerAddress, Unreachable, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
 import { createKept } from './kept';
+import { createAnswers } from './stored';
+import { NOT_STORED, storedKey, type StoredLibrary } from '../../../packages/core/stored';
 import { createPlays } from './plays';
 import { nativeFetch } from './http';
 import { Squiggly, type NativeItem, type NativeOp, type NativePlayback } from './plugin';
@@ -79,12 +81,18 @@ const reach = new Reach({
   },
 });
 const away = () => reach.state.away;
+// Library answers kept on the phone for the account (stored.ts).
+const answers = createAnswers();
 const plays = createPlays({ client: () => client, away, failed: () => reach.failed(), changed: count => setSession({ queuedPlays: count }) });
 session = { ...session, queuedPlays: plays.size };
 
 async function connectTo(typed: Connection, { save }: { save: boolean }): Promise<Result<ConnectOutcome>> {
   const mine = ++generation;
+  // The saved sign-in, already answered at launch (reconnectKept): it isn't asked twice.
+  const pinged = answeredAtLaunch?.connection === typed ? answeredAtLaunch : null;
+  answeredAtLaunch = null;
   const attempt = await Effect.runPromise(Effect.either(Effect.gen(function* () {
+    if (pinged) return { type: 'ready' as const, ...pinged };
     const address = yield* resolveServerAddress(typed, makeClient);
     // Only plain HTTP answered: nothing is signed in until the person agrees (App.tsx's Connect).
     if (address.type === 'plain-http') return address;
@@ -98,6 +106,7 @@ async function connectTo(typed: Connection, { save }: { save: boolean }): Promis
   if (attempt.right.type === 'plain-http') return { ok: true, value: attempt.right };
   const { connection, candidate, info } = attempt.right;
   client = candidate; unverified = null;
+  answers.bind(keyOf(candidate.baseUrl, connection.username));
   reach.leave();
   await Squiggly.setServer({ coverBase: candidate.coverArtBase(), key: coverKey(candidate, connection.username) }).catch(() => undefined);
   // Kept songs belong to one account: another one forgets them, and plays waiting to be reported.
@@ -133,6 +142,7 @@ async function reconnect(): Promise<Result> {
   return result.ok ? { ok: true, value: undefined } : result;
 }
 
+let answeredAtLaunch: { connection: Connection; candidate: SubsonicClient; info: { name: string } } | null = null;
 async function reconnectKept(saved: Connection): Promise<Result | null> {
   let candidate: SubsonicClient;
   try { candidate = makeClient(saved); } catch { return null; }
@@ -143,8 +153,10 @@ async function reconnectKept(saved: Connection): Promise<Result | null> {
   const outcome = await withTimeout(Effect.runPromise(Effect.either(candidate.ping())), LAUNCH_WAIT, 'late' as const);
   if (mine !== generation) return { ok: false, error: 'Connection canceled.' };
   // Answered, or refused: the usual sign-in, which says why when it fails.
-  if (outcome !== 'late' && (Either.isRight(outcome) || reachOf(outcome.left) === 'refused')) return null;
+  if (outcome !== 'late' && Either.isRight(outcome)) { answeredAtLaunch = { connection: saved, candidate, info: outcome.right }; return null; }
+  if (outcome !== 'late' && reachOf(outcome.left) === 'refused') return null;
   client = candidate; unverified = saved;
+  answers.bind(key);
   await Squiggly.setServer({ coverBase: candidate.coverArtBase(), key: coverKey(candidate, saved.username) }).catch(() => undefined);
   plays.bind(key);
   setSession({ connected: true, sessionId: crypto.randomUUID(), account: `${candidate.baseUrl}\n${saved.username}`, serverName: hostName(candidate) }, { reconnecting: false, reconnectError: null });
@@ -169,7 +181,11 @@ async function call<T>(method: LibraryMethod, args: unknown[]): Promise<Result<T
   const result = await Effect.runPromise(Effect.either(libraryCall(current, method, args)));
   // An answer from an account that has since been replaced must not reach the page.
   if (current !== client) return { ok: false, error: 'Server session changed. Try again.' };
-  if (Either.isRight(result)) return { ok: true, value: result.right.value as T };
+  if (Either.isRight(result)) {
+    const key = storedKey(method, args);
+    if (key) void answers.write(key, result.right.value);
+    return { ok: true, value: result.right.value as T };
+  }
   const error = message(result.left, 'The request failed.');
   if (result.left instanceof Unreachable) { reach.failed(); return { ok: false, error, unreachable: true }; }
   return { ok: false, error };
@@ -210,6 +226,27 @@ const library: LibraryApi = {
   shares: () => call('shares', []),
   deleteShare: id => call('deleteShare', [id]),
   radioStations: () => call('radioStations', []),
+};
+
+// The same requests, answered with what was kept from the last time. Arguments go as library's do,
+// so they name the same answer.
+async function keptAnswer<T>(method: LibraryMethod, args: unknown[]): Promise<Result<T>> {
+  const key = client && storedKey(method, args);
+  const kept = key ? await answers.read(key) : undefined;
+  return kept === undefined ? { ok: false, error: NOT_STORED } : { ok: true, value: kept as T };
+}
+const stored: StoredLibrary = {
+  albums: (type, offset, size, years) => keptAnswer('albums', years ? [type, offset, size, years] : [type, offset, size]),
+  album: id => keptAnswer('album', [id]),
+  artists: () => keptAnswer('artists', []),
+  artist: id => keptAnswer('artist', [id]),
+  playlists: () => keptAnswer('playlists', []),
+  genres: () => keptAnswer('genres', []),
+  starred: () => keptAnswer('starred', []),
+  topSongs: (artistId, count) => keptAnswer('topSongs', [artistId, count]),
+  lyrics: (track, lookup) => keptAnswer('lyrics', [{ id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration }, lookup]),
+  artistInfo: artistId => keptAnswer('artistInfo', [artistId]),
+  radioStations: () => keptAnswer('radioStations', []),
 };
 
 // Player -----------------------------------------------------------------------------------
@@ -322,6 +359,7 @@ async function saveM3u(name: unknown, entries: unknown): Promise<Result> {
 export const androidBridge: AndroidBridge = {
   saveM3u,
   library,
+  stored,
   kept: createKept({ client: () => client, away, unreachable: () => reach.failed() }),
   session: {
     get: () => session,
@@ -347,6 +385,7 @@ export const androidBridge: AndroidBridge = {
       // plays waiting to be reported.
       await Squiggly.keptForgetAll().catch(() => undefined);
       plays.clear();
+      await answers.clear();
       client = null; savedAccount = null;
       await Squiggly.setServer({ coverBase: null, key: null }).catch(() => undefined);
       await Squiggly.forgetAccount().catch(() => undefined);

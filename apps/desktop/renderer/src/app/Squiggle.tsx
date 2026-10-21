@@ -3,11 +3,19 @@ import { reducedMotion } from './theme';
 import { time } from './ui';
 
 // The squiggle is the app's "now playing" mark and its seek bar. It keeps squiggling while
-// the window is visible: every frame while playing, a calmer 30 frames a second while paused.
-// A hidden window draws nothing, and reduced motion gets a still wave. Position is
-// interpolated locally between the occasional snapshots; no clock lives in app state.
+// the window is visible: up to 60 frames a second while playing, a calmer 30 while paused. A
+// phone draws half as often: the wave moves under half a pixel a frame either way, and the
+// WebView gets to rest between them. A hidden window draws nothing, and reduced motion gets a
+// still wave. Position is interpolated locally between the occasional snapshots; no clock lives
+// in app state. Each frame only paints the canvas: the clock and the range's value are written
+// when they change, and the canvas's size comes from its ResizeObserver, so a frame never makes
+// the page lay itself out again.
 // Radians per second the wave travels, and how tall it stands while paused (1 is full height).
 const PLAYING_SPEED = 2.4, PAUSED_SPEED = 1.3, PAUSED_LIFT = .82;
+const coarse = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : null;
+// The shortest time between frames, playing and paused, in milliseconds.
+const playingGap = () => coarse?.matches ? 1000 / 30 - 2 : 1000 / 60 - 2;
+const pausedGap = () => coarse?.matches ? 1000 / 15 : 1000 / 30;
 
 export function Squiggle({ label, identity, position, duration, playing, color, rest, onSeek, live = false }: {
   label: string;
@@ -43,19 +51,22 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     // The system setting or the theme's motion token (reduced or none) both mean a still wave.
     const reduced = reducedMotion;
     let frame = 0, timer: ReturnType<typeof setTimeout> | undefined, last = performance.now(), phase = 0, spoken = '';
+    let { width, height } = element.getBoundingClientRect();
     let speed = latest.current.playing ? PLAYING_SPEED : PAUSED_SPEED, lift = latest.current.playing ? 1 : PAUSED_LIFT;
     const draw = (now: number) => {
       const { position: value, duration: length, playing: active, at, color: ink, rest: line, live: onAir } = latest.current;
       const elapsed = active ? Math.min((now - at) / 1000, 1) : 0;
       const seconds = dragging.current ?? Math.min(length, value + elapsed);
-      if (clock.current) clock.current.textContent = onAir ? 'Live' : time(seconds);
+      const shown = onAir ? 'Live' : time(seconds);
+      if (clock.current && clock.current.textContent !== shown) clock.current.textContent = shown;
       if (input.current) {
-        if (dragging.current === null) input.current.value = String(seconds);
+        // Tenths, as its step: the value changes ten times a second, not every frame.
+        const value = String(Math.floor(seconds * 10) / 10);
+        if (dragging.current === null && input.current.value !== value) input.current.value = value;
         // Written only when the words change, so assistive tech isn't told sixty times a second.
         const text = `${time(seconds)} of ${time(length)}`;
         if (text !== spoken) { spoken = text; input.current.setAttribute('aria-valuetext', text); }
       }
-      const { width, height } = element.getBoundingClientRect();
       const ratio = devicePixelRatio || 1;
       if (element.width !== Math.round(width * ratio) || element.height !== Math.round(height * ratio)) {
         element.width = Math.round(width * ratio); element.height = Math.round(height * ratio);
@@ -92,6 +103,8 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
     };
     const still = () => document.hidden || reduced.matches;
     const tick = (now: number) => {
+      // A screen faster than 60 Hz (or 30 on a phone) skips the frames in between.
+      if (latest.current.playing && now - last < playingGap()) { frame = requestAnimationFrame(tick); return; }
       // Slower while paused: still alive, clearly not playing.
       // Playing runs a touch faster and taller than paused, and the change eases in over about
       // half a second, so pressing play visibly winds the wave up.
@@ -109,7 +122,7 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
       // Every frame while playing, and while the speed is still easing between the two.
       const settling = Math.abs(speed - (latest.current.playing ? PLAYING_SPEED : PAUSED_SPEED)) > .02;
       if (latest.current.playing || settling) frame = requestAnimationFrame(tick);
-      else timer = setTimeout(() => { frame = requestAnimationFrame(tick); }, 1000 / 30);
+      else timer = setTimeout(() => { frame = requestAnimationFrame(tick); }, pausedGap());
     };
     const refresh = () => {
       cancelAnimationFrame(frame); clearTimeout(timer);
@@ -118,7 +131,8 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
       draw(last); schedule();
     };
     redraw.current = () => draw(performance.now());
-    const observer = new ResizeObserver(() => redraw.current()); observer.observe(element);
+    const observer = new ResizeObserver(([entry]) => { ({ width, height } = entry.contentRect); redraw.current(); });
+    observer.observe(element);
     document.addEventListener('visibilitychange', refresh); reduced.addEventListener('change', refresh);
     refresh();
     return () => {
