@@ -175,17 +175,20 @@ export class Radio<C extends RadioClient> {
         if (!current()) return;
         fresh.push(...freshSongs(similar, taken, room - fresh.length));
       }
+      let drawn = 0;
       for (const ask of fallbackAsks(turn.seeds[0])) {
         if (fresh.length) break;
         const random = yield* client.randomSongs(ask);
         if (!current()) return;
+        drawn += random.length;
         fresh.push(...freshSongs(random, taken, room));
       }
       // Songs queued by hand while the server answered aren't added again.
       const latest = radio.shell.player();
       const queued = new Set(latest.queue.map(track => track.id));
       const adding = fresh.filter(track => !queued.has(track.id)).slice(0, radio.limit - latest.queue.length);
-      if (!adding.length) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); return; }
+      // Random songs all queued already: tried again in a minute (autoplayTried), not given up on.
+      if (!adding.length) { if (!drawn) { radio.autoplayed = { ...radio.autoplayed, missed: turn.entry }; radio.shell.changed(); } return; }
       radio.shell.remember(adding);
       radio.marking = { before: new Set(latest.entryIds), ids: new Set(adding.map(track => track.id)) };
       yield* radio.shell.append(client, adding).pipe(Effect.tapError(() => Effect.sync(() => { radio.marking = null; })));

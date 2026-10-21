@@ -961,6 +961,24 @@ describe('main-process radio', () => {
     await radio.topUp();
     expect(client.randomSongs.mock.calls).toEqual([[{ size: 30, genre: 'Sufi' }], [{ size: 30 }]]);
     expect(log).toEqual([`append ${many('r', 10).map(item => item.id).join(' ')}`]);
+    // A genre longer than a request may carry: anywhere at once.
+    log.length = 0; client.randomSongs.mockClear();
+    load(['d'], 0);
+    set({ queue: [{ ...player().queue[0], genre: 'x'.repeat(257) }] });
+    await radio.topUp();
+    expect(client.randomSongs.mock.calls).toEqual([[{ size: 30 }]]);
+    // Random songs that were all queued already: nothing is added, the queue doesn't say it ends,
+    // and the turn is tried again a minute on.
+    log.length = 0;
+    setRandom(() => songs('e'));
+    load(['e'], 0);
+    await radio.topUp(0);
+    expect(log).toEqual([]);
+    expect(radio.autoplayView.missed).toBeNull();
+    expect(radio.topUp(30_000)).toBeNull();
+    setRandom(() => many('r', 15));
+    await radio.topUp(61_000);
+    expect(log).toEqual([`append ${many('r', 10).map(item => item.id).join(' ')}`]);
     // Only when the server has nothing at all does the queue end there.
     log.length = 0;
     setRandom(() => []);

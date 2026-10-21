@@ -19,9 +19,12 @@ const SEEDS = 3;
 export const noAutoplay: AutoplayView = { added: [], missed: null };
 // When the server knows nothing like the seeds that isn't queued (its similar songs come from
 // Last.fm's artist information, which many artists lack), the turn takes songs at random from the
-// last song's genre, then from anywhere on the server, so the music still keeps going.
+// last song's genre, then from anywhere on the server, so the music still keeps going. A genre
+// longer than a request may carry (256 characters) goes straight to anywhere. Random songs that
+// all happen to be queued already are no sign the server has nothing new: the turn is tried again
+// in a minute, and only a server that gives no songs at all ends the queue.
 export const fallbackAsks = (last: Track): RandomSongOptions[] =>
-  [...(last.genre ? [{ size: AUTOPLAY_ASK, genre: last.genre }] : []), { size: AUTOPLAY_ASK }];
+  [...(last.genre && last.genre.length <= 256 ? [{ size: AUTOPLAY_ASK, genre: last.genre }] : []), { size: AUTOPLAY_ASK }];
 // A turn starts on the queue's next-to-last song, not its last: a server asking Last.fm can take
 // ten seconds to answer, and the songs should be there before the last one ends, or before anyone
 // skipping through gets to it.
