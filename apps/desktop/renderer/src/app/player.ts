@@ -252,7 +252,9 @@ if (desktop) {
       streamKbps: p.streamKbps ?? null,
       reach: sameReach(state.reach, reach) ? state.reach : reach,
       queuedPlays: snapshot.server.queuedPlays ?? 0,
-      error, diagnostics: snapshot.diagnostics,
+      // Its figures change once a second, but each snapshot (four a second) brings a fresh copy:
+      // the Diagnostics page redraws only when they change.
+      error, diagnostics: JSON.stringify(state.diagnostics) === JSON.stringify(snapshot.diagnostics) ? state.diagnostics : snapshot.diagnostics,
       repeat: p.repeat ?? 'off', shuffle: p.shuffle ?? false,
       stationTitle: p.stationTitle ?? null,
     });
