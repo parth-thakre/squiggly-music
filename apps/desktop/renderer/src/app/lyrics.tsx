@@ -217,7 +217,8 @@ function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pause
 // first, and nothing at all for a station or lyrics that aren't timed. It's there to glance at,
 // so assistive tech isn't told each line; the lyric sheet in the full window has them all. With
 // word times it fills word by word as the sheet does: while the line is sung (and only then), each
-// word's progress goes straight to its span as --p once a frame, and nothing re-renders.
+// word's progress goes straight to its span as --p once a frame, and nothing re-renders. Once the
+// last word is full it looks only every CHECK_MS, so a seek back into the line fills it again.
 export function SungLine({ track, below = false }: { track: Track; below?: boolean }) {
   const { lyrics } = useLyrics(track);
   const playing = usePlayer(s => s.playing);
@@ -242,9 +243,9 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
     if (!words || !element) return;
     const spans = Array.from(element.querySelectorAll<HTMLElement>('.word'));
     const values: number[] = [];
-    let frame = 0;
+    let frame = 0, timer: ReturnType<typeof setTimeout> | undefined;
     const paint = () => {
-      frame = 0;
+      frame = 0; timer = undefined;
       const now = livePosition() + LEAD, whole = reducedMotion.matches;
       let sung = true;
       for (let k = 0; k < words.length && k < spans.length; k++) {
@@ -254,13 +255,13 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
         values[k] = p;
         spans[k].style.setProperty('--p', String(p));
       }
-      // The last word filled: nothing more to draw until the next line.
-      if (playing && !document.hidden && !sung) frame = requestAnimationFrame(paint);
+      if (!playing || document.hidden) return;
+      if (sung) timer = setTimeout(paint, CHECK_MS); else frame = requestAnimationFrame(paint);
     };
     paint();
-    const wake = () => { if (!frame && !document.hidden) paint(); };
+    const wake = () => { if (!frame && !timer && !document.hidden) paint(); };
     document.addEventListener('visibilitychange', wake);
-    return () => { cancelAnimationFrame(frame); document.removeEventListener('visibilitychange', wake); };
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
   }, [words, playing, pausedAt]);
   if (!synced) return null;
   const text = line?.text ?? '';

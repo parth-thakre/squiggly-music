@@ -181,6 +181,19 @@ test.describe('mini player', () => {
     expect(fill[2]).toBe(0);
   });
 
+  test('a seek back into a line already sung fills it again from there', async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 140 });
+    // Line 2 runs from 3 s to 6 s (the next starts), its words from 3 to 3.4 and 3.4 to 4.4: playing
+    // at 5 s, they're all full and the line waits for the next.
+    const words = [{ start: 3, end: 3.4, text: 'sung ' }, { start: 3.4, end: 4.4, text: 'again' }];
+    await playing(page, 5, true, lyricLines.map((line, i) => i === 1 ? { ...line, text: 'sung again', words } : line), 'estimated', true);
+    await page.goto('/');
+    const last = page.locator('.mini .mini-lyric > span:not(.leaving) .word').last();
+    await expect.poll(() => last.evaluate(element => element.style.getPropertyValue('--p'))).toBe('1');
+    await page.evaluate(() => (window as unknown as { setPlayer: (patch: object) => void }).setPlayer({ position: 3.2 }));
+    await expect.poll(() => last.evaluate(element => Number(element.style.getPropertyValue('--p'))), { timeout: 1500 }).toBeLessThan(.5);
+  });
+
   test('on Windows, with no system frame, the window resizes from its own edges', async ({ page }) => {
     await page.setViewportSize({ width: 420, height: 112 });
     await playing(page, 4);
