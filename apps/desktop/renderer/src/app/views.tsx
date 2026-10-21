@@ -813,7 +813,7 @@ export function SettingsView() {
       <h2>Lyrics</h2>
       {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Lyrics in your files always come first. For songs without them, the song\'s title, artist, and album are sent to lrclib.net.')}
       <h2>Queue</h2>
-      {row('autoplay', 'Keep playing similar songs', 'When the queue is down to its last two songs, up to ten songs like the last one from your server are added after it. Not while radio plays or the queue repeats.')}
+      {row('autoplay', 'Keep playing similar songs', 'When the queue is down to its last two songs, up to ten songs like the last one from your server are added after it, or songs from its genre or anywhere on your server when it knows none like it. Not while radio plays or the queue repeats.')}
       <h2>Your server</h2>
       {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
       {settings.reportPlays && <label className="setting choice">

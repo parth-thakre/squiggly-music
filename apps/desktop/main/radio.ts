@@ -1,11 +1,12 @@
 import { Effect } from 'effect';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../packages/core/autoplay';
-import type { AlbumDetail, AutoplayView, PlayerSnapshot, RadioSeed, Track } from '../../../packages/core/contracts';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, fallbackAsks, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../packages/core/autoplay';
+import type { AlbumDetail, AutoplayView, PlayerSnapshot, RadioSeed, RandomSongOptions, Track } from '../../../packages/core/contracts';
 
 export interface RadioClient {
   topSongs(artistId: string, count: number): Effect.Effect<Track[], Error>;
   album(id: string): Effect.Effect<AlbumDetail, Error>;
   similarSongs(id: string, count: number): Effect.Effect<Track[], Error>;
+  randomSongs(options: RandomSongOptions): Effect.Effect<Track[], Error>;
 }
 export interface RadioShell<C extends RadioClient> {
   client(): C | null;
@@ -173,6 +174,12 @@ export class Radio<C extends RadioClient> {
         const similar = yield* client.similarSongs(seed.id, AUTOPLAY_ASK);
         if (!current()) return;
         fresh.push(...freshSongs(similar, taken, room - fresh.length));
+      }
+      for (const ask of fallbackAsks(turn.seeds[0])) {
+        if (fresh.length) break;
+        const random = yield* client.randomSongs(ask);
+        if (!current()) return;
+        fresh.push(...freshSongs(random, taken, room));
       }
       // Songs queued by hand while the server answered aren't added again.
       const latest = radio.shell.player();

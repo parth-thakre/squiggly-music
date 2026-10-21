@@ -1,4 +1,4 @@
-import type { AutoplayView, RepeatMode, Track } from './contracts';
+import type { AutoplayView, RandomSongOptions, RepeatMode, Track } from './contracts';
 
 // Autoplay: when an ordinary queue reaches its last song, songs like it from the server go on the
 // end, so the music keeps going instead of stopping. It stays off until turned on in Settings,
@@ -17,6 +17,11 @@ export const AUTOPLAY_ASK = 30;
 // the turn has its ten.
 const SEEDS = 3;
 export const noAutoplay: AutoplayView = { added: [], missed: null };
+// When the server knows nothing like the seeds that isn't queued (its similar songs come from
+// Last.fm's artist information, which many artists lack), the turn takes songs at random from the
+// last song's genre, then from anywhere on the server, so the music still keeps going.
+export const fallbackAsks = (last: Track): RandomSongOptions[] =>
+  [...(last.genre ? [{ size: AUTOPLAY_ASK, genre: last.genre }] : []), { size: AUTOPLAY_ASK }];
 // A turn starts on the queue's next-to-last song, not its last: a server asking Last.fm can take
 // ten seconds to answer, and the songs should be there before the last one ends, or before anyone
 // skipping through gets to it.
