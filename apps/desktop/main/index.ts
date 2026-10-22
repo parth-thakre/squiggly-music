@@ -56,6 +56,10 @@ remote.installEarly();
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
+// Windows: Chromium stops painting a window it decides other windows cover, and Alt+Tab's
+// switcher covers them all, so its preview showed the window frozen until it came to the front.
+// Without the occlusion tracker only a minimized or hidden window stops. Must precede ready.
+if (process.platform === 'win32') app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 // Windows names the app in the media flyout and notifications by finding a Start menu shortcut
 // with this id (appId in electron-builder.yml; the installer's shortcuts carry it). Without one it
 // says "Unknown app". Set before Chromium creates its windows, which take the id they start with.
