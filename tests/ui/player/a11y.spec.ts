@@ -4,6 +4,8 @@ import { expect, test, trackOf } from '../fixtures/test';
 
 // An axe-core smoke check (WCAG 2.x A and AA rules) of the main screens, on desktop and phone.
 async function violations(page: Page) {
+  // The room fades to a new sleeve's colours over .6 s; contrast is measured once it gets there.
+  await page.evaluate(() => Promise.all(document.getAnimations().filter(a => a instanceof CSSTransition).map(a => a.finished.catch(() => {}))));
   const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
   return results.violations.map(v => `${v.id} (${v.impact}): ${v.nodes.slice(0, 3).map(node => node.target.join(' ')).join(', ')}`);
 }

@@ -5,7 +5,7 @@ import { neutral, paletteFromImage, type Palette } from './palette';
 // The palette before any art loads; it lives with the contrast rules it is tested against.
 export { neutral };
 
-export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'volume' | 'star' | 'starred' }) {
+export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'volume' | 'star' | 'starred' | 'heart' | 'hearted' }) {
   const paths = {
     play: <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" />,
     pause: <><rect x="6.5" y="5" width="4" height="14" rx="1" /><rect x="13.5" y="5" width="4" height="14" rx="1" /></>,
@@ -14,6 +14,9 @@ export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'vo
     volume: <><path d="M4 9.5h3.2L12 5.2v13.6l-4.8-4.3H4z" /><path d="M15.5 8.8a4.6 4.6 0 0 1 0 6.4M18 6.4a8 8 0 0 1 0 11.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></>,
     star: <path d="M12 4.2l2.3 4.9 5.3.6-3.9 3.6 1.1 5.3L12 16l-4.8 2.6 1.1-5.3-3.9-3.6 5.3-.6z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
     starred: <path d="M12 4.2l2.3 4.9 5.3.6-3.9 3.6 1.1 5.3L12 16l-4.8 2.6 1.1-5.3-3.9-3.6 5.3-.6z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
+    // Favorites are a heart, so they never read as a rating's stars.
+    heart: <path d="M12 19.3s-7.2-4.4-7.2-9.6A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.2 2.5c0 5.2-7.2 9.6-7.2 9.6z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
+    hearted: <path d="M12 19.3s-7.2-4.4-7.2-9.6A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.2 2.5c0 5.2-7.2 9.6-7.2 9.6z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">{paths[kind]}</svg>;
 }

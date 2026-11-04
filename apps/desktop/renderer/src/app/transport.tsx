@@ -1,4 +1,4 @@
-import { Repeat, Repeat1, Shuffle, Star } from 'lucide-react';
+import { Heart, Repeat, Repeat1, Shuffle } from 'lucide-react';
 import { useLayoutEffect, type CSSProperties } from 'react';
 import { nextRepeat } from '../../../../../packages/core/playOrder';
 import type { Track } from '../../../../../packages/core/contracts';
@@ -100,7 +100,7 @@ export function FavoriteToggle({ track }: { track: Track }) {
     if (!result.ok) player.showError(result.error);
   };
   return <button type="button" className="icon-button favorite" aria-label="Favorite" title={on ? 'Remove from favorites' : 'Add to favorites'}
-    aria-pressed={on} onClick={() => void toggle()}><Star aria-hidden="true" fill={on ? 'currentColor' : 'none'} /></button>;
+    aria-pressed={on} onClick={() => void toggle()}><Heart aria-hidden="true" fill={on ? 'currentColor' : 'none'} /></button>;
 }
 
 // The sleep timer, in a few quiet words under the song, while one is set.

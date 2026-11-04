@@ -15,7 +15,7 @@ import { KeptMark } from './keptMark';
 import './kept.css';
 
 // Song rows are --row-height tall (compact themes shorten them); windowing uses the same number.
-const rowHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height')) || 44;
+const rowHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height')) || 52;
 const WINDOWED = 120;
 // A click that came from a finger. Chrome sends clicks as pointer events that say so; a browser
 // that doesn't goes by the screen.
@@ -215,7 +215,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const key = keys[index];
         const isNow = queue ? index === nowIndex : track.id === nowId;
         const kept = keptSupported && track.source === 'navidrome' && isKept(track.id);
-        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} playing={isNow && playing}
+        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} played={!!queue && index < nowIndex} playing={isNow && playing}
           isSelected={selected.has(key) || menuRow === key} selecting={selected.size > 0} starred={isStarred(track.id, track.starred)}
           kept={kept} unavailable={away && keptSupported && track.source === 'navidrome' && !kept} away={away} wide={wide}
           drop={drag && drag.to === index && drag.from !== index ? (drag.from < index ? 'drop-after' : 'drop-before') : !drag && into === index ? 'drop-before' : null}
@@ -242,15 +242,15 @@ interface RowHandlers {
 }
 // One song row. Everything it shows comes in as plain values, so playing, pausing, or moving to
 // the next song redraws the rows that changed rather than every row in the list.
-const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, playing, isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable, album, albumArtist, showAlbum, numbered, keptMarks, handlers }: {
-  track: Track; index: number; rowKey: string; isNow: boolean; playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
+const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, played, playing, isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable, album, albumArtist, showAlbum, numbered, keptMarks, handlers }: {
+  track: Track; index: number; rowKey: string; isNow: boolean; played: boolean; playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
   kept: boolean; unavailable: boolean; away: boolean; wide: boolean; drop: string | null; top: number | null; draggable: boolean;
   album?: string; albumArtist?: string; showAlbum: boolean; numbered: 'position' | 'track'; keptMarks: boolean;
   handlers: { current: RowHandlers };
 }) {
   const name = splitTitle(track.title, album);
   const credit = track.artist !== albumArtist ? track.artist : null;
-  const classes = [isNow && 'now', isSelected && 'selected', unavailable && 'unavailable', drop].filter(Boolean).join(' ');
+  const classes = [isNow && 'now', played && 'played', isSelected && 'selected', unavailable && 'unavailable', drop].filter(Boolean).join(' ');
   return <li data-key={rowKey} data-index={index} className={classes || undefined}
     style={top !== null ? { position: 'absolute', top, left: 0, right: 0 } : undefined}
     draggable={draggable} onContextMenu={event => handlers.current.menu(event, index)} onClick={event => handlers.current.rowTap(event, index, isNow)}
@@ -282,6 +282,6 @@ const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, playing, 
     {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
     {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
       aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
-      onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'starred' : 'star'} /></button>}
+      onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'hearted' : 'heart'} /></button>}
   </li>;
 });

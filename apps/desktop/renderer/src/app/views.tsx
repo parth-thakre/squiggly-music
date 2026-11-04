@@ -309,7 +309,7 @@ function StarButton({ target, id, starred, name }: { target: 'album' | 'artist';
   useFavoritesVersion();
   const on = isStarred(id, starred);
   return <button type="button" className={`text-button star-text${on ? ' on' : ''}`} aria-pressed={on} onClick={() => void setStarred(target, [id], !on)}>
-    <Glyph kind={on ? 'starred' : 'star'} />{on ? 'In favorites' : 'Add to favorites'}<span className="sr-only"> {name}</span></button>;
+    <Glyph kind={on ? 'hearted' : 'heart'} />{on ? 'In favorites' : 'Add to favorites'}<span className="sr-only"> {name}</span></button>;
 }
 // A playlist file of these songs (exports.ts). Errors show under the page's heading.
 function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {

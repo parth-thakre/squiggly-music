@@ -2,7 +2,7 @@
 /* Theme tokens (theme/index.ts sets these on the root). Colours live on .room, from the cover or the theme. */
 :root {
   --font-display: 'Young Serif', serif; --font-body: 'Familjen Grotesk Variable', system-ui, sans-serif;
-  --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px;
+  --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px; --row-height: 52px;
 }
 html, body { margin: 0; height: 100%; }
 /* The room fills the window and each part scrolls on its own; the document itself never scrolls. */
@@ -17,6 +17,8 @@ button:disabled { cursor: default; opacity: .45; }
 
 /* One flat room colour, taken from the record that is playing. */
 .room {
+  --raised: color-mix(in srgb, var(--ink) 5%, var(--ground));
+  --overlay: color-mix(in srgb, var(--ink) 8%, var(--ground));
   height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
   background: var(--ground); color: var(--ink); transition: background-color .6s ease, color .6s ease;
 }
@@ -60,7 +62,7 @@ button:disabled { cursor: default; opacity: .45; }
 /* Deck */
 .deck-top, .deck-bottom { display: contents; }
 .deck-hide, .deck-open { display: none; }
-.deck { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; padding: 14px 28px 22px 40px; scrollbar-width: none; }
+.deck { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; margin: 6px 0 20px 24px; padding: 16px 16px 16px; border-radius: calc(var(--radius) * 2 + 2px); background: var(--raised); scrollbar-width: none; }
 .deck-cover { width: 100%; aspect-ratio: 1; flex: none; }
 .deck-cover { box-shadow: 0 1px 1px rgba(0, 0, 0, .12), 0 22px 34px -20px rgba(0, 0, 0, .55); }
 /* The deck's and a record page's sleeve show the whole picture. A cover that isn't square (a film
@@ -97,7 +99,7 @@ img:is(.deck-cover, .head-cover) {
 .squiggle-rail input::-moz-range-thumb { width: 4px; height: 18px; border: 0; }
 .squiggle-rail:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
 
-.transport { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; margin-top: 10px; }
 .glyph, .play { flex: none; display: grid; place-items: center; padding: 0; border: 0; }
 .glyph { width: 38px; height: 38px; background: none; }
 .glyph svg { width: 21px; }
@@ -111,7 +113,7 @@ img:is(.deck-cover, .head-cover) {
 .play.starting svg { opacity: .5; }
 .starting-ring { position: absolute; inset: 4px; border: 2px solid color-mix(in srgb, currentColor 22%, transparent); border-top-color: currentColor; border-radius: 50%; animation: turn .9s linear infinite; }
 @keyframes turn { to { transform: rotate(1turn); } }
-.volume { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; margin-left: 8px; color: var(--soft); }
+.volume { flex: 1 1 100%; min-width: 0; display: flex; align-items: center; gap: 9px; margin: 6px 0 0; color: var(--soft); }
 .volume svg { flex: none; width: 17px; }
 .volume .figure { flex: none; width: 2.7em; text-align: right; font-size: calc(12.5px * var(--text)); color: var(--ink); }
 .volume input {
@@ -127,7 +129,7 @@ img:is(.deck-cover, .head-cover) {
 .page { min-width: 0; overflow-y: auto; padding: 18px 48px 72px 36px; outline: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .status { margin: 0; padding: 20px 0; color: var(--soft); }
 /* Room for an artist's popular songs (ArtistPage): fewer than ten, often, in a personal library. */
-.popular-waiting { box-sizing: border-box; min-height: calc(var(--row-height, 44px) * 5); }
+.popular-waiting { box-sizing: border-box; min-height: calc(var(--row-height, 52px) * 5); }
 .sentinel { height: 1px; }
 
 .head { margin-bottom: 26px; }
@@ -144,8 +146,8 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
   .head.with-cover.on-deck { grid-template-columns: 0px minmax(0, 1fr); gap: 0; }
   .head.on-deck .head-cover { opacity: 0; transform: scale(.9); view-transition-name: none; }
 }
-.head h1 { margin: 0; font: var(--display-weight) calc(clamp(40px, 4.4vw, 66px) * var(--display-size))/1.02 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
-.head h1.long { font-size: calc(clamp(30px, 3.2vw, 46px) * var(--display-size)); line-height: 1.08; }
+.head h1 { margin: 0; font: var(--display-weight) calc(clamp(34px, 3.3vw, 50px) * var(--display-size))/1.06 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
+.head h1.long { font-size: calc(clamp(28px, 2.6vw, 38px) * var(--display-size)); line-height: 1.1; }
 .qualifier { margin: 8px 0 0; font-size: calc(16px * var(--text)); color: var(--soft); }
 .byline { margin: 12px 0 0; color: var(--soft); }
 .byline strong, .byline .link { color: var(--ink); font-weight: 600; margin-right: .3em; }
@@ -155,6 +157,9 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; margin-top: 20px; }
 .play-action { display: inline-flex; align-items: center; gap: 10px; padding: 0; background: none; border: 0; font-size: calc(15px * var(--text)); font-weight: 600; }
+.head .actions > .text-button { min-height: 36px; padding: 0 16px; border: 1px solid color-mix(in srgb, var(--ink) 26%, transparent); border-radius: 999px; font-size: calc(14px * var(--text)); }
+.head .actions > .text-button:hover:not(:disabled) { text-decoration: none; background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.head .actions > .text-button.star-text { padding-left: 13px; }
 .disc { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--ink); color: var(--ground); }
 .disc svg { width: 19px; }
 .star-text { display: inline-flex; align-items: center; gap: 6px; }
@@ -169,6 +174,8 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .rating button:hover svg { transform: scale(1.15); }
 .rating .on { color: var(--accent); }
 .byline .rating { margin-left: .4em; }
+/* A rating is a quiet fact, not a mark: the accent stays for what's playing and what you love. */
+:is(.byline .rating, .rating.deck-rating) .on { color: color-mix(in srgb, var(--ink) 70%, var(--ground)); }
 .deck-rating { display: flex; margin: 12px 0 0 -2px; }
 /* Touch: bigger targets, and beside the byline a line of their own, the first star lined up with it. */
 @media (pointer: coarse) {
@@ -189,13 +196,15 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .mosaic.single { grid-template-columns: 1fr; }
 .mosaic img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 30px 22px; margin: 0; padding: 0; list-style: none; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 32px 24px; margin: 0; padding: 0; list-style: none; }
 .grid li { min-width: 0; }
 .grid button { display: block; width: 100%; padding: 0; background: none; border: 0; text-align: left; }
-.grid .cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .1), 0 10px 16px -12px rgba(0, 0, 0, .5); transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
+.grid .cover { width: 100%; aspect-ratio: 1; border-radius: var(--radius); box-shadow: 0 1px 1px rgba(0, 0, 0, .1), 0 10px 16px -12px rgba(0, 0, 0, .5); transition: transform .25s cubic-bezier(.2, .8, .2, 1); }
 .grid .playable:hover .cover { transform: translateY(-4px); }
 .grid-name { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: calc(14px * var(--text)); font-weight: 600; line-height: 1.3; }
-.grid-name > span, .grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.grid-name > span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.grid-name { align-items: flex-start; }
 .grid-sub { display: block; font-size: calc(13px * var(--text)); color: var(--soft); line-height: 1.35; }
 .grid-sub .link { display: inline; width: auto; color: inherit; font-weight: inherit; }
 /* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
@@ -227,7 +236,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 
 /* Tracks */
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }
-.tracks li { display: flex; align-items: center; height: var(--row-height, 44px); }
+.tracks li { display: flex; align-items: center; height: var(--row-height, 52px); }
 .track {
   position: relative; flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
   height: 100%; text-align: left; font-size: calc(15.5px * var(--text));
@@ -248,16 +257,21 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .row-rating .rating { display: flex; vertical-align: 0; }
 .row-rating .rating button { padding: 2px 1px; }
 .row-rating .rating svg { width: 16px; }
-.row-rating .unrated { opacity: .35; transition: opacity .12s; }
+.row-rating .rating .on { color: color-mix(in srgb, var(--ink) 62%, var(--ground)); }
+.row-rating .rating button:not(.on) { opacity: .45; }
+.row-rating .unrated { opacity: 0; transition: opacity .12s; }
 .tracks li:hover .unrated, .row-rating .unrated:focus-within { opacity: 1; }
-.track .title { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.track .title { display: flex; flex-direction: column; justify-content: center; gap: 1px; min-width: 0; }
 /* The song's name keeps its width; the version note and credits give way first, and the name
    only shortens when it can't fit on its own. */
 .track .name { flex: 0 0 auto; max-width: 100%; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.track .extra, .track .credit, .track .album { flex: 0 10 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: calc(13.5px * var(--text)); color: var(--soft); }
+.track .extra, .track .credit, .track .album { flex: 0 10 auto; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: calc(13.5px * var(--text)); color: var(--soft); }
+.track .credit { font-size: calc(13px * var(--text)); line-height: 1.3; }
+.track .track-play { line-height: 1.3; }
 .track .album { font-size: calc(14px * var(--text)); }
 .track:hover .name { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
 .now .track .name { font-weight: 650; }
+.tracks li.played .track .name { color: var(--soft); }
 .now .track .n { color: var(--accent-text, var(--accent)); }
 .star { flex: none; display: grid; place-items: center; width: 36px; height: 36px; padding: 0; background: none; border: 0; color: var(--soft); opacity: 0; }
 .star svg { width: 17px; }
@@ -293,12 +307,12 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 
 .shelf-section { margin-top: 38px; }
 .shelf-section:first-of-type { margin-top: 8px; }
-.shelf-section h2 { margin: 0 0 14px; font: var(--display-weight) calc(27px * var(--display-size))/1.1 var(--font-display); }
+.shelf-section h2 { margin: 0 0 14px; font: var(--display-weight) calc(23px * var(--display-size))/1.15 var(--font-display); }
 .section-note { margin: -6px 0 14px; font-size: calc(14px * var(--text)); color: var(--soft); }
 .shelf-section > .actions { margin: 0 0 12px; }
 .rows { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 4px 28px; margin: 0; padding: 0; list-style: none; }
 .rows button { display: flex; align-items: center; gap: 16px; width: 100%; padding: 8px 0; background: none; border: 0; text-align: left; }
-.rows .cover { flex: none; width: 64px; height: 64px; }
+.rows .cover { flex: none; width: 64px; height: 64px; border-radius: max(2px, calc(var(--radius) - 2px)); }
 .rows .cover-type span { font-size: calc(11px * var(--display-size)); }
 .rows .cover-type { padding: 7px; }
 .row-text { display: grid; min-width: 0; }
@@ -317,8 +331,12 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .connect > .connect-demo { margin-top: 18px; font-size: calc(14px * var(--text)); }
 .connect form { display: grid; gap: 18px; margin: 28px 0 22px; }
 .connect label { display: grid; gap: 4px; font-size: calc(13.5px * var(--text)); color: var(--soft); }
-.connect input { padding: 7px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; font-size: calc(16px * var(--text)); color: var(--ink); }
-.connect input:focus-visible { outline: none; border-bottom-color: var(--ink); }
+.connect input { padding: 11px 13px; background: var(--raised); border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); border-radius: var(--radius); font-size: calc(16px * var(--text)); color: var(--ink); }
+.connect input:focus-visible { outline: none; border-color: var(--ink); }
+.connect label { color: var(--ink); font-weight: 600; }
+.connect form .play-action { min-height: 44px; padding: 0 22px 0 6px; border-radius: 999px; background: var(--ink); color: var(--ground); }
+.connect form .play-action .disc { width: 32px; height: 32px; background: var(--ground); color: var(--ink); }
+.connect form .play-action .disc svg { width: 14px; }
 .connect .play-action { justify-self: start; margin-top: 6px; }
 /* Asking before plain HTTP: the warning, then Continue and Cancel on one line. */
 .connect-http { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
@@ -328,8 +346,8 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .menu-layer { position: fixed; inset: 0; z-index: 50; }
 .menu {
   position: fixed; min-width: 230px; max-width: 320px; max-height: min(70vh, 560px); overflow-y: auto; padding: 6px;
-  background: var(--ground); color: var(--ink); border: 1px solid var(--line); border-radius: calc(var(--radius) + 2px);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, .12), 0 22px 44px -18px rgba(0, 0, 0, .5);
+  background: var(--overlay); color: var(--ink); border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .16), 0 24px 56px -16px rgba(0, 0, 0, .6);
   animation: menu-in .14s cubic-bezier(.2, .8, .2, 1);
 }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-3px); } }
@@ -393,6 +411,14 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .settings h2:first-child { margin-top: 4px; }
 .setting { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 14px; padding: 10px 0; cursor: pointer; }
 .setting input { width: 18px; height: 18px; margin: 3px 0 0; accent-color: var(--ink); }
+.setting input[type='checkbox'] {
+  -webkit-appearance: none; appearance: none; display: grid; place-items: center; width: 20px; height: 20px; margin: 2px 0 0;
+  border: 1.5px solid var(--soft); border-radius: 5px; background: none; cursor: pointer;
+}
+.setting input[type='checkbox']::after { content: ''; width: 10px; height: 5px; margin-top: -3px; border: solid var(--ground); border-width: 0 0 2px 2px; transform: rotate(-45deg); opacity: 0; }
+.setting input[type='checkbox']:checked { border-color: var(--ink); background: var(--ink); }
+.setting input[type='checkbox']:checked::after { opacity: 1; }
+.setting input[type='checkbox']:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .setting strong { display: block; font-size: calc(15.5px * var(--text)); font-weight: 600; }
 .setting span span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
 /* A setting that is an action rather than a switch: text in the switches' column, the button under it. */
@@ -446,14 +472,14 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .note code { font: calc(13px * var(--text)) ui-monospace, 'SF Mono', Menlo, Consolas, monospace; }
 
 /* Command palette: a menu that takes a query. Centred near the top on desktop, a sheet on phones. */
-.palette-layer { position: fixed; inset: 0; z-index: 60; }
+.palette-layer { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, .42); }
 .menu.palette {
   left: 0; right: 0; top: 11vh; width: min(580px, 100vw - 32px); max-width: none; max-height: min(64vh, 560px); margin: 0 auto;
   display: flex; flex-direction: column; padding: 0; overflow: hidden;
 }
 .palette-input {
-  flex: none; width: 100%; margin: 0; padding: 16px 18px 12px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
-  font: calc(21px * var(--display-size))/1.2 var(--font-display); font-weight: var(--display-weight);
+  flex: none; width: 100%; margin: 0; padding: 16px 18px 14px; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+  font: 500 calc(17px * var(--text))/1.3 var(--font-body);
 }
 .palette-input::placeholder { color: var(--soft); }
 .palette-input:focus-visible { outline: none; }
@@ -468,7 +494,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .palette-name { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .palette-detail { margin-left: 10px; font-size: calc(13px * var(--text)); color: var(--soft); }
 .palette-keys { flex: none; font-size: calc(12.5px * var(--text)); color: var(--soft); }
-.palette-keys kbd { font-weight: 500; color: var(--ink); }
+.palette-keys kbd { display: inline-block; min-width: 1.7em; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-bottom-width: 2px; border-radius: 5px; text-align: center; font-weight: 500; color: var(--ink); }
 .palette > .menu-note { padding: 12px 16px 16px; max-width: none; }
 .menu.palette.sheet { top: auto; width: auto; margin: 0; max-height: 78dvh; padding: 0 0 env(safe-area-inset-bottom); }
 .menu.palette.sheet:focus { outline: none; }
@@ -521,13 +547,16 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .lyrics.compact .lyric-lines.synced { padding-bottom: 30dvh; font-size: calc(27px * var(--display-size)); }
 
 /* Deck additions */
-.deck-actions { display: flex; gap: 4px; margin: 8px 0 0 -8px; }
+.deck-actions { display: flex; gap: 4px; margin: 12px -6px 0; padding-top: 10px; border-top: 1px solid var(--line); }
 .icon-button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; background: none; border: 0; border-radius: 50%; color: var(--soft); transition: background-color .15s ease, color .15s ease; }
 .icon-button svg { width: 20px; height: 20px; stroke-width: 1.75; }
 .icon-button:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .icon-button[aria-pressed='true'] { color: var(--ink); background: var(--line); }
 /* Shuffle and repeat (PlayModes in transport.tsx) sit apart from the page toggles, at the far end. */
 .play-modes { display: flex; gap: 4px; margin-left: auto; }
+.play-modes .icon-button { position: relative; }
+.play-modes .icon-button[aria-pressed='true'] { color: var(--accent); }
+.play-modes .icon-button[aria-pressed='true']::after { content: ''; position: absolute; bottom: 3px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 50%; background: currentColor; }
 /* The playing song's star: a mark in the accent when on, like a list row's, not a pressed page toggle. */
 .icon-button.favorite[aria-pressed='true'] { color: var(--accent); background: none; }
 .icon-button.favorite[aria-pressed='true']:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
@@ -546,6 +575,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .deck-lyrics:hover li.current { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: .18em; }
 @media (prefers-reduced-motion: reduce) { .deck-lyrics ol, .deck-lyrics li { transition: none; } }
 .deck-links { display: flex; gap: 16px; margin: auto 0 0; padding-top: 18px; }
+.deck-cover { border-radius: var(--radius); }
 .deck-links { flex-wrap: wrap; row-gap: 6px; }
 /* An update ready or out: the one deck link in the accent, first in the row. */
 .update-link { color: var(--accent-text, var(--accent)); font-weight: 600; }
@@ -679,8 +709,9 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
   /* Five tabs: on a narrow screen, or with a large theme text size, the labels shrink to fit one line. */
   .sections button { min-height: 48px; padding: 0 clamp(2px, 1.5vw, 8px); font-size: min(calc(15px * var(--text)), 4.2vw); }
 
-  .head h1 { font-size: calc(clamp(34px, 10vw, 46px) * var(--display-size)); }
-  .head h1.long { font-size: calc(clamp(26px, 7.4vw, 34px) * var(--display-size)); }
+  .head h1 { font-size: calc(clamp(28px, 8vw, 34px) * var(--display-size)); }
+  .head h1.long { font-size: calc(clamp(24px, 6.6vw, 28px) * var(--display-size)); }
+  .shelf-section h2 { font-size: calc(21px * var(--display-size)); }
   .head.with-cover { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .head-cover { width: min(220px, 62vw); }
   .choices { gap: 4px 18px; }
@@ -696,14 +727,15 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
   .tracks .figure { width: 40px; }
   /* No room in a phone's rows: songs are rated from their menu or the open deck. */
   .row-rating { display: none; }
-  .track .credit, .track .album { display: none; }
+  .track .album { display: none; }
   .star { width: 32px; opacity: 1; }
 
   /* The strip */
   .deck {
     grid-row: 3; position: relative; display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: center; gap: 0 12px;
-    padding: 8px 14px 4px 18px; border-top: 1px solid var(--line); overflow: visible;
+    margin: 0; padding: 8px 14px 4px 18px; border-radius: 0; border-top: 1px solid var(--line); overflow: visible;
   }
+  .deck-actions { border-top: 0; padding-top: 0; }
   .deck-cover { width: 48px; }
   .deck-text { margin: 0; min-width: 0; }
   .deck-title { font-size: calc(17px * var(--display-size)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -931,12 +963,12 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
 }
 
 /* Compact density: tighter pages and lists, including song rows. */
-html[data-density='compact'] { --row-height: 38px; }
+html[data-density='compact'] { --row-height: 44px; }
 @media (min-width: 761px) {
   html[data-density='compact'] .bar { padding: 12px 28px 8px; gap: 22px; }
   html[data-density='compact'] .top-position { padding: 0 28px 2px; }
   html[data-density='compact'] .top-position.idle { background-size: calc(100% - 56px) 2.5px; }
-  html[data-density='compact'] .deck { padding: 8px 22px 16px 28px; }
+  html[data-density='compact'] .deck { margin: 2px 0 14px 16px; padding: 12px 12px 14px; }
   html[data-density='compact'] .page { padding: 12px 34px 48px 26px; }
   html[data-density='compact'] .head { margin-bottom: 18px; }
   html[data-density='compact'] .head.with-cover { gap: 24px; }

@@ -9,7 +9,9 @@ export const LINE_ALPHA = .16;
 export const TEXT_CONTRAST = 4.5;
 export const MARK_CONTRAST = 3;
 
-export const neutral: Palette = { ground: '#d8d7d1', ink: '#1a1a18', soft: '#46453f', accent: '#1a1a18', accentText: '#1a1a18' };
+// Before any sleeve: a warm charcoal room, so the first screen and an idle window are as dark as most
+// rooms a record makes.
+export const neutral: Palette = { ground: '#1b1a18', ink: '#efede6', soft: '#aeaba1', accent: '#efede6', accentText: '#efede6' };
 
 // Derives a flat window palette from cover art: the sleeve's dominant color becomes the
 // ground, a readable tint of the same hue becomes ink, and its most saturated distinct
