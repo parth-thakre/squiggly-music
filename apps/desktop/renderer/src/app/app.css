@@ -2,7 +2,7 @@
 /* Theme tokens (theme/index.ts sets these on the root). Colours live on .room, from the cover or the theme. */
 :root {
   --font-display: 'Young Serif', serif; --font-body: 'Familjen Grotesk Variable', system-ui, sans-serif;
-  --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px; --row-height: 44px; --row-two: 52px;
+  --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px; --row-height: 44px; --row-two: 56px;
 }
 html, body { margin: 0; height: 100%; }
 /* The room fills the window and each part scrolls on its own; the document itself never scrolls. */
@@ -19,10 +19,9 @@ button:disabled { cursor: default; opacity: .45; }
 .room {
   --raised: color-mix(in srgb, var(--ink) 7%, var(--ground));
   --overlay: color-mix(in srgb, var(--ink) 8%, var(--ground));
-  --sunken: color-mix(in srgb, #000 12%, var(--ground));
+  --sunken: var(--set-back, color-mix(in srgb, #000 24%, var(--ground)));
   height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
   background: var(--ground); color: var(--ink); transition: background-color .6s ease, color .6s ease;
-  background-image: linear-gradient(color-mix(in srgb, var(--accent) 10%, transparent), transparent 420px);
 }
 
 /* Bar */
@@ -47,9 +46,17 @@ button:disabled { cursor: default; opacity: .45; }
 .sections button[aria-current], .choices button[aria-pressed='true'] { color: var(--ink); }
 .sections button:hover, .choices button:hover { color: var(--ink); }
 .back { margin-left: auto; }
+/* Desktop: the sections start over the page's left edge, Back in the slot before them. */
+@media (min-width: 761px) {
+  .bar { column-gap: 0; }
+  .bar .wordmark { width: calc(clamp(260px, 26vw, 330px) - 48px); margin-right: 0; }
+  .bar-top:not(:has(.back)) .wordmark { margin-right: 44px; }
+  .sections { gap: 22px; }
+  .bar .bar-top > .search-field { margin-left: auto; }
+}
 @media (max-width: 760px) { .back svg { display: none; } }
 @media (min-width: 761px) {
-  .bar .bar-top > .back { order: 0; margin: 0 10px 0 2px; display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0; border: 0; border-radius: 50%; color: var(--soft); }
+  .bar .bar-top > .back { order: 0; margin: 0 12px 0 0; display: grid; place-items: center; width: 32px; height: 32px; min-height: 0; padding: 0; border: 0; border-radius: 50%; color: var(--soft); }
   .bar .bar-top > .back:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, transparent); text-decoration: none; }
   .back svg { width: 20px; height: 20px; }
   .back-word { display: none; }
@@ -90,14 +97,14 @@ img:is(.deck-cover, .head-cover) {
 }
 .deck-empty { margin: 0; color: var(--soft); }
 .deck-text { margin-top: 18px; }
-.deck-title { margin: 0; font: var(--display-weight) calc(25px * var(--display-size))/1.12 var(--font-display); text-wrap: balance; }
+.deck-title { margin: 0; font: var(--display-weight) calc(22px * var(--display-size))/1.18 var(--font-display); text-wrap: balance; }
 /* Desktop: two lines each at most for the title and credits. */
 @media (min-width: 761px) {
-  .deck .deck-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .deck .deck-title { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
   .deck .deck-sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 }
-.deck-sub { margin: 6px 0 0; font-size: calc(14px * var(--text)); color: var(--soft); }
-.deck-sub .link { font-weight: 500; color: color-mix(in srgb, var(--ink) 88%, var(--soft)); }
+.deck-sub { margin: 6px 0 0; font-size: calc(13px * var(--text)); color: var(--soft); }
+.deck-sub .link { font-weight: 400; color: var(--ink); }
 .deck .squiggle { margin-top: 14px; }
 .up-next { margin: 16px 0 0; font-size: calc(13px * var(--text)); color: var(--soft); }
 .up-next .link { font-weight: 500; }
@@ -156,6 +163,16 @@ img:is(.deck-cover, .head-cover) {
 .sentinel { height: 1px; }
 
 .head { margin-bottom: 22px; }
+/* A record's or an artist's page: a band in the sleeve's colour behind the head, fading into the
+   room by the list, so the page has a top and a body. */
+@media (min-width: 761px) {
+  .head.feature { position: relative; isolation: isolate; margin-bottom: 28px; padding-top: 14px; }
+  .head.feature::before { content: ''; position: absolute; z-index: -1; left: -36px; right: -48px; top: -18px; bottom: -28px;
+    background: linear-gradient(color-mix(in srgb, var(--accent) 30%, var(--ground)), color-mix(in srgb, var(--accent) 12%, var(--ground)) 60%, var(--ground)); }
+  .head.feature h1 { font-size: calc(clamp(48px, 5vw, 76px) * var(--display-size)); line-height: 1; letter-spacing: -.015em; }
+  .head.feature h1.long { font-size: calc(clamp(36px, 3.4vw, 52px) * var(--display-size)); line-height: 1.04; }
+}
+.head .kind { margin: 0 0 8px; font-size: calc(13px * var(--text)); font-weight: 600; color: var(--soft); }
 .head.with-cover { display: grid; grid-template-columns: clamp(160px, 18vw, 230px) minmax(0, 1fr); gap: 32px; align-items: end; }
 .head-cover { width: 100%; aspect-ratio: 1; box-shadow: 0 1px 1px rgba(0, 0, 0, .12), 0 18px 28px -18px rgba(0, 0, 0, .5); }
 /* An artist's picture is a portrait, cropped to a circle, not a sleeve shown whole. */
@@ -170,7 +187,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
   .head.with-cover.on-deck { grid-template-columns: 0px minmax(0, 1fr); gap: 0; }
   .head.on-deck .head-cover { opacity: 0; transform: scale(.9); view-transition-name: none; }
 }
-.head h1 { margin: 0; font: var(--display-weight) calc(clamp(32px, 3.1vw, 46px) * var(--display-size))/1.06 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
+.head h1 { margin: 0; font: var(--display-weight) calc(clamp(30px, 2.6vw, 38px) * var(--display-size))/1.08 var(--font-display); letter-spacing: -.01em; text-wrap: balance; }
 .head h1.long { font-size: calc(clamp(28px, 2.6vw, 38px) * var(--display-size)); line-height: 1.1; }
 .qualifier { margin: 8px 0 0; font-size: calc(16px * var(--text)); color: var(--soft); }
 .byline { margin: 12px 0 0; color: var(--soft); }
@@ -195,6 +212,17 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .head .actions > .text-button:hover:not(:disabled) { text-decoration: none; background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .head .actions > .text-button.star-text { padding-left: 13px; }
 .head .actions > .text-button.more-button { display: grid; place-items: center; width: 36px; padding: 0; }
+@media (min-width: 761px) {
+  .head .actions { gap: 8px; align-items: center; }
+  .head .actions > .play-action { width: 56px; height: 56px; min-height: 0; margin-right: 8px; padding: 0; justify-content: center; border-radius: 50%; background: var(--accent); color: var(--ground); }
+  .head .actions > .play-action:hover:not(:disabled) { background: var(--accent); transform: scale(1.04); }
+  .head .actions > .play-action .disc svg { width: 22px; }
+  .head .actions .action-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .head .actions > .text-button.icon-action { display: grid; place-items: center; width: 40px; height: 40px; min-height: 0; padding: 0; border: 0; border-radius: 50%; color: var(--soft); }
+  .head .actions > .text-button.icon-action:hover:not(:disabled) { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, transparent); }
+  .head .actions > .text-button.icon-action svg { width: 22px; height: 22px; }
+  .head .actions > .star-text.on { color: var(--ink); }
+}
 .more-button svg { width: 18px; height: 18px; }
 .disc { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; background: var(--ink); color: var(--ground); }
 .disc svg { width: 19px; }
@@ -210,6 +238,12 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .rating button:hover svg { transform: scale(1.15); }
 .rating .on { color: var(--accent); }
 .byline .rating { margin-left: .4em; }
+/* At rest, an unrated record's or artist's stars stay out of its facts; they come up under the
+   pointer or focus. The deck's unrated stars are quiet. */
+.byline .rating.unrated { opacity: 0; transition: opacity .15s; }
+.head:hover .byline .rating.unrated, .byline .rating.unrated:focus-within { opacity: 1; }
+.rating.deck-rating.unrated { opacity: .55; }
+.rating.deck-rating.unrated:is(:hover, :focus-within) { opacity: 1; }
 .deck-rating { display: flex; margin: 10px 0 2px -2px; }
 /* Touch: bigger targets, and beside the byline a line of their own, the first star lined up with it. */
 @media (pointer: coarse) {
@@ -242,8 +276,11 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .rows .row-desc { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: calc(13px * var(--text)); line-height: 1.38; }
 .grid-name > span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
 .grid-name { align-items: flex-start; }
-/* One line of credits, ending at a whole name: the rest wraps out of sight. */
-.grid-sub { display: block; max-height: 1.4em; white-space: normal; font-size: calc(13.5px * var(--text)); color: var(--soft); line-height: 1.4; }
+/* One line of credits: names shorten with an ellipsis, later ones first. */
+.grid-sub { display: flex; white-space: nowrap; overflow: hidden; font-size: calc(13.5px * var(--text)); color: var(--soft); line-height: 1.4; }
+.grid-sub > * { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.grid-sub > * + * { flex-shrink: 40; }
+.grid-sub .link { display: inline; }
 .grid-sub .link { display: inline; width: auto; color: inherit; font-weight: inherit; }
 /* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
    keyboard focus. Touch screens have no hover, so there it always shows, a little smaller. */
@@ -275,16 +312,18 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 /* Tracks */
 .tracks { margin: 0; padding: 0; list-style: none; }
 .tracks-head { display: flex; align-items: center; height: 32px; margin: 0 0 4px; padding: 0; border-bottom: 1px solid var(--line);
-  font-size: calc(11px * var(--text)); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--soft); }
+  font-size: calc(12.5px * var(--text)); font-weight: 500; color: var(--soft); }
+.tracks-head svg { width: 15px; height: 15px; vertical-align: -3px; }
 .tracks-head .track { flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; font-size: inherit; }
 .tracks-head .n { font-size: inherit; color: inherit; }
 .tracks-head .figure { font-size: inherit; color: inherit; }
 .tracks-head.with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr); }
 .tracks-head .figure { flex: none; width: 48px; text-align: right; }
-.tracks-head .star { opacity: 0; }
+.tracks-head .star { opacity: 1; color: var(--soft); }
+.tracks-head .star svg { width: 14px; }
 .tracks-head .row-rating { font-size: inherit; }
 .tracks li { display: flex; align-items: center; height: var(--row-height, 44px); }
-.tracks.two-line li { height: var(--row-two, 52px); }
+.tracks.two-line li { height: var(--row-two, 56px); }
 .track {
   position: relative; flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
   height: 100%; text-align: left; font-size: calc(15px * var(--text));
@@ -380,6 +419,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 
 .shelf-section { margin-top: 30px; }
 .shelf-section:first-of-type { margin-top: 8px; }
+.shelf-section.more-by { margin-top: 44px; }
 .shelf-section h2 { margin: 0 0 14px; font: var(--display-weight) calc(23px * var(--display-size))/1.15 var(--font-display); }
 .section-note { margin: -6px 0 14px; font-size: calc(14px * var(--text)); color: var(--soft); }
 .shelf-section > .actions { margin: 0 0 12px; }
@@ -1070,7 +1110,7 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
 }
 
 /* Compact density: tighter pages and lists, including song rows. */
-html[data-density='compact'] { --row-height: 38px; --row-two: 46px; }
+html[data-density='compact'] { --row-height: 38px; --row-two: 48px; }
 @media (min-width: 761px) {
   html[data-density='compact'] .bar { padding: 12px 28px 8px; gap: 22px; }
   html[data-density='compact'] .deck { margin: 2px 0 14px 16px; padding: 12px 12px 14px; }
@@ -1164,6 +1204,9 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
   .sections { gap: 12px; }
   .wordmark { margin-right: 0; }
   .search-field { min-width: 100px; }
+  /* Too narrow to line the sections up over the page: they follow the wordmark. */
+  .bar .wordmark, .bar-top:not(:has(.back)) .wordmark { width: auto; margin-right: 0; }
+  .bar { column-gap: 14px; }
 }
 /* Six tabs on a narrow phone: the labels shrink a little further to stay on one line. */
 @media (max-width: 480px) {

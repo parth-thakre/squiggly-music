@@ -27,7 +27,7 @@ import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
 import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoreHorizontal, Plus, Radio as RadioIcon, Shuffle as ShuffleIcon } from 'lucide-react';
 import { reducedMotion } from './theme';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
@@ -51,10 +51,11 @@ function Pending<T>({ result, children, waiting }: { result: Result<T> | undefin
 
 // `onDeck`: this record is the one playing, so the deck already shows its sleeve and the page's
 // cover folds away (desktop only; a phone's deck is a strip).
-function Head({ title, qualifier, cover, onDeck = false, children }: { title: string; qualifier?: string; cover?: ReactNode; onDeck?: boolean; children?: ReactNode }) {
-  return <header className={`head${cover ? ' with-cover' : ''}${onDeck ? ' on-deck' : ''}`}>
+function Head({ title, qualifier, cover, kind, onDeck = false, children }: { title: string; qualifier?: string; cover?: ReactNode; kind?: string; onDeck?: boolean; children?: ReactNode }) {
+  return <header className={`head${cover ? ' with-cover' : ''}${kind ? ' feature' : ''}${onDeck ? ' on-deck' : ''}`}>
     {cover}
     <div className="head-text">
+      {kind && <p className="kind">{kind}</p>}
       <h1 className={title.length > 28 ? 'long' : undefined}>{title}</h1>
       {qualifier && <p className="qualifier">{qualifier}</p>}
       {children}
@@ -64,9 +65,9 @@ function Head({ title, qualifier, cover, onDeck = false, children }: { title: st
 function Actions({ tracks, children }: { tracks: Track[] | null; children?: ReactNode }) {
   return <div className="actions">
     <button type="button" className="play-action" disabled={!tracks?.length} onClick={() => tracks && void player.play(tracks, 0).then(showNowPlaying)}>
-      <span className="disc"><Glyph kind="play" /></span>Play
+      <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
     </button>
-    <button type="button" className="text-button" disabled={!tracks?.length} onClick={() => tracks && void player.play(shuffled(tracks), 0).then(showNowPlaying)}>Shuffle</button>
+    <button type="button" className="text-button icon-action" title="Shuffle" disabled={!tracks?.length} onClick={() => tracks && void player.play(shuffled(tracks), 0).then(showNowPlaying)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
     {children}
   </div>;
 }
@@ -293,25 +294,38 @@ export function AlbumPage({ id }: { id: string }) {
     const title = splitTitle(album.name);
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
-      <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
+      <Head title={title.main} qualifier={title.extra} kind="Record" onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
         <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingStars target="album" id={album.id} rating={album.userRating} name={album.name} /></p>
         <Actions tracks={tracks}>
-          <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
+          <button type="button" className="text-button icon-action" title="Radio" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
           <MoreButton target={{ kind: 'album', album }} />
           <KeepButton kind="album" id={album.id} name={album.name} artist={album.artist} coverArt={album.coverArt} tracks={tracks} />
         </Actions>
       </Head>
       <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" groups={discGroups(tracks, discTitles)} />
+      {album.artistId && <MoreBy artistId={album.artistId} name={album.artist} except={album.id} />}
     </>;
   }}</Pending>;
+}
+
+// Other records by the record's artist, as a shelf under its songs. Nothing when there are none.
+function MoreBy({ artistId, name, except }: { artistId: string; name: string; except: string }) {
+  const result = useKept(`artist:${artistId}`, from => from.artist(artistId));
+  const others = result?.ok ? result.value.albums.filter(a => a.id !== except).slice(0, 6) : [];
+  if (!others.length) return null;
+  return <section className="shelf-section more-by" aria-labelledby="more-by">
+    <div className="section-head"><h2 id="more-by">More by {name}</h2>
+      <button type="button" className="text-button see-all" onClick={() => nav.go({ view: 'artist', id: artistId })}>See all</button></div>
+    <AlbumGrid albums={others} />
+  </section>;
 }
 
 function StarButton({ target, id, starred, name }: { target: 'album' | 'artist'; id: string; starred: boolean; name: string }) {
   useFavoritesVersion();
   const on = isStarred(id, starred);
-  return <button type="button" className={`text-button star-text${on ? ' on' : ''}`} aria-pressed={on} onClick={() => void setStarred(target, [id], !on)}>
-    <Glyph kind={on ? 'hearted' : 'heart'} />{on ? 'In favorites' : 'Add to favorites'}<span className="sr-only"> {name}</span></button>;
+  return <button type="button" className={`text-button star-text icon-action${on ? ' on' : ''}`} aria-pressed={on} title={on ? 'In favorites' : 'Add to favorites'} onClick={() => void setStarred(target, [id], !on)}>
+    <Glyph kind={on ? 'hearted' : 'heart'} /><span className="action-label">{on ? 'In favorites' : 'Add to favorites'}</span><span className="sr-only"> {name}</span></button>;
 }
 // A playlist file of these songs (exports.ts). Errors show under the page's heading.
 function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
@@ -323,7 +337,7 @@ function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
 }
 // The same menu as right-click, for people who don't right-click (and for touch).
 function MoreButton({ target }: { target: Parameters<typeof openMenu>[1] }) {
-  return <button type="button" className="text-button more-button" aria-haspopup="menu" aria-label="More" title="More" onClick={event => {
+  return <button type="button" className="text-button more-button icon-action" aria-haspopup="menu" aria-label="More" title="More" onClick={event => {
     const box = event.currentTarget.getBoundingClientRect();
     openMenu({ clientX: box.left, clientY: box.bottom + 6, preventDefault: () => {}, target: event.currentTarget }, target);
   }}><MoreHorizontal aria-hidden="true" /></button>;
@@ -447,15 +461,15 @@ export function ArtistPage({ id }: { id: string }) {
     showNowPlaying();
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => <>
-    <Head title={artist.name} cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
+    <Head title={artist.name} kind="Artist" cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
       <p className="byline"><span>{albums.length || !appearsOn ? plural(albums.length, 'record')
         : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
           <span className="disc"><Glyph kind="play" /></span>Play
         </button>
-        <button type="button" className="text-button" disabled={busy} onClick={() => void playAll(artist, true)}>Shuffle</button>
-        <button type="button" className="text-button" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}>Radio</button>
+        <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy} onClick={() => void playAll(artist, true)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
+        <button type="button" className="text-button icon-action" title="Radio" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
         <StarButton target="artist" id={artist.id} starred={artist.starred} name={artist.name} />
         <MoreButton target={{ kind: 'artist', artist }} />
       </div>
@@ -519,7 +533,7 @@ export function Tracks() {
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
           <span className="disc"><Glyph kind="play" /></span>Play
         </button>
-        <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
+        <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
       {tracksPlainHttp && <p className="note">In the server's order. Sorting a library this big needs HTTPS.</p>}
@@ -1185,7 +1199,7 @@ export function GenrePage({ name }: { name: string }) {
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
           <span className="disc"><Glyph kind="play" /></span>Play
         </button>
-        <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
+        <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>

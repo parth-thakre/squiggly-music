@@ -21,6 +21,35 @@ function expectReadable(palette: Palette) {
   }
 }
 
+// The hue of a #rrggbb colour, in degrees.
+function hueOf(hex: string) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (!d) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+
+describe('the room follows the colour you see', () => {
+  it('a yellow sleeve with a large purple-black shadow gets a yellow room, not a purple one', () => {
+    const palette = paletteFromPixels(sleeve([43, 31, 48], [43, 31, 48], [43, 31, 48], [230, 190, 40], [230, 190, 40]));
+    const hue = hueOf(palette.ground);
+    expect(hue, `ground ${palette.ground}`).toBeGreaterThan(30);
+    expect(hue, `ground ${palette.ground}`).toBeLessThan(65);
+    // The accent is still the sleeve's yellow.
+    expect(hueOf(palette.accent), `accent ${palette.accent}`).toBeGreaterThan(30);
+    expect(hueOf(palette.accent), `accent ${palette.accent}`).toBeLessThan(65);
+    expectReadable(palette);
+  });
+
+  it('a sleeve whose largest patch already shares its vivid hue keeps that patch\'s hue', () => {
+    const palette = paletteFromPixels(sleeve([20, 26, 46], [20, 26, 46], [20, 26, 46], [60, 90, 200]));
+    const hue = hueOf(palette.ground);
+    expect(hue, `ground ${palette.ground}`).toBeGreaterThan(200);
+    expect(hue, `ground ${palette.ground}`).toBeLessThan(240);
+  });
+});
+
 describe('palette contrast', () => {
   it('measures contrast and compositing like the browser', () => {
     expect(contrast('#000000', '#ffffff')).toBeCloseTo(21, 5);

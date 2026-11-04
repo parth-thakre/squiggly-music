@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
-import { GripVertical, X } from 'lucide-react';
+import { Clock, GripVertical, Heart, X } from 'lucide-react';
 import { Credits } from './credits';
 import { canDrag, carriesItems, readPayload, startDrag, type DragPayload } from './drag';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -214,7 +214,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     {/* Column names over the rows, wider than a phone. Only for the eye: each row names its own parts. */}
     {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}${onMove ? ' reorderable' : ''}`} aria-hidden="true">
       <span className="track"><span className="n">#</span><span>Title</span>{showAlbum && <span>Record</span>}</span>
-      <span className="row-rating">Rating</span><span className="star" /><span className="figure">Time</span>
+      <span className="row-rating">Rating</span><span className="star"><Heart /></span><span className="figure"><Clock /></span>
       {keptSupported && keptMarks && <span className="kept-slot" />}<span className="row-remove" />
     </div>}
     <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${queue ? ' queue-list' : ''}${onMove ? ' reorderable' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}

@@ -3,7 +3,7 @@ import { useLayoutEffect, type CSSProperties } from 'react';
 import { nextRepeat } from '../../../../../packages/core/playOrder';
 import type { Track } from '../../../../../packages/core/contracts';
 import { isStation } from '../../../../../packages/core/stations';
-import type { Palette } from './palette';
+import { blend, contrast, type Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
 import { Squiggle } from './Squiggle';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -19,9 +19,16 @@ export const alpha = (hex: string, a: number) => {
 };
 // The room's colours as CSS variables. accentText is for normal-weight text; palettes that
 // don't carry one fall back to the accent.
+// A surface set back from the room (the deck): further from the ink, so text on it reads at least
+// as well as on the room itself: darker in a dark room, lighter in a light one.
+const setBack = (palette: Palette) => {
+  const dark = contrast(palette.ground, '#000000') < contrast(palette.ground, '#ffffff');
+  return blend(palette.ground, dark ? '#000000' : '#ffffff', dark ? .24 : .4);
+};
 export const paletteStyle = (palette: Palette) => ({
   '--ground': palette.ground, '--ink': palette.ink, '--soft': palette.soft, '--accent': palette.accent,
   '--accent-text': palette.accentText ?? palette.accent, '--line': palette.line ?? alpha(palette.ink, .16),
+  '--set-back': setBack(palette),
 }) as CSSProperties;
 
 // The room's palette: the theme's fixed colours, or the playing record's sleeve. Each window
