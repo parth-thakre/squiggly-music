@@ -1,4 +1,4 @@
-import { ListMusic, MessageSquareQuote, PictureInPicture2, Search as SearchIcon } from 'lucide-react';
+import { ChevronLeft, ListMusic, MessageSquareQuote, PictureInPicture2, Search as SearchIcon } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
@@ -128,7 +128,7 @@ const Bar = memo(function Bar() {
     {/* The wordmark goes home, as a site's logo does. */}
     <button type="button" className="wordmark" aria-label="Squiggly home" aria-current={route.view === 'home' ? 'page' : undefined}
       onClick={() => nav.go({ view: 'home' })}><Mark />Squiggly</button>
-    {canGoBack && <button type="button" className="text-button back" onClick={() => nav.back()}>Back</button>}
+    {canGoBack && <button type="button" className="text-button back" aria-label="Back" title="Back" onClick={() => nav.back()}><ChevronLeft aria-hidden="true" /><span className="back-word">Back</span></button>}
     <label className="search-field"><SearchIcon aria-hidden="true" />
     <input className="search" type="search" placeholder="Find anything" aria-label="Search your library" value={query}
       onChange={event => {

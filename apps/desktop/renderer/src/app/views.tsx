@@ -27,7 +27,7 @@ import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
 import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoreHorizontal, Plus } from 'lucide-react';
 import { reducedMotion } from './theme';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
@@ -612,7 +612,7 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
 function NewPlaylist() {
   const [naming, setNaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!naming) return <button type="button" className="text-button" onClick={() => setNaming(true)}>New playlist</button>;
+  if (!naming) return <button type="button" className="text-button new-playlist" onClick={() => setNaming(true)}><Plus aria-hidden="true" />New playlist</button>;
   return <form className="inline-form" onSubmit={async event => {
     event.preventDefault();
     const name = String(new FormData(event.currentTarget).get('name') ?? '').trim();
@@ -796,6 +796,7 @@ export function Queue() {
     // tinted. A run autoplay added straight after the playing song keeps its own label there.
     const parts: TrackGroup[] = [];
     if (index > 0 && !folded) parts.push({ at: 0, label: 'Played', quiet: true });
+    if (!added.some(g => g.at === index)) parts.push({ at: index, label: 'Now playing', quiet: true });
     if (index + 1 < entryIds.length && !added.some(g => g.at === index + 1)) parts.push({ at: index + 1, label: 'Up next', quiet: true });
     return [...parts, ...added].sort((a, b) => a.at - b.at);
   }, [autoplay, entryIds, index, folded]);
@@ -863,8 +864,7 @@ export function SettingsView() {
       </label>}
       <QueuedPlays />
       {row('syncQueue', 'Sync the queue across devices')}
-      <Disconnect />
-      {mode === 'web' && <SignOut />}
+      <div className="server-actions"><Disconnect />{mode === 'web' && <SignOut />}</div>
       {keptSupported && <KeptSettings />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>

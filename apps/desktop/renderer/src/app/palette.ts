@@ -75,7 +75,7 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   const dark = l < .55;
   // Keep the sleeve's character but calm it enough to read long lists on. A dull dark sleeve is
   // lifted to a little colour, so the room still reads as its own; a grey one stays grey.
-  const ground = hslToHex([h, dark ? (s < .06 ? s : Math.min(.45, Math.max(s, .16))) : Math.min(s, .5), dark ? Math.min(Math.max(l, .085), .155) : Math.max(Math.min(l, .86), .74)]);
+  const ground = hslToHex([h, dark ? (s < .06 ? s : Math.min(.45, Math.max(s, .22))) : Math.min(s, .5), dark ? Math.min(Math.max(l, .085), .155) : Math.max(Math.min(l, .86), .74)]);
   const ink = readable([h, Math.min(s, .35), dark ? .9 : .12], [ground], 11, dark);
   // Soft text sits on selected rows too, and a selected row is darker (or lighter) than the ground.
   const tint = selectedTint({ ground, ink });
