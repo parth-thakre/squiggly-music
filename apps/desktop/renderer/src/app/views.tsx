@@ -599,7 +599,8 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
       <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
       <span className="row-text">
         <span className="row-name">{splitTitle(playlist.name).main}</span>
-        <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{note && `. ${note}`}</span>
+        <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}</span>
+        {note && <span className="row-sub row-note">{note}</span>}
       </span>
       <ContainerMark kind="playlist" id={playlist.id} />
     </button>

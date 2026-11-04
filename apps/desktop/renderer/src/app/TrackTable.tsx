@@ -217,7 +217,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
       <span className="row-rating">Rating</span><span className="figure">Time</span>
       {keptSupported && keptMarks && <span className="kept-slot" />}{onRemove && <span className="row-remove" />}<span className="star" />
     </div>}
-    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
+    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${queue ? ' queue-list' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
       onDragLeave={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setInto(null); }}
       style={windowed ? { height: (tracks.length + groups.length) * ROW, position: 'relative' } : undefined}>
       {tracks.slice(first, last).map((track, offset) => {
