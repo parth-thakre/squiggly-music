@@ -417,7 +417,12 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 }
 .names li { break-inside: avoid; }
 .names button { padding: 5px 0; background: none; border: 0; text-align: left; font-size: calc(15.5px * var(--text)); }
-.names button span { margin-left: 8px; font-size: calc(13px * var(--text)); color: var(--soft); }
+.names button { display: flex; align-items: center; gap: 12px; }
+.artist-thumb { flex: none; width: 40px; height: 40px; }
+.artist-thumb .cover { width: 40px; height: 40px; border-radius: 50%; }
+.artist-thumb .cover-type.initial span { font-size: calc(17px * var(--display-size)) !important; }
+.artist-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.names button .artist-label span { margin-left: 8px; font-size: calc(13px * var(--text)); color: var(--soft); }
 .names button:hover { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 .shelf-section { margin-top: 30px; }

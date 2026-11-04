@@ -780,7 +780,10 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
   const drags = canDrag();
   return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
     <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
-      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name}{artist.albumCount > 0 && <> <span>{plural(artist.albumCount, 'record')}</span></>}</button>
+      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
+      {/* The server's picture of the artist (a photo, or one of their sleeves); only for the eye. */}
+      <span className="artist-thumb" aria-hidden="true"><Cover id={artist.coverArt} name={artist.name} size={96} /></span>
+      <span className="artist-label">{artist.name}{artist.albumCount > 0 && <> <span>{plural(artist.albumCount, 'record')}</span></>}</span></button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
 }
