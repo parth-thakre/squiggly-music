@@ -33,12 +33,13 @@ test.describe('lyrics', () => {
     await expect.poll(() => colorOf(current)).toBe(ink);
     const past = app.main.locator('.lyric-lines li.past').first();
     await expect(past).toHaveText('Line 1 of the lyric');
-    // Upcoming lines are soft, so what's next reads first; sung lines step back further.
+    // Upcoming lines step back from the line being sung, and sung lines step back further.
     const soft = await resolved(page, '--soft');
     const upcoming = app.main.locator('.lyric-lines li:not(.current):not(.past)').first();
-    await expect.poll(() => colorOf(upcoming)).toBe(soft);
     await expect.poll(() => colorOf(past)).not.toBe(soft);
-    expect(await colorOf(past)).not.toBe(ink);
+    const [pastColour, upcomingColour] = [await colorOf(past), await colorOf(upcoming)];
+    expect([ink, soft, pastColour]).not.toContain(upcomingColour);
+    expect(pastColour).not.toBe(ink);
     for (const line of await app.main.locator('.lyric-lines li').all()) expect(await colorOf(line)).not.toBe(accentText);
     await expect(app.main.locator('.lyric-lines li.current')).toHaveCount(1);
     // Line-timed lyrics get estimated words, and say so.

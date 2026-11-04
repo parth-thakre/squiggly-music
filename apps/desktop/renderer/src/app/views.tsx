@@ -466,7 +466,7 @@ export function ArtistPage({ id }: { id: string }) {
         : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
-          <span className="disc"><Glyph kind="play" /></span>Play
+          <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
         <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy} onClick={() => void playAll(artist, true)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
         <button type="button" className="text-button icon-action" title="Radio" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
@@ -531,7 +531,7 @@ export function Tracks() {
       {tracksSorted && <Sorts list="tracks" type={sort} />}
       <div className="actions">
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
-          <span className="disc"><Glyph kind="play" /></span>Play
+          <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
         <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
       </div>
@@ -1197,7 +1197,7 @@ export function GenrePage({ name }: { name: string }) {
       {genre && <p className="byline"><span>{plural(genre.songCount, 'song')}, {plural(genre.albumCount, 'record')}</span></p>}
       <div className="actions">
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
-          <span className="disc"><Glyph kind="play" /></span>Play
+          <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
         <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
       </div>
