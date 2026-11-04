@@ -193,9 +193,12 @@ test('the desktop marks the entries its main process says autoplay added', async
   });
   await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
   const main = page.locator('main.page');
-  // One quiet heading, above the first song autoplay added; the song after them isn't marked.
+  // Played above the first song; then, above the first song autoplay added (straight after the
+  // playing one), its quiet heading in place of Up next; the song after them isn't marked.
   const rows = main.locator('ol.tracks > li');
-  await expect(rows).toHaveCount(6);
-  await expect(rows.nth(2)).toHaveClass(/\bgroup-head\b/);
-  await expect(rows.nth(2)).toHaveText('Added by autoplay');
+  await expect(rows).toHaveCount(7);
+  await expect(rows.nth(0)).toHaveText('Played');
+  await expect(rows.nth(3)).toHaveClass(/\bgroup-head\b/);
+  await expect(rows.nth(3)).toHaveText('Added by autoplay');
+  await expect(main.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
 });

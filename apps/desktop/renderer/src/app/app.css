@@ -19,7 +19,7 @@ button:disabled { cursor: default; opacity: .45; }
 .room {
   --raised: color-mix(in srgb, var(--ink) 5%, var(--ground));
   --overlay: color-mix(in srgb, var(--ink) 8%, var(--ground));
-  height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
+  height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
   background: var(--ground); color: var(--ink); transition: background-color .6s ease, color .6s ease;
 }
 
@@ -88,11 +88,6 @@ img:is(.deck-cover, .head-cover) {
 .up-next .link { font-weight: 500; }
 .deck-error { margin: 14px 0 0; font-size: calc(13.5px * var(--text)); color: var(--ink); }
 .quiet-link { margin-top: auto; padding-top: 18px; align-self: flex-start; font-size: calc(12.5px * var(--text)); color: var(--soft); }
-
-/* The squiggle across the top, between the header and the deck and page (TopPosition). Flat while
-   nothing plays: the rest of a song not yet started, in the same line. */
-.top-position { grid-column: 1 / -1; padding: 0 40px 4px; }
-.top-position.idle { height: 30px; background: linear-gradient(color-mix(in srgb, var(--ink) 22%, transparent), color-mix(in srgb, var(--ink) 22%, transparent)) center / calc(100% - 80px) 2.5px no-repeat; }
 
 .squiggle { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .squiggle-time { font-size: calc(12px * var(--text)); color: var(--soft); }
@@ -190,8 +185,6 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .rating button:hover svg { transform: scale(1.15); }
 .rating .on { color: var(--accent); }
 .byline .rating { margin-left: .4em; }
-/* A rating is a quiet fact, not a mark: the accent stays for what's playing and what you love. */
-:is(.byline .rating, .rating.deck-rating) .on { color: color-mix(in srgb, var(--ink) 70%, var(--ground)); }
 .deck-rating { display: flex; margin: 12px 0 0 -2px; }
 /* Touch: bigger targets, and beside the byline a line of their own, the first star lined up with it. */
 @media (pointer: coarse) {
@@ -220,7 +213,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .grid-name { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: calc(14px * var(--text)); font-weight: 600; line-height: 1.3; }
 .grid-sub, .row-name, .row-sub { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .grid-name > span { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
-.grid-name { align-items: flex-start; min-height: calc(2 * 1.3em); }
+.grid-name { align-items: flex-start; }
 .grid-sub { display: block; font-size: calc(13px * var(--text)); color: var(--soft); line-height: 1.35; }
 .grid-sub .link { display: inline; width: auto; color: inherit; font-weight: inherit; }
 /* One-click play (PlayOver in views.tsx): over a cover, or beside an artist's name, on hover or
@@ -276,6 +269,15 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr); }
 .track .n { font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .track .n .wave { width: 20px; }
+.track .n { position: relative; }
+.track .n .grip { position: absolute; left: -3px; top: 50%; width: 16px; height: 16px; margin-top: -8px; color: var(--soft); opacity: 0; }
+.tracks li:is(:hover, :focus-within) .track .n:has(.grip) .n-mark { opacity: 0; }
+.tracks li:is(:hover, :focus-within) .track .n .grip { opacity: 1; }
+.row-remove { flex: none; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; background: none; border: 0; border-radius: 50%; color: var(--soft); opacity: 0; }
+.row-remove svg { width: 16px; height: 16px; }
+.tracks li:is(:hover, :focus-within) .row-remove, .row-remove:focus-visible { opacity: 1; }
+.row-remove:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 9%, transparent); }
+@media (hover: none) { .row-remove { opacity: 1; } }
 /* The rating and the duration sit outside the row's button, between it and the favorite star.
    An unrated song's stars stay faint until the row is pointed at. */
 .tracks .figure { flex: none; width: 48px; text-align: right; font-size: calc(13.5px * var(--text)); color: var(--soft); }
@@ -288,7 +290,6 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .row-rating .rating { display: flex; vertical-align: 0; }
 .row-rating .rating button { padding: 2px 1px; }
 .row-rating .rating svg { width: 16px; }
-.row-rating .rating .on { color: color-mix(in srgb, var(--ink) 62%, var(--ground)); }
 .row-rating .rating button:not(.on) { opacity: .45; }
 .row-rating .unrated { opacity: 0; transition: opacity .12s; }
 .tracks li:hover .unrated, .row-rating .unrated:focus-within { opacity: 1; }
@@ -452,6 +453,11 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .setting input[type='checkbox']:checked { border-color: var(--ink); background: var(--ink); }
 .setting input[type='checkbox']:checked::after { opacity: 1; }
 .setting input[type='checkbox']:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.setting input[type='radio'] { -webkit-appearance: none; appearance: none; display: grid; place-items: center; width: 20px; height: 20px; border: 1.5px solid var(--soft); border-radius: 50%; background: none; cursor: pointer; }
+.setting input[type='radio']::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--ink); transform: scale(0); transition: transform .12s; }
+.setting input[type='radio']:checked { border-color: var(--ink); }
+.setting input[type='radio']:checked::after { transform: none; }
+.setting input[type='radio']:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .setting strong { display: block; font-size: calc(15.5px * var(--text)); font-weight: 600; }
 .setting span span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
 /* A setting that is an action rather than a switch: text in the switches' column, the button under it. */
@@ -516,7 +522,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 }
 .palette-input::placeholder { color: var(--soft); }
 .palette-input:focus-visible { outline: none; }
-.palette-list { overflow-y: auto; padding: 4px 6px 8px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.palette-list { overflow-y: auto; padding: 4px 6px 12px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .palette-list [role='group'] + [role='group'] { margin-top: 4px; }
 .palette .menu-title { padding-top: 10px; }
 .palette-item {
@@ -529,6 +535,8 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .palette-keys { flex: none; font-size: calc(12.5px * var(--text)); color: var(--soft); }
 .palette-keys kbd { display: inline-block; min-width: 1.7em; padding: 1px 6px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-bottom-width: 2px; border-radius: 5px; text-align: center; font-weight: 500; color: var(--ink); }
 .palette > .menu-note { padding: 12px 16px 16px; max-width: none; }
+.palette-foot { flex: none; display: flex; gap: 18px; margin: 0; padding: 9px 16px; border-top: 1px solid var(--line); font-size: calc(12.5px * var(--text)); color: var(--soft); }
+.palette-foot kbd { display: inline-block; min-width: 1.7em; margin-right: 3px; padding: 0 5px; border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); border-bottom-width: 2px; border-radius: 5px; text-align: center; font-weight: 500; color: var(--ink); }
 .menu.palette.sheet { top: auto; width: auto; margin: 0; max-height: 78dvh; padding: 0 0 env(safe-area-inset-bottom); }
 .menu.palette.sheet:focus { outline: none; }
 .menu.palette.sheet .palette-input { padding: 18px 18px 12px; font-size: calc(20px * var(--display-size)); }
@@ -629,6 +637,7 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .connect-beta .setting { gap: 14px; margin-top: 6px; font-size: inherit; color: var(--ink); }
 .connect-beta .setting input { padding: 0; border: 0; }
 .deck-links .quiet-link { margin: 0; padding: 0; white-space: nowrap; }
+@media (min-width: 761px) { .deck-links .quiet-link { min-height: 28px; font-size: calc(13px * var(--text)); } }
 .bar-commands { display: none; }
 .deck-sheet-bar { display: none; }
 .resume { margin-top: 18px; }
@@ -1007,8 +1016,6 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
 html[data-density='compact'] { --row-height: 38px; --row-two: 46px; }
 @media (min-width: 761px) {
   html[data-density='compact'] .bar { padding: 12px 28px 8px; gap: 22px; }
-  html[data-density='compact'] .top-position { padding: 0 28px 2px; }
-  html[data-density='compact'] .top-position.idle { background-size: calc(100% - 56px) 2.5px; }
   html[data-density='compact'] .deck { margin: 2px 0 14px 16px; padding: 12px 12px 14px; }
   html[data-density='compact'] .page { padding: 12px 34px 48px 26px; }
   html[data-density='compact'] .head { margin-bottom: 18px; }
@@ -1088,7 +1095,7 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
    rise into the song above. The whole title is in the heading's tooltip. */
 .group-head h2 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: var(--display-weight) calc(19px * var(--display-size))/1.2 var(--font-display); }
 /* Songs autoplay added to the queue: a quiet note above them, not a title. */
-.group-head.quiet h2 { font: 500 calc(13px * var(--text))/1.2 var(--font-body); color: var(--soft); }
+.group-head.quiet h2 { font: 600 calc(11.5px * var(--text))/1.2 var(--font-body); letter-spacing: .06em; text-transform: uppercase; color: var(--soft); }
 /* Decade, at the end of the Records sorts: it opens a row of decades under them. */
 .choices .decade-toggle.on { font-weight: 600; background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); }
 .decades { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; }

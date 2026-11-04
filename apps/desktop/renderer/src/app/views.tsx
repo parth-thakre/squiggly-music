@@ -403,7 +403,7 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
             <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
               onContextMenu={event => openMenu(event, { kind: 'artist', artist })}
               draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
-              <span className="artist-name">{artist.name}</span> <span>{artist.albumCount}</span>
+              <span className="artist-name">{artist.name}</span> <span>{plural(artist.albumCount, 'record')}</span>
             </button>
             <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
           </li>)}
@@ -780,7 +780,15 @@ export function Queue() {
   const settings = useSettings();
   const [saved, setSaved] = useState<string | null>(null);
   // Songs autoplay added sit under a quiet note, one above each run of them.
-  const groups = useMemo<TrackGroup[]>(() => addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true })), [autoplay, entryIds]);
+  const groups = useMemo<TrackGroup[]>(() => {
+    const added = addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true }));
+    // Quiet labels part what has played from what comes next; the playing row between them is
+    // tinted. A run autoplay added straight after the playing song keeps its own label there.
+    const parts: TrackGroup[] = [];
+    if (index > 0) parts.push({ at: 0, label: 'Played', quiet: true });
+    if (index + 1 < entryIds.length && !added.some(g => g.at === index + 1)) parts.push({ at: index + 1, label: 'Up next', quiet: true });
+    return [...parts, ...added].sort((a, b) => a.at - b.at);
+  }, [autoplay, entryIds, index]);
   // Records, artists, songs, and playlists dropped on the page join the end of the queue; onto
   // the list, before that song.
   const drop = useDropTarget(payload => void dropOnQueue(payload));

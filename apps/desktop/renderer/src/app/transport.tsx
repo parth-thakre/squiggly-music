@@ -78,7 +78,7 @@ export function Position({ track, palette }: { track: Track; palette: Palette })
   const live = isStation(track);
   return <Squiggle label={live ? `${track.title}, live. There is no position to seek to.` : `Position in ${track.title}`} identity={entry ?? track.id}
     position={position} duration={duration || (track.duration ?? 0)} playing={playing}
-    color={palette.accent} rest={alpha(palette.ink, .22)} onSeek={player.seek} live={live} />;
+    color={palette.accent} rest={alpha(palette.ink, .42)} onSeek={player.seek} live={live} />;
 }
 
 // The line under the title: the artist, or for a station, what it says is on. When it says nothing

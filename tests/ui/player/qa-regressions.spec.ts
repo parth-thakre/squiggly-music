@@ -51,11 +51,11 @@ test.describe('QA regressions', () => {
     test.skip(info.project.name !== 'desktop', 'desktop layout');
     await app.play('Test Pressing', 'Long Run');
     await app.pause();
-    await page.locator('.top-position .squiggle-rail input').first().evaluate((input: HTMLInputElement) => {
+    await page.locator('.deck .squiggle-rail input').first().evaluate((input: HTMLInputElement) => {
       input.value = '0'; input.dispatchEvent(new Event('input', { bubbles: true }));
     });
     // Sample the canvas: a flat line has one ink row; a wave spans several.
-    const rows = await page.locator('.top-position .squiggle-rail canvas').first().evaluate((canvas: HTMLCanvasElement) => {
+    const rows = await page.locator('.deck .squiggle-rail canvas').first().evaluate((canvas: HTMLCanvasElement) => {
       const context = canvas.getContext('2d')!;
       const { width, height } = canvas;
       const data = context.getImageData(0, 0, Math.min(width, Math.round(24 * devicePixelRatio)), height).data;

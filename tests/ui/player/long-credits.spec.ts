@@ -15,7 +15,7 @@ test('a long credit gives way before the song\'s name does', async ({ page }) =>
   ];
   await page.evaluate(v => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(v), { queue, entryIds: ['e1', 'e2'], currentIndex: 0, duration: 200, playId: 'p', playing: false, position: 0 });
   await page.getByRole('button', { name: 'Queue', exact: true }).first().click();
-  const rows = page.locator('ol.tracks > li');
+  const rows = page.locator('ol.tracks > li:not(.group-head)');
   await expect(rows).toHaveCount(2);
   for (const row of await rows.all()) {
     const fits = (selector: string) => row.locator(selector).evaluate(element => element.scrollWidth <= element.clientWidth);

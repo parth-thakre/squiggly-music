@@ -5,7 +5,7 @@ import { current, currentEntry, optimisticVolume, player, usePlayer } from './pl
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover, useWide } from './ui';
+import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { asHex } from './palette';
@@ -82,7 +82,6 @@ export function App() {
     {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
     {shell && cover ? <CoverScreen palette={palette} /> : shell ? <>
       <Bar />
-      <TopPosition />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : access === 'checking' ? null : mode === 'web' && access === 'sign-in' ? <SignIn /> : <Connect />}
@@ -162,17 +161,6 @@ const Bar = memo(function Bar() {
   </header>;
 });
 
-// Wider than a phone, the squiggle runs the window's full width under the header, the line
-// between it and everything below, so a song has room to be found in. With nothing playing the
-// line is still there, flat. A phone keeps it in the deck's strip.
-function TopPosition() {
-  const wide = useWide();
-  const track = usePlayer(current);
-  const palette = useContext(PaletteContext);
-  if (!wide) return null;
-  return <div className={`top-position${track ? '' : ' idle'}`}>{track && <Position track={track} palette={palette} />}</div>;
-}
-
 // A drag held over a section opens it, so what it carries can reach that section's pages.
 function SectionButton({ view, label, current }: { view: (typeof sections)[number]['view']; label: string; current: boolean }) {
   const spring = useSpringOpen(() => { if (nav.current.view !== view) nav.go({ view }); });
@@ -236,8 +224,6 @@ const Deck = memo(function Deck() {
   const palette = useContext(PaletteContext);
   const entry = usePlayer(currentEntry);
   const deck = useRef<HTMLElement>(null);
-  // Wider than a phone, the squiggle runs along the top instead (TopPosition).
-  const wide = useWide();
   useSwipeSongs(deck, entry ?? track?.id);
   // Folding to the cover screen unmounts the deck; its open sheet's history entry goes with it.
   useEffect(() => { if (expanded) return () => nav.closeOverlay(); }, [expanded]);
@@ -279,7 +265,7 @@ const Deck = memo(function Deck() {
         <DeckSlots placement="under-title" track={track} />
       </div>
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
-      {!wide && <Position track={track} palette={palette} />}
+      <Position track={track} palette={palette} />
       <div className="transport">
         <TransportButtons playing={playing} />
         <Volume />
