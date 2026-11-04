@@ -338,12 +338,13 @@ function DeckLinks() {
   const pageConnection = usePlayer(s => s.mode === 'web' && s.connected && s.pageConnection);
   const mode = usePlayer(s => s.mode);
   const key = keysFor(useKeymap().keymap, PALETTE)[0];
+  const here = useRoute().view;
   return <p className="deck-links">
     <UpdateLink />
     <BetaMarker />
     <button type="button" className="quiet-link commands-link" title={key ? `Commands (${key.join(' then ')})` : undefined} onClick={openPalette}>Commands</button>
-    <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'settings' })}>Settings</button>
-    <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
+    <button type="button" className="quiet-link" aria-current={here === 'settings' ? 'page' : undefined} onClick={() => nav.go({ view: 'settings' })}>Settings</button>
+    <button type="button" className="quiet-link" aria-current={here === 'diagnostics' ? 'page' : undefined} onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
     {mode === 'desktop' && <button type="button" className="quiet-link" onClick={() => void openFiles()}>Open files</button>}
     {pageConnection && <button type="button" className="quiet-link" onClick={() => void player.disconnect().then(result => { if (!result.ok) player.showError(result.error); })}>Disconnect</button>}
   </p>;

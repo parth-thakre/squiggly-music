@@ -297,7 +297,7 @@ export function AlbumPage({ id }: { id: string }) {
       <Head title={title.main} qualifier={title.extra} kind="Record" onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
         <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingStars target="album" id={album.id} rating={album.userRating} name={album.name} /></p>
         <Actions tracks={tracks}>
-          <button type="button" className="text-button icon-action" title="Radio" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
+          <button type="button" className="text-button icon-action labelled" title="Radio" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
           <MoreButton target={{ kind: 'album', album }} />
           <KeepButton kind="album" id={album.id} name={album.name} artist={album.artist} coverArt={album.coverArt} tracks={tracks} />
@@ -469,7 +469,7 @@ export function ArtistPage({ id }: { id: string }) {
           <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
         <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy} onClick={() => void playAll(artist, true)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
-        <button type="button" className="text-button icon-action" title="Radio" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
+        <button type="button" className="text-button icon-action labelled" title="Radio" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
         <StarButton target="artist" id={artist.id} starred={artist.starred} name={artist.name} />
         <MoreButton target={{ kind: 'artist', artist }} />
       </div>
