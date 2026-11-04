@@ -142,8 +142,8 @@ function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
       : !result.ok ? <p className="status">{result.error}</p>
       : !lyrics ? <div className="lyrics-none">
           <p className="status">No lyrics for this song{lyricsLookup ? ', on your server or on LRCLIB.' : ' on your server.'}</p>
-          {!lyricsLookup && <p className="note">Online lookup is off. <button type="button" className="link" onClick={() => void updateSettings({ lyricsLookup: true })}>
-            Look up lyrics on LRCLIB</button> sends the song's title and artist to lrclib.net. You can turn it off again in Settings.</p>}
+          {!lyricsLookup && <p className="note"><button type="button" className="link" onClick={() => void updateSettings({ lyricsLookup: true })}>
+            Look up lyrics on LRCLIB</button></p>}
         </div>
       : <>
         <ol className={`lyric-lines${lyrics.synced ? ' synced' : ''}`} ref={list}>

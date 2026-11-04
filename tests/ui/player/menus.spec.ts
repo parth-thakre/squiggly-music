@@ -207,7 +207,7 @@ test.describe('ratings', () => {
     await app.menu.getByRole('menuitem', { name: 'Clear rating' }).click();
     await expect.poll(() => fake.ratings.has('al-2')).toBe(false);
     await app.page.getByRole('button', { name: 'Back', exact: true }).click();
-    await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
+    await expect(app.main.getByText('Nothing rated yet.')).toBeVisible();
     await expect(records).toHaveCount(0);
   });
 
@@ -279,6 +279,6 @@ test.describe('ratings', () => {
     const record = app.main.getByRole('list').first().getByRole('button', { name: /^Quiet Harbor/ });
     await expect(record).toBeVisible();
     await app.chooseFromMenu(record, 'Rate', 'Clear rating');
-    await expect(app.main.getByText('Nothing rated yet. Records you rate will collect here, best first.')).toBeVisible();
+    await expect(app.main.getByText('Nothing rated yet.')).toBeVisible();
   });
 });

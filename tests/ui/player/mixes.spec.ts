@@ -15,7 +15,6 @@ test.describe('mixes', () => {
     await page.keyboard.press('m');
     await expect(app.heading).toHaveText('Mixes');
     await expect(app.section('Playlists')).toHaveAttribute('aria-current', 'page');
-    await expect(app.main.locator('.byline')).toHaveText('Playlists Squiggly builds from your library. They change as it does.');
     await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['From what you play', 'By genre', 'By decade']);
     // The two every library has come first, under no heading.
     await expect(app.main.locator('ul.grid').first().locator('.grid-name')).toHaveText(['Everything, shuffled', 'Recently added']);

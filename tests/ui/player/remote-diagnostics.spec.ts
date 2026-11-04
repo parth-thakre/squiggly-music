@@ -51,7 +51,7 @@ test.describe('a beta with diagnostics', () => {
     const toggle = page.getByRole('checkbox', { name: /Send diagnostics to the developer/ });
     await expect(toggle).toBeChecked();
     await expect(toggle).toBeFocused();
-    await expect(page.getByText('Never passwords, tokens, usernames, or server addresses with their sign-in parameters.')).toBeVisible();
+    await expect(page.getByText('Never passwords or tokens.')).toBeVisible();
 
     await toggle.uncheck();
     await expect(page.getByRole('button', { name: 'Beta · diagnostics off' })).toBeVisible();

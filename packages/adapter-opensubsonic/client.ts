@@ -213,7 +213,13 @@ export class ServerError extends Error { constructor(message: string, readonly c
 export class Unreachable extends ServerError {}
 export const reachOf = (error: unknown): 'unreachable' | 'refused' => error instanceof Unreachable ? 'unreachable' : 'refused';
 const requestFailed = 'Server request failed. Check the address, connection, and Navidrome/OpenSubsonic compatibility.';
-const timedOut = 'The server did not respond within 15 seconds. Check your connection and try again.';
+const timedOut = (seconds: number) => `The server did not respond within ${seconds} seconds. Check your connection and try again.`;
+// How long a request may take to answer. Similar songs get longer: Navidrome finds them by asking
+// Last.fm, Deezer, and the rest about each similar artist in turn, which can take well past the usual
+// limit, and they're asked for in the background (radio and autoplay) while a song plays. Giving
+// up early cancels the server's work, so the next ask starts it over.
+const ANSWER_SECONDS = 15;
+const SIMILAR_SECONDS = 60;
 const gatewayDown = (status: number) => status === 502 || status === 503 || status === 504;
 // A rejected fetch is no answer, except a redirect refused by redirect: 'error', which is an answer
 // (a proxy sending the request to a login page, say), and a certificate that isn't trusted: the
@@ -507,7 +513,7 @@ export class SubsonicClient {
     return params;
   }
   // accept() inspects headers before the body is read; parse() runs on the capped body.
-  private transfer<A, B>(endpoint: string, extra: Params, formPost: boolean, authenticated: boolean, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A) {
+  private transfer<A, B>(endpoint: string, extra: Params, formPost: boolean, authenticated: boolean, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A, seconds = ANSWER_SECONDS) {
     const url = this.endpointUrl(endpoint);
     const params = authenticated ? this.params(extra) : new URLSearchParams({ v: '1.16.1', c: 'squiggly', f: 'json' });
     if (!formPost) url.search = params.toString();
@@ -515,9 +521,9 @@ export class SubsonicClient {
       const text = `Server returned HTTP ${response.status}. Check the server address and reverse proxy settings.`;
       if (!response.ok) throw gatewayDown(response.status) ? new Unreachable(text) : new HttpError(text, response.status);
       return accept(response);
-    }, parse);
+    }, parse, seconds);
   }
-  private send<A, B>(metric: string, url: string, init: RequestInit, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A) {
+  private send<A, B>(metric: string, url: string, init: RequestInit, limitMB: number, accept: (response: Response) => B, parse: (body: Uint8Array<ArrayBuffer>, accepted: B) => A, seconds = ANSWER_SECONDS) {
     const task = Effect.tryPromise({
       try: async signal => {
         const response = await (this.options.fetch ?? fetch)(url, { ...init, signal, redirect: 'error' }).catch(error => { throw fetchFailure(error); });
@@ -546,19 +552,19 @@ export class SubsonicClient {
       },
       // Never forward fetch errors containing authenticated URLs or server-provided text.
       catch: error => error instanceof ServerError ? error : untrusted(error) ? certificateError() : new ServerError(requestFailed),
-    }).pipe(Effect.timeoutFail({ duration: '15 seconds', onTimeout: () => new Unreachable(timedOut) }));
+    }).pipe(Effect.timeoutFail({ duration: `${seconds} seconds`, onTimeout: () => new Unreachable(timedOut(seconds)) }));
     return this.metrics.measure(metric, task);
   }
-  private exchange<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params, formPost: boolean, authenticated = true) {
+  private exchange<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params, formPost: boolean, authenticated = true, seconds = ANSWER_SECONDS) {
     return this.transfer(endpoint, extra, formPost, authenticated, 8, () => undefined, body => {
       const result = Schema.decodeUnknownSync(EnvelopeSchema)(JSON.parse(utf8(body)))['subsonic-response'];
       const status = Schema.decodeUnknownSync(StatusSchema)(result);
       if (status.status !== 'ok') throw protocolError(status.error?.code);
       return Schema.decodeUnknownSync(schema)(result);
-    });
+    }, seconds);
   }
-  private request<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params = {}) {
-    return this.supports('formPost').pipe(Effect.flatMap(formPost => this.exchange(endpoint, schema, extra, formPost)));
+  private request<A, I>(endpoint: string, schema: Schema.Schema<A, I>, extra: Params = {}, seconds = ANSWER_SECONDS) {
+    return this.supports('formPost').pipe(Effect.flatMap(formPost => this.exchange(endpoint, schema, extra, formPost, true, seconds)));
   }
   // Whether a Subsonic server answers at this address, asked without credentials: any Subsonic
   // reply counts, even one refusing the request. Used to pick HTTPS or HTTP before signing in.
@@ -831,7 +837,7 @@ export class SubsonicClient {
   // Accepts a song, album or artist ID. Servers without similarity data return no songs.
   similarSongs(id: string, count: number) {
     const size = clamp(count, 1, 200);
-    return this.request('getSimilarSongs', SimilarSongsSchema, { id, count: String(size) }).pipe(Effect.flatMap(result => songList(result.similarSongs.song, size)));
+    return this.request('getSimilarSongs', SimilarSongsSchema, { id, count: String(size) }, SIMILAR_SECONDS).pipe(Effect.flatMap(result => songList(result.similarSongs.song, size)));
   }
   // topSongsByArtistId looks songs up by artist ID. Other servers only match by name, so this
   // resolves the name first and keeps songs by that artist; it degrades to no songs.

@@ -229,7 +229,7 @@ function rememberTracks(tracks: readonly Track[]) {
 const radio = new Radio<SubsonicClient>({
   client: () => server, player: () => state.player, known: id => knownTracks.get(id), remember: rememberTracks,
   replace: (client, tracks) => send({ type: 'queue', tracks: tracks.map(track => playable(client, track)), ordered: true }),
-  follow: (client, tracks) => send({ type: 'queue-clear' }).pipe(Effect.zipRight(send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }))),
+  follow: (client, tracks) => send({ type: 'queue-clear' }).pipe(Effect.zipRight(tracks.length ? send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }) : Effect.void)),
   append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }),
   // Already one request at a time, so it never takes a sync permit from the final queue save.
   background: task => Effect.runPromise(Effect.either(metrics.measure('sync.radio-top-up', task))),

@@ -57,7 +57,6 @@ test.describe('queue', () => {
     await app.expectPlaying('Tail Light');
     await expect(app.tracks().nth(5)).toHaveClass(/\bnow\b/);
     await expect(app.tracks().nth(4)).not.toHaveClass(/\bnow\b/);
-    await expect(app.main.getByText('This is the last song.')).toBeVisible();
 
     await app.rowButton(app.tracks().nth(4)).click();
     await expect(app.tracks().nth(4)).toHaveClass(/\bnow\b/);

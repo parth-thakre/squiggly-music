@@ -1,8 +1,8 @@
 import type { Page } from '@playwright/test';
 import { expect, test, toSeconds, trackOf as trackOfId, type App } from '../fixtures/test';
 
-// A picture of the deck's squiggle canvas, to tell whether it is still being redrawn.
-const squigglePixels = (page: Page) => page.locator('.deck .squiggle canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
+// A picture of the squiggle canvas across the top, to tell whether it is still being redrawn.
+const squigglePixels = (page: Page) => page.locator('.top-position .squiggle canvas').evaluate((canvas: HTMLCanvasElement) => canvas.toDataURL());
 
 // Presses the pointer on the squiggle at a fraction of its width and returns the page's
 // mouse, still held down, so a spec can look at the deck mid-drag.
@@ -19,7 +19,7 @@ test.describe('playback', () => {
 
   test('plays an album song, the position advances, and pause holds it', async ({ app }) => {
     await app.play('Test Pressing', 'Long Run');
-    await expect(app.deck.locator('.squiggle-time').last()).toHaveText('0:45');
+    await expect(app.page.locator('.top-position .squiggle-time').last()).toHaveText('0:45');
     await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(2);
     await expect(app.seek).toHaveAttribute('aria-valuetext', /^0:0[2-9] of 0:45$/);
     // The playing row in the list says so.
@@ -260,7 +260,7 @@ test.describe('repeat and shuffle', () => {
     await page.reload();
     await expect(app.heading).toHaveText('Long Player');
     // Nothing plays: the deck offers the queue the play saved, or, before it's saved, a way to start.
-    await expect(app.deck.getByText(/^(Pick a record, playlist, or song to start\.|Pick up where you left off)$/)).toBeVisible();
+    await expect(app.deck.getByText(/^(Nothing playing\.|Pick up where you left off)$/)).toBeVisible();
     await app.play('Long Player', 'Take 2');
     await expect(shuffle(app)).toHaveAttribute('aria-pressed', 'true');
     await expect(repeat(app)).toHaveAccessibleName('Repeat all');

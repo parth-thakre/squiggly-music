@@ -692,7 +692,8 @@ describe('MPRIS media controls', () => {
 describe('main-process radio', () => {
   const album = { id: 'al', name: 'Record', artist: 'Artist', songCount: 2, artistId: null, year: null, genre: null, duration: null, coverArt: null, starred: false };
   const songs = (...ids: string[]) => ids.map(id => track(id));
-  function fixture() {
+  // wait: how long a start waits for songs like its first one (RADIO_WAIT in the app).
+  function fixture(wait = 60_000) {
     let entries = 0;
     let player = snapshot({ queue: [], currentIndex: -1 });
     const known = new Map<string, Track>();
@@ -740,7 +741,7 @@ describe('main-process radio', () => {
       changed: () => log.push(`radio ${radio.view?.label ?? 'off'}`),
       autoplay: () => autoplay,
       next: still => { if (laneFull) return false; if (laneBusy) lane.push(still); else take(still); return true; },
-    });
+    }, 1000, wait);
     return {
       radio, client, known, log, pending, autoplay: (on: boolean) => { autoplay = on; },
       set: (changes: Partial<PlayerSnapshot>) => { player = { ...player, ...changes }; },
@@ -813,6 +814,50 @@ describe('main-process radio', () => {
     expect(Either.isLeft(result) && result.left.message).toContain('nothing similar');
     expect(log).toEqual([]);
     expect(radio.view).toBeNull();
+  });
+
+  it('begins with its first song when songs like it are slow, and they follow once in', async () => {
+    const { radio, client, log, respond, player } = fixture(10);
+    expect(await run(radio.start({ kind: 'artist', id: 'ar1', label: 'Slow' }))).toEqual(Either.right(true));
+    expect(log).toEqual(['replace top1', 'radio Slow']);
+    // The request still out is the station's top-up: snapshots don't ask the same again.
+    expect(radio.topUp()).toBeNull();
+    expect(client.similarSongs).toHaveBeenCalledTimes(1);
+    respond('top1', songs('top1', 's1', 's2', 's1'));
+    await vi.waitFor(() => expect(log.at(-1)).toBe('append s1 s2'));
+    expect(player().queue.map(item => item.id)).toEqual(['top1', 's1', 's2']);
+    expect(radio.view).toEqual({ label: 'Slow' });
+  });
+
+  it('a slow answer with nothing new ends the station and leaves its song playing', async () => {
+    const { radio, log, respond, player } = fixture(10);
+    await run(radio.start({ kind: 'artist', id: 'ar1', label: 'Slow' }));
+    respond('top1', songs('top1'));
+    await vi.waitFor(() => expect(radio.view).toBeNull());
+    expect(log).toEqual(['replace top1', 'radio Slow', 'radio off']);
+    expect(player()).toMatchObject({ queue: songs('top1'), currentIndex: 0, playing: true });
+  });
+
+  it('keeps the playing song when a slow station starts from it, and drops the rest of the queue at once', async () => {
+    const { radio, known, log, respond, load, player } = fixture(10);
+    load(['a', 'x', 'b'], 1);
+    known.set('x', track('x'));
+    await run(radio.start({ kind: 'song', trackId: 'x', label: 'X' }));
+    expect(log).toEqual(['follow ', 'radio X']);
+    expect(player().queue.map(item => item.id)).toEqual(['x']);
+    respond('x', songs('x-like'));
+    await vi.waitFor(() => expect(log.at(-1)).toBe('append x-like'));
+  });
+
+  it('never adds a slow answer to a station that came after it', async () => {
+    const { radio, log, respond, setSimilar } = fixture(10);
+    await run(radio.start({ kind: 'artist', id: 'ar1', label: 'Slow' }));
+    setSimilar(id => id === 'al1' ? songs('al1', 'b1') : null);
+    await run(radio.start({ kind: 'album', id: 'al', label: 'Record' }));
+    respond('top1', songs('late'));
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(log.filter(entry => entry.startsWith('append'))).toEqual([]);
+    expect(radio.view).toEqual({ label: 'Record' });
   });
 
   it('tops up once three or fewer songs follow the current one, with new songs only, one request at a time', async () => {
@@ -986,6 +1031,19 @@ describe('main-process radio', () => {
     await radio.topUp();
     expect(log).toEqual(['radio off']);
     expect(radio.autoplayView.missed).toBe(player().entryIds[0]);
+  });
+
+  it('autoplay takes songs at random when the server can\'t say what is like the song, and asks about no other', async () => {
+    const { radio, client, log, autoplay, load, set, player, setRandom } = fixture();
+    autoplay(true);
+    client.similarSongs.mockImplementation(() => Effect.fail(new Error('The server did not respond within 60 seconds.')) as unknown as Effect.Effect<Track[]>);
+    setRandom(options => options.genre === 'Ghazal' ? many('g', 15) : []);
+    load(['x', 'y', 'z'], 1);
+    set({ queue: player().queue.map((item, i) => i === 2 ? { ...item, genre: 'Ghazal' } : item) });
+    await radio.topUp();
+    expect(client.similarSongs.mock.calls).toEqual([['z', 30]]);
+    expect(client.randomSongs.mock.calls).toEqual([[{ size: 30, genre: 'Ghazal' }]]);
+    expect(log).toEqual([`append ${many('g', 10).map(item => item.id).join(' ')}`]);
   });
 
   it('autoplay leaves alone repeat, radio, files and stations, and a queue that changed while it asked', async () => {

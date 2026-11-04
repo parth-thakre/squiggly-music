@@ -26,7 +26,6 @@ test.describe('autoplay', () => {
     await app.signIn();
     await app.play('Test Pressing', 'Tail Light');
     await app.openQueue();
-    await expect(app.main.getByText('This is the last song.')).toBeVisible();
     expect(fake.callsTo('similarSongs')).toEqual([]);
     await app.main.getByRole('button', { name: 'Keep playing similar songs' }).click();
 
@@ -37,13 +36,12 @@ test.describe('autoplay', () => {
     await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
     await expect(app.tracks().nth(4)).toHaveClass(/\bnow\b/);
 
-    // Turned off where it's noticed: the songs it added stay, marked, and nothing more comes.
-    await app.main.getByRole('button', { name: 'Turn off autoplay' }).click();
-    await expect(app.main.getByRole('button', { name: 'Turn off autoplay' })).toHaveCount(0);
-    await expect(app.main.getByRole('heading', { name: 'Added by autoplay' })).toHaveCount(1);
+    // Turned off in Settings: the songs it added stay, marked, and nothing more comes.
     await app.openSettings();
-    await expect(app.main.getByRole('checkbox', { name: /^Keep playing similar songs/ })).not.toBeChecked();
+    await app.main.getByRole('checkbox', { name: /^Keep playing similar songs/ }).uncheck();
     expect(await app.page.evaluate(() => JSON.parse(localStorage.getItem('squiggly.settings') ?? '{}').autoplay)).toBe(false);
+    await app.openQueue();
+    await expect(app.main.getByRole('heading', { name: 'Added by autoplay' })).toHaveCount(1);
   });
 
   test('turned on in Settings, it waits out repeat and says when the server has nothing like the song', async ({ app, fake, page }) => {
@@ -79,7 +77,6 @@ test.describe('autoplay', () => {
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
     await expect(app.deck.getByText('Autoplay found nothing new like this song.')).toBeVisible();
     await app.openQueue();
-    await expect(app.main.getByText('Autoplay found nothing new like this song on your server, so the queue ends here.')).toBeVisible();
     expect(await app.titles()).toEqual(['Tail Light']);
     // Asked once, and not again for that entry.
     expect(fake.callsTo('similarSongs').slice(2).map(call => call.args)).toEqual([[special.tailLight, 30]]);
@@ -201,5 +198,4 @@ test('the desktop marks the entries its main process says autoplay added', async
   await expect(rows).toHaveCount(6);
   await expect(rows.nth(2)).toHaveClass(/\bgroup-head\b/);
   await expect(rows.nth(2)).toHaveText('Added by autoplay');
-  await expect(main.getByText('Autoplay adds songs like the last one when the queue runs out.')).toBeVisible();
 });

@@ -7,7 +7,7 @@ test('the browser version says the server is out of reach, keeps nothing, and co
   fake.unreachable = true;
   await app.section('Artists').click();
   await expect(app.heading).toHaveText('Your server is out of reach');
-  await expect(app.main.getByText(/The browser version keeps nothing on this device, so music returns when the server does\./)).toBeVisible();
+  await expect(app.main.getByText(/^Can't reach /)).toBeVisible();
   await expect(app.main.getByRole('button', { name: 'Open kept songs' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Squiggly home' }).click();
   await expect(app.heading).toHaveText('Your server is out of reach');

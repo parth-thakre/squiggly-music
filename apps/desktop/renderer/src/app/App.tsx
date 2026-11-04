@@ -5,7 +5,7 @@ import { current, currentEntry, optimisticVolume, player, usePlayer } from './pl
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
+import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover, useWide } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, PlayModes, SleepNote } from './transport';
 import { asHex } from './palette';
@@ -82,6 +82,7 @@ export function App() {
     {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
     {shell && cover ? <CoverScreen palette={palette} /> : shell ? <>
       <Bar />
+      <TopPosition />
       <Deck />
       <main className="page" ref={nav.attach} tabIndex={-1}><View /></main>
     </> : access === 'checking' ? null : mode === 'web' && access === 'sign-in' ? <SignIn /> : <Connect />}
@@ -160,6 +161,17 @@ const Bar = memo(function Bar() {
   </header>;
 });
 
+// Wider than a phone, the squiggle runs the window's full width under the header, the line
+// between it and everything below, so a song has room to be found in. With nothing playing the
+// line is still there, flat. A phone keeps it in the deck's strip.
+function TopPosition() {
+  const wide = useWide();
+  const track = usePlayer(current);
+  const palette = useContext(PaletteContext);
+  if (!wide) return null;
+  return <div className={`top-position${track ? '' : ' idle'}`}>{track && <Position track={track} palette={palette} />}</div>;
+}
+
 // A drag held over a section opens it, so what it carries can reach that section's pages.
 function SectionButton({ view, label, current }: { view: (typeof sections)[number]['view']; label: string; current: boolean }) {
   const spring = useSpringOpen(() => { if (nav.current.view !== view) nav.go({ view }); });
@@ -223,6 +235,8 @@ const Deck = memo(function Deck() {
   const palette = useContext(PaletteContext);
   const entry = usePlayer(currentEntry);
   const deck = useRef<HTMLElement>(null);
+  // Wider than a phone, the squiggle runs along the top instead (TopPosition).
+  const wide = useWide();
   useSwipeSongs(deck, entry ?? track?.id);
   // Folding to the cover screen unmounts the deck; its open sheet's history entry goes with it.
   useEffect(() => { if (expanded) return () => nav.closeOverlay(); }, [expanded]);
@@ -230,7 +244,7 @@ const Deck = memo(function Deck() {
   // offered), else a line saying how to start. No empty sleeve.
   if (!track) return <aside className="deck" aria-label="Now playing">
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
-      : <Resume fallback={<p className="deck-empty">Pick a record, playlist, or song to start.</p>} />}
+      : <Resume fallback={<p className="deck-empty">Nothing playing.</p>} />}
     {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
     <DeckLinks />
   </aside>;
@@ -264,7 +278,7 @@ const Deck = memo(function Deck() {
         <DeckSlots placement="under-title" track={track} />
       </div>
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
-      <Position track={track} palette={palette} />
+      {!wide && <Position track={track} palette={palette} />}
       <div className="transport">
         <TransportButtons playing={playing} />
         <Volume />
@@ -409,15 +423,14 @@ function SignalPath({ track }: { track: Track }) {
   const resampled = usePlayer(s => resampledNote(s.audio?.sink));
   const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
   // A kept song is a file on this device: said only when the player really opened it.
-  const notes = [delivery === 'mp3-fallback' && `This ${mode === 'android' ? 'phone' : 'browser'} can't play the original file, so it's playing a 320 kbps MP3 from the server.`,
-    delivery === 'reduced' && `Streaming a ${streamKbps} kbps MP3 of it, as set in Settings.`,
-    delivery === 'device' && 'Playing the copy kept on this device.',
+  const notes = [delivery === 'mp3-fallback' && 'Playing a 320 kbps MP3.',
+    delivery === 'reduced' && `Streaming a ${streamKbps} kbps MP3.`,
+    delivery === 'device' && 'Playing the kept copy.',
     volume < 100 && `Volume at ${volume}%.`, resampled, buffering && delivery !== 'device' && 'Buffering.'].filter(Boolean).join(' ');
   // A station: a live stream, and what mpv says it decodes, if anything. The server's list says
-  // nothing about the stream, and the browser can't hear what the station says is on.
+  // nothing about the stream.
   const decoded = [codec?.toUpperCase(), kHz(decoderRate)].filter(Boolean).join(' at ');
-  const live = mode === 'desktop' ? `A live stream${decoded ? `, which mpv decodes as ${decoded}` : ''}.`
-    : mode === 'web' ? 'A live stream, played by this browser, which can\'t tell what the station says is on.' : 'A live stream.';
+  const live = mode === 'desktop' && decoded ? `A live stream, ${decoded}.` : 'A live stream.';
   // What the file is. The Android app asks for the original file too, and plays it itself.
   const line = isStation(track) ? [live, notes].filter(Boolean).join(' ') : [mode !== 'web' && format, notes].filter(Boolean).join('. ');
   return line ? <p className="signal">{line}</p> : null;
@@ -467,9 +480,9 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
   </Frame>;
   return <Frame className="connect">
     <h1>{embedded ? 'Connect to your library' : 'Squiggly'}</h1>
-    <p>{embedded ? 'Records, artists, playlists, and search come from your Navidrome server.' : 'Connect to your Navidrome server to open your library.'}{' '}
-      {web ? `The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.${choosing ? ` Connecting stops playback and empties the queue. The host keeps ${serverName ?? 'its own server'} for other browsers, and this page goes back to it when you disconnect.` : ''}`
-        : canRemember ? 'Squiggly remembers this sign-in, with the password encrypted by your system. Disconnect in Settings to forget it.' : 'This system can\'t store the password securely, so it stays in memory for this session only.'}</p>
+    {(!embedded || (web && choosing) || (!web && !canRemember)) && <p>{!embedded && 'Connect to your Navidrome server.'}{' '}
+      {web ? choosing && 'Connecting stops playback and empties the queue.'
+        : !canRemember && 'The password is kept for this session only.'}</p>}
     {reconnectError && saved && <p className="deck-error" role="alert">Couldn't reconnect to {hostOf(saved.url)}: {reconnectError}</p>}
     <KeptAccountNote />
     {/* The phone keeps the password encrypted, so a failed reconnect (offline, say) can try again without it. */}
@@ -493,7 +506,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
     {!embedded && window.squiggly && <button type="button" className="text-button" onClick={() => void openFiles()}>Play files from this computer instead</button>}
     {/* Navidrome's own public demo, with Creative Commons music, for trying Squiggly without a server. */}
     <p className="connect-demo">No server yet? <button type="button" className="link" disabled={busy}
-      onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>, a public server of Creative Commons music that everyone shares.</p>
+      onClick={() => void connect({ url: 'https://demo.navidrome.org', username: 'demo', password: 'demo' })}>Try Navidrome's demo</button>.</p>
     {!embedded && window.squiggly && <p className="connect-update"><UpdateLink /></p>}
     {!embedded && <BetaMarker inPlace />}
   </Frame>;
@@ -504,7 +517,7 @@ function KeptAccountNote() {
   useKeptVersion();
   const count = keptCount();
   if (!keptSupported || !count) return null;
-  return <p className="note">Squiggly keeps songs for one account. Signing in to another server or as another user forgets the {count.toLocaleString()} {count === 1 ? 'song' : 'songs'} kept here.</p>;
+  return <p className="note">Signing in to another account forgets the {count.toLocaleString()} {count === 1 ? 'song' : 'songs'} kept here.</p>;
 }
 
 // The browser build's door: the host keeps a Navidrome account, and its password keeps
@@ -522,7 +535,7 @@ function SignIn() {
   };
   return <main className="connect">
     <h1>Squiggly</h1>
-    <p>This host plays music from its Navidrome account. Enter the password set for it on this host. It keeps other people on the network from playing, browsing, or changing that account.</p>
+    <p>Enter this host's password.</p>
     <form onSubmit={submit}>
       <label>Password<input name="password" type="password" required autoComplete="current-password" autoFocus /></label>
       <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Signing in' : 'Sign in'}</button>

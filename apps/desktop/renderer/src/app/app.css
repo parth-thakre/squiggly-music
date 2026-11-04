@@ -17,7 +17,7 @@ button:disabled { cursor: default; opacity: .45; }
 
 /* One flat room colour, taken from the record that is playing. */
 .room {
-  height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
+  height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr);
   background: var(--ground); color: var(--ink); transition: background-color .6s ease, color .6s ease;
 }
 
@@ -80,6 +80,11 @@ img:is(.deck-cover, .head-cover) {
 .up-next .link { font-weight: 500; }
 .deck-error { margin: 14px 0 0; font-size: calc(13.5px * var(--text)); color: var(--ink); }
 .quiet-link { margin-top: auto; padding-top: 18px; align-self: flex-start; font-size: calc(12.5px * var(--text)); color: var(--soft); }
+
+/* The squiggle across the top, between the header and the deck and page (TopPosition). Flat while
+   nothing plays: the rest of a song not yet started, in the same line. */
+.top-position { grid-column: 1 / -1; padding: 0 40px 4px; }
+.top-position.idle { height: 30px; background: linear-gradient(color-mix(in srgb, var(--ink) 22%, transparent), color-mix(in srgb, var(--ink) 22%, transparent)) center / calc(100% - 80px) 2.5px no-repeat; }
 
 .squiggle { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 .squiggle-time { font-size: calc(12px * var(--text)); color: var(--soft); }
@@ -929,6 +934,8 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
 html[data-density='compact'] { --row-height: 38px; }
 @media (min-width: 761px) {
   html[data-density='compact'] .bar { padding: 12px 28px 8px; gap: 22px; }
+  html[data-density='compact'] .top-position { padding: 0 28px 2px; }
+  html[data-density='compact'] .top-position.idle { background-size: calc(100% - 56px) 2.5px; }
   html[data-density='compact'] .deck { padding: 8px 22px 16px 28px; }
   html[data-density='compact'] .page { padding: 12px 34px 48px 26px; }
   html[data-density='compact'] .head { margin-bottom: 18px; }

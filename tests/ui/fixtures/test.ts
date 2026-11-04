@@ -36,9 +36,10 @@ export class App {
   get main() { return this.page.locator('main.page'); }
   get heading() { return this.main.getByRole('heading', { level: 1 }); }
   get menu() { return this.page.getByRole('menu'); }
-  get seek() { return this.deck.getByRole('slider', { name: /^Position in / }); }
+  // Across the top of a wide window, in the deck's strip on a phone.
+  get seek() { return this.page.locator('.top-position, .deck').getByRole('slider', { name: /^Position in / }); }
   /** The squiggle's running clock (the first of its two time labels). */
-  get clock() { return this.deck.locator('.squiggle-time').first(); }
+  get clock() { return this.page.locator('.top-position, .deck').locator('.squiggle-time').first(); }
   get signInPassword() { return this.page.getByLabel('Password'); }
   tracks(scope: Locator = this.main) { return scope.locator('ol.tracks > li'); }
   row(title: string, scope: Locator = this.main) { return this.tracks(scope).filter({ has: this.page.getByRole('button', { name: new RegExp(`^(Play|Pause|Resume) ${escape(title)}$`) }) }); }

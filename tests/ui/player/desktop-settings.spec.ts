@@ -32,7 +32,6 @@ test.describe('saved sign-in', () => {
     await expect(page.getByRole('alert')).toHaveText('Couldn\'t reconnect to music.example.com: The server did not answer.');
     await expect(page.getByLabel('Server address')).toHaveValue(saved.url);
     await expect(page.getByLabel('Username')).toHaveValue('ana');
-    await expect(page.getByText('Squiggly remembers this sign-in')).toBeVisible();
   });
   test('while reconnecting, the connect form waits', async ({ page }) => {
     await installDesktopBridge(page, { connected: false, signIn: { saved, reconnecting: true } });
@@ -43,7 +42,7 @@ test.describe('saved sign-in', () => {
   test('without secure storage, the password is said to stay in memory', async ({ page }) => {
     await installDesktopBridge(page, { connected: false, signIn: { canRemember: false } });
     await page.goto('/');
-    await expect(page.getByText('This system can\'t store the password securely')).toBeVisible();
+    await expect(page.getByText('The password is kept for this session only.')).toBeVisible();
   });
 });
 

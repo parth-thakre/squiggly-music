@@ -50,7 +50,7 @@ test.describe('search', () => {
 
     await tab(app, 'Artists').click();
     await expect(app.main.locator('ul.names > li')).toHaveCount(0);
-    await expect(app.main.getByText('No artists match “ember”. Check the spelling, or look under All.')).toBeVisible();
+    await expect(app.main.getByText('No artists match “ember”.')).toBeVisible();
     await tab(app, 'All').click();
     await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Records']);
     // Tabs replace the place, so Back leaves the search for the page before it.
@@ -112,7 +112,7 @@ test.describe('search', () => {
     // A search that finds nothing leaves focus in the field.
     await field(app).fill('zzz');
     await field(app).press('Enter');
-    await expect(app.main.getByText('No songs match “zzz”. Check the spelling, or look under All.')).toBeVisible();
+    await expect(app.main.getByText('No songs match “zzz”.')).toBeVisible();
     await expect(field(app)).toBeFocused();
     await page.keyboard.press('Escape');
     await expect(app.heading).toHaveText('Artists');
@@ -242,7 +242,7 @@ test.describe('search', () => {
   test('says when nothing matches and when the search failed', async ({ app, fake }) => {
     await field(app).fill('zzz');
     await expect(app.heading).toHaveText('“zzz”');
-    await expect(app.main.getByText('Nothing matches “zzz”. Check the spelling or try fewer words.')).toBeVisible();
+    await expect(app.main.getByText('Nothing matches “zzz”.')).toBeVisible();
     await expect(app.main.getByRole('button', { name: /^See all/ })).toHaveCount(0);
 
     fake.failNext('search', 'The server did not respond within 15 seconds. Check your connection and try again.');
@@ -251,6 +251,6 @@ test.describe('search', () => {
     await expect(app.main.getByText('The server did not respond within 15 seconds. Check your connection and try again.')).toBeVisible();
     // Each tab asks again.
     await tab(app, 'Records').click();
-    await expect(app.main.getByText('No records match “harbour”. Check the spelling, or look under All.')).toBeVisible();
+    await expect(app.main.getByText('No records match “harbour”.')).toBeVisible();
   });
 });

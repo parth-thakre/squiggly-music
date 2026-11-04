@@ -440,7 +440,7 @@ builtin.menu({
     const track = one(t)!;
     if (isStation(track)) {
       const announced = current(getPlayer())?.id === track.id ? getPlayer().stationTitle : null;
-      return ['An internet radio station from your server, played as a live stream.', announced && `On now: ${announced}`]
+      return ['Internet radio, live.', announced && `On now: ${announced}`]
         .filter(Boolean).map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
     }
     const lines = [
@@ -449,12 +449,11 @@ builtin.menu({
       `${track.artist}, ${splitTitle(track.album).main}`,
       track.source === 'navidrome' && ratingText(ratingOf(track.id, track.userRating)),
       track.source !== 'navidrome' ? 'A file on this computer.'
-        : deliveryOf(track) === 'mp3-fallback' ? 'This browser couldn’t decode the original, so it is playing a 320 kbps MP3 from Navidrome instead.'
-        : deliveryOf(track) === 'reduced' ? `Streaming a ${getPlayer().streamKbps} kbps MP3 from Navidrome, as set in Settings, not the original file.`
-        : deliveryOf(track) === 'device' ? 'Playing the copy kept on this device.'
-        : keptSupported && isKept(track.id) && current(getPlayer())?.id === track.id ? 'Kept on this device. This play streams from the server.'
+        : deliveryOf(track) === 'mp3-fallback' ? 'Playing a 320 kbps MP3.'
+        : deliveryOf(track) === 'reduced' ? `Streaming a ${getPlayer().streamKbps} kbps MP3.`
+        : deliveryOf(track) === 'device' ? 'Playing the kept copy.'
         : keptSupported && isKept(track.id) ? 'Kept on this device.'
-        : 'Requested from Navidrome as the original file.',
+        : 'Original file.',
     ].filter(Boolean);
     return lines.map((line, i): MenuItem => ({ id: `info-${i}`, section: 0, note: true, label: String(line) }));
   },

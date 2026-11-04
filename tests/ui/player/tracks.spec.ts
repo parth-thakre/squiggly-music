@@ -153,7 +153,7 @@ test.describe('tracks', () => {
     await app.section('Tracks').click();
     await expect(app.tracks().first()).toBeVisible();
     await expect(sorts(app)).toHaveCount(0);
-    await expect(app.main.getByText('this library is too big to sort here, and sorting it on the server means sending your password to Navidrome', { exact: false })).toBeVisible();
+    await expect(app.main.getByText('Sorting a library this big needs HTTPS.', { exact: false })).toBeVisible();
   });
 
   test('says so while the first page loads, and Shuffle draws from the whole library', async ({ app, fake }) => {

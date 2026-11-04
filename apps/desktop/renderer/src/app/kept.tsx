@@ -97,8 +97,7 @@ export function OfflineNotice({ compact = false }: { compact?: boolean }) {
   const server = serverName ?? 'your server';
   return <section className="offline" aria-labelledby="offline-heading">
     <h1 id="offline-heading">Your server is out of reach</h1>
-    <p>{web ? `Squiggly can't reach ${server}. The browser version keeps nothing on this device, so music returns when the server does.`
-      : `Squiggly can't reach ${server}. Songs kept on this device still play.`}</p>
+    <p>{web ? `Can't reach ${server}.` : `Can't reach ${server}. Kept songs still play.`}</p>
     <p className="offline-status" role="status" aria-live="polite">{line}</p>
     <p className="actions">
       {retryButton}
@@ -117,7 +116,7 @@ export function Kept() {
   if (!keptSupported) return <>
     <header className="head"><div className="head-text"><h1>Kept</h1></div></header>
     {away && <OfflineNotice compact />}
-    <Status>The browser version can't keep songs. The desktop and Android apps can.</Status>
+    <Status>Only the desktop and Android apps keep songs.</Status>
   </>;
   const containers = kept?.containers ?? [];
   const limit = kept?.limitBytes ?? settings.keptLimitMb * MB;
@@ -129,7 +128,7 @@ export function Kept() {
     {away && <OfflineNotice compact />}
     {kept?.notice && <p className="note">{kept.notice}</p>}
     {!kept ? <p className="status loading">Reading what is kept</p> : !containers.length
-      ? <Status>Nothing is kept on this device yet. Choose Keep on this device on a record, playlist, or mix.</Status>
+      ? <Status>Nothing kept yet.</Status>
       : groups.map(group => {
         const list = containers.filter(c => c.kind === group.kind).sort((a, b) => b.keptAt - a.keptAt);
         return list.length ? <section key={group.kind} className="shelf-section" aria-labelledby={`kept-${group.kind}`}>
@@ -231,8 +230,7 @@ export function KeptSettings() {
   return <>
     <h2>Kept on this device</h2>
     <div className="setting-action">
-      <p><strong>{kept ? `${plural(kept.songs, 'song')}, ${formatBytes(kept.usedBytes)} of ${formatLimit(limitMb)}` : 'Reading what is kept'}</strong>
-        <span>Kept songs are the files as the server sent them, and play from this device whether the server answers or not.</span></p>
+      <p><strong>{kept ? `${plural(kept.songs, 'song')}, ${formatBytes(kept.usedBytes)} of ${formatLimit(limitMb)}` : 'Reading what is kept'}</strong></p>
       {kept?.dir && <p className="kept-dir"><span>{kept.dir}</span></p>}
       <p className="actions kept-settings-actions">
         <button type="button" className="text-button" onClick={() => nav.go({ view: 'kept' })}>Open kept songs</button>
@@ -240,13 +238,13 @@ export function KeptSettings() {
       </p>
     </div>
     <label className="setting choice">
-      <span><strong>Room for kept songs</strong><span>In MB. New keeps are refused once kept songs reach it.</span></span>
+      <span><strong>Room for kept songs</strong></span>
       <span className="kept-limit"><input type="number" inputMode="numeric" min={KEPT_LIMIT_MB.min} max={KEPT_LIMIT_MB.max} step={1} value={value}
         onChange={event => setValue(event.target.value)} onBlur={apply} onKeyDown={event => { if (event.key === 'Enter') apply(); }} /> MB</span>
     </label>
-    {over && <p className="note">Kept songs use more than the new limit. Nothing is removed. New keeps are refused until you forget some.</p>}
+    {over && <p className="note">Over the limit. Nothing new is kept until you forget some.</p>}
     <div className="setting-action">
-      <p><strong>Forget all</strong><span>Removes every kept song and cover from this device. Records and playlists on your server stay as they are.</span></p>
+      <p><strong>Forget all</strong><span>Removes every kept song from this device.</span></p>
       {confirming ? <p className="keep-confirm">
         <span>Forget {kept ? plural(kept.songs, 'kept song') : 'every kept song'}?</span>
         <button type="button" className="text-button" onClick={async () => { setConfirming(false); const result = await forgetAll(); setError(result.ok ? null : result.error); }}>Forget all</button>
