@@ -57,15 +57,18 @@ export function PlayButton({ playing }: { playing: boolean }) {
 // Shuffle and repeat, as icon toggles like the deck's others. Repeat goes off, all, one: pressed
 // for both of the last two, with its own icon for one.
 const repeatName = { off: 'Repeat', all: 'Repeat all', one: 'Repeat one' } as const;
-export function PlayModes() {
-  const repeat = usePlayer(s => s.repeat);
+export function ShuffleButton() {
   const shuffle = usePlayer(s => s.shuffle);
-  return <span className="play-modes">
-    <button type="button" className="icon-button" aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle} onClick={() => player.shuffle(!shuffle)}><Shuffle aria-hidden="true" /></button>
-    <button type="button" className="icon-button" aria-label={repeatName[repeat]} title={repeatName[repeat]} aria-pressed={repeat !== 'off'} onClick={() => player.repeat(nextRepeat(repeat))}>
-      {repeat === 'one' ? <Repeat1 aria-hidden="true" /> : <Repeat aria-hidden="true" />}
-    </button>
-  </span>;
+  return <button type="button" className="icon-button mode" aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle} onClick={() => player.shuffle(!shuffle)}><Shuffle aria-hidden="true" /></button>;
+}
+export function RepeatButton() {
+  const repeat = usePlayer(s => s.repeat);
+  return <button type="button" className="icon-button mode" aria-label={repeatName[repeat]} title={repeatName[repeat]} aria-pressed={repeat !== 'off'} onClick={() => player.repeat(nextRepeat(repeat))}>
+    {repeat === 'one' ? <Repeat1 aria-hidden="true" /> : <Repeat aria-hidden="true" />}
+  </button>;
+}
+export function PlayModes() {
+  return <span className="play-modes"><ShuffleButton /><RepeatButton /></span>;
 }
 
 // The seek squiggle. The only part of the deck or mini player that follows position snapshots.

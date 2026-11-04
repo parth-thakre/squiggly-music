@@ -27,6 +27,8 @@ import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
 import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { reducedMotion } from './theme';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
 import { exportM3u } from './exports';
@@ -600,7 +602,7 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
       <span className="row-text">
         <span className="row-name">{splitTitle(playlist.name).main}</span>
         <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}</span>
-        {note && <span className="row-sub row-note">{note}</span>}
+        {note && <span className="row-badge" title={note}>{note.startsWith('Kept in sync') ? 'Synced from a file' : 'Server playlist'}</span>}
       </span>
       <ContainerMark kind="playlist" id={playlist.id} />
     </button>
@@ -764,7 +766,7 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
   const drags = canDrag();
   return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
     <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
-      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name} <span>{artist.albumCount}</span></button>
+      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name}{artist.albumCount > 0 && <> <span>{plural(artist.albumCount, 'record')}</span></>}</button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
 }
@@ -1233,10 +1235,22 @@ function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; 
   return <section className="shelf-section home-shelf" aria-labelledby={id}>
     <div className="section-head">
       <h2 id={id}>{title}</h2>
-      {result.ok && <SeeAll what={title.toLowerCase()} go={() => nav.go(type === 'newest' ? { view: 'records' } : { view: 'records', sort: type })} />}
+      {result.ok && <span className="shelf-tools"><ShelfArrows title={title} /><SeeAll what={title.toLowerCase()} go={() => nav.go(type === 'newest' ? { view: 'records' } : { view: 'records', sort: type })} /></span>}
     </div>
     {result.ok ? <AlbumGrid albums={result.value} /> : <Status>{result.error}</Status>}
   </section>;
+}
+
+// Back and forward along a shelf, most of a shelf's width at a time.
+function ShelfArrows({ title }: { title: string }) {
+  const step = (event: ReactMouseEvent<HTMLButtonElement>, direction: number) => {
+    const grid = event.currentTarget.closest('section')?.querySelector<HTMLElement>('.grid');
+    grid?.scrollBy({ left: direction * grid.clientWidth * .85, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  };
+  return <span className="shelf-arrows">
+    <button type="button" className="icon-button" aria-label={`Earlier in ${title}`} onClick={event => step(event, -1)}><ChevronLeft aria-hidden="true" /></button>
+    <button type="button" className="icon-button" aria-label={`Further along ${title}`} onClick={event => step(event, 1)}><ChevronRight aria-hidden="true" /></button>
+  </span>;
 }
 
 // The automatic playlists, as the Playlists page lists them. The decades appear once something
@@ -1355,14 +1369,16 @@ export function Search({ query, type }: { query: string; type?: SearchType }) {
   </>;
 }
 
+// All shows a few songs under the artists and records; See all has the rest.
+const ALL_SONGS = 8;
 function SearchAll({ query }: { query: string }) {
   const result = useResource(`search:${query.toLowerCase()}`, () => api.search(query));
   return <Pending result={result} waiting="Searching">{({ artists, albums, tracks, capped }) => !artists.length && !albums.length && !tracks.length
     ? <Status>Nothing matches “{query}”.</Status>
     : <>
-      {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks}><TrackTable tracks={tracks} showAlbum /></SearchGroup>}
-      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums}><AlbumGrid albums={albums} /></SearchGroup>}
       {artists.length > 0 && <SearchGroup title="Artists" query={query} type="artists" more={capped.artists}><ArtistNames artists={artists} /></SearchGroup>}
+      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums}><AlbumGrid albums={albums} /></SearchGroup>}
+      {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks || tracks.length > ALL_SONGS}><TrackTable tracks={tracks.slice(0, ALL_SONGS)} showAlbum /></SearchGroup>}
     </>}</Pending>;
 }
 function SearchGroup({ title, query, type, more, children }: { title: string; query: string; type: SearchType; more: boolean; children: ReactNode }) {

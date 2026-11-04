@@ -7,7 +7,7 @@ import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
 import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
-import { FavoriteToggle, PlayModes, SleepNote } from './transport';
+import { FavoriteToggle, RepeatButton, ShuffleButton, SleepNote } from './transport';
 import { asHex } from './palette';
 import { following } from '../../../../../packages/core/playOrder';
 import { isStation } from '../../../../../packages/core/stations';
@@ -269,7 +269,9 @@ const Deck = memo(function Deck() {
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
       <Position track={track} palette={palette} />
       <div className="transport">
+        <ShuffleButton />
         <TransportButtons playing={playing} />
+        <RepeatButton />
         <Volume />
       </div>
       {/* What the page shows next to the deck: toggles, so icons, each named for screen readers
@@ -279,7 +281,6 @@ const Deck = memo(function Deck() {
         <QueueToggle open={route.view === 'queue'} />
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
         <FavoriteToggle track={track} />
-        <PlayModes />
       </div>
       <DeckSlots placement="under-controls" track={track} />
       <SignalPath track={track} />
