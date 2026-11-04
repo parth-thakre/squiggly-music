@@ -461,7 +461,7 @@ export function ArtistPage({ id }: { id: string }) {
     </Head>
     {!together ? <p className="status loading">Finding their songs</p> : <>
       {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
-      {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
+      {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} albumArtist={artist.name} showAlbum /></section>}
       {/* Still on its way: room for it, so the records below stay put when it comes. */}
       {top === undefined && popularFound !== false && <section className="shelf-section" aria-busy="true"><h2>Popular</h2>
         <p className="status loading popular-waiting">Finding their popular songs</p></section>}

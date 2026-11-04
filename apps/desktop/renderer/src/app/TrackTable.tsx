@@ -59,8 +59,8 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   keptMarks?: boolean;
 }) {
   useActiveTheme();
-  // Two lines when some row credits other artists than the record's, or lists records.
-  const twoLine = useMemo(() => showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, showAlbum, albumArtist]);
+  // Two lines when some row credits other artists than the record's (the record, when shown, has a column).
+  const twoLine = useMemo(() => tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist]);
   const ROW = rowHeight(twoLine);
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);

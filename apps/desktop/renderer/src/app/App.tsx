@@ -264,6 +264,8 @@ const Deck = memo(function Deck() {
         </p>
         <DeckSlots placement="under-title" track={track} />
       </div>
+      {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
+      {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
       <Position track={track} palette={palette} />
       <div className="transport">
@@ -273,7 +275,7 @@ const Deck = memo(function Deck() {
       {/* What the page shows next to the deck: toggles, so icons, each named for screen readers
           and in a tooltip. */}
       <div className="deck-actions">
-        <button type="button" className="icon-button" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /></button>
+        <button type="button" className="icon-button labelled" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /><span className="icon-label" aria-hidden="true">Lyrics</span></button>
         <QueueToggle open={route.view === 'queue'} />
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
         <FavoriteToggle track={track} />
@@ -287,8 +289,6 @@ const Deck = memo(function Deck() {
       {!upNext && missed && <p className="up-next">Autoplay found nothing new like this song.</p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
-      {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
-      {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
       <DeckLyrics />
       <DeckLinks />
@@ -301,10 +301,10 @@ const Deck = memo(function Deck() {
 function QueueToggle({ open }: { open: boolean }) {
   const { over, handlers } = useDropTarget(payload => void dropOnQueue(payload));
   const spring = useSpringOpen(() => { if (nav.current.view !== 'queue') nav.go({ view: 'queue' }); });
-  return <button type="button" className={`icon-button${over ? ' drop-over' : ''}`} aria-label="Queue" title="Queue" aria-pressed={open}
+  return <button type="button" className={`icon-button labelled${over ? ' drop-over' : ''}`} aria-label="Queue" title="Queue" aria-pressed={open}
     onClick={() => open ? nav.back() : nav.go({ view: 'queue' })} {...handlers}
     onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); }}
-    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}><ListMusic aria-hidden="true" /></button>;
+    onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}><ListMusic aria-hidden="true" /><span className="icon-label" aria-hidden="true">Queue</span></button>;
 }
 
 // A downloaded update, or a newer release for a copy that can't update itself. Shown under the

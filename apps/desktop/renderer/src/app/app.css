@@ -17,7 +17,7 @@ button:disabled { cursor: default; opacity: .45; }
 
 /* One flat room colour, taken from the record that is playing. */
 .room {
-  --raised: color-mix(in srgb, var(--ink) 5%, var(--ground));
+  --raised: color-mix(in srgb, var(--ink) 7%, var(--ground));
   --overlay: color-mix(in srgb, var(--ink) 8%, var(--ground));
   height: 100vh; height: 100dvh; display: grid; grid-template-columns: clamp(260px, 26vw, 330px) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr);
   background: var(--ground); color: var(--ink); transition: background-color .6s ease, color .6s ease;
@@ -83,8 +83,8 @@ img:is(.deck-cover, .head-cover) {
 .deck-title { margin: 0; font: var(--display-weight) calc(25px * var(--display-size))/1.12 var(--font-display); text-wrap: balance; }
 .deck-sub { margin: 6px 0 0; font-size: calc(14px * var(--text)); color: var(--soft); }
 .deck-sub .link { font-weight: 500; }
-.deck .squiggle { margin-top: 12px; }
-.up-next { margin: 14px 0 0; font-size: calc(13px * var(--text)); color: var(--soft); }
+.deck .squiggle { margin-top: 14px; }
+.up-next { margin: 16px 0 0; font-size: calc(13px * var(--text)); color: var(--soft); }
 .up-next .link { font-weight: 500; }
 .deck-error { margin: 14px 0 0; font-size: calc(13.5px * var(--text)); color: var(--ink); }
 .quiet-link { margin-top: auto; padding-top: 18px; align-self: flex-start; font-size: calc(12.5px * var(--text)); color: var(--soft); }
@@ -100,7 +100,7 @@ img:is(.deck-cover, .head-cover) {
 .squiggle-rail input::-moz-range-thumb { width: 4px; height: 18px; border: 0; }
 .squiggle-rail:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
 
-.transport { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 14px; margin-top: 10px; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 12px 14px; margin-top: 8px; }
 .glyph, .play { flex: none; display: grid; place-items: center; padding: 0; border: 0; }
 .glyph { width: 38px; height: 38px; background: none; }
 .glyph svg { width: 21px; }
@@ -114,7 +114,7 @@ img:is(.deck-cover, .head-cover) {
 .play.starting svg { opacity: .5; }
 .starting-ring { position: absolute; inset: 4px; border: 2px solid color-mix(in srgb, currentColor 22%, transparent); border-top-color: currentColor; border-radius: 50%; animation: turn .9s linear infinite; }
 @keyframes turn { to { transform: rotate(1turn); } }
-.volume { flex: 1 1 100%; min-width: 0; display: flex; align-items: center; gap: 9px; margin: 6px 0 0; color: var(--soft); }
+.volume { flex: 1 1 100%; min-width: 0; display: flex; align-items: center; gap: 9px; margin: 0; color: var(--soft); }
 .volume svg { flex: none; width: 17px; }
 .volume .figure { flex: none; width: 2.7em; text-align: right; font-size: calc(12.5px * var(--text)); color: var(--ink); }
 .volume input {
@@ -185,7 +185,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .rating button:hover svg { transform: scale(1.15); }
 .rating .on { color: var(--accent); }
 .byline .rating { margin-left: .4em; }
-.deck-rating { display: flex; margin: 12px 0 0 -2px; }
+.deck-rating { display: flex; margin: 10px 0 2px -2px; }
 /* Touch: bigger targets, and beside the byline a line of their own, the first star lined up with it. */
 @media (pointer: coarse) {
   .rating button { padding: 6px 4px; } .rating svg { width: 20px; }
@@ -283,10 +283,11 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .tracks .figure { flex: none; width: 48px; text-align: right; font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .row-rating { position: relative; flex: none; width: 90px; margin-left: 12px; }
 .rating-compact { position: absolute; inset: 0; display: flex; align-items: center; gap: 3px; font-size: calc(13px * var(--text)); font-variant-numeric: tabular-nums; color: var(--soft); pointer-events: none; transition: opacity .12s; }
-.rating-compact svg { width: 13px; }
+.rating-compact svg { width: 13px; color: var(--accent); }
+.rating-compact { color: var(--ink); }
 .row-rating .rating-compact + .rating { opacity: 0; transition: opacity .12s; }
-.tracks li:is(:hover, :focus-within, .selected) .row-rating .rating-compact { opacity: 0; }
-.tracks li:is(:hover, :focus-within, .selected) .row-rating .rating-compact + .rating { opacity: 1; }
+.tracks li:is(:hover, .selected) .row-rating .rating-compact, .row-rating:focus-within .rating-compact { opacity: 0; }
+.tracks li:is(:hover, .selected) .row-rating .rating-compact + .rating, .row-rating:focus-within .rating-compact + .rating { opacity: 1; }
 .row-rating .rating { display: flex; vertical-align: 0; }
 .row-rating .rating button { padding: 2px 1px; }
 .row-rating .rating svg { width: 16px; }
@@ -321,7 +322,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 /* Artists and lists */
 .index { display: flex; flex-wrap: wrap; gap: 2px; margin: -8px 0 12px -9px; }
 /* The artist index is windowed, so its rows have fixed heights that the list reads from here. */
-.artist-list { --letter-row: 50px; --name-row: 36px; --name-min: 220px; --name-gap: 32px; }
+.artist-list { --letter-row: 50px; --name-row: 40px; --name-min: 280px; --name-gap: 32px; }
 .letter-row { display: flex; align-items: flex-end; height: var(--letter-row); margin: 0; padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; font: var(--display-weight) calc(22px * var(--display-size))/1 var(--font-display); color: var(--accent); }
 .name-row { display: grid; column-gap: var(--name-gap); height: var(--name-row); margin: 0; padding: 0; list-style: none; }
 .name-row li { min-width: 0; }
@@ -470,6 +471,8 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 }
 .setting.choice select option { color: #000; }
 .setting-action p { margin: 0 0 4px; }
+.settings :is(.setting-action, .settings-actions) .text-button { display: inline-flex; align-items: center; min-height: 36px; margin: 6px 12px 0 0; padding: 0 16px; border: 1px solid color-mix(in srgb, var(--ink) 42%, transparent); border-radius: 999px; font-size: calc(14px * var(--text)); }
+.settings :is(.setting-action, .settings-actions) .text-button:hover:not(:disabled) { text-decoration: none; background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .setting-action strong { display: block; font-size: calc(15.5px * var(--text)); font-weight: 600; }
 .setting-action span { display: block; margin-top: 2px; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
 
@@ -593,9 +596,11 @@ kbd { font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; }
 .lyrics.compact .lyric-lines.synced { padding-bottom: 30dvh; font-size: calc(27px * var(--display-size)); }
 
 /* Deck additions */
-.deck-actions { display: flex; gap: 4px; margin: 12px -6px 0; padding-top: 10px; border-top: 1px solid var(--line); }
+.deck-actions { display: flex; gap: 2px; margin: 16px -6px 0; padding-top: 12px; border-top: 1px solid var(--line); }
 .icon-button { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; background: none; border: 0; border-radius: 50%; color: var(--soft); transition: background-color .15s ease, color .15s ease; }
 .icon-button svg { width: 20px; height: 20px; stroke-width: 1.75; }
+.icon-button.labelled { display: inline-flex; gap: 6px; width: auto; padding: 0 12px 0 9px; border-radius: 999px; }
+.icon-label { font-size: calc(13px * var(--text)); font-weight: 600; }
 .icon-button:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 7%, transparent); }
 .icon-button[aria-pressed='true'] { color: var(--ink); background: var(--line); }
 /* Shuffle and repeat (PlayModes in transport.tsx) sit apart from the page toggles, at the far end. */
@@ -1121,6 +1126,7 @@ button.wordmark { padding: 0; background: none; border: 0; color: inherit; }
   overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; margin-top: -6px; padding: 6px 0 10px;
 }
 .page .home-shelf .grid li { scroll-snap-align: start; }
+@media (min-width: 761px) { .page .home-shelf .grid { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 72px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 72px), transparent); } }
 .elsewhere { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .elsewhere-user { font-weight: 600; }
 @media (max-width: 760px) {
