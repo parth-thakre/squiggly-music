@@ -27,7 +27,7 @@ import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
 import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MoreHorizontal } from 'lucide-react';
 import { reducedMotion } from './theme';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
@@ -296,7 +296,7 @@ export function AlbumPage({ id }: { id: string }) {
       <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
         <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingStars target="album" id={album.id} rating={album.userRating} name={album.name} /></p>
         <Actions tracks={tracks}>
-          <button type="button" className="text-button ghost" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
+          <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
           <MoreButton target={{ kind: 'album', album }} />
           <KeepButton kind="album" id={album.id} name={album.name} artist={album.artist} coverArt={album.coverArt} tracks={tracks} />
@@ -323,10 +323,10 @@ function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
 }
 // The same menu as right-click, for people who don't right-click (and for touch).
 function MoreButton({ target }: { target: Parameters<typeof openMenu>[1] }) {
-  return <button type="button" className="text-button ghost" aria-haspopup="menu" onClick={event => {
+  return <button type="button" className="text-button more-button" aria-haspopup="menu" aria-label="More" title="More" onClick={event => {
     const box = event.currentTarget.getBoundingClientRect();
     openMenu({ clientX: box.left, clientY: box.bottom + 6, preventDefault: () => {}, target: event.currentTarget }, target);
-  }}>More</button>;
+  }}><MoreHorizontal aria-hidden="true" /></button>;
 }
 
 // Artists ------------------------------------------------------------------------------
@@ -455,7 +455,7 @@ export function ArtistPage({ id }: { id: string }) {
           <span className="disc"><Glyph kind="play" /></span>Play
         </button>
         <button type="button" className="text-button" disabled={busy} onClick={() => void playAll(artist, true)}>Shuffle</button>
-        <button type="button" className="text-button ghost" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}>Radio</button>
+        <button type="button" className="text-button" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}>Radio</button>
         <StarButton target="artist" id={artist.id} starred={artist.starred} name={artist.name} />
         <MoreButton target={{ kind: 'artist', artist }} />
       </div>
@@ -972,7 +972,7 @@ function SignOut() {
   const [busy, setBusy] = useState(false);
   if (access !== 'signed-in') return null;
   return <div className="setting-action">
-    <button type="button" className="text-button quiet" disabled={busy} onClick={async () => { setBusy(true); await player.signOut(); setBusy(false); }}>
+    <button type="button" className="text-button" disabled={busy} onClick={async () => { setBusy(true); await player.signOut(); setBusy(false); }}>
       {busy ? 'Signing out' : 'Sign out'}</button>
   </div>;
 }

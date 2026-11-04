@@ -44,7 +44,7 @@ export function Cover({ id, name, size, className }: { id: string | null | undef
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [id]);
   const classes = `cover${className ? ` ${className}` : ''}`;
-  if (!id || failed) return <div className={`${classes} cover-type`} role="img" aria-label={`${name}, no cover art`}><span>{name}</span></div>;
+  if (!id || failed) return <div className={`${classes} cover-type${size <= 160 ? ' initial' : ''}`} role="img" aria-label={`${name}, no cover art`}><span>{size <= 160 ? Array.from(name.trim())[0]?.toUpperCase() : name}</span></div>;
   return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 

@@ -215,7 +215,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}${onMove ? ' reorderable' : ''}`} aria-hidden="true">
       <span className="track"><span className="n">#</span><span>Title</span>{showAlbum && <span>Record</span>}</span>
       <span className="row-rating">Rating</span><span className="star" /><span className="figure">Time</span>
-      {keptSupported && keptMarks && <span className="kept-slot" />}{onRemove && <span className="row-remove" />}
+      {keptSupported && keptMarks && <span className="kept-slot" />}<span className="row-remove" />
     </div>}
     <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${queue ? ' queue-list' : ''}${onMove ? ' reorderable' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
       onDragLeave={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setInto(null); }}
@@ -225,12 +225,12 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
         const key = keys[index];
         const isNow = queue ? index === nowIndex : track.id === nowId;
         const kept = keptSupported && track.source === 'navidrome' && isKept(track.id);
-        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} played={!!queue && index < nowIndex} reorderable={!!onMove} removable={!!onRemove} playing={isNow && playing}
+        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} number={queue ? (index > nowIndex ? index - nowIndex : '') : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1} played={!!queue && index < nowIndex} reorderable={!!onMove} removable={!!onRemove} playing={isNow && playing}
           isSelected={selected.has(key) || menuRow === key} selecting={selected.size > 0} starred={isStarred(track.id, track.starred)}
           kept={kept} unavailable={away && keptSupported && track.source === 'navidrome' && !kept} away={away} wide={wide}
           drop={drag && drag.to === index && drag.from !== index ? (drag.from < index ? 'drop-after' : 'drop-before') : !drag && into === index ? 'drop-before' : null}
           top={windowed ? slot(index) * ROW : null} draggable={draggable} album={album} albumArtist={albumArtist} showAlbum={showAlbum}
-          numbered={numbered} keptMarks={keptMarks} handlers={handlers} />;
+          keptMarks={keptMarks} handlers={handlers} />;
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
         return group ? [<li key={`group-${index}`} className={`group-head${group.quiet ? ' quiet' : ''}`}
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
@@ -253,10 +253,10 @@ interface RowHandlers {
 }
 // One song row. Everything it shows comes in as plain values, so playing, pausing, or moving to
 // the next song redraws the rows that changed rather than every row in the list.
-const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, played, reorderable, removable, playing, isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable, album, albumArtist, showAlbum, numbered, keptMarks, handlers }: {
-  track: Track; index: number; rowKey: string; isNow: boolean; played: boolean; reorderable: boolean; removable: boolean; playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
+const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, number, played, reorderable, removable, playing, isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable, album, albumArtist, showAlbum, keptMarks, handlers }: {
+  track: Track; index: number; rowKey: string; isNow: boolean; number: number | string; played: boolean; reorderable: boolean; removable: boolean; playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
   kept: boolean; unavailable: boolean; away: boolean; wide: boolean; drop: string | null; top: number | null; draggable: boolean;
-  album?: string; albumArtist?: string; showAlbum: boolean; numbered: 'position' | 'track'; keptMarks: boolean;
+  album?: string; albumArtist?: string; showAlbum: boolean; keptMarks: boolean;
   handlers: { current: RowHandlers };
 }) {
   const name = splitTitle(track.title, album);
@@ -270,7 +270,7 @@ const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, played, r
     {/* The row's button covers the whole row (CSS), and the artists and the record are links
         above it: a button can't hold buttons. */}
     <span className="track">
-      <span className="n"><span className="n-mark">{isNow ? <Wave playing={playing} /> : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1}</span>
+      <span className="n"><span className="n-mark">{isNow ? <Wave playing={playing} /> : number}</span>
         {reorderable && <GripVertical className="grip" aria-hidden="true" />}</span>
       <span className="title">
         <button type="button" className="track-play" onClick={event => handlers.current.click(event, index, isNow)}
@@ -298,7 +298,7 @@ const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, played, r
     <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
     {/* Beside the button, so the row's name stays "Play <title>". */}
     {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
-    {removable && (isNow ? <span className="row-remove" aria-hidden="true" /> : <button type="button" className="row-remove" aria-label={`Remove ${track.title}`} title="Remove"
+    {wide && (!removable || isNow ? <span className="row-remove" aria-hidden="true" /> : <button type="button" className="row-remove" aria-label={`Remove ${track.title}`} title="Remove"
       onClick={event => { event.stopPropagation(); handlers.current.remove(index); }}><X aria-hidden="true" /></button>)}
   </li>;
 });
