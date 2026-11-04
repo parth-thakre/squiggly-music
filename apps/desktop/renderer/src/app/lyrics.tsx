@@ -136,7 +136,8 @@ function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
   }, []);
 
   const name = splitTitle(track.title, track.album).main;
-  return <div className={`lyrics${compact ? ' compact' : ''}${browsing ? ' browsing' : ''}`} onWheel={browse} onTouchMove={browse}>
+  const empty = !!result?.ok && !lyrics;
+  return <div className={`lyrics${compact ? ' compact' : ''}${browsing ? ' browsing' : ''}${empty ? ' empty' : ''}`} onWheel={browse} onTouchMove={browse}>
     {!compact && <header className="lyrics-head"><h1>{name}</h1><p>{track.artist}</p></header>}
     {!result ? <p className="status loading">Finding the words</p>
       : !result.ok ? <p className="status">{result.error}</p>

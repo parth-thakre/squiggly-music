@@ -213,7 +213,7 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     {/* Column names over the rows, wider than a phone. Only for the eye: each row names its own parts. */}
     {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}`} aria-hidden="true">
       <span className="track"><span className="n">#</span><span>Title</span>{showAlbum && <span>Record</span>}</span>
-      <span className="row-rating" /><span className="figure">Time</span>
+      <span className="row-rating">Rating</span><span className="figure">Time</span>
       {keptSupported && keptMarks && <span className="kept-slot" />}<span className="star" />
     </div>}
     <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
@@ -284,7 +284,9 @@ const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, played, p
     {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
         and only while it's in reach; other rows keep the slot empty so the durations line up.
         A phone's rows have no room for them (app.css): they're rated from the menu or the open deck. */}
-    {wide && <span className="row-rating">{track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />}</span>}
+    {wide && <span className="row-rating">{track.source === 'navidrome' && !away && <>
+      {!!track.userRating && <span className="rating-compact" aria-hidden="true">{track.userRating}<Glyph kind="starred" /></span>}
+      <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} /></>}</span>}
     <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
     {/* Beside the button, so the row's name stays "Play <title>". */}
     {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
