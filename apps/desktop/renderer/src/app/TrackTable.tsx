@@ -212,12 +212,12 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
 
   return <>
     {/* Column names over the rows, wider than a phone. Only for the eye: each row names its own parts. */}
-    {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}`} aria-hidden="true">
+    {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}${onMove ? ' reorderable' : ''}`} aria-hidden="true">
       <span className="track"><span className="n">#</span><span>Title</span>{showAlbum && <span>Record</span>}</span>
-      <span className="row-rating">Rating</span><span className="figure">Time</span>
-      {keptSupported && keptMarks && <span className="kept-slot" />}{onRemove && <span className="row-remove" />}<span className="star" />
+      <span className="row-rating">Rating</span><span className="star" /><span className="figure">Time</span>
+      {keptSupported && keptMarks && <span className="kept-slot" />}{onRemove && <span className="row-remove" />}
     </div>}
-    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${queue ? ' queue-list' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
+    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${queue ? ' queue-list' : ''}${onMove ? ' reorderable' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
       onDragLeave={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setInto(null); }}
       style={windowed ? { height: (tracks.length + groups.length) * ROW, position: 'relative' } : undefined}>
       {tracks.slice(first, last).map((track, offset) => {
@@ -290,14 +290,15 @@ const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, played, r
     {wide && <span className="row-rating">{track.source === 'navidrome' && !away && <>
       {!!track.userRating && <span className="rating-compact" aria-hidden="true">{track.userRating}<Glyph kind="starred" /></span>}
       <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} /></>}</span>}
-    <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
-    {/* Beside the button, so the row's name stays "Play <title>". */}
-    {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
-    {/* A station can't be a favorite: the server stars songs, records, and artists. Away, stars wait for the server. */}
-    {removable && (isNow ? <span className="row-remove" aria-hidden="true" /> : <button type="button" className="row-remove" aria-label={`Remove ${track.title}`} title="Remove"
-      onClick={event => { event.stopPropagation(); handlers.current.remove(index); }}><X aria-hidden="true" /></button>)}
+    {/* The heart, between the rating and the time in every list. A station can't be a favorite: the
+        server stars songs, records, and artists. Away, stars wait for the server. */}
     {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
       aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
       onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'hearted' : 'heart'} /></button>}
+    <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
+    {/* Beside the button, so the row's name stays "Play <title>". */}
+    {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
+    {removable && (isNow ? <span className="row-remove" aria-hidden="true" /> : <button type="button" className="row-remove" aria-label={`Remove ${track.title}`} title="Remove"
+      onClick={event => { event.stopPropagation(); handlers.current.remove(index); }}><X aria-hidden="true" /></button>)}
   </li>;
 });

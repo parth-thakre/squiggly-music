@@ -74,7 +74,7 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   const [h, s, l] = colors[0]?.hsl ?? [0, 0, .5];
   const dark = l < .55;
   // Keep the sleeve's character but calm it enough to read long lists on.
-  const ground = hslToHex([h, Math.min(s, dark ? .45 : .5), dark ? Math.min(Math.max(l, .1), .2) : Math.max(Math.min(l, .86), .74)]);
+  const ground = hslToHex([h, Math.min(s, dark ? .45 : .5), dark ? Math.min(Math.max(l, .085), .155) : Math.max(Math.min(l, .86), .74)]);
   const ink = readable([h, Math.min(s, .35), dark ? .9 : .12], [ground], 11, dark);
   // Soft text sits on selected rows too, and a selected row is darker (or lighter) than the ground.
   const tint = selectedTint({ ground, ink });
