@@ -48,7 +48,8 @@ test.describe('sign-in', () => {
     await expect(app.heading).toHaveText('Home');
     await expect(app.main.getByRole('button', { name: /^Test Pressing/ })).toBeVisible();
 
-    await app.deck.getByRole('button', { name: 'Sign out' }).click();
+    await app.openSettings();
+    await app.main.getByRole('button', { name: 'Sign out' }).click();
     await expect(app.signInPassword).toBeVisible();
     await expect(app.section('Records')).toHaveCount(0);
     // The session is gone on the server too, not just hidden.

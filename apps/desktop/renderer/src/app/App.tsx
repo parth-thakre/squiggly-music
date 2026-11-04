@@ -334,7 +334,6 @@ function BetaMarker({ inPlace = false }: { inPlace?: boolean }) {
 // room for the window's buttons.
 const openFiles = async () => { const result = await window.squiggly!.openFiles(); if (!result.ok) player.showError(result.error); };
 function DeckLinks() {
-  const signedIn = usePlayer(s => s.access === 'signed-in');
   // The browser's own connection; one the host was started with isn't the page's to drop.
   const pageConnection = usePlayer(s => s.mode === 'web' && s.connected && s.pageConnection);
   const mode = usePlayer(s => s.mode);
@@ -347,7 +346,6 @@ function DeckLinks() {
     <button type="button" className="quiet-link" onClick={() => nav.go({ view: 'diagnostics' })}>Diagnostics</button>
     {mode === 'desktop' && <button type="button" className="quiet-link" onClick={() => void openFiles()}>Open files</button>}
     {pageConnection && <button type="button" className="quiet-link" onClick={() => void player.disconnect().then(result => { if (!result.ok) player.showError(result.error); })}>Disconnect</button>}
-    {signedIn && <button type="button" className="quiet-link" onClick={() => void player.signOut()}>Sign out</button>}
   </p>;
 }
 // A queue saved on the server (maybe from another device), offered once when nothing plays: its

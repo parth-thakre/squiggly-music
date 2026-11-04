@@ -58,6 +58,9 @@ test.describe('queue', () => {
     await expect(app.tracks().nth(5)).toHaveClass(/\bnow\b/);
     await expect(app.tracks().nth(4)).not.toHaveClass(/\bnow\b/);
 
+    // The first copy has played, so it is folded away until asked for.
+    await expect(app.tracks().nth(4)).toBeHidden();
+    await app.main.getByRole('button', { name: 'Show 5 played songs' }).click();
     await app.rowButton(app.tracks().nth(4)).click();
     await expect(app.tracks().nth(4)).toHaveClass(/\bnow\b/);
     await expect(app.tracks().nth(5)).not.toHaveClass(/\bnow\b/);

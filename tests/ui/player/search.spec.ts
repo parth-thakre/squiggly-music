@@ -22,9 +22,9 @@ test.describe('search', () => {
     await expect(app.heading).toHaveText('“e”');
     await expect(tab(app, 'All')).toHaveAttribute('aria-pressed', 'true');
     // 206 songs and 26 records match, more than All shows; the 5 artists all fit. Artists and
-    // records come first, then the first eight songs.
-    await expect(app.tracks()).toHaveCount(8);
-    await expect(records(app)).toHaveCount(16);
+    // records come first (a row of them), then the first five songs.
+    await expect(app.tracks()).toHaveCount(5);
+    await expect(records(app)).toHaveCount(6);
     await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Artists', 'Records', 'Songs']);
     await expect(app.main.getByRole('button', { name: 'See all songs' })).toBeVisible();
     await expect(app.main.getByRole('button', { name: 'See all records' })).toHaveText('See all records');
@@ -63,7 +63,7 @@ test.describe('search', () => {
     fake.large = true;
     await field(app).fill('night');
     await expect(app.heading).toHaveText('“night”');
-    await expect(app.tracks()).toHaveCount(8);
+    await expect(app.tracks()).toHaveCount(5);
     await expect(app.main.getByRole('button', { name: 'See all records' })).toHaveCount(0);
     await app.main.getByRole('button', { name: 'See all songs' }).click();
     await expect(tab(app, 'Songs')).toHaveAttribute('aria-pressed', 'true');

@@ -155,7 +155,8 @@ test.describe('autoplay', () => {
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
     await expect.poll(() => asked.length).toBe(2);
     await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
-    await app.deck.getByRole('button', { name: 'Sign out' }).click();
+    await app.openSettings();
+    await app.main.getByRole('button', { name: 'Sign out' }).click();
     await expect(app.signInPassword).toBeVisible();
     await asked[1].route.fulfill({ json: asked[1].json });
     // Signed in again on the same page, the queue waits at the song it was on.
@@ -193,12 +194,16 @@ test('the desktop marks the entries its main process says autoplay added', async
   });
   await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
   const main = page.locator('main.page');
-  // Played above the first song; then, above the first song autoplay added (straight after the
+  // The played song is folded away; above the first song autoplay added (straight after the
   // playing one), its quiet heading in place of Up next; the song after them isn't marked.
   const rows = main.locator('ol.tracks > li');
-  await expect(rows).toHaveCount(7);
-  await expect(rows.nth(0)).toHaveText('Played');
-  await expect(rows.nth(3)).toHaveClass(/\bgroup-head\b/);
-  await expect(rows.nth(3)).toHaveText('Added by autoplay');
+  await expect(rows).toHaveCount(6);
+  await expect(rows.nth(0)).toBeHidden();
+  await expect(rows.nth(2)).toHaveClass(/\bgroup-head\b/);
+  await expect(rows.nth(2)).toHaveText('Added by autoplay');
   await expect(main.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
+  // Shown again, the played song has its heading.
+  await main.getByRole('button', { name: 'Show 1 played song' }).click();
+  await expect(rows.nth(0)).toHaveText('Played');
+  await expect(rows.nth(3)).toHaveText('Added by autoplay');
 });

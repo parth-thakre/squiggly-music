@@ -568,7 +568,7 @@ export function Playlists() {
           }} />
           <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
             <MixTile mix={mix} travels={mix.id === morph.id} />
-            <span className="row-text"><span className="row-name">{mix.name}</span><span className="row-sub">{mix.description}</span></span>
+            <span className="row-text"><span className="row-name">{mix.name}</span><span className="row-sub row-desc">{mix.description}</span></span>
           </button>
         </li>)}
       </ul>
@@ -771,6 +771,8 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
   </li>)}</ul>;
 }
 
+// Past this many songs the queue is windowed, and windowed rows can't fold away.
+const QUEUE_FOLD_LIMIT = 120;
 export function Queue() {
   const queue = usePlayer(s => s.queue);
   const entryIds = usePlayer(s => s.entryIds);
@@ -782,16 +784,21 @@ export function Queue() {
   const away = usePlayer(s => s.reach.away);
   const settings = useSettings();
   const [saved, setSaved] = useState<string | null>(null);
+  const [showPlayed, setShowPlayed] = useState(false);
+  // What has played folds away, so the queue starts at the playing song. A list long enough to be
+  // windowed (TrackTable) keeps every row in place, so there it always shows.
+  const foldable = index > 0 && queue.length <= QUEUE_FOLD_LIMIT;
+  const folded = foldable && !showPlayed;
   // Songs autoplay added sit under a quiet note, one above each run of them.
   const groups = useMemo<TrackGroup[]>(() => {
     const added = addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true }));
     // Quiet labels part what has played from what comes next; the playing row between them is
     // tinted. A run autoplay added straight after the playing song keeps its own label there.
     const parts: TrackGroup[] = [];
-    if (index > 0) parts.push({ at: 0, label: 'Played', quiet: true });
+    if (index > 0 && !folded) parts.push({ at: 0, label: 'Played', quiet: true });
     if (index + 1 < entryIds.length && !added.some(g => g.at === index + 1)) parts.push({ at: index + 1, label: 'Up next', quiet: true });
     return [...parts, ...added].sort((a, b) => a.at - b.at);
-  }, [autoplay, entryIds, index]);
+  }, [autoplay, entryIds, index, folded]);
   // Records, artists, songs, and playlists dropped on the page join the end of the queue; onto
   // the list, before that song.
   const drop = useDropTarget(payload => void dropOnQueue(payload));
@@ -813,6 +820,7 @@ export function Queue() {
         {offer && <>{(upcoming > 0 || modes) && ' '}<button type="button" className="link" onClick={() => void updateSettings({ autoplay: true })}>Keep playing similar songs</button></>}</p>}
       <div className="actions">
         <button type="button" className="text-button" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
+        {foldable && <button type="button" className="text-button" aria-expanded={showPlayed} onClick={() => setShowPlayed(v => !v)}>{showPlayed ? 'Hide played' : `Show ${plural(index, 'played song')}`}</button>}
         <button type="button" className="text-button" onClick={async () => {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
           setSaved(await createPlaylist(`Queue, ${date}`, queue.filter(t => t.source === 'navidrome').map(t => t.id)));
@@ -820,8 +828,8 @@ export function Queue() {
       </div>
       {saved && <p className="note" role="alert">{saved}</p>}
     </Head>
-    <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
-      onDropItems={(payload, at) => void dropOnQueue(payload, at)} groups={groups} />
+    <div className={folded ? 'played-folded' : undefined}><TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
+      onDropItems={(payload, at) => void dropOnQueue(payload, at)} groups={groups} /></div>
   </div>;
 }
 
@@ -1370,14 +1378,15 @@ export function Search({ query, type }: { query: string; type?: SearchType }) {
 }
 
 // All shows a few songs under the artists and records; See all has the rest.
-const ALL_SONGS = 8;
+const ALL_SONGS = 5;
+const ALL_RECORDS = 6;
 function SearchAll({ query }: { query: string }) {
   const result = useResource(`search:${query.toLowerCase()}`, () => api.search(query));
   return <Pending result={result} waiting="Searching">{({ artists, albums, tracks, capped }) => !artists.length && !albums.length && !tracks.length
     ? <Status>Nothing matches “{query}”.</Status>
     : <>
       {artists.length > 0 && <SearchGroup title="Artists" query={query} type="artists" more={capped.artists}><ArtistNames artists={artists} /></SearchGroup>}
-      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums}><AlbumGrid albums={albums} /></SearchGroup>}
+      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums || albums.length > ALL_RECORDS}><AlbumGrid albums={albums.slice(0, ALL_RECORDS)} /></SearchGroup>}
       {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks || tracks.length > ALL_SONGS}><TrackTable tracks={tracks.slice(0, ALL_SONGS)} showAlbum /></SearchGroup>}
     </>}</Pending>;
 }
