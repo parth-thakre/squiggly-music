@@ -602,7 +602,7 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
       <span className="row-text">
         <span className="row-name">{splitTitle(playlist.name).main}</span>
         <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}</span>
-        {note && <span className="row-badge" title={note}>{note.startsWith('Kept in sync') ? 'Synced from a file' : 'Server playlist'}</span>}
+        {note?.startsWith('Kept in sync') && <span className="row-badge" title={note}>Synced from a file</span>}
       </span>
       <ContainerMark kind="playlist" id={playlist.id} />
     </button>
