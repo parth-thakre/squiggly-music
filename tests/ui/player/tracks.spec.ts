@@ -61,7 +61,7 @@ test.describe('tracks', () => {
     await sortBy(app, 'A to Z');
     await expect(app.tracks().first()).toContainText('Coda 11');
     // Seventy rows down, whatever a row's height.
-    const at = await app.main.evaluate(main => { main.scrollTo(0, 68 * parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height'))); return Math.round(main.scrollTop); });
+    const at = await app.main.evaluate(main => { main.scrollTo(0, 68 * parseFloat(getComputedStyle(main.querySelector('ol.tracks li:not(.group-head)')!).height)); return Math.round(main.scrollTop); });
     const deep = app.main.locator('ol.tracks > li[data-index="70"] .title .name');
     const title = await deep.textContent();
     await expect(app.row(title!)).toBeInViewport();

@@ -14,8 +14,9 @@ import { isKept, keptSupported, useKeptVersion } from './keptState';
 import { KeptMark } from './keptMark';
 import './kept.css';
 
-// Song rows are --row-height tall (compact themes shorten them); windowing uses the same number.
-const rowHeight = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row-height')) || 52;
+// Song rows are --row-height tall, or --row-two where rows also show the artists or the record
+// under the name (compact themes shorten both); windowing uses the same number.
+const rowHeight = (two: boolean) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(two ? '--row-two' : '--row-height')) || (two ? 52 : 44);
 const WINDOWED = 120;
 // A click that came from a finger. Chrome sends clicks as pointer events that say so; a browser
 // that doesn't goes by the screen.
@@ -57,7 +58,9 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   keptMarks?: boolean;
 }) {
   useActiveTheme();
-  const ROW = rowHeight();
+  // Two lines when some row credits other artists than the record's, or lists records.
+  const twoLine = useMemo(() => showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, showAlbum, albumArtist]);
+  const ROW = rowHeight(twoLine);
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);
   const playing = usePlayer(s => s.playing);
@@ -207,7 +210,13 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   };
 
   return <>
-    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
+    {/* Column names over the rows, wider than a phone. Only for the eye: each row names its own parts. */}
+    {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}`} aria-hidden="true">
+      <span className="track"><span className="n">#</span><span>Title</span>{showAlbum && <span>Record</span>}</span>
+      <span className="row-rating" /><span className="figure">Time</span>
+      {keptSupported && keptMarks && <span className="kept-slot" />}<span className="star" />
+    </div>}
+    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
       onDragLeave={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setInto(null); }}
       style={windowed ? { height: (tracks.length + groups.length) * ROW, position: 'relative' } : undefined}>
       {tracks.slice(first, last).map((track, offset) => {

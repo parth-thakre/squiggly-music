@@ -1,4 +1,4 @@
-import { ListMusic, MessageSquareQuote, PictureInPicture2 } from 'lucide-react';
+import { ListMusic, MessageSquareQuote, PictureInPicture2, Search as SearchIcon } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import type { Connection, Track } from '../../../../../packages/core/contracts';
 import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
@@ -130,6 +130,7 @@ const Bar = memo(function Bar() {
     <button type="button" className="wordmark" aria-label="Squiggly home" aria-current={route.view === 'home' ? 'page' : undefined}
       onClick={() => nav.go({ view: 'home' })}><Mark />Squiggly</button>
     {canGoBack && <button type="button" className="text-button back" onClick={() => nav.back()}>Back</button>}
+    <label className="search-field"><SearchIcon aria-hidden="true" />
     <input className="search" type="search" placeholder="Find anything" aria-label="Search your library" value={query}
       onChange={event => {
         const value = event.target.value; setQuery(value);
@@ -150,7 +151,7 @@ const Bar = memo(function Bar() {
           setQuery('');
           if (route.view === 'search') { if (canGoBack) nav.back(); else nav.go({ view: 'records' }, true); }
         }
-      }} />
+      }} /></label>
     {/* Phones have no Ctrl+K; the palette opens from here. */}
     <button type="button" className="text-button bar-commands" onClick={openPalette}>Commands</button>
     </div>
@@ -493,7 +494,7 @@ function Connect({ embedded = false }: { embedded?: boolean }) {
         autoCapitalize="off" spellCheck={false} defaultValue={saved?.url} /></label>
       <label>Username<input name="username" required autoComplete="username" defaultValue={saved?.username} /></label>
       <label>Password<input name="password" type="password" required autoComplete="current-password" /></label>
-      <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Connecting' : 'Connect'}</button>
+      <button type="submit" className="primary-button" disabled={busy}>{busy ? 'Connecting' : 'Connect'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
       {/* Someone on the network could have blocked HTTPS to get the password sent in the clear, so plain HTTP is never used without asking. */}
       {plainHttp && <div className="connect-http" role="alert">
@@ -538,7 +539,7 @@ function SignIn() {
     <p>Enter this host's password.</p>
     <form onSubmit={submit}>
       <label>Password<input name="password" type="password" required autoComplete="current-password" autoFocus /></label>
-      <button type="submit" className="play-action" disabled={busy}><span className="disc"><Glyph kind="play" /></span>{busy ? 'Signing in' : 'Sign in'}</button>
+      <button type="submit" className="primary-button" disabled={busy}>{busy ? 'Signing in' : 'Sign in'}</button>
       {error && <p className="deck-error" role="alert">{error}</p>}
     </form>
   </main>;

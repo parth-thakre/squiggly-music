@@ -2,7 +2,7 @@
 /* Theme tokens (theme/index.ts sets these on the root). Colours live on .room, from the cover or the theme. */
 :root {
   --font-display: 'Young Serif', serif; --font-body: 'Familjen Grotesk Variable', system-ui, sans-serif;
-  --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px; --row-height: 52px;
+  --display-weight: 400; --text: 1; --display-size: 1; --radius: 6px; --row-height: 44px; --row-two: 52px;
 }
 html, body { margin: 0; height: 100%; }
 /* The room fills the window and each part scrolls on its own; the document itself never scrolls. */
@@ -38,25 +38,31 @@ button:disabled { cursor: default; opacity: .45; }
 .wordmark .mark { width: 36px; height: auto; margin-top: 2px; }
 .sections { display: flex; gap: 22px; }
 .sections button, .choices button { padding: 0; background: none; border: 0; color: var(--soft); }
-.sections button { font-size: calc(15px * var(--text)); font-weight: 600; }
+.sections button { position: relative; padding: 6px 0; font-size: calc(15px * var(--text)); font-weight: 600; }
+@media (min-width: 761px) { .sections button[aria-current]::after { content: ''; position: absolute; left: 0; right: 0; bottom: -2px; height: 2px; border-radius: 1px; background: var(--accent); } }
 /* Header labels stay on one line; when space runs short the search box gives way instead. */
 .bar :is(button, .wordmark) { flex: none; white-space: nowrap; }
 .sections button[aria-current], .choices button[aria-pressed='true'] { color: var(--ink); }
 .sections button:hover, .choices button:hover { color: var(--ink); }
 .back { margin-left: auto; }
-.search {
-  flex: 0 1 220px; width: 220px; min-width: 110px; padding: 4px 0; background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0;
+.search-field {
+  flex: 0 1 260px; width: 260px; min-width: 120px; display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px;
+  background: var(--raised); border: 1px solid color-mix(in srgb, var(--ink) 12%, transparent); border-radius: 999px; color: var(--soft); cursor: text;
 }
-.back + .search { margin-left: 0; }
-.bar-top > .search:not(.back + .search) { margin-left: auto; }
+.search-field svg { flex: none; width: 16px; height: 16px; stroke-width: 2; }
+.search-field:focus-within { border-color: var(--ink); }
+.search { flex: 1; min-width: 0; width: 100%; padding: 0; background: none; border: 0; border-radius: 0; color: var(--ink); }
+.back + .search-field { margin-left: 0; }
+.bar-top > .search-field:not(.back + .search-field) { margin-left: auto; }
 .search::placeholder { color: var(--soft); }
 .search::-webkit-search-cancel-button { -webkit-appearance: none; }
-.search:focus-visible { outline: none; border-bottom-color: var(--ink); }
+.search:focus-visible { outline: none; }
 .source { color: var(--soft); font-size: calc(13px * var(--text)); }
 
 .text-button, .link, .quiet-link { padding: 0; background: none; border: 0; }
 .text-button { font-size: calc(14.5px * var(--text)); font-weight: 600; }
 .link { font-weight: 600; color: var(--ink); text-align: left; }
+:is(.note, .connect-demo, .lyrics-none, .section-note) .link { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); }
 .text-button:hover:not(:disabled), .link:hover, .quiet-link:hover { text-decoration: underline; text-underline-offset: 4px; text-decoration-thickness: 1px; }
 
 /* Deck */
@@ -129,7 +135,7 @@ img:is(.deck-cover, .head-cover) {
 .page { min-width: 0; overflow-y: auto; padding: 18px 48px 72px 36px; outline: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .status { margin: 0; padding: 20px 0; color: var(--soft); }
 /* Room for an artist's popular songs (ArtistPage): fewer than ten, often, in a personal library. */
-.popular-waiting { box-sizing: border-box; min-height: calc(var(--row-height, 52px) * 5); }
+.popular-waiting { box-sizing: border-box; min-height: calc(var(--row-two, 52px) * 5); }
 .sentinel { height: 1px; }
 
 .head { margin-bottom: 26px; }
@@ -152,11 +158,21 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .byline { margin: 12px 0 0; color: var(--soft); }
 .byline strong, .byline .link { color: var(--ink); font-weight: 600; margin-right: .3em; }
 .note { margin: 8px 0 0; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
-.choices { display: flex; flex-wrap: wrap; gap: 6px 20px; margin-top: 14px; }
-.choices button[aria-pressed='true'] { font-weight: 600; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+.choices button { min-height: 32px; padding: 0 14px; border-radius: 999px; font-size: calc(14px * var(--text)); font-weight: 500; }
+.choices button:hover { background: color-mix(in srgb, var(--ink) 7%, transparent); }
+.choices button[aria-pressed='true'] { font-weight: 600; background: var(--ink); color: var(--ground); }
 
 .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; margin-top: 20px; }
 .play-action { display: inline-flex; align-items: center; gap: 10px; padding: 0; background: none; border: 0; font-size: calc(15px * var(--text)); font-weight: 600; }
+/* A page's Play: the disc and its word are one filled button. */
+.head .actions > .play-action { min-height: 44px; padding: 0 20px 0 5px; border-radius: 999px; background: var(--ink); color: var(--ground); }
+.head .actions > .play-action .disc { width: 34px; height: 34px; background: var(--ground); color: var(--ink); }
+.head .actions > .play-action .disc svg { width: 15px; }
+.head .actions > .play-action:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--ground)); }
+.primary-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 26px; border: 0; border-radius: 999px;
+  background: var(--ink); color: var(--ground); font-size: calc(15px * var(--text)); font-weight: 600; }
+.primary-button:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--ground)); }
 .head .actions > .text-button { min-height: 36px; padding: 0 16px; border: 1px solid color-mix(in srgb, var(--ink) 26%, transparent); border-radius: 999px; font-size: calc(14px * var(--text)); }
 .head .actions > .text-button:hover:not(:disabled) { text-decoration: none; background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .head .actions > .text-button.star-text { padding-left: 13px; }
@@ -236,7 +252,16 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 
 /* Tracks */
 .tracks { margin: 0; padding: 0; list-style: none; max-width: 980px; }
-.tracks li { display: flex; align-items: center; height: var(--row-height, 52px); }
+.tracks-head { display: flex; align-items: center; max-width: 1000px; height: 32px; margin: 0 -10px 4px; padding: 0 10px; border-bottom: 1px solid var(--line);
+  font-size: calc(11.5px * var(--text)); font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--soft); }
+.tracks-head .track { flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 12px; font-size: inherit; }
+.tracks-head .n { font-size: inherit; color: inherit; }
+.tracks-head .figure { font-size: inherit; color: inherit; }
+.tracks-head.with-album .track { grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr); }
+.tracks-head .figure { flex: none; width: 48px; text-align: right; }
+.tracks-head .star { opacity: 0; }
+.tracks li { display: flex; align-items: center; height: var(--row-height, 44px); }
+.tracks.two-line li { height: var(--row-two, 52px); }
 .track {
   position: relative; flex: 1; min-width: 0; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 12px;
   height: 100%; text-align: left; font-size: calc(15.5px * var(--text));
@@ -334,10 +359,8 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 .connect input { padding: 11px 13px; background: var(--raised); border: 1px solid color-mix(in srgb, var(--ink) 16%, transparent); border-radius: var(--radius); font-size: calc(16px * var(--text)); color: var(--ink); }
 .connect input:focus-visible { outline: none; border-color: var(--ink); }
 .connect label { color: var(--ink); font-weight: 600; }
-.connect form .play-action { min-height: 44px; padding: 0 22px 0 6px; border-radius: 999px; background: var(--ink); color: var(--ground); }
-.connect form .play-action .disc { width: 32px; height: 32px; background: var(--ground); color: var(--ink); }
-.connect form .play-action .disc svg { width: 14px; }
-.connect .play-action { justify-self: start; margin-top: 6px; }
+
+.connect :is(.play-action, .primary-button) { justify-self: start; margin-top: 6px; }
 /* Asking before plain HTTP: the warning, then Continue and Cancel on one line. */
 .connect-http { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
 .connect-http p { flex-basis: 100%; margin: 0; font-size: calc(14.5px * var(--text)); }
@@ -694,7 +717,8 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
   .bar { display: contents; }
   .bar-top { grid-row: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; padding: calc(10px + env(safe-area-inset-top)) 18px 6px; }
   .wordmark { font-size: 21px; margin: 0; }
-  .bar-top > .search, .bar-top > .search:not(.back + .search) { order: 3; flex: 1 1 100%; width: auto; margin: 0; padding: 8px 0; font-size: calc(16px * var(--text)); }
+  .bar-top > .search-field, .bar-top > .search-field:not(.back + .search-field) { order: 3; flex: 1 1 100%; width: auto; height: 42px; margin: 6px 0 4px; }
+  .search { font-size: calc(16px * var(--text)); }
   .back { order: 2; margin-left: auto; padding: 8px 0; }
   .bar-top > .text-button:not(.back) { order: 2; }
   .bar-top > .bar-commands { display: block; margin-left: auto; padding: 8px 0; }
@@ -813,7 +837,8 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
 @media (max-width: 760px) and (max-height: 520px) {
   .wordmark, .source { display: none; }
   .bar-top { padding-top: calc(6px + env(safe-area-inset-top)); }
-  .bar-top > .search, .bar-top > .search:not(.back + .search) { padding: 5px 0; font-size: calc(15px * var(--text)); }
+  .bar-top > .search-field, .bar-top > .search-field:not(.back + .search-field) { height: 36px; margin: 2px 0; }
+  .search { font-size: calc(15px * var(--text)); }
   .page { padding: 6px 14px 16px; }
   .head { margin-bottom: 14px; }
   .head h1 { font-size: calc(28px * var(--display-size)); }
@@ -963,7 +988,7 @@ html:is([data-motion='reduced'], [data-motion='none']) .mini-lyric > span { anim
 }
 
 /* Compact density: tighter pages and lists, including song rows. */
-html[data-density='compact'] { --row-height: 44px; }
+html[data-density='compact'] { --row-height: 38px; --row-two: 46px; }
 @media (min-width: 761px) {
   html[data-density='compact'] .bar { padding: 12px 28px 8px; gap: 22px; }
   html[data-density='compact'] .top-position { padding: 0 28px 2px; }
@@ -1049,8 +1074,8 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
 /* Songs autoplay added to the queue: a quiet note above them, not a title. */
 .group-head.quiet h2 { font: 500 calc(13px * var(--text))/1.2 var(--font-body); color: var(--soft); }
 /* Decade, at the end of the Records sorts: it opens a row of decades under them. */
-.choices .decade-toggle.on { color: var(--ink); font-weight: 600; }
-.decades { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 20px; }
+.choices .decade-toggle.on { font-weight: 600; background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); }
+.decades { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; }
 .decades .status-inline { color: var(--soft); }
 /* Six tabs on a narrow desktop window, with Back showing: the header's gaps close up and the
    search field gives way further, so the field stays inside the window. */
@@ -1058,7 +1083,7 @@ html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion
   .bar, html[data-density='compact'] .bar { gap: 14px; }
   .sections { gap: 12px; }
   .wordmark { margin-right: 0; }
-  .search { min-width: 90px; }
+  .search-field { min-width: 100px; }
 }
 /* Six tabs on a narrow phone: the labels shrink a little further to stay on one line. */
 @media (max-width: 480px) {
