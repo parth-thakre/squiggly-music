@@ -44,6 +44,7 @@ import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
 import { KeptStore } from './keptStore';
 import { LyricsCache } from './lyricsCache';
+import { CoverCache } from './coverCache';
 import { AnswerStore } from './answerStore';
 import { paintFrame, roundCorners, windowRect } from './windowFrame';
 import { choosePlayable, KeepManager, pickLocation } from './keepManager';
@@ -147,6 +148,7 @@ let finalSession: { generation: number; client: SubsonicClient } | null = null;
 // Songs kept on this computer (<userData>/kept), and their downloads. Created at ready.
 let keptStore: KeptStore | null = null;
 let lyricsCache: LyricsCache | null = null;
+let coverCache: CoverCache | null = null;
 // Library answers kept for the account (<userData>/library), shown while they're read again. Created at ready.
 let answers: AnswerStore | null = null;
 // Makes songs streamed at a lower quality seekable (streamRelay.ts). Null until started, or if it couldn't.
@@ -371,8 +373,15 @@ async function serverCover(client: SubsonicClient, id: string, size: number): Pr
   const larger = [...sizes.keys()].filter(have => have >= size).sort((a, b) => a - b)[0];
   const from = larger === undefined ? null : await sizes.get(larger)!;
   if (from && larger === size) return from;
-  const wanted = from ? Promise.resolve(shrinkCover(from, size))
-    : Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, size)))).then(result => Either.isRight(result) ? result.right : null);
+  // Then one kept on disk (coverCache.ts), then the server, keeping what it sends.
+  const wanted = from ? Promise.resolve(shrinkCover(from, size)) : (async () => {
+    const kept = await coverCache?.read(id, size);
+    if (kept) return kept;
+    const result = await Effect.runPromise(Effect.either(awaited(semaphores.art.withPermits(1)(client.coverArt(id, size)))));
+    if (Either.isLeft(result)) return null;
+    if (server === client) void coverCache?.write(id, size, result.right);
+    return result.right;
+  })();
   sizes.set(size, wanted);
   const cover = await wanted;
   if (!cover && sizes.get(size) === wanted) sizes.delete(size);
@@ -675,6 +684,7 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
     if (keptStore) yield* Effect.promise(() => keptStore!.bind(key).catch(() => undefined));
     if (lyricsCache) yield* Effect.promise(() => lyricsCache!.bind(key));
+    if (coverCache) yield* Effect.promise(() => coverCache!.bind(key));
     keptPush();
     reports?.bind(key);
     void reports?.flush();
@@ -695,6 +705,7 @@ function adoptAway(candidate: SubsonicClient, connection: Connection, key: strin
   state.server = { ...state.server, connected: true, name: hostName(candidate), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnecting: false, reconnectError: null };
   reports?.bind(key);
   void lyricsCache?.bind(key);
+  void coverCache?.bind(key);
   reach.enter({ probeNow });
   updateTray(); updateMedia();
 }
@@ -740,6 +751,14 @@ function seekTo(seconds: number) {
   if (track && Number.isFinite(seconds)) transport({ type: 'seek', seconds: Math.max(0, seconds), queueIndex: index, trackId: track.id, ...(entryId ? { entryId } : {}) });
 }
 
+// Requests someone is waiting on: the library's answers and the server's sleeves. While any is out,
+// and for a moment after (pages ask in bursts), song downloads keep to their pace (startStreamRelay).
+let waitedOn = 0, lastWaited = 0;
+const WAITING_LINGERS_MS = 3000;
+const someoneWaits = () => waitedOn > 0 || Date.now() - lastWaited < WAITING_LINGERS_MS;
+const awaited = <A, E, R>(task: Effect.Effect<A, E, R>) => Effect.acquireUseRelease(
+  Effect.sync(() => { waitedOn++; }), () => task, () => Effect.sync(() => { waitedOn--; lastWaited = Date.now(); }));
+
 function assertSender(event: IpcMainInvokeEvent) {
   const trusted = appWindows().some(target => event.sender === target.webContents && event.senderFrame === target.webContents.mainFrame);
   if (!trusted) throw new Error('Untrusted IPC sender.');
@@ -762,7 +781,8 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
         }
         return task(value, generation);
       });
-      const result = await Effect.runPromise(Effect.either(metrics.measure(`ipc.${channel}`, semaphores[lane].withPermits(1)(program))));
+      const permitted = semaphores[lane].withPermits(1)(program);
+      const result = await Effect.runPromise(Effect.either(metrics.measure(`ipc.${channel}`, lane === 'library' ? awaited(permitted) : permitted)));
       if (Either.isLeft(result)) {
         const error = result.left instanceof Error ? result.left.message : 'Operation failed.';
         remote.ipcFailed(channel, error, performance.now() - began);
@@ -1029,6 +1049,7 @@ function installHandlers() {
     if (keeper) yield* Effect.promise(() => keeper!.forgetAll());
     reports?.clear();
     yield* Effect.promise(() => lyricsCache?.clear() ?? Promise.resolve());
+    yield* Effect.promise(() => coverCache?.clear() ?? Promise.resolve());
     yield* Effect.promise(() => forgetting ?? Promise.resolve());
     keptPush();
     // Restart also removes authenticated stream URLs from the player's native playlist. Ends the
@@ -1354,9 +1375,9 @@ app.whenReady().then(async () => {
   await playModes.load();
   relay = await startStreamRelay(fetch, {
     cacheDir: join(userData, 'song-cache'),
-    // Half a minute at once, then twice as fast as it plays: a song can't run dry, and a slow
-    // connection keeps room for the library's pages and sleeves.
-    pace: { leadSeconds: 30, speed: 2 },
+    // While someone waits on a page or a sleeve: half a minute at once, then twice as fast as it
+    // plays, so a song can't run dry and a slow connection keeps room for them. Otherwise, full speed.
+    pace: { leadSeconds: 30, speed: 2, when: someoneWaits },
     onEvent: ({ name, ...data }) => remote.event(name, { ...data }, name === 'stream.failed'),
   }).catch(() => null);
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
@@ -1364,6 +1385,7 @@ app.whenReady().then(async () => {
   // opens away when the server doesn't answer.
   keptStore = new KeptStore(join(userData, 'kept'));
   lyricsCache = new LyricsCache(join(userData, 'lyrics'));
+  coverCache = new CoverCache(join(userData, 'covers'));
   answers = new AnswerStore(join(userData, 'library'), app.getVersion());
   await keptStore.load().catch(() => undefined);
   playsStore = new JsonStore(join(userData, 'plays.json'), PlaysFileSchema, playsStore.value, { maxBytes: 256 * 1024, compact: true });
