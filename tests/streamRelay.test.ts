@@ -206,7 +206,7 @@ describe('downloading songs whole', () => {
       ...(headers.range ? { 'content-range': `bytes ${start}-${file.length - 1}/${file.length}` } : {}),
     } });
   };
-  async function cached(answer: Answer, options: { stallMs?: number; cacheBytes?: number } = {}) {
+  async function cached(answer: Answer, options: { stallMs?: number; cacheBytes?: number; pace?: { leadSeconds: number; speed: number } } = {}) {
     asked.length = 0; quiet = {}; held = {}; events = [];
     cacheDir = await mkdtemp(join(tmpdir(), 'squiggly-relay-'));
     relay = await startStreamRelay((async (input: string | URL | Request, init?: RequestInit) => {
@@ -265,6 +265,35 @@ describe('downloading songs whole', () => {
     const whole = await get(location);
     expect(whole.body).toEqual(Buffer.concat([tag(), audio(0)]).subarray(0, TAG + SECONDS * PER_SECOND));
     expect(offsets()).toEqual([null, '3']);
+  });
+
+  it('with a pace, takes the first seconds at once and the rest at a multiple of the music\'s rate', async () => {
+    // The file in 10 KB pieces, as a connection brings it.
+    const pieces: Answer = (url, headers) => {
+      const file = files[url.searchParams.get('id')!];
+      const start = Number(/bytes=(\d+)-/.exec(headers.range ?? '')?.[1] ?? 0);
+      let at = start;
+      const body = new ReadableStream<Uint8Array>({ pull(controller) {
+        if (at >= file.length) { controller.close(); return; }
+        controller.enqueue(new Uint8Array(file.subarray(at, at + 10_000))); at += 10_000;
+      } });
+      return new Response(body, { status: headers.range ? 206 : 200, headers: {
+        'content-type': 'audio/flac', 'accept-ranges': 'bytes', 'content-length': String(file.length - start),
+        ...(headers.range ? { 'content-range': `bytes ${start}-${file.length - 1}/${file.length}` } : {}),
+      } });
+    };
+    // 300 KB of a 30-second song is 10 KB a second: 100 KB at once, then 200 KB a second.
+    await cached(pieces, { pace: { leadSeconds: 10, speed: 20 } });
+    const began = Date.now();
+    const whole = await get(relay!.location('https://music.example/rest/stream?id=a&format=raw', 30, 'a'));
+    expect(whole.body).toEqual(files.a);
+    const took = Date.now() - began;
+    expect(took).toBeGreaterThanOrEqual(850);
+    expect(took).toBeLessThan(3000);
+    // A song of unknown length isn't held back.
+    const free = Date.now();
+    await get(relay!.location('https://music.example/rest/stream?id=b&format=raw', null, 'b'));
+    expect(Date.now() - free).toBeLessThan(500);
   });
 
   it('downloads the songs queued next, one at a time, once the one playing has', async () => {

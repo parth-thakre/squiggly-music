@@ -1354,6 +1354,9 @@ app.whenReady().then(async () => {
   await playModes.load();
   relay = await startStreamRelay(fetch, {
     cacheDir: join(userData, 'song-cache'),
+    // Half a minute at once, then twice as fast as it plays: a song can't run dry, and a slow
+    // connection keeps room for the library's pages and sleeves.
+    pace: { leadSeconds: 30, speed: 2 },
     onEvent: ({ name, ...data }) => remote.event(name, { ...data }, name === 'stream.failed'),
   }).catch(() => null);
   state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };

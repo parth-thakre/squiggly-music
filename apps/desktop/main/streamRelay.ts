@@ -19,6 +19,11 @@
 // at a time. A read further on than the download has reached is fetched for itself, as without
 // the cache, while the download goes on.
 //
+// With `pace`, a download of a song whose length in seconds is known takes its first leadSeconds
+// of audio at once, then goes at `speed` times the music's own rate rather than as fast as the
+// connection allows. Over a slow connection (the server's upload, reached over Tailscale, say) a
+// download at full speed fills it, and every page and sleeve waits in line behind the music.
+//
 // The addresses carry the account's credentials, so they stay in this process: libmpv is given
 // http://127.0.0.1:<port>/<random token>, and nothing else is served. The files hold only audio,
 // and go when the account signs out (forget) and each time the relay starts.
@@ -88,6 +93,7 @@ export interface RelayOptions {
   stallMs?: number;
   // For diagnostics: never the addresses, only the song's key and sizes.
   onEvent?: (event: RelayEvent) => void;
+  pace?: { leadSeconds: number; speed: number };
 }
 
 export interface StreamRelay {
@@ -105,7 +111,7 @@ export interface StreamRelay {
 }
 
 export async function startStreamRelay(fetchSong: typeof fetch = fetch, options: RelayOptions = {}): Promise<StreamRelay> {
-  const { cacheDir, cacheBytes = 2 * 1024 ** 3, stallMs = STALL_MS, onEvent } = options;
+  const { cacheDir, cacheBytes = 2 * 1024 ** 3, stallMs = STALL_MS, onEvent, pace } = options;
   if (cacheDir) { await rm(cacheDir, { recursive: true, force: true }); await mkdir(cacheDir, { recursive: true }); }
   const songs = new Map<string, Song>();
   const keyed = new Map<string, Song>();
@@ -339,6 +345,9 @@ export async function startStreamRelay(fetchSong: typeof fetch = fetch, options:
         if (!body) throw new Error('No stream.');
       } else throw new Error('No shape.');
       const from = download.have, at = Date.now();
+      // The music's own rate in bytes a second, when the song's size and length are both known.
+      const audioRate = !pace ? null : song.shape.kind === 'mp3' ? song.shape.perSecond
+        : download.length && song.duration ? download.length / song.duration : null;
       for await (const chunk of body.chunks()) {
         const room = download.length === null ? chunk.length : Math.max(0, download.length - download.have);
         const part = chunk.subarray(0, Math.min(chunk.length, room));
@@ -349,6 +358,18 @@ export async function startStreamRelay(fetchSong: typeof fetch = fetch, options:
           download.moved();
         }
         if ((download.length !== null && download.have >= download.length) || signal.aborted) break;
+        // Ahead of the pace: wait until it catches up (a second at most, then look again).
+        if (pace && audioRate) {
+          for (;;) {
+            const allowed = from + audioRate * (pace.leadSeconds + pace.speed * (Date.now() - at) / 1000);
+            if (download.have <= allowed || signal.aborted) break;
+            await new Promise<void>(resolve => {
+              const timer = setTimeout(resolve, Math.min(1000, (download.have - allowed) / (audioRate * pace.speed) * 1000));
+              signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
+            });
+          }
+          if (signal.aborted) break;
+        }
       }
       // A file served in ranges has its length to reach, and is asked for again until it does; a
       // conversion is whole where it ends.
