@@ -218,6 +218,7 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
   .head .actions { gap: 8px; align-items: center; }
   .head .actions > .play-action { width: 56px; height: 56px; min-height: 0; margin-right: 8px; padding: 0; justify-content: center; border-radius: 50%; background: var(--accent); color: var(--ground); }
   .head .actions > .play-action:hover:not(:disabled) { background: var(--accent); transform: scale(1.04); }
+  .head .actions > .play-action .disc { width: 22px; height: 22px; }
   .head .actions > .play-action .disc svg { width: 22px; }
   .head .actions .action-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .head .actions > .text-button.icon-action { display: grid; place-items: center; width: 40px; height: 40px; min-height: 0; padding: 0; border: 0; border-radius: 50%; color: var(--soft); }
