@@ -1234,6 +1234,8 @@ button.wordmark { padding: 0; background: none; border: 0; color: inherit; }
 .page .home-shelf .grid {
   grid-auto-flow: column; grid-template-columns: none; grid-auto-rows: auto; grid-auto-columns: max(136px, calc((100% - 5 * 22px) / 6));
   overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x proximity; margin-top: -6px; padding: 6px 0 10px;
+  /* The arrows by See all move a shelf; Windows would draw a full scrollbar under each one. */
+  scrollbar-width: none;
 }
 .page .home-shelf .grid li { scroll-snap-align: start; }
 .elsewhere { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
