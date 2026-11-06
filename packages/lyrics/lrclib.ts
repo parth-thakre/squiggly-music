@@ -99,6 +99,10 @@ const RecordSchema = Schema.Struct({
 const SearchSchema = Schema.Array(RecordSchema).pipe(Schema.maxItems(100));
 type LrclibRecord = Schema.Schema.Type<typeof RecordSchema>;
 export const lrclibUserAgent = 'Squiggly Music (https://github.com/parth-thakre)';
+// Which way of matching songs found an answer of none. Raise it when matching finds more, so
+// misses kept on a computer (main/lyricsCache.ts) are asked again rather than trusted for a day.
+// 2: the lead artist alone, with no record, when the full credit finds nothing.
+export const LRCLIB_MATCHING = 2;
 export interface LrclibOptions { baseUrl?: string; fetch?: typeof globalThis.fetch }
 class LookupError extends Error {}
 class BusyError extends LookupError {}
