@@ -27,6 +27,8 @@ import { ThemeSettings } from './theme/ThemeSettings';
 import { RatingStars } from './ratings';
 import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
+import { ChevronLeft, ChevronRight, MoreHorizontal, Plus, Radio as RadioIcon, Shuffle as ShuffleIcon } from 'lucide-react';
+import { reducedMotion } from './theme';
 import type { SearchOptions, SearchResults } from '../../../../../packages/core/contracts';
 import { clearSearches, dropFocusRequest, focusWaiting, onFocusFirstResult, rememberSearch, useRecentSearches } from './searches';
 import { exportM3u } from './exports';
@@ -49,10 +51,11 @@ function Pending<T>({ result, children, waiting }: { result: Result<T> | undefin
 
 // `onDeck`: this record is the one playing, so the deck already shows its sleeve and the page's
 // cover folds away (desktop only; a phone's deck is a strip).
-function Head({ title, qualifier, cover, onDeck = false, children }: { title: string; qualifier?: string; cover?: ReactNode; onDeck?: boolean; children?: ReactNode }) {
-  return <header className={`head${cover ? ' with-cover' : ''}${onDeck ? ' on-deck' : ''}`}>
+function Head({ title, qualifier, cover, kind, onDeck = false, children }: { title: string; qualifier?: string; cover?: ReactNode; kind?: string; onDeck?: boolean; children?: ReactNode }) {
+  return <header className={`head${cover ? ' with-cover' : ''}${kind ? ' feature' : ''}${onDeck ? ' on-deck' : ''}`}>
     {cover}
     <div className="head-text">
+      {kind && <p className="kind">{kind}</p>}
       <h1 className={title.length > 28 ? 'long' : undefined}>{title}</h1>
       {qualifier && <p className="qualifier">{qualifier}</p>}
       {children}
@@ -62,9 +65,9 @@ function Head({ title, qualifier, cover, onDeck = false, children }: { title: st
 function Actions({ tracks, children }: { tracks: Track[] | null; children?: ReactNode }) {
   return <div className="actions">
     <button type="button" className="play-action" disabled={!tracks?.length} onClick={() => tracks && void player.play(tracks, 0).then(showNowPlaying)}>
-      <span className="disc"><Glyph kind="play" /></span>Play
+      <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
     </button>
-    <button type="button" className="text-button" disabled={!tracks?.length} onClick={() => tracks && void player.play(shuffled(tracks), 0).then(showNowPlaying)}>Shuffle</button>
+    <button type="button" className="text-button icon-action" title="Shuffle" disabled={!tracks?.length} onClick={() => tracks && void player.play(shuffled(tracks), 0).then(showNowPlaying)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
     {children}
   </div>;
 }
@@ -213,8 +216,8 @@ export function Records() {
     <Head title="Records"><Sorts list="records" type={type}><Decades sort={route.view === 'records' ? route.sort : undefined} decade={decade} /></Sorts></Head>
     {albums.items.length ? <AlbumGrid albums={albums.items} /> : albums.done
       ? <Status>{decade !== null ? `No records from the ${decade}s.`
-        : type === 'frequent' || type === 'recent' ? 'Nothing played yet. Records you listen to will collect here.'
-        : type === 'highest' ? 'Nothing rated yet. Records you rate will collect here, best first.' : 'No records on this server yet.'}</Status>
+        : type === 'frequent' || type === 'recent' ? 'Nothing played yet.'
+        : type === 'highest' ? 'Nothing rated yet.' : 'No records on this server yet.'}</Status>
       : albums.error ? <Status>{albums.error}</Status> : <p className="status loading">Opening your records</p>}
     {albums.error && albums.items.length > 0 && <Status>{albums.error}</Status>}
     <div ref={sentinel} className="sentinel" />
@@ -291,25 +294,38 @@ export function AlbumPage({ id }: { id: string }) {
     const title = splitTitle(album.name);
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <>
-      <Head title={title.main} qualifier={title.extra} onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
+      <Head title={title.main} qualifier={title.extra} kind="Record" onDeck={playingHere} cover={<Cover id={album.coverArt} name={album.name} size={600} className="head-cover" />}>
         <p className="byline"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} strong /> <span>{facts}</span><RatingStars target="album" id={album.id} rating={album.userRating} name={album.name} /></p>
         <Actions tracks={tracks}>
-          <button type="button" className="text-button" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}>Radio</button>
+          <button type="button" className="text-button icon-action labelled" title="Radio" onClick={() => player.radio({ kind: 'album', id: album.id, label: title.main })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
           <StarButton target="album" id={album.id} starred={album.starred} name={album.name} />
           <MoreButton target={{ kind: 'album', album }} />
           <KeepButton kind="album" id={album.id} name={album.name} artist={album.artist} coverArt={album.coverArt} tracks={tracks} />
         </Actions>
       </Head>
       <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" groups={discGroups(tracks, discTitles)} />
+      {album.artistId && <MoreBy artistId={album.artistId} name={album.artist} except={album.id} />}
     </>;
   }}</Pending>;
+}
+
+// Other records by the record's artist, as a shelf under its songs. Nothing when there are none.
+function MoreBy({ artistId, name, except }: { artistId: string; name: string; except: string }) {
+  const result = useKept(`artist:${artistId}`, from => from.artist(artistId));
+  const others = result?.ok ? result.value.albums.filter(a => a.id !== except).slice(0, 6) : [];
+  if (!others.length) return null;
+  return <section className="shelf-section more-by" aria-labelledby="more-by">
+    <div className="section-head"><h2 id="more-by">More by {name}</h2>
+      <button type="button" className="text-button see-all" onClick={() => nav.go({ view: 'artist', id: artistId })}>See all</button></div>
+    <AlbumGrid albums={others} />
+  </section>;
 }
 
 function StarButton({ target, id, starred, name }: { target: 'album' | 'artist'; id: string; starred: boolean; name: string }) {
   useFavoritesVersion();
   const on = isStarred(id, starred);
-  return <button type="button" className={`text-button star-text${on ? ' on' : ''}`} aria-pressed={on} onClick={() => void setStarred(target, [id], !on)}>
-    <Glyph kind={on ? 'starred' : 'star'} />{on ? 'In favorites' : 'Add to favorites'}<span className="sr-only"> {name}</span></button>;
+  return <button type="button" className={`text-button star-text icon-action${on ? ' on' : ''}`} aria-pressed={on} title={on ? 'In favorites' : 'Add to favorites'} onClick={() => void setStarred(target, [id], !on)}>
+    <Glyph kind={on ? 'hearted' : 'heart'} /><span className="action-label">{on ? 'In favorites' : 'Add to favorites'}</span><span className="sr-only"> {name}</span></button>;
 }
 // A playlist file of these songs (exports.ts). Errors show under the page's heading.
 function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
@@ -321,10 +337,10 @@ function ExportButton({ name, tracks }: { name: string; tracks: Track[] }) {
 }
 // The same menu as right-click, for people who don't right-click (and for touch).
 function MoreButton({ target }: { target: Parameters<typeof openMenu>[1] }) {
-  return <button type="button" className="text-button" aria-haspopup="menu" onClick={event => {
+  return <button type="button" className="text-button more-button icon-action" aria-haspopup="menu" aria-label="More" title="More" onClick={event => {
     const box = event.currentTarget.getBoundingClientRect();
     openMenu({ clientX: box.left, clientY: box.bottom + 6, preventDefault: () => {}, target: event.currentTarget }, target);
-  }}>More</button>;
+  }}><MoreHorizontal aria-hidden="true" /></button>;
 }
 
 // Artists ------------------------------------------------------------------------------
@@ -403,7 +419,7 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
             <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
               onContextMenu={event => openMenu(event, { kind: 'artist', artist })}
               draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
-              <span className="artist-name">{artist.name}</span> <span>{artist.albumCount}</span>
+              <span className="artist-name">{artist.name}</span> <span>{plural(artist.albumCount, 'record')}</span>
             </button>
             <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
           </li>)}
@@ -445,15 +461,15 @@ export function ArtistPage({ id }: { id: string }) {
     showNowPlaying();
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => <>
-    <Head title={artist.name} cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
+    <Head title={artist.name} kind="Artist" cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
       <p className="byline"><span>{albums.length || !appearsOn ? plural(albums.length, 'record')
         : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
-          <span className="disc"><Glyph kind="play" /></span>Play
+          <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
-        <button type="button" className="text-button" disabled={busy} onClick={() => void playAll(artist, true)}>Shuffle</button>
-        <button type="button" className="text-button" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}>Radio</button>
+        <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy} onClick={() => void playAll(artist, true)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
+        <button type="button" className="text-button icon-action labelled" title="Radio" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
         <StarButton target="artist" id={artist.id} starred={artist.starred} name={artist.name} />
         <MoreButton target={{ kind: 'artist', artist }} />
       </div>
@@ -461,7 +477,7 @@ export function ArtistPage({ id }: { id: string }) {
     </Head>
     {!together ? <p className="status loading">Finding their songs</p> : <>
       {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
-      {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} showAlbum /></section>}
+      {top?.ok && top.value.length > 0 && <section className="shelf-section"><h2>Popular</h2><TrackTable tracks={top.value} albumArtist={artist.name} showAlbum /></section>}
       {/* Still on its way: room for it, so the records below stay put when it comes. */}
       {top === undefined && popularFound !== false && <section className="shelf-section" aria-busy="true"><h2>Popular</h2>
         <p className="status loading popular-waiting">Finding their popular songs</p></section>}
@@ -515,16 +531,16 @@ export function Tracks() {
       {tracksSorted && <Sorts list="tracks" type={sort} />}
       <div className="actions">
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
-          <span className="disc"><Glyph kind="play" /></span>Play
+          <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
-        <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
+        <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
-      {tracksPlainHttp && <p className="note">Tracks are in the server's own order: this library is too big to sort here, and sorting it on the server means sending your password to Navidrome, which this server isn't using HTTPS for.</p>}
+      {tracksPlainHttp && <p className="note">In the server's order. Sorting a library this big needs HTTPS.</p>}
     </Head>
     {tracks.items.length ? <TrackTable tracks={tracks.items} showAlbum /> : tracks.done
-      ? <Status>{played ? 'Nothing played yet. Tracks you listen to will collect here.'
-        : tracksSorted && sort === 'highest' ? 'Nothing rated yet. Songs you rate will collect here, best first.' : 'No tracks on this server yet.'}</Status>
+      ? <Status>{played ? 'Nothing played yet.'
+        : tracksSorted && sort === 'highest' ? 'Nothing rated yet.' : 'No tracks on this server yet.'}</Status>
       : tracks.error ? <Status>{tracks.error}</Status> : <p className="status loading">Gathering tracks</p>}
     {tracks.error && tracks.items.length > 0 && <Status>{tracks.error}</Status>}
     <div ref={sentinel} className="sentinel" />
@@ -553,11 +569,10 @@ export function Playlists() {
       <div className="section-head"><h2 id="yours">Yours</h2><NewPlaylist /></div>
       <Pending result={playlists} waiting="Loading playlists">{list => list.length ? <ul className="rows">
         {list.map(playlist => <PlaylistRow key={playlist.id} playlist={playlist} />)}
-      </ul> : <Status>No playlists yet. Start one here, or save an automatic playlist below.</Status>}</Pending>
+      </ul> : <Status>No playlists yet.</Status>}</Pending>
     </section>
     <section className="shelf-section" aria-labelledby="automatic">
       <div className="section-head"><h2 id="automatic">Automatic</h2><SeeAll what="mixes" go={() => nav.go({ view: 'mixes' })} /></div>
-      <p className="section-note">Drawn from your library each session. Save one to keep it as it is.</p>
       <ul className="rows">
         {/* The first few; the Mixes page has them all. */}
         {mixes.slice(0, PLAYLIST_MIXES).map(mix =><li key={mix.id} className="playable">
@@ -567,7 +582,7 @@ export function Playlists() {
           }} />
           <button type="button" onClick={event => { travel(mix.id, event.currentTarget); nav.go({ view: 'mix', id: mix.id }); }}>
             <MixTile mix={mix} travels={mix.id === morph.id} />
-            <span className="row-text"><span className="row-name">{mix.name}</span><span className="row-sub">{mix.description}</span></span>
+            <span className="row-text"><span className="row-name">{mix.name}</span><span className="row-sub row-desc">{mix.description}</span></span>
           </button>
         </li>)}
       </ul>
@@ -600,7 +615,8 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
       <Cover id={playlist.coverArt} name={playlist.name} size={160} className={playlist.id === morph.id ? 'morph' : undefined} />
       <span className="row-text">
         <span className="row-name">{splitTitle(playlist.name).main}</span>
-        <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}{note && `. ${note}`}</span>
+        <span className="row-sub">{plural(playlist.songCount, 'song')}, {length(playlist.duration)}</span>
+        {note?.startsWith('Kept in sync') && <span className="row-badge" title={note}>Synced from a file</span>}
       </span>
       <ContainerMark kind="playlist" id={playlist.id} />
     </button>
@@ -610,7 +626,7 @@ function PlaylistRow({ playlist }: { playlist: Playlist }) {
 function NewPlaylist() {
   const [naming, setNaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  if (!naming) return <button type="button" className="text-button" onClick={() => setNaming(true)}>New playlist</button>;
+  if (!naming) return <button type="button" className="text-button new-playlist" onClick={() => setNaming(true)}><Plus aria-hidden="true" />New playlist</button>;
   return <form className="inline-form" onSubmit={async event => {
     event.preventDefault();
     const name = String(new FormData(event.currentTarget).get('name') ?? '').trim();
@@ -700,14 +716,13 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
         <ExportButton name={playlist.name} tracks={tracks} />
         {!view.saving && <KeepButton kind="playlist" id={playlist.id} name={playlist.name} coverArt={playlist.coverArt} tracks={tracks} />}
       </Actions>
-      {editable && tracks.length > 1 && <p className="note hint">Drag songs to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>}
       {view.error && <p className="note" role="alert">{view.error}</p>}
     </Head>
     {tracks.length ? <TrackTable tracks={tracks} showAlbum playlist={playlist}
       onMove={editable ? (from, to) => void editor.move(from, to) : undefined}
       onRemove={editable ? indexes => void editor.removeAt(indexes) : undefined}
       onDropItems={editable ? (payload, at) => void dropOnPlaylist(playlist, payload, null, at) : undefined} />
-      : <Status>This playlist is empty. Right-click any song and choose Add to playlist.</Status>}
+      : <Status>This playlist is empty.</Status>}
   </div>;
 }
 
@@ -752,7 +767,7 @@ export function Favorites() {
   return <>
     <Head title="Favorites" />
     <Pending result={result} waiting="Collecting favorites">{({ tracks, albums, artists }) => !tracks.length && !albums.length && !artists.length
-      ? <Status>Nothing here yet. Use the star beside a song, record, or artist to keep it here.</Status>
+      ? <Status>No favorites yet.</Status>
       : <>
         {tracks.length > 0 && <section className="shelf-section"><h2>Songs</h2><Actions tracks={tracks} /><TrackTable tracks={tracks} showAlbum /></section>}
         {albums.length > 0 && <section className="shelf-section"><h2>Records</h2><AlbumGrid albums={albums} /></section>}
@@ -765,11 +780,16 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
   const drags = canDrag();
   return <ul className="names">{artists.map(artist => <li key={artist.id} className="playable">
     <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
-      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>{artist.name} <span>{artist.albumCount}</span></button>
+      draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
+      {/* The server's picture of the artist (a photo, or one of their sleeves); only for the eye. */}
+      <span className="artist-thumb" aria-hidden="true"><Cover id={artist.coverArt} name={artist.name} size={96} /></span>
+      <span className="artist-label">{artist.name}{artist.albumCount > 0 && <> <span>{plural(artist.albumCount, 'record')}</span></>}</span></button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
 }
 
+// Past this many songs the queue is windowed, and windowed rows can't fold away.
+const QUEUE_FOLD_LIMIT = 120;
 export function Queue() {
   const queue = usePlayer(s => s.queue);
   const entryIds = usePlayer(s => s.entryIds);
@@ -781,42 +801,53 @@ export function Queue() {
   const away = usePlayer(s => s.reach.away);
   const settings = useSettings();
   const [saved, setSaved] = useState<string | null>(null);
+  const [showPlayed, setShowPlayed] = useState(false);
+  // What has played folds away, so the queue starts at the playing song. A list long enough to be
+  // windowed (TrackTable) keeps every row in place, so there it always shows.
+  const foldable = index > 0 && queue.length <= QUEUE_FOLD_LIMIT;
+  const folded = foldable && !showPlayed;
   // Songs autoplay added sit under a quiet note, one above each run of them.
-  const groups = useMemo<TrackGroup[]>(() => addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true })), [autoplay, entryIds]);
+  const groups = useMemo<TrackGroup[]>(() => {
+    const added = addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true }));
+    // Quiet labels part what has played from what comes next; the playing row between them is
+    // tinted. A run autoplay added straight after the playing song keeps its own label there.
+    const parts: TrackGroup[] = [];
+    if (index > 0 && !folded) parts.push({ at: 0, label: 'Played', quiet: true });
+    if (!added.some(g => g.at === index)) parts.push({ at: index, label: 'Now playing', quiet: true });
+    if (index + 1 < entryIds.length && !added.some(g => g.at === index + 1)) parts.push({ at: index + 1, label: 'Up next', quiet: true });
+    return [...parts, ...added].sort((a, b) => a.at - b.at);
+  }, [autoplay, entryIds, index, folded]);
   // Records, artists, songs, and playlists dropped on the page join the end of the queue; onto
   // the list, before that song.
   const drop = useDropTarget(payload => void dropOnQueue(payload));
   const area = `drop-area${drop.over ? ' drop-over' : ''}`;
-  if (!queue.length) return <div className={area} {...drop.handlers}><Head title="Queue" /><Status>Nothing queued. Play a record, playlist, or song, or right-click one and choose Add to queue.</Status></div>;
+  if (!queue.length) return <div className={area} {...drop.handlers}><Head title="Queue" /><Status>Nothing queued.</Status></div>;
   const upcoming = queue.length - index - 1;
   const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
   const modes = shuffle ? (repeats ? `Shuffled, and ${repeats}.` : 'Shuffled.') : repeats && `${repeats[0].toUpperCase()}${repeats.slice(1)}.`;
-  // Autoplay can follow an ordinary queue that ends on a song from the server. Where it would,
-  // the queue says so with a way to turn it off; where it's off, the last song offers it.
+  // Autoplay can follow an ordinary queue that ends on a song from the server. Where it's off, the
+  // last song offers it; where it's on, the songs it added say so (groups).
   const follows = !radio && repeat === 'off';
   const endsOnSong = follows && upcoming === 0 && queue.at(-1)?.source === 'navidrome';
-  const missed = endsOnSong && autoplay.missed === entryIds.at(-1);
+  const offer = endsOnSong && !settings.autoplay && !away;
   return <div className={area} {...drop.handlers}>
     <Head title="Queue">
-      <p className="byline"><span>{upcoming > 0 ? `${plural(upcoming, 'song')} up next, ${length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}` : 'This is the last song.'}</span>
-        {modes && <>{upcoming > 0 ? '. ' : ' '}<span>{modes}</span></>}
-        {endsOnSong && !settings.autoplay && !away && <> <button type="button" className="link" onClick={() => void updateSettings({ autoplay: true })}>Keep playing similar songs</button></>}</p>
-      {radio && <p className="note">Radio from {radio.label}. Songs like these are added as you listen. <button type="button" className="link" onClick={player.stopRadio}>Stop radio</button></p>}
-      {follows && settings.autoplay && (endsOnSong || groups.length > 0) && <p className="note">
-        {missed ? 'Autoplay found nothing new like this song on your server, so the queue ends here.' : 'Autoplay adds songs like the last one when the queue runs out.'}
-        {' '}<button type="button" className="link" onClick={() => void updateSettings({ autoplay: false })}>Turn off autoplay</button></p>}
+      {(upcoming > 0 || modes || offer) && <p className="byline">
+        {upcoming > 0 && <span>{plural(upcoming, 'song')} up next, {length(queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0))}</span>}
+        {modes && <>{upcoming > 0 && '. '}<span>{modes}</span></>}
+        {offer && <>{(upcoming > 0 || modes) && ' '}<button type="button" className="link" onClick={() => void updateSettings({ autoplay: true })}>Keep playing similar songs</button></>}</p>}
       <div className="actions">
         <button type="button" className="text-button" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
+        {foldable && <button type="button" className="text-button" aria-expanded={showPlayed} onClick={() => setShowPlayed(v => !v)}>{showPlayed ? 'Hide played' : `Show ${plural(index, 'played song')}`}</button>}
         <button type="button" className="text-button" onClick={async () => {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
           setSaved(await createPlaylist(`Queue, ${date}`, queue.filter(t => t.source === 'navidrome').map(t => t.id)));
         }}>Save as playlist</button>
       </div>
       {saved && <p className="note" role="alert">{saved}</p>}
-      <p className="note hint">Drag to reorder, or press Alt+Up and Alt+Down. Select with Ctrl or Shift and press Delete to remove.</p>
     </Head>
-    <TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
-      onDropItems={(payload, at) => void dropOnQueue(payload, at)} groups={groups} />
+    <div className={folded ? 'played-folded' : undefined}><TrackTable tracks={queue} showAlbum queue onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
+      onDropItems={(payload, at) => void dropOnQueue(payload, at)} groups={groups} /></div>
   </div>;
 }
 
@@ -829,50 +860,49 @@ export function SettingsView() {
   const error = useSettingsError();
   const mode = usePlayer(s => s.mode);
   const devices = usePlayer(s => s.devices);
-  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt' | 'streamQuality'>, title: string, detail: string) => <label className="setting">
+  const row = (key: Exclude<keyof typeof settings, 'outputDevice' | 'checkForUpdates' | 'keptLimitMb' | 'diagnostics' | 'playCountsAt' | 'streamQuality'>, title: string, detail?: string) => <label className="setting">
     <input type="checkbox" checked={settings[key]} onChange={event => void updateSettings({ [key]: event.target.checked })} />
-    <span><strong>{title}</strong><span>{detail}</span></span>
+    <span><strong>{title}</strong>{detail && <span>{detail}</span>}</span>
   </label>;
   return <>
     <Head title="Settings" />
     <section className="settings">
       <h2>Lyrics</h2>
-      {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Lyrics in your files always come first. For songs without them, the song\'s title, artist, and album are sent to lrclib.net.')}
+      {row('lyricsLookup', 'Look up missing lyrics on LRCLIB', 'Sends the title, artist, and album to lrclib.net.')}
       <h2>Queue</h2>
-      {row('autoplay', 'Keep playing similar songs', 'When the queue is down to its last two songs, up to ten songs like the last one from your server are added after it, or songs from its genre or anywhere on your server when it knows none like it. Not while radio plays or the queue repeats.')}
+      {row('autoplay', 'Keep playing similar songs when the queue ends')}
       <h2>Your server</h2>
-      {row('reportPlays', 'Report what you play', 'Navidrome counts plays, which fills Most played, Recently played, and the history-based automatic playlists.')}
+      {row('reportPlays', 'Report what you play')}
       {settings.reportPlays && <label className="setting choice">
-        <span><strong>Count a play after</strong><span>How much of a song has to play before it counts in Navidrome, and on Last.fm or ListenBrainz if your server sends plays there. Skipping ahead doesn't count, and songs of 30 seconds or less never count.</span></span>
+        <span><strong>Count a play after</strong></span>
         <select value={settings.playCountsAt} onChange={event => void updateSettings({ playCountsAt: Number(event.target.value) as PlayCountsAt })}>
           {PLAY_COUNTS_AT.map(percent => <option key={percent} value={percent}>{percent}% of the song</option>)}
         </select>
       </label>}
       <QueuedPlays />
-      {row('syncQueue', 'Keep the queue in sync', 'The queue and position are saved on your server, so you can pick up on another device.')}
-      <Disconnect />
-      {mode === 'web' && <SignOut />}
+      {row('syncQueue', 'Sync the queue across devices')}
+      <div className="server-actions"><Disconnect />{mode === 'web' && <SignOut />}</div>
       {keptSupported && <KeptSettings />}
       {mode === 'desktop' && <>
         <h2>Sound</h2>
         <label className="setting choice">
-          <span><strong>Output</strong><span>Where Squiggly plays. While this device is disconnected, Squiggly plays through the system default, and goes back to it when it returns.</span></span>
+          <span><strong>Output</strong></span>
           <select value={settings.outputDevice} onChange={event => void updateSettings({ outputDevice: event.target.value })}>
             {!devices.some(d => d.name === settings.outputDevice) && <option value={settings.outputDevice}>{settings.outputDevice === 'auto' ? 'System default' : `${outputDescription(settings.outputDevice) ?? settings.outputDevice} (disconnected)`}</option>}
             {devices.map(d => <option key={d.name} value={d.name}>{d.name === 'auto' ? 'System default' : d.description}</option>)}
           </select>
         </label>
         <label className="setting choice">
-          <span><strong>Streaming quality</strong><span>On a slow connection, Navidrome can send a smaller MP3 instead of the original file. A change applies from the next song; the one playing keeps its stream. Songs kept on this computer always play from their file.</span></span>
+          <span><strong>Streaming quality</strong><span>Applies from the next song.</span></span>
           <select value={settings.streamQuality} onChange={event => void updateSettings({ streamQuality: event.target.value === 'original' ? 'original' : Number(event.target.value) as StreamQuality })}>
             {STREAM_QUALITIES.map(quality => <option key={quality} value={quality}>{quality === 'original' ? 'Original file' : `MP3, ${quality} kbps`}</option>)}
           </select>
         </label>
-        {row('exclusiveOutput', 'Exclusive output', 'Ask the output device for exclusive use so the system mixer does not resample or mix. Other apps go quiet while Squiggly plays. Windows and macOS support this; many Linux setups ignore it.')}
+        {row('exclusiveOutput', 'Exclusive output', 'Other apps go quiet while Squiggly plays.')}
         <UpdateSettings />
         <h2>Window</h2>
-        {row('closeToTray', 'Keep playing when the window closes', 'Closing the window leaves Squiggly in the tray. Quit from the tray menu.')}
-        {row('miniOnTop', 'Keep the mini player on top', 'The mini player stays above other windows.')}
+        {row('closeToTray', 'Keep playing in the tray when the window closes')}
+        {row('miniOnTop', 'Keep the mini player on top')}
         {diagnosticsBuilt && <><h2>Diagnostics</h2><DiagnosticsSwitch /></>}
       </>}
       {error && <p className="note" role="alert">{error}</p>}
@@ -888,7 +918,7 @@ export function SettingsView() {
 function QueuedPlays() {
   const count = usePlayer(s => s.queuedPlays);
   if (!count) return null;
-  return <p className="note">{count === 1 ? '1 play is' : `${count.toLocaleString()} plays are`} waiting to be reported. They are sent when your server is back.</p>;
+  return <p className="note">{plural(count, 'play')} waiting for your server.</p>;
 }
 
 // Updates from GitHub releases (apps/desktop/main/updates.ts). Development builds have none.
@@ -910,9 +940,7 @@ function UpdateSettings() {
     <h2>Updates</h2>
     <label className="setting">
       <input type="checkbox" checked={settings.checkForUpdates} onChange={event => void updateSettings({ checkForUpdates: event.target.checked })} />
-      <span><strong>Check for updates</strong><span>{update.mode === 'install'
-        ? 'Asks GitHub for new releases at launch and every six hours, and downloads them in the background. Nothing else about you is sent.'
-        : 'Asks GitHub for new releases at launch and every six hours. This copy can\'t update itself, so you download new versions from the release page. Nothing else about you is sent.'}</span></span>
+      <span><strong>Check for updates</strong></span>
     </label>
     <div className="setting-action">
       <p><span role="status">{status}</span></p>
@@ -950,7 +978,7 @@ export function DiagnosticsSwitch() {
   }, []);
   return <label className="setting">
     <input ref={input} type="checkbox" checked={settings.diagnostics} onChange={event => void updateSettings({ diagnostics: event.target.checked })} />
-    <span><strong>Send diagnostics to the developer</strong><span>This beta sends errors, logs, and what the audio engine is doing, and keeps a copy in its data folder. Never passwords, tokens, usernames, or server addresses with their sign-in parameters.</span></span>
+    <span><strong>Send diagnostics to the developer</strong><span>Errors and logs. Never passwords or tokens.</span></span>
   </label>;
 }
 
@@ -958,19 +986,11 @@ export function DiagnosticsSwitch() {
 // page is open to whoever can reach it, and there is nothing here to sign out of.
 function SignOut() {
   const access = usePlayer(s => s.access);
-  const serverName = usePlayer(s => s.serverName);
-  const pageConnection = usePlayer(s => s.pageConnection);
   const [busy, setBusy] = useState(false);
-  if (access !== 'signed-in' && access !== 'open') return null;
-  // Disconnect above covers a server this page connected to itself.
-  if (access === 'open' && pageConnection) return null;
+  if (access !== 'signed-in') return null;
   return <div className="setting-action">
-    <p><strong>Sign out</strong>
-      <span>{access === 'signed-in'
-        ? `This page is signed in with its own password; the ${serverName ?? 'server'} account stays with the host. Signing out asks for the page's password again.`
-        : `This page has no password of its own: whoever can open it uses the host's ${serverName ?? 'server'} account. There is nothing to sign out of here.`}</span></p>
-    {access === 'signed-in' && <button type="button" className="text-button" disabled={busy} onClick={async () => { setBusy(true); await player.signOut(); setBusy(false); }}>
-      {busy ? 'Signing out' : 'Sign out'}</button>}
+    <button type="button" className="text-button" disabled={busy} onClick={async () => { setBusy(true); await player.signOut(); setBusy(false); }}>
+      {busy ? 'Signing out' : 'Sign out'}</button>
   </div>;
 }
 // The desktop's main process, the Android bridge, or (in the browser) the host forgets the
@@ -987,15 +1007,13 @@ function Disconnect() {
   if (!connected) return null;
   // The host's configured server isn't the page's to drop, but the page can use another instead.
   if (web && !pageConnection) return <div className="setting-action">
-    <p><strong>Connect to another server</strong>
-      <span>This page uses the host's own server, {serverName ?? 'your server'}. You can connect it to another Navidrome server instead. That stops playback and empties the queue; the host keeps its own server for other browsers, and this page goes back to it when you disconnect.</span></p>
+    <p><span>Using {serverName ?? 'the host\'s server'}. Switching stops playback and empties the queue.</span></p>
     <button type="button" className="text-button" onClick={() => player.chooseServer(true)}>Connect to another server</button>
   </div>;
   return <div className="setting-action">
     <p><strong>Disconnect or switch server</strong>
-      <span>Connected to {serverName ?? 'your server'}. Disconnecting stops playback, empties the queue, and goes back to the connect screen, where you can connect to this server or another. {web
-        ? 'The host that serves this page forgets the password too, so have it ready.'
-        : `It also forgets the saved sign-in, so have your password ready.${keptSupported ? ' It also forgets everything kept on this device.' : ''}`}</span></p>
+      <span>Connected to {serverName ?? 'your server'}. {web ? 'You\'ll need the password again.'
+        : keptSupported ? 'Forgets the saved sign-in and everything kept on this device.' : 'Forgets the saved sign-in.'}</span></p>
     <button type="button" className="text-button" disabled={busy} onClick={async () => {
       setBusy(true); setError(null);
       const result = await (web ? player : (window.squiggly ?? window.squigglyAndroid!.session)).disconnect();
@@ -1011,8 +1029,8 @@ export function DiagnosticsView() {
   const mode = usePlayer(s => s.mode);
   const audio = usePlayer(s => s.audio);
   const [message, setMessage] = useState<string | null>(null);
-  if (mode === 'web') return <><Head title="Diagnostics" /><Status>Process and memory figures come from the desktop app. The browser version has none to show.</Status></>;
-  if (mode === 'android') return <><Head title="Diagnostics" /><Status>Process and memory figures come from the desktop app. Android shows them in Settings › Apps › Squiggly.</Status></>;
+  if (mode === 'web') return <><Head title="Diagnostics" /><Status>Only in the desktop app.</Status></>;
+  if (mode === 'android') return <><Head title="Diagnostics" /><Status>Only in the desktop app.</Status></>;
   return <>
     <Head title="Diagnostics">
       <p className="byline"><span>Running {length(diagnostics.uptimeSeconds)}{diagnostics.startupMs !== null && `, started in ${Math.round(diagnostics.startupMs)} ms`}</span></p>
@@ -1117,7 +1135,7 @@ export function Genres() {
   return <>
     <Head title="Genres" />
     <Pending result={result} waiting="Gathering genres">{genres => genres.length ? <GenreList genres={genres} />
-      : <Status>No genres yet. Genres come from the tags in your files.</Status>}</Pending>
+      : <Status>No genres yet.</Status>}</Pending>
   </>;
 }
 // A library can hold thousands of genres (every tag its files use), so only the rows near the
@@ -1182,9 +1200,9 @@ export function GenrePage({ name }: { name: string }) {
       {genre && <p className="byline"><span>{plural(genre.songCount, 'song')}, {plural(genre.albumCount, 'record')}</span></p>}
       <div className="actions">
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
-          <span className="disc"><Glyph kind="play" /></span>Play
+          <span className="disc"><Glyph kind="play" /></span><span className="action-label">Play</span>
         </button>
-        <button type="button" className="text-button" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}>Shuffle</button>
+        <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy || !tracks.items.length} onClick={() => void shuffle()}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
       </div>
       {problem && <p className="note" role="alert">{problem}</p>}
     </Head>
@@ -1242,10 +1260,22 @@ function RecordShelf({ type, title }: { type: 'recent' | 'newest' | 'frequent'; 
   return <section className="shelf-section home-shelf" aria-labelledby={id}>
     <div className="section-head">
       <h2 id={id}>{title}</h2>
-      {result.ok && <SeeAll what={title.toLowerCase()} go={() => nav.go(type === 'newest' ? { view: 'records' } : { view: 'records', sort: type })} />}
+      {result.ok && <span className="shelf-tools"><ShelfArrows title={title} /><SeeAll what={title.toLowerCase()} go={() => nav.go(type === 'newest' ? { view: 'records' } : { view: 'records', sort: type })} /></span>}
     </div>
     {result.ok ? <AlbumGrid albums={result.value} /> : <Status>{result.error}</Status>}
   </section>;
+}
+
+// Back and forward along a shelf, most of a shelf's width at a time.
+function ShelfArrows({ title }: { title: string }) {
+  const step = (event: ReactMouseEvent<HTMLButtonElement>, direction: number) => {
+    const grid = event.currentTarget.closest('section')?.querySelector<HTMLElement>('.grid');
+    grid?.scrollBy({ left: direction * grid.clientWidth * .85, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+  };
+  return <span className="shelf-arrows">
+    <button type="button" className="icon-button" aria-label={`Earlier in ${title}`} onClick={event => step(event, -1)}><ChevronLeft aria-hidden="true" /></button>
+    <button type="button" className="icon-button" aria-label={`Further along ${title}`} onClick={event => step(event, 1)}><ChevronRight aria-hidden="true" /></button>
+  </span>;
 }
 
 // The automatic playlists, as the Playlists page lists them. The decades appear once something
@@ -1364,14 +1394,17 @@ export function Search({ query, type }: { query: string; type?: SearchType }) {
   </>;
 }
 
+// All shows a few songs under the artists and records; See all has the rest.
+const ALL_SONGS = 5;
+const ALL_RECORDS = 6;
 function SearchAll({ query }: { query: string }) {
   const result = useResource(`search:${query.toLowerCase()}`, () => api.search(query));
   return <Pending result={result} waiting="Searching">{({ artists, albums, tracks, capped }) => !artists.length && !albums.length && !tracks.length
-    ? <Status>Nothing matches “{query}”. Check the spelling or try fewer words.</Status>
+    ? <Status>Nothing matches “{query}”.</Status>
     : <>
-      {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks}><TrackTable tracks={tracks} showAlbum /></SearchGroup>}
-      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums}><AlbumGrid albums={albums} /></SearchGroup>}
       {artists.length > 0 && <SearchGroup title="Artists" query={query} type="artists" more={capped.artists}><ArtistNames artists={artists} /></SearchGroup>}
+      {albums.length > 0 && <SearchGroup title="Records" query={query} type="albums" more={capped.albums || albums.length > ALL_RECORDS}><AlbumGrid albums={albums.slice(0, ALL_RECORDS)} /></SearchGroup>}
+      {tracks.length > 0 && <SearchGroup title="Songs" query={query} type="songs" more={capped.tracks || tracks.length > ALL_SONGS}><TrackTable tracks={tracks.slice(0, ALL_SONGS)} showAlbum /></SearchGroup>}
     </>}</Pending>;
 }
 function SearchGroup({ title, query, type, more, children }: { title: string; query: string; type: SearchType; more: boolean; children: ReactNode }) {
@@ -1392,7 +1425,7 @@ function SearchPages<T extends { id: string }>({ query, type, pick, none, childr
     () => api.search(query, searchPage(type, offset, size)).then((result): Result<T[]> => result.ok ? { ok: true, value: pick(result.value) } : result)]);
   const sentinel = useMore(pages.more, pages.items.length);
   return <>
-    {pages.items.length ? children(pages.items) : pages.done ? <Status>{none} “{query}”. Check the spelling, or look under All.</Status>
+    {pages.items.length ? children(pages.items) : pages.done ? <Status>{none} “{query}”.</Status>
       : pages.error ? <Status>{pages.error}</Status> : <p className="status loading">Searching</p>}
     {pages.error && pages.items.length > 0 && <Status>{pages.error}</Status>}
     <div ref={sentinel} className="sentinel" />
@@ -1430,7 +1463,6 @@ function Stations() {
   const stations = useKept('radioStations', from => from.radioStations());
   return <section className="shelf-section" aria-labelledby="stations">
     <h2 id="stations">Stations</h2>
-    <p className="section-note">Internet radio from your server. Stations play live, so there is nothing to skip through.</p>
     <Pending result={stations} waiting="Loading stations">{list => list.length ? <ul className="rows">
       {list.map(station => <li key={station.id} className="playable">
         <PlayOver label={station.name} play={() => playStation(station)} />
@@ -1443,7 +1475,7 @@ function Stations() {
           </span>
         </button>
       </li>)}
-    </ul> : <Status>Your server has no internet radio stations. Navidrome's administrators can add them.</Status>}</Pending>
+    </ul> : <Status>No stations on your server.</Status>}</Pending>
   </section>;
 }
 
@@ -1481,7 +1513,7 @@ export function Mixes() {
   </>;
 }
 function MixesHead() {
-  return <Head title="Mixes"><p className="byline"><span>Playlists Squiggly builds from your library. They change as it does.</span></p></Head>;
+  return <Head title="Mixes" />;
 }
 function MixGroup({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return <section className="shelf-section" aria-labelledby={id}><h2 id={id}>{title}</h2>{children}</section>;

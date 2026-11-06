@@ -1,5 +1,6 @@
 // Autoplay's fallback in the page (player.ts), which the browser and Android run, with the Android
-// player faked: the server finds nothing similar, and each random-songs answer waits for the test.
+// player faked: the server finds nothing similar (or fails to say), and each random-songs answer
+// waits for the test.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AndroidPlayback, AndroidSession, Result, Track } from '../packages/core/contracts';
 
@@ -13,11 +14,11 @@ afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals()
 const song = (id: string, genre?: string): Track => ({ id, title: id, artist: 'artist', album: 'album', duration: 200,
   source: 'navidrome', sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null, ...(genre ? { genre } : {}) });
 
-async function fixture(tracks = [song('old', 'Folk')]) {
+async function fixture(tracks = [song('old', 'Folk')], similar: Result<Track[]> = { ok: true, value: [] }) {
   vi.useFakeTimers();
   let report!: (value: AndroidPlayback) => void;
   const answers: ((value: Result<Track[]>) => void)[] = [];
-  fake.similarSongs.mockReset().mockResolvedValue({ ok: true, value: [] });
+  fake.similarSongs.mockReset().mockResolvedValue(similar);
   fake.randomSongs.mockReset().mockImplementation(() => new Promise(done => { answers.push(done); }));
   const session: AndroidSession = { ready: true, connected: true, serverName: 'test', sessionId: 's1', account: 'test',
     signIn: { saved: null, canRemember: false, reconnecting: false, reconnectError: null } };
@@ -56,6 +57,15 @@ describe('autoplay\'s fallback in the page', () => {
     await vi.advanceTimersByTimeAsync(1_000);
     expect(fake.randomSongs).toHaveBeenCalledTimes(3);
     f.answers[2]({ ok: true, value: [song('old'), song('new')] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.getPlayer().queue.map(t => t.id)).toEqual(['old', 'new']);
+  });
+
+  it('takes songs at random when the server can\'t say what is like the song', async () => {
+    const f = await fixture([song('old', 'Folk')], { ok: false, error: 'The server did not respond within 60 seconds.' });
+    expect(fake.similarSongs).toHaveBeenCalledTimes(1);
+    expect(fake.randomSongs.mock.calls[0]).toEqual([{ size: 30, genre: 'Folk' }]);
+    f.answers[0]({ ok: true, value: [song('new')] });
     await vi.advanceTimersByTimeAsync(0);
     expect(f.getPlayer().queue.map(t => t.id)).toEqual(['old', 'new']);
   });

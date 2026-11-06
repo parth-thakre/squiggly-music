@@ -25,7 +25,9 @@ export const nativeFetch: typeof fetch = async (input, init = {}) => {
   else if (init.body != null) throw new TypeError('This fetch sends text bodies only.');
 
   const id = ++requests;
-  const sent = Squiggly.http({ id, url, method: init.method ?? 'GET', headers, ...(body !== undefined ? { body } : {}), timeoutMs: 15000, maxBytes: MAX_BYTES });
+  // The native limit is the longest any request may take (NativeHttp.kt allows up to a minute);
+  // the connector's own limit, usually 15 seconds, aborts the rest sooner through the signal.
+  const sent = Squiggly.http({ id, url, method: init.method ?? 'GET', headers, ...(body !== undefined ? { body } : {}), timeoutMs: 60_000, maxBytes: MAX_BYTES });
   let stop: (() => void) | undefined;
   const aborted = new Promise<never>((_, reject) => {
     if (!signal) return;

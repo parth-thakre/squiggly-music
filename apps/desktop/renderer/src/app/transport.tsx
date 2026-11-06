@@ -1,9 +1,9 @@
-import { Repeat, Repeat1, Shuffle, Star } from 'lucide-react';
+import { Heart, Repeat, Repeat1, Shuffle } from 'lucide-react';
 import { useLayoutEffect, type CSSProperties } from 'react';
 import { nextRepeat } from '../../../../../packages/core/playOrder';
 import type { Track } from '../../../../../packages/core/contracts';
 import { isStation } from '../../../../../packages/core/stations';
-import type { Palette } from './palette';
+import { blend, contrast, type Palette } from './palette';
 import { currentEntry, player, usePlayer } from './player';
 import { Squiggle } from './Squiggle';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -19,9 +19,16 @@ export const alpha = (hex: string, a: number) => {
 };
 // The room's colours as CSS variables. accentText is for normal-weight text; palettes that
 // don't carry one fall back to the accent.
+// A surface set back from the room (the deck): further from the ink, so text on it reads at least
+// as well as on the room itself: darker in a dark room, lighter in a light one.
+const setBack = (palette: Palette) => {
+  const dark = contrast(palette.ground, '#000000') < contrast(palette.ground, '#ffffff');
+  return blend(palette.ground, dark ? '#000000' : '#ffffff', dark ? .24 : .4);
+};
 export const paletteStyle = (palette: Palette) => ({
   '--ground': palette.ground, '--ink': palette.ink, '--soft': palette.soft, '--accent': palette.accent,
   '--accent-text': palette.accentText ?? palette.accent, '--line': palette.line ?? alpha(palette.ink, .16),
+  '--set-back': setBack(palette),
 }) as CSSProperties;
 
 // The room's palette: the theme's fixed colours, or the playing record's sleeve. Each window
@@ -57,15 +64,18 @@ export function PlayButton({ playing }: { playing: boolean }) {
 // Shuffle and repeat, as icon toggles like the deck's others. Repeat goes off, all, one: pressed
 // for both of the last two, with its own icon for one.
 const repeatName = { off: 'Repeat', all: 'Repeat all', one: 'Repeat one' } as const;
-export function PlayModes() {
-  const repeat = usePlayer(s => s.repeat);
+export function ShuffleButton() {
   const shuffle = usePlayer(s => s.shuffle);
-  return <span className="play-modes">
-    <button type="button" className="icon-button" aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle} onClick={() => player.shuffle(!shuffle)}><Shuffle aria-hidden="true" /></button>
-    <button type="button" className="icon-button" aria-label={repeatName[repeat]} title={repeatName[repeat]} aria-pressed={repeat !== 'off'} onClick={() => player.repeat(nextRepeat(repeat))}>
-      {repeat === 'one' ? <Repeat1 aria-hidden="true" /> : <Repeat aria-hidden="true" />}
-    </button>
-  </span>;
+  return <button type="button" className="icon-button mode" aria-label="Shuffle" title="Shuffle" aria-pressed={shuffle} onClick={() => player.shuffle(!shuffle)}><Shuffle aria-hidden="true" /></button>;
+}
+export function RepeatButton() {
+  const repeat = usePlayer(s => s.repeat);
+  return <button type="button" className="icon-button mode" aria-label={repeatName[repeat]} title={repeatName[repeat]} aria-pressed={repeat !== 'off'} onClick={() => player.repeat(nextRepeat(repeat))}>
+    {repeat === 'one' ? <Repeat1 aria-hidden="true" /> : <Repeat aria-hidden="true" />}
+  </button>;
+}
+export function PlayModes() {
+  return <span className="play-modes"><ShuffleButton /><RepeatButton /></span>;
 }
 
 // The seek squiggle. The only part of the deck or mini player that follows position snapshots.
@@ -78,7 +88,7 @@ export function Position({ track, palette }: { track: Track; palette: Palette })
   const live = isStation(track);
   return <Squiggle label={live ? `${track.title}, live. There is no position to seek to.` : `Position in ${track.title}`} identity={entry ?? track.id}
     position={position} duration={duration || (track.duration ?? 0)} playing={playing}
-    color={palette.accent} rest={alpha(palette.ink, .22)} onSeek={player.seek} live={live} />;
+    color={palette.accent} rest={alpha(palette.ink, .42)} onSeek={player.seek} live={live} />;
 }
 
 // The line under the title: the artist, or for a station, what it says is on. When it says nothing
@@ -100,7 +110,7 @@ export function FavoriteToggle({ track }: { track: Track }) {
     if (!result.ok) player.showError(result.error);
   };
   return <button type="button" className="icon-button favorite" aria-label="Favorite" title={on ? 'Remove from favorites' : 'Add to favorites'}
-    aria-pressed={on} onClick={() => void toggle()}><Star aria-hidden="true" fill={on ? 'currentColor' : 'none'} /></button>;
+    aria-pressed={on} onClick={() => void toggle()}><Heart aria-hidden="true" fill={on ? 'currentColor' : 'none'} /></button>;
 }
 
 // The sleep timer, in a few quiet words under the song, while one is set.

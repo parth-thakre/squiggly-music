@@ -3,6 +3,7 @@ import { readdir, readFile, rm, stat, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Either, Schema } from 'effect';
 import type { Lyrics } from '../../../packages/core/contracts';
+import { LRCLIB_MATCHING } from '../../../packages/lyrics/lrclib';
 import { writeAtomic } from './store';
 
 // Lyrics already looked up, kept on disk so a song played before shows its lyrics at once, while
@@ -31,15 +32,18 @@ const LyricsSchema = Schema.Struct({
   wordTiming: Schema.NullOr(Schema.Literal('exact', 'estimated')),
   source: Schema.Literal('server', 'lrclib'),
 });
-// lookup: whether LRCLIB was allowed, which matters to an answer of none.
-const EntrySchema = Schema.Struct({ id: Schema.String, at: Time, lookup: Schema.Boolean, lyrics: Schema.NullOr(LyricsSchema) });
+// lookup: whether LRCLIB was allowed, which matters to an answer of none. matching: how LRCLIB
+// was searched for it (LRCLIB_MATCHING); absent in entries kept before there was more than one.
+const EntrySchema = Schema.Struct({ id: Schema.String, at: Time, lookup: Schema.Boolean, lyrics: Schema.NullOr(LyricsSchema), matching: Schema.optional(Schema.Number) });
 type Entry = Schema.Schema.Type<typeof EntrySchema>;
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex').slice(0, 32);
 
 // Whether a kept answer answers this request. Server lyrics always do. LRCLIB's only while lookups
-// are allowed. None does if LRCLIB was asked too, or isn't now.
-const answers = (entry: Entry, lookup: boolean) => entry.lyrics ? entry.lyrics.source === 'server' || lookup : entry.lookup || !lookup;
+// are allowed. None does if LRCLIB isn't asked now, or was asked the way it is now: a miss from an
+// older way of matching is asked again.
+const answers = (entry: Entry, lookup: boolean) => entry.lyrics ? entry.lyrics.source === 'server' || lookup
+  : !lookup || (entry.lookup && entry.matching === LRCLIB_MATCHING);
 
 export class LyricsCache {
   private folder: string | null = null;
@@ -79,7 +83,7 @@ export class LyricsCache {
       if (usable && (away || this.now() - usable.at < (usable.lyrics ? FOUND_MS : NONE_MS))) return { lyrics: usable.lyrics as Lyrics | null, failed: null };
       try {
         const lyrics = await ask();
-        if (folder) await this.write(folder, { id, at: this.now(), lookup, lyrics });
+        if (folder) await this.write(folder, { id, at: this.now(), lookup, lyrics, ...(lookup ? { matching: LRCLIB_MATCHING } : {}) });
         return { lyrics, failed: null };
       } catch (error) {
         if (usable) return { lyrics: usable.lyrics as Lyrics | null, failed: error };

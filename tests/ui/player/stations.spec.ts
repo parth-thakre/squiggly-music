@@ -49,7 +49,7 @@ test.describe('internet radio stations', () => {
     await expect(app.deck.getByRole('img', { name: /^Harbour FM, live\./ })).toBeVisible();
     await expect(app.clock).toHaveText('Live');
     await expect(app.deck.locator('.deck-sub')).toHaveText('Internet radio');
-    await expect(app.deck.locator('.signal')).toHaveText('A live stream, played by this browser, which can\'t tell what the station says is on.');
+    await expect(app.deck.locator('.signal')).toHaveText('A live stream.');
     await expect(app.deck.getByRole('button', { name: 'Favorite' })).toHaveCount(0);
 
     // The stream is relayed by the host; the station's own address never reached the page.

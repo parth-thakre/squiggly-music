@@ -80,7 +80,7 @@ export function Squiggle({ label, identity, position, duration, playing, color, 
       // and seeking stay exact.
       // Live, the wave runs to the right edge and there is no rest of the song to draw.
       const end = onAir ? right + 6 : Math.max(left + 22, left + (right - left) * (length > 0 ? Math.max(0, Math.min(1, seconds / length)) : 0));
-      context.lineCap = 'round'; context.lineJoin = 'round'; context.lineWidth = 2.5;
+      context.lineCap = 'round'; context.lineJoin = 'round'; context.lineWidth = 3;
       if (!onAir) { context.strokeStyle = line; context.beginPath(); context.moveTo(end + 7, mid); context.lineTo(right, mid); context.stroke(); }
       // The played part is always a full-height wave. On a short stretch the ends taper less and
       // the waves come closer together (unfurling to full length as the song plays), so even a

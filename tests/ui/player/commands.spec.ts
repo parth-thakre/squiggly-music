@@ -190,7 +190,7 @@ test.describe('the playing song', () => {
     await page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox').fill('details');
     await page.keyboard.press('Enter');
     await expect(app.menu).toBeVisible();
-    await expect(app.menu).toContainText('Requested from Navidrome as the original file.');
+    await expect(app.menu).toContainText('Original file.');
     await expect(app.menu.getByRole('menuitem')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await expect(app.menu).toBeHidden();

@@ -60,7 +60,8 @@ test.describe('tracks', () => {
     await expect(app.tracks().first()).toContainText('Take 100');
     await sortBy(app, 'A to Z');
     await expect(app.tracks().first()).toContainText('Coda 11');
-    await app.main.evaluate(main => main.scrollTo(0, 3000));
+    // Seventy rows down, whatever a row's height.
+    const at = await app.main.evaluate(main => { main.scrollTo(0, 68 * parseFloat(getComputedStyle(main.querySelector('ol.tracks li:not(.group-head)')!).height)); return Math.round(main.scrollTop); });
     const deep = app.main.locator('ol.tracks > li[data-index="70"] .title .name');
     const title = await deep.textContent();
     await expect(app.row(title!)).toBeInViewport();
@@ -71,7 +72,7 @@ test.describe('tracks', () => {
     await page.goBack();
     await expect(app.heading).toHaveText('Tracks');
     await expect(sorts(app).getByRole('button', { name: 'A to Z' })).toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(() => app.main.evaluate(main => Math.round(main.scrollTop))).toBe(3000);
+    await expect.poll(() => app.main.evaluate(main => Math.round(main.scrollTop))).toBe(at);
     await expect(app.row(title!)).toBeInViewport();
     expect(fake.nativeQueries.length).toBe(asked);
     // Changing the sort replaces the place rather than adding one: Back leaves Tracks.
@@ -153,7 +154,7 @@ test.describe('tracks', () => {
     await app.section('Tracks').click();
     await expect(app.tracks().first()).toBeVisible();
     await expect(sorts(app)).toHaveCount(0);
-    await expect(app.main.getByText('this library is too big to sort here, and sorting it on the server means sending your password to Navidrome', { exact: false })).toBeVisible();
+    await expect(app.main.getByText('Sorting a library this big needs HTTPS.', { exact: false })).toBeVisible();
   });
 
   test('says so while the first page loads, and Shuffle draws from the whole library', async ({ app, fake }) => {

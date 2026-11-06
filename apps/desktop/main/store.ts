@@ -5,7 +5,7 @@ import { Either, Schema } from 'effect';
 // Writes a file whole or not at all: a private temporary file beside it, then a rename. Durable
 // writes also reach the disk before the rename (and the folder's entry after it, where the system
 // allows), so a crash leaves the old file or the new one, never a torn one.
-export async function writeAtomic(path: string, text: string, { durable = false }: { durable?: boolean } = {}) {
+export async function writeAtomic(path: string, text: string | Uint8Array, { durable = false }: { durable?: boolean } = {}) {
   await mkdir(dirname(path), { recursive: true });
   const temporary = `${path}.${process.pid}.tmp`;
   const handle = await open(temporary, 'w', 0o600);

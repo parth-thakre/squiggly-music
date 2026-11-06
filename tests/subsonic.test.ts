@@ -847,6 +847,21 @@ describe('no answer, or an answer that refused', () => {
     expect(reachOf(error)).toBe('unreachable');
     expect(error.message).toBe('The server did not respond within 15 seconds. Check your connection and try again.');
   });
+  it('waits a minute for similar songs, which the server finds by asking other services', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string, options: RequestInit) => new URL(url).pathname.endsWith('/getOpenSubsonicExtensions.view') ? Promise.resolve(discoveryResponse())
+      : new Promise((_resolve, reject) => options.signal!.addEventListener('abort', () => reject(new Error('aborted'))))));
+    const [early, error] = await Effect.runPromise(Effect.gen(function* () {
+      const fiber = yield* Effect.fork(Effect.flip(client().similarSongs('song-1', 30)));
+      yield* Effect.promise(() => new Promise(resolve => setTimeout(resolve, 20)));
+      yield* TestClock.adjust('15 seconds');
+      const early = yield* Fiber.poll(fiber);
+      yield* TestClock.adjust('45 seconds');
+      return [early, yield* Fiber.join(fiber)] as const;
+    }).pipe(Effect.provide(TestContext.TestContext)));
+    expect(early._tag).toBe('None');
+    expect(reachOf(error)).toBe('unreachable');
+    expect(error.message).toBe('The server did not respond within 60 seconds. Check your connection and try again.');
+  });
   it('reads a song\'s size only when the server sends one', async () => {
     servePayload(albumPayload({ id: 's', title: 's', size: 31_457_280 }));
     expect((await Effect.runPromise(client().album('a'))).tracks[0].size).toBe(31_457_280);

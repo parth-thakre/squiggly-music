@@ -97,6 +97,7 @@ function Palette() {
         </div>)}
       </div>
       {!items.length && <p className="menu-note" role="status">{query.trim() ? `Nothing matches “${query.trim()}”.` : 'No commands are available right now.'}</p>}
+      {!sheet && <p className="palette-foot" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd> Choose</span><span><kbd>Enter</kbd> Run</span><span><kbd>Esc</kbd> Close</span></p>}
     </div>
   </div>;
 }
