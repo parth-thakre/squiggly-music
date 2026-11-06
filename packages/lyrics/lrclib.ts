@@ -155,8 +155,15 @@ export function lrclibLyrics(query: LyricsQuery, options: LrclibOptions = {}): E
   if (!title || !artist) return Effect.succeed(null);
   const decode = <A, I>(schema: Schema.Schema<A, I>) => (body: unknown) => body === null ? Effect.succeed(null)
     : Schema.decodeUnknown(schema)(body).pipe(Effect.mapError(() => new LookupError(failed)));
-  const search = request('search', { track_name: title, artist_name: artist, ...(album ? { album_name: album } : {}) }).pipe(
+  const searchWith = (params: Record<string, string>) => request('search', params).pipe(
     Effect.flatMap(decode(SearchSchema)), Effect.map(records => records && pickResult(query, records)));
+  // Servers often credit every writer as an artist ("Carly Rae Jepsen, Jacob Kasher Hindlin & Peter
+  // Svensson") and name the deluxe edition, which LRCLIB matches neither of. Last, it's asked with
+  // the lead artist alone and no record; the length (or title) check still keeps out other songs.
+  const lead = artist.split(/\s*(?:[,;&•/]|\s(?:feat\.?|ft\.?|featuring)\s)\s*/i)[0].trim() || artist;
+  const broad = lead !== artist || album ? searchWith({ track_name: title, artist_name: lead }) : Effect.succeed(null);
+  const search = searchWith({ track_name: title, artist_name: artist, ...(album ? { album_name: album } : {}) }).pipe(
+    Effect.flatMap(found => found ? Effect.succeed(found) : broad));
   // The exact-match endpoint needs all four fields; fall back to search when it has nothing.
   const task = query.duration === null || !album ? search
     : request('get', { track_name: title, artist_name: artist, album_name: album, duration: String(Math.round(query.duration)) }).pipe(
