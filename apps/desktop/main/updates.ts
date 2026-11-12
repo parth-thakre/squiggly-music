@@ -1,5 +1,5 @@
 import { app } from 'electron';
-import electronUpdater from 'electron-updater';
+import type { AppUpdater } from 'electron-updater';
 import type { UpdateState } from '../../../packages/core/contracts';
 
 // Updates from this project's GitHub releases, as described by resources/app-update.yml (written
@@ -29,7 +29,8 @@ export const initialUpdateState = (): UpdateState => ({
 });
 
 export class Updates {
-  private updater: typeof electronUpdater.autoUpdater | null = null;
+  private updater: AppUpdater | null = null;
+  private stopped = false;
   private timers: ReturnType<typeof setTimeout>[] = [];
   // report: diagnostics builds' raw updater events (remoteDiagnostics.ts), errors included.
   constructor(
@@ -42,7 +43,14 @@ export class Updates {
   start() {
     this.report('start', { mode: this.state().mode, current: this.state().current });
     if (this.state().mode === 'off') return;
-    const updater = this.updater = electronUpdater.autoUpdater;
+    // Loaded here rather than at the top: importing electron-updater takes about 30 ms, which
+    // would come before the window opens. The first check is ten seconds away.
+    void import('electron-updater').then(({ default: electronUpdater }) => { if (!this.stopped) this.listen(electronUpdater.autoUpdater); },
+      error => this.report('load-failed', { message: error instanceof Error ? error.message : String(error) }));
+  }
+
+  private listen(updater: AppUpdater) {
+    this.updater = updater;
     updater.autoDownload = this.state().mode === 'install';
     // Installing on quit goes through installOnQuit, from the app's own quit sequence.
     updater.autoInstallOnAppQuit = false;
@@ -95,5 +103,5 @@ export class Updates {
     return version ? `${RELEASES}/tag/v${version}` : `${RELEASES}/latest`;
   }
 
-  stop() { for (const timer of this.timers) clearTimeout(timer); this.timers = []; }
+  stop() { this.stopped = true; for (const timer of this.timers) clearTimeout(timer); this.timers = []; }
 }
