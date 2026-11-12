@@ -43,10 +43,23 @@ export class Updates {
   start() {
     this.report('start', { mode: this.state().mode, current: this.state().current });
     if (this.state().mode === 'off') return;
-    // Loaded here rather than at the top: importing electron-updater takes about 30 ms, which
-    // would come before the window opens. The first check is ten seconds away.
-    void import('electron-updater').then(({ default: electronUpdater }) => { if (!this.stopped) this.listen(electronUpdater.autoUpdater); },
-      error => this.report('load-failed', { message: error instanceof Error ? error.message : String(error) }));
+    void this.load();
+  }
+
+  // Loaded when updates start rather than at the top: importing electron-updater takes about
+  // 30 ms, which would come before the window opens. The first check is ten seconds away. A
+  // failed load shows as a failed check, and the next check asked for by hand loads it again.
+  private loading: Promise<AppUpdater | null> | null = null;
+  private load() {
+    return this.loading ??= import('electron-updater').then(({ default: electronUpdater }) => {
+      if (!this.stopped && !this.updater) this.listen(electronUpdater.autoUpdater);
+      return this.updater;
+    }, error => {
+      this.loading = null;
+      this.report('load-failed', { message: error instanceof Error ? error.message : String(error) });
+      this.patch({ status: 'error', error: 'Couldn\'t reach GitHub to check for updates.', percent: null });
+      return null;
+    });
   }
 
   private listen(updater: AppUpdater) {
@@ -79,6 +92,11 @@ export class Updates {
   // Scheduled checks respect the setting; one asked for by hand always runs.
   check(asked = false) {
     const status = this.state().status;
+    // Asked for while the updater is still loading (or after it failed to): check once it's there.
+    if (!this.updater && asked && !this.stopped && this.state().mode !== 'off') {
+      void this.load().then(updater => { if (updater) this.check(true); });
+      return;
+    }
     if (!this.updater || (!asked && !this.enabled()) || status === 'checking' || status === 'downloading' || status === 'ready') {
       this.report('check-skipped', { asked, status, updater: this.updater !== null, enabled: this.enabled() });
       return;
