@@ -151,11 +151,15 @@ export function shuffled<T>(items: readonly T[]): T[] {
   for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
   return copy;
 }
-export const plural = (n: number, word: string) => `${n.toLocaleString()} ${n === 1 ? word : `${word}s`}`;
+// One formatter each, made once: toLocaleString builds a new one on every call, which made
+// plural() a tenth of the work of scrolling a long artist list.
+const count = new Intl.NumberFormat();
+const kilohertz = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
+export const plural = (n: number, word: string) => `${count.format(n)} ${n === 1 ? word : `${word}s`}`;
 export function length(seconds: number) {
   const minutes = Math.round(seconds / 60);
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
-export const kHz = (rate: number | null | undefined) => rate ? `${(rate / 1000).toLocaleString('en', { maximumFractionDigits: 1 })} kHz` : null;
+export const kHz = (rate: number | null | undefined) => rate ? `${kilohertz.format(rate / 1000)} kHz` : null;
 
 export function Status({ children }: { children: ReactNode }) { return <p className="status">{children}</p>; }
