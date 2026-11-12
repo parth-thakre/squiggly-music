@@ -19,9 +19,13 @@ const MAX_WORDS = 500;
 
 export const round = (seconds: number) => Math.max(0, Math.round(seconds * 1000) / 1000);
 
-const segmenter = (granularity: 'word' | 'grapheme') => typeof Intl !== 'undefined' && 'Segmenter' in Intl
-  ? new Intl.Segmenter(undefined, { granularity }) : null;
-const words = segmenter('word'), graphemes = segmenter('grapheme');
+// Made on first use: a word segmenter loads its dictionaries, about 5 ms that would otherwise
+// come before the app's first paint, for lyrics that mostly never need it.
+const segmenter = (granularity: 'word' | 'grapheme') => {
+  let made: Intl.Segmenter | null | undefined;
+  return () => made !== undefined ? made : made = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter(undefined, { granularity }) : null;
+};
+const wordSegmenter = segmenter('word'), graphemeSegmenter = segmenter('grapheme');
 // Scripts written without spaces between words.
 const unspaced = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 const letter = /[\p{L}\p{N}]/u;
@@ -45,7 +49,8 @@ export function splitWords(text: string): string[] {
   if (!tokens.length) return [];
   const out: string[] = [];
   for (const token of tokens) {
-    if (!words || !unspaced.test(token)) { out.push(token); continue; }
+    const words = unspaced.test(token) ? wordSegmenter() : null;
+    if (!words) { out.push(token); continue; }
     // Chinese, Japanese, Thai and the like: split the run into words, keeping punctuation and
     // spaces with the word before (or, at the very start, with the word after).
     let pending = '';
@@ -63,6 +68,7 @@ export function splitWords(text: string): string[] {
 // (a Devanagari syllable with its vowel sign is one), and at least one.
 export function weightOf(word: string): number {
   let count = 0;
+  const graphemes = graphemeSegmenter();
   if (graphemes) { for (const { segment } of graphemes.segment(word)) if (letter.test(segment)) count++; }
   else for (const char of word) if (letter.test(char)) count++;
   return Math.max(1, count);
