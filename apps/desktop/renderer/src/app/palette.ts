@@ -136,6 +136,35 @@ export function ensureContrast(color: string, grounds: string[], minimum: number
   return readable(hslOf(color), grounds, minimum, dark);
 }
 
+// A server with no picture of an artist hands out a stock one: a grey figure on flat grey. Told
+// apart from a photograph (a black-and-white one too) by having no colour and only two tones.
+export function isStandIn(pixels: Uint8ClampedArray | readonly number[]): boolean {
+  const tones = new Map<number, number>();
+  let count = 0, grey = 0;
+  for (let i = 0; i + 3 < pixels.length; i += 4) {
+    if (pixels[i + 3] < 128) continue;
+    const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+    count++;
+    if (Math.max(r, g, b) - Math.min(r, g, b) <= 14) grey++;
+    const tone = Math.floor((r * 299 + g * 587 + b * 114) / 24000);
+    tones.set(tone, (tones.get(tone) ?? 0) + 1);
+  }
+  if (!count || grey / count < .97) return false;
+  const [first = 0, second = 0] = [...tones.values()].sort((a, b) => b - a);
+  return (first + second) / count >= .85;
+}
+export async function standInFromImage(url: string): Promise<boolean> {
+  const image = new Image();
+  image.crossOrigin = 'anonymous';
+  image.src = url;
+  await image.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const context = canvas.getContext('2d', { willReadFrequently: true })!;
+  context.drawImage(image, 0, 0, 32, 32);
+  return isStandIn(context.getImageData(0, 0, 32, 32).data);
+}
+
 export async function paletteFromImage(url: string): Promise<Palette> {
   const image = new Image();
   image.crossOrigin = 'anonymous';

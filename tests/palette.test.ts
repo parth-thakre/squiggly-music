@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blend, contrast, MARK_CONTRAST, neutral, paletteFromPixels, selectedTint, TEXT_CONTRAST, type Palette } from '../apps/desktop/renderer/src/app/palette';
+import { blend, contrast, isStandIn, MARK_CONTRAST, neutral, paletteFromPixels, selectedTint, TEXT_CONTRAST, type Palette } from '../apps/desktop/renderer/src/app/palette';
 
 // A 48 x 48 sleeve, as paletteFromImage samples it, filled with the given colors in bands.
 function sleeve(...colors: [number, number, number][]) {
@@ -81,5 +81,20 @@ describe('palette contrast', () => {
 
   it('meets the same rules with the neutral palette used before any art loads', () => {
     expectReadable(neutral);
+  });
+});
+
+describe('a server\'s stock picture of an artist', () => {
+  const pixels = (colours: [number, number, number][]) => colours.flatMap(([r, g, b]) => [r, g, b, 255]);
+  const fill = (count: number, colour: [number, number, number]) => Array.from({ length: count }, () => colour);
+  it('is a grey figure on flat grey: no colour, two tones', () => {
+    expect(isStandIn(pixels([...fill(800, [222, 222, 222]), ...fill(200, [196, 196, 196]), ...fill(24, [209, 209, 209])]))).toBe(true);
+  });
+  it('is not a black-and-white photograph, whose greys run the whole range', () => {
+    expect(isStandIn(pixels(Array.from({ length: 1024 }, (_, i) => { const v = (i * 37) % 256; return [v, v, v] as [number, number, number]; })))).toBe(false);
+  });
+  it('is not a flat picture in colour, nor an empty one', () => {
+    expect(isStandIn(pixels([...fill(900, [230, 60, 60]), ...fill(124, [200, 40, 40])]))).toBe(false);
+    expect(isStandIn([])).toBe(false);
   });
 });

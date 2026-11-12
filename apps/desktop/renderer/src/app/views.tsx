@@ -305,6 +305,7 @@ export function AlbumPage({ id }: { id: string }) {
       </Head>
       <TrackTable tracks={tracks} album={album.name} albumArtist={album.artist} numbered="track" groups={discGroups(tracks, discTitles)} />
       {album.artistId && <MoreBy artistId={album.artistId} name={album.artist} except={album.id} />}
+      {album.year ? <MoreFrom year={album.year} except={album.id} /> : null}
     </>;
   }}</Pending>;
 }
@@ -317,6 +318,18 @@ function MoreBy({ artistId, name, except }: { artistId: string; name: string; ex
   return <section className="shelf-section more-by" aria-labelledby="more-by">
     <div className="section-head"><h2 id="more-by">More by {name}</h2>
       <button type="button" className="text-button see-all" onClick={() => nav.go({ view: 'artist', id: artistId })}>See all</button></div>
+    <AlbumGrid albums={others} />
+  </section>;
+}
+
+// Other records from the record's year, as a second shelf: a single's page isn't one row and a
+// blank. Nothing when the library has no others from that year.
+function MoreFrom({ year, except }: { year: number; except: string }) {
+  const result = useKept(`albums:byYear:${year}:0:7`, from => from.albums('byYear', 0, 7, { fromYear: year, toYear: year }));
+  const others = result?.ok ? result.value.filter(a => a.id !== except).slice(0, 6) : [];
+  if (!others.length) return null;
+  return <section className="shelf-section more-by" aria-labelledby="more-from">
+    <div className="section-head"><h2 id="more-from">More from {year}</h2></div>
     <AlbumGrid albums={others} />
   </section>;
 }
@@ -462,7 +475,7 @@ export function ArtistPage({ id }: { id: string }) {
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => <>
     <Head title={artist.name} kind="Artist" cover={artist.coverArt ? <Cover id={artist.coverArt} name={artist.name} size={600} className="head-cover portrait" /> : undefined}>
-      <p className="byline"><span>{albums.length || !appearsOn ? plural(albums.length, 'record')
+      <p className="byline"><span>{albums.length || !appearsOn ? plural(Math.max(artist.albumCount ?? 0, albums.length), 'record')
         : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`}</span><RatingStars target="artist" id={artist.id} rating={artist.userRating} name={artist.name} /></p>
       <div className="actions">
         <button type="button" className="play-action" disabled={busy} onClick={() => void playAll(artist, false)}>
@@ -782,7 +795,7 @@ function ArtistNames({ artists }: { artists: Artist[] }) {
     <button type="button" data-warm={`artist:${artist.id}`} onClick={() => nav.go({ view: 'artist', id: artist.id })}
       draggable={drags} onDragStart={event => startDrag(event, { kind: 'artist', artist })}>
       {/* The server's picture of the artist (a photo, or one of their sleeves); only for the eye. */}
-      <span className="artist-thumb" aria-hidden="true"><Cover id={artist.coverArt} name={artist.name} size={96} /></span>
+      <span className="artist-thumb" aria-hidden="true"><Cover id={artist.coverArt} name={artist.name} size={96} portrait /></span>
       <span className="artist-label">{artist.name}{artist.albumCount > 0 && <> <span>{plural(artist.albumCount, 'record')}</span></>}</span></button>
     <PlayOver small label={artist.name} play={() => playTarget({ kind: 'artist', artist })} />
   </li>)}</ul>;
@@ -837,12 +850,13 @@ export function Queue() {
         {modes && <>{upcoming > 0 && '. '}<span>{modes}</span></>}
         {offer && <>{(upcoming > 0 || modes) && ' '}<button type="button" className="link" onClick={() => void updateSettings({ autoplay: true })}>Keep playing similar songs</button></>}</p>}
       <div className="actions">
-        <button type="button" className="text-button" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
-        {foldable && <button type="button" className="text-button" aria-expanded={showPlayed} onClick={() => setShowPlayed(v => !v)}>{showPlayed ? 'Hide played' : `Show ${plural(index, 'played song')}`}</button>}
         <button type="button" className="text-button" onClick={async () => {
           const date = new Date().toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
           setSaved(await createPlaylist(`Queue, ${date}`, queue.filter(t => t.source === 'navidrome').map(t => t.id)));
         }}>Save as playlist</button>
+        {foldable && <button type="button" className="text-button" aria-expanded={showPlayed} onClick={() => setShowPlayed(v => !v)}>{showPlayed ? 'Hide played' : `Show ${plural(index, 'played song')}`}</button>}
+        {/* The one that throws songs away comes last and stays quiet. */}
+        <button type="button" className="text-button quiet clear-queue" disabled={upcoming < 1} onClick={() => void player.clear()}>Clear up next</button>
       </div>
       {saved && <p className="note" role="alert">{saved}</p>}
     </Head>

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent } from 'react';
+import { Search } from 'lucide-react';
 import { registry, type Command } from '../registry';
 import { filterCommands } from './filter';
 import { keysFor, PALETTE, recentCommands, runCommand, useKeymap } from './keymap';
@@ -79,9 +80,10 @@ function Palette() {
   const optionId = (i: number) => `palette-option-${i}`;
   return <div className="palette-layer" onPointerDown={event => { if (event.target === event.currentTarget) void closePalette(); }}>
     <div ref={dialog} className={`menu palette${sheet ? ' sheet' : ''}${keyed ? ' keyed' : ''}`} role="dialog" aria-modal="true" aria-label="Commands" tabIndex={-1} data-own-keys onKeyDown={onKeyDown}>
-      <input className="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
-        aria-activedescendant={items.length ? optionId(at) : undefined} aria-label="Find a command" placeholder="Find a command"
-        autoComplete="off" spellCheck={false} autoFocus={!sheet} value={query} onChange={event => setQuery(event.target.value)} />
+      <label className="palette-field"><Search aria-hidden="true" />
+        <input className="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
+          aria-activedescendant={items.length ? optionId(at) : undefined} aria-label="Find a command" placeholder="Find a command"
+          autoComplete="off" spellCheck={false} autoFocus={!sheet} value={query} onChange={event => setQuery(event.target.value)} /></label>
       <div ref={list} id="palette-list" className="palette-list" role="listbox" aria-label="Results">
         {groups.map(group => <div key={group.label} role="group" aria-label={group.label}>
           <p className="menu-title" aria-hidden="true"><span>{group.label}</span></p>

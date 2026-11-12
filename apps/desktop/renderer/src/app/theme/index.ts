@@ -141,6 +141,8 @@ export function applyTheme(theme: Theme, root: HTMLElement = document.documentEl
   root.dataset.density = density;
   root.dataset.motion = motion;
   root.dataset.theme = theme.id;
+  // Whether the room's colours come from the sleeve: only then does its accent wash the window (app.css).
+  root.dataset.colors = theme.tokens.colors === 'cover' ? 'cover' : 'fixed';
   motionChanged();
 }
 

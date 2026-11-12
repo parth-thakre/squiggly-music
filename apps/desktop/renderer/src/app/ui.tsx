@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, onLibraryReset } from './library';
-import { neutral, paletteFromImage, type Palette } from './palette';
+import { neutral, paletteFromImage, standInFromImage, type Palette } from './palette';
 
 // The palette before any art loads; it lives with the contrast rules it is tested against.
 export { neutral };
@@ -40,11 +40,36 @@ export function Wave({ playing }: { playing: boolean }) {
 }
 
 // Covers are requested near their displayed size; the library never loads full-size art for thumbnails.
-export function Cover({ id, name, size, className }: { id: string | null | undefined; name: string; size: number; className?: string }) {
+// Whether the server's picture of an artist is its stock one (palette.ts), looked at once per
+// picture. Until it's known, and if it can't be read, the picture counts as real.
+const standIns = new Map<string, Promise<boolean>>();
+onLibraryReset(() => standIns.clear());
+function useStandIn(id: string | null | undefined, size: number): boolean {
+  const [plain, setPlain] = useState(false);
+  useEffect(() => {
+    setPlain(false);
+    if (!id) return;
+    let live = true;
+    let entry = standIns.get(id);
+    if (!entry) {
+      entry = standInFromImage(api.coverUrl(id, size)).catch(() => false);
+      standIns.set(id, entry);
+      if (standIns.size > 400) standIns.delete(standIns.keys().next().value!);
+    }
+    void entry.then(value => { if (live) setPlain(value); });
+    return () => { live = false; };
+  }, [id, size]);
+  return plain;
+}
+
+// `portrait`: an artist's picture. The server's stock picture gives way to the artist's initial,
+// so every artist without a picture looks the same.
+export function Cover({ id, name, size, className, portrait = false }: { id: string | null | undefined; name: string; size: number; className?: string; portrait?: boolean }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [id]);
+  const plain = useStandIn(portrait ? id : null, size);
   const classes = `cover${className ? ` ${className}` : ''}`;
-  if (!id || failed) return <div className={`${classes} cover-type${size <= 160 ? ' initial' : ''}`} role="img" aria-label={`${name}, no cover art`}><span>{size <= 160 ? Array.from(name.trim())[0]?.toUpperCase() : name}</span></div>;
+  if (!id || failed || plain) return <div className={`${classes} cover-type${size <= 160 ? ' initial' : ''}`} role="img" aria-label={`${name}, no cover art`}><span>{size <= 160 ? Array.from(name.trim())[0]?.toUpperCase() : splitTitle(name).main}</span></div>;
   return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
 }
 
@@ -75,6 +100,9 @@ function paletteOf(coverArt: string) {
 // rather than seconds after it on a slow connection. It waits a few seconds, after the song playing
 // has its own art and its stream has started. The image is held so the page keeps it.
 let early: HTMLImageElement | null = null;
+let earlyArt: string | null = null;
+const earlyListeners = new Set<() => void>();
+const onEarly = (listener: () => void) => { earlyListeners.add(listener); return () => { earlyListeners.delete(listener); }; };
 export function useNextCover(coverArt: string | null | undefined, size: number) {
   useEffect(() => {
     if (!coverArt) return;
@@ -83,10 +111,15 @@ export function useNextCover(coverArt: string | null | undefined, size: number) 
       early = new Image();
       early.decoding = 'async';
       early.src = api.coverUrl(coverArt, size);
+      earlyArt = coverArt;
+      for (const listener of earlyListeners) listener();
     }, 4000);
     return () => clearTimeout(timer);
   }, [coverArt, size]);
 }
+// Whether the next song's sleeve has been asked for yet, so showing it small (the deck's next
+// song) waits its turn too rather than asking the moment a song starts.
+export const useNextCoverAsked = (coverArt: string | null | undefined) => useSyncExternalStore(onEarly, () => !!coverArt && earlyArt === coverArt);
 
 // Real titles carry qualifiers: "(Original Motion Picture Soundtrack)", "- Single", "[From "Film"]".
 // Only recognised release qualifiers split off, so "I'm Gonna Be (500 Miles)" stays whole.

@@ -5,7 +5,7 @@ import { current, currentEntry, optimisticVolume, player, usePlayer } from './pl
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
-import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover } from './ui';
+import { Cover, Glyph, kHz, neutral, splitTitle, useNextCover, useNextCoverAsked } from './ui';
 import { paletteStyle, Position, TransportButtons, useRoomPalette } from './transport';
 import { FavoriteToggle, RepeatButton, ShuffleButton, SleepNote } from './transport';
 import { asHex } from './palette';
@@ -111,6 +111,9 @@ const Bar = memo(function Bar() {
   const own = useRef<Route | null>(null);
   useEffect(() => {
     if (route === own.current) return;
+    // The empty search page arriving (its key, pressed) while the listener is already typing: the
+    // page draws a moment after the field takes the keys, and must not wipe them.
+    if (route.view === 'search' && !route.query && document.activeElement?.classList.contains('search')) return;
     clearTimeout(timer.current);
     setQuery(route.view === 'search' ? route.query : '');
     // Enter's wait for a first result ends when the search is left.
@@ -209,6 +212,8 @@ const Deck = memo(function Deck() {
   const playing = usePlayer(s => s.playing);
   // What Next plays: the first song after the last one under repeat all.
   const upNext = usePlayer(s => s.queue[following(s.index, s.queue.length, s.repeat, 'skip')] as Track | undefined);
+  // Its sleeve shows once it has been fetched ahead (useNextCover), at the size the deck will use.
+  const nextAsked = useNextCoverAsked(upNext?.coverArt);
   const error = usePlayer(s => s.error);
   const engine = usePlayer(s => s.engine);
   const radio = usePlayer(s => s.radio);
@@ -252,14 +257,14 @@ const Deck = memo(function Deck() {
     </div>
     <div className="deck-bottom">
       <div className="deck-text">
-        <h2 className="deck-title">{name.main}</h2>
+        <h2 className={`deck-title${name.main.length > 27 ? ' longer' : name.main.length > 20 ? ' long' : ''}`} title={name.main}>{name.main}</h2>
         <p className="deck-sub">
           {isStation(track) ? announced ?? 'Internet radio' : <>
-            <Credits text={track.artist} artistId={track.artistId} artists={track.artists} />
-            {track.album && <>
+            <span className="deck-artists"><Credits text={track.artist} artistId={track.artistId} artists={track.artists} /></span>
+            {track.album && <span className="deck-album">
               {' on '}
               {track.albumId ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
-            </>}
+            </span>}
           </>}
         </p>
         <DeckSlots placement="under-title" track={track} />
@@ -286,7 +291,12 @@ const Deck = memo(function Deck() {
       <SignalPath track={track} />
       <DeckSlots placement="quiet-line" track={track} />
       <SleepNote />
-      {upNext && <p className="up-next">Next: <button type="button" className="link" onClick={() => nav.go({ view: 'queue' })}>{splitTitle(upNext.title).main}</button></p>}
+      {/* The next song: on a desktop, with room (no lyrics under it), its sleeve and artist too. */}
+      {upNext && <p className="up-next">Next: <button type="button" className="link next-song" onClick={() => nav.go({ view: 'queue' })}>
+        {!upNext.coverArt || nextAsked || upNext.coverArt === track.coverArt
+          ? <Cover id={upNext.coverArt} name={upNext.album || upNext.title} size={upNext.coverArt ? 600 : 80} /> : <span className="cover" />}
+        <span className="next-text"><span className="next-title">{splitTitle(upNext.title).main}</span>{!isStation(upNext) && upNext.artist && <span className="next-artist">{upNext.artist}</span>}</span>
+      </button></p>}
       {!upNext && missed && <p className="up-next">Autoplay found nothing new like this song.</p>}
       {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
         : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
