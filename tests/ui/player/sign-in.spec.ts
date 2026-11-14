@@ -48,7 +48,8 @@ test.describe('sign-in', () => {
     await expect(app.heading).toHaveText('Home');
     await expect(app.main.getByRole('button', { name: /^Test Pressing/ })).toBeVisible();
 
-    await app.deck.getByRole('button', { name: 'Sign out' }).click();
+    await app.openSettings();
+    await app.main.getByRole('button', { name: 'Sign out' }).click();
     await expect(app.signInPassword).toBeVisible();
     await expect(app.section('Records')).toHaveCount(0);
     // The session is gone on the server too, not just hidden.
@@ -81,9 +82,8 @@ test.describe('connect', () => {
     const app = new App(page, unconfigured.url);
     const audio = await audioElements(page);
     await page.goto(unconfigured.url);
-    // The same connect screen as the desktop and Android, saying what the host keeps.
+    // The same connect screen as the desktop and Android.
     await expect(page.getByRole('heading', { name: 'Squiggly', level: 1 })).toBeVisible();
-    await expect(page.getByText('The host that serves this page keeps the connection in its memory until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk.')).toBeVisible();
     await expect(page.getByRole('button', { name: "Try Navidrome's demo" })).toBeVisible();
     expect((await page.request.post(`${app.url}/api/playlists`, { data: [], headers: { origin: app.url } })).status()).toBe(503);
 
@@ -108,7 +108,7 @@ test.describe('connect', () => {
     await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toBeVisible();
     await expect(app.deck.getByRole('button', { name: 'Sign out' })).toHaveCount(0);
     await app.openSettings();
-    await expect(app.main.getByText(`Connected to Navidrome (http://${unconfigured.navidrome}). Disconnecting stops playback, empties the queue, and goes back to the connect screen`)).toBeVisible();
+    await expect(app.main.getByText(`Connected to Navidrome (http://${unconfigured.navidrome}).`, { exact: false })).toBeVisible();
     await app.main.getByRole('button', { name: 'Disconnect', exact: true }).click();
 
     await expect(page.getByLabel('Server address')).toBeVisible();
@@ -150,7 +150,7 @@ test.describe('another server on a host with its own', () => {
     await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
     await app.main.getByRole('button', { name: 'Connect to another server' }).click();
     await expect(page.getByLabel('Server address')).toBeVisible();
-    await expect(page.getByText('The host keeps its own server for other browsers, and this page goes back to it when you disconnect.')).toBeVisible();
+    await expect(page.getByText('Connecting stops playback and empties the queue.')).toBeVisible();
     // Going back leaves the page on the host's server.
     await page.getByRole('button', { name: /^Back to / }).click();
     await expect(app.heading).toHaveText('Settings');
@@ -180,7 +180,7 @@ test.describe('another server on a host with its own', () => {
     await page.context().addCookies(kept);
     await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
 
-    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await expect(app.deck.getByText('Nothing playing.')).toBeVisible();
     await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
     await expect(app.deck.getByRole('alert')).toHaveCount(0);
     expect(await audio()).toEqual(silent);
@@ -205,7 +205,7 @@ test.describe('another server on a host with its own', () => {
     // Whoever signs in next is on the host's own server, with nothing from the connection before.
     await app.signInPassword.fill(webPassword);
     await page.getByRole('button', { name: 'Sign in' }).click();
-    await expect(app.deck.getByText('Pick a record, playlist, or song to start.')).toBeVisible();
+    await expect(app.deck.getByText('Nothing playing.')).toBeVisible();
     await expect(app.deck.getByRole('button', { name: 'Disconnect', exact: true })).toHaveCount(0);
     expect(await audio()).toEqual(silent);
   });

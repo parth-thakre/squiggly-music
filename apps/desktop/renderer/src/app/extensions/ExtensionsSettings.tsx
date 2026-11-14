@@ -16,7 +16,7 @@ export function ExtensionsSettings() {
   const [busy, setBusy] = useState(false);
   if (!bridge?.extensions) return <section className="settings extensions-settings">
     <h2>Extensions</h2>
-    <p className="note">Extensions run in the desktop app.</p>
+    <p className="note">Only in the desktop app.</p>
   </section>;
   const run = async (label: string, task: () => Promise<{ ok: boolean; error?: string }>) => {
     setBusy(true); setStatus(null);
@@ -26,15 +26,14 @@ export function ExtensionsSettings() {
   };
   return <section className="settings extensions-settings" aria-busy={busy}>
     <h2>Extensions</h2>
-    <p className="note">Extensions add commands, menu items, pages, themes, lines in the deck, and sections on the Playlists page. Each is a folder of TypeScript in the extensions folder, inside the config folder. Save a file in one and it reloads.</p>
-    <p className="note">An extension isn't sandboxed. It runs in this window and can do anything the window can: see what's shown and typed here, change your playlists on the server, and contact other servers. A new extension stays off until you turn it on. Turn on only extensions you trust.</p>
+    <p className="note">Extensions aren't sandboxed. Turn on only ones you trust.</p>
     <div className="actions settings-actions">
       <button type="button" className="text-button" disabled={busy} onClick={() => void run('', () => bridge.extensions.openDir())}>Open the extensions folder</button>
       <button type="button" className="text-button" disabled={busy} onClick={() => void run('Reloaded every extension.', () => bridge.extensions.reload())}>Reload all</button>
     </div>
     {status && <p className="note" role="status">{status}</p>}
     {!loaded ? <p className="status">Loading extensions…</p>
-      : list.length === 0 ? <p className="note">No extensions yet. Copy a folder from the examples into the extensions folder.</p>
+      : list.length === 0 ? <p className="note">No extensions yet.</p>
       : <ul className="extension-list">{list.map(info => <Row key={info.id} info={info} busy={busy} run={run} />)}</ul>}
   </section>;
 }
@@ -50,13 +49,13 @@ function Row({ info, busy, run }: { info: ExtensionInfo; busy: boolean; run: (la
       <span><strong>{info.name} <span className="extension-version">{info.version}</span></strong>
         <span id={describedBy}>{info.description ?? 'No description.'} <span className="extension-source">extensions/{info.folder} · {info.id}</span></span></span>
     </label>
-    {info.isNew && <p className="note extension-new">New in the extensions folder. It stays off until you turn it on.</p>}
+    {info.isNew && <p className="note extension-new">New. Off until you turn it on.</p>}
     {info.error && <pre className="extension-error" role="alert">{info.error}</pre>}
     {pages.length > 0 && <p className="note">Pages: {pages.map((page, i) => <span key={page.id}>{i > 0 && ', '}
       <button type="button" className="link" onClick={() => openExtensionPage(page.id)}>{page.title}</button></span>)}</p>}
     <div className="actions extension-actions">
       {!confirming ? <button type="button" className="text-button quiet" disabled={busy} onClick={() => setConfirming(true)}>Remove</button> : <>
-        <span className="note">Move this folder to the trash? Its settings are removed too.</span>
+        <span className="note">Move this folder to the trash?</span>
         <button type="button" className="text-button danger" disabled={busy} onClick={() => void run(`Moved ${info.name} to the trash.`, () => removeExtension(info.id))}>Remove</button>
         <button type="button" className="text-button quiet" onClick={() => setConfirming(false)}>Keep it</button>
       </>}

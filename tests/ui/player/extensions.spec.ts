@@ -52,9 +52,9 @@ test('a new extension is announced and stays off until it is turned on in Settin
 
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   const row = page.locator('.extensions-settings').getByRole('listitem').filter({ hasText: 'Sleep timer example' });
-  await expect(row.getByText('New in the extensions folder. It stays off until you turn it on.')).toBeVisible();
+  await expect(row.getByText('New. Off until you turn it on.')).toBeVisible();
   await row.getByRole('checkbox', { name: /^Sleep timer example/ }).check();
-  await expect(row.getByText('New in the extensions folder.')).toBeHidden();
+  await expect(row.getByText('New. Off until you turn it on.')).toBeHidden();
   await page.keyboard.press('Control+k');
   await page.getByRole('dialog', { name: 'Commands' }).getByRole('combobox').fill('sleep');
   await expect(page.getByRole('dialog', { name: 'Commands' }).getByRole('option', { name: /^Start the example sleep timer/ })).toBeVisible();
@@ -78,7 +78,7 @@ test('Settings lists extensions with their errors, and turning one off takes its
 
   // Remove asks first, then moves the folder to the trash.
   await section.getByRole('listitem').filter({ hasText: 'Sleep timer example' }).getByRole('button', { name: 'Remove' }).click();
-  await expect(section.getByText('Move this folder to the trash? Its settings are removed too.')).toBeVisible();
+  await expect(section.getByText('Move this folder to the trash?')).toBeVisible();
   await section.getByRole('listitem').filter({ hasText: 'Sleep timer example' }).getByRole('button', { name: 'Remove' }).click();
   await expect(section.getByRole('status')).toHaveText('Moved Sleep timer example to the trash.');
   await expect(section.getByText('extensions/sleep-timer · sleep-timer')).toBeHidden();

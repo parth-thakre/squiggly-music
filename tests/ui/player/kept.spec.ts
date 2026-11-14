@@ -44,7 +44,7 @@ test('keep a record, play it from the device, lose the server, play from Kept, a
     await app.openAlbum('Test Pressing');
     await app.rowButton(app.row('Long Run')).click();
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');
-    await expect(app.deck.locator('.signal')).toContainText('Playing the copy kept on this device.');
+    await expect(app.deck.locator('.signal')).toContainText('Playing the kept copy.');
     expect((await calls(page)).at(-1)).toBe(`play:${pressing.join(',')}:device`);
     expect(fake.streamed).toHaveLength(5);
   });
@@ -53,7 +53,7 @@ test('keep a record, play it from the device, lose the server, play from Kept, a
     fake.unreachable = true;
     await app.section('Artists').click();
     await expect(app.heading).toHaveText('Your server is out of reach');
-    await expect(app.main.getByText('Squiggly can\'t reach Navidrome (music.example.com). Songs kept on this device still play.')).toBeVisible();
+    await expect(app.main.getByText('Can\'t reach Navidrome (music.example.com). Kept songs still play.')).toBeVisible();
     await expect(app.main.getByRole('button', { name: 'Retry' })).toBeVisible();
     // The deck plays on.
     await expect(app.deck.getByRole('heading', { level: 2 })).toHaveText('Long Run');

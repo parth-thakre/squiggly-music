@@ -89,7 +89,7 @@ function QueuePanel() {
   return <section className="flip-panel">
     <header className="flip-panel-head">
       <h1>Queue</h1>
-      <p>{upcoming > 0 ? `${plural(upcoming, 'song')} up next` : 'This is the last song.'}</p>
+      <p>{upcoming > 0 ? `${plural(upcoming, 'song')} up next` : 'Last song'}</p>
     </header>
     <ol className="flip-queue" ref={list}>
       {queue.map((track, i) => <li key={entries[i] ?? i} className={i === index ? 'now' : i < index ? 'played' : undefined}>

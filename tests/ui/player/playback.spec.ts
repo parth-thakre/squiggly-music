@@ -260,7 +260,7 @@ test.describe('repeat and shuffle', () => {
     await page.reload();
     await expect(app.heading).toHaveText('Long Player');
     // Nothing plays: the deck offers the queue the play saved, or, before it's saved, a way to start.
-    await expect(app.deck.getByText(/^(Pick a record, playlist, or song to start\.|Pick up where you left off)$/)).toBeVisible();
+    await expect(app.deck.getByText(/^(Nothing playing\.|Pick up where you left off)$/)).toBeVisible();
     await app.play('Long Player', 'Take 2');
     await expect(shuffle(app)).toHaveAttribute('aria-pressed', 'true');
     await expect(repeat(app)).toHaveAccessibleName('Repeat all');

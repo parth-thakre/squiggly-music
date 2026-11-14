@@ -17,9 +17,15 @@ export const AUTOPLAY_ASK = 30;
 // the turn has its ten.
 const SEEDS = 3;
 export const noAutoplay: AutoplayView = { added: [], missed: null };
+// How long a radio station waits for songs like its first one before it begins with that song
+// alone, in milliseconds. Most answers come well inside it, and the station begins with them all;
+// a server slow to ask Last.fm and the rest doesn't hold the music up, and its songs follow the
+// first once they're in (main/radio.ts on the desktop, player.ts in the browser and on Android).
+export const RADIO_WAIT = 3000;
 // When the server knows nothing like the seeds that isn't queued (its similar songs come from
-// Last.fm's artist information, which many artists lack), the turn takes songs at random from the
-// last song's genre, then from anywhere on the server, so the music still keeps going. A genre
+// Last.fm's artist information, which many artists lack), or can't say in time, the turn takes
+// songs at random from the last song's genre, then from anywhere on the server, so the music still
+// keeps going. A genre
 // longer than a request may carry (256 characters) goes straight to anywhere. Random songs that
 // all happen to be queued already are no sign the server has nothing new: the turn is tried again
 // in a minute, and only a server that gives no songs at all ends the queue.

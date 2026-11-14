@@ -9,7 +9,9 @@ export const LINE_ALPHA = .16;
 export const TEXT_CONTRAST = 4.5;
 export const MARK_CONTRAST = 3;
 
-export const neutral: Palette = { ground: '#d8d7d1', ink: '#1a1a18', soft: '#46453f', accent: '#1a1a18', accentText: '#1a1a18' };
+// Before any sleeve: a warm charcoal room, so the first screen and an idle window are as dark as most
+// rooms a record makes.
+export const neutral: Palette = { ground: '#1b1a18', ink: '#efede6', soft: '#aeaba1', accent: '#efede6', accentText: '#efede6' };
 
 // Derives a flat window palette from cover art: the sleeve's dominant color becomes the
 // ground, a readable tint of the same hue becomes ink, and its most saturated distinct
@@ -57,6 +59,25 @@ function readable([h, s, l]: Hsl, grounds: string[], minimum: number, dark: bool
   return dark ? '#ffffff' : '#000000';
 }
 
+// The hue of the sleeve's most vivid family of colours, when the ground's own hue (the largest
+// patch, often a shadow) is more than 90 degrees from it and the vivid family covers a fair share
+// of the sleeve: a yellow sleeve with a purple-black shadow gets a dark yellow room, not a purple one.
+function groundHue(data: Uint8ClampedArray, h: number, s: number, total: number): number | null {
+  if (s < .06) return null;
+  const bins = Array.from({ length: 18 }, () => ({ weight: 0, count: 0, x: 0, y: 0 }));
+  for (let i = 0; i < data.length; i += 4) {
+    const [ph, ps, pl] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
+    if (ps < .3 || pl < .18 || pl > .82) continue;
+    const bin = bins[Math.floor(ph / 20) % 18];
+    bin.count++; bin.weight += ps; bin.x += Math.cos(ph * Math.PI / 180); bin.y += Math.sin(ph * Math.PI / 180);
+  }
+  const top = bins.filter(b => b.count / total > .2).sort((a, b) => b.weight - a.weight)[0];
+  if (!top) return null;
+  const hue = (Math.atan2(top.y, top.x) * 180 / Math.PI + 360) % 360;
+  const gap = Math.min(Math.abs(hue - h), 360 - Math.abs(hue - h));
+  return gap > 90 ? hue : null;
+}
+
 export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   const buckets = new Map<number, { count: number; r: number; g: number; b: number }>();
   for (let i = 0; i < data.length; i += 4) {
@@ -69,10 +90,14 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   const total = data.length / 4;
   const colors = [...buckets.values()].map(b => ({ share: b.count / total, hsl: rgbToHsl(b.r / b.count, b.g / b.count, b.b / b.count) }))
     .sort((a, b) => b.share - a.share);
-  const [h, s, l] = colors[0]?.hsl ?? [0, 0, .5];
+  const [h0, s, l] = colors[0]?.hsl ?? [0, 0, .5];
   const dark = l < .55;
-  // Keep the sleeve's character but calm it enough to read long lists on.
-  const ground = hslToHex([h, Math.min(s, dark ? .45 : .5), dark ? Math.min(Math.max(l, .1), .2) : Math.max(Math.min(l, .86), .74)]);
+  let h = h0;
+  // Keep the sleeve's character but calm it enough to read long lists on. A dull dark sleeve is
+  // lifted to a little colour, so the room still reads as its own; a grey one stays grey.
+  const vividHue = groundHue(data, h0, s, total);
+  if (vividHue !== null) h = vividHue;
+  const ground = hslToHex([h, dark ? (s < .06 ? s : Math.min(.45, Math.max(s, .22))) : Math.min(s, .5), dark ? Math.min(Math.max(l, .085), .155) : Math.max(Math.min(l, .86), .74)]);
   const ink = readable([h, Math.min(s, .35), dark ? .9 : .12], [ground], 11, dark);
   // Soft text sits on selected rows too, and a selected row is darker (or lighter) than the ground.
   const tint = selectedTint({ ground, ink });
@@ -87,7 +112,9 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
     bin.count++; bin.weight += ps; bin.s += ps; bin.l += pl;
     bin.x += Math.cos(ph * Math.PI / 180); bin.y += Math.sin(ph * Math.PI / 180);
   }
-  const hueGap = (a: number) => Math.min(Math.abs(a - h), 360 - Math.abs(a - h));
+  // Measured from the sleeve's largest patch, not the room's hue: when the room takes the vivid hue
+  // (groundHue), that hue must still be free to be the accent.
+  const hueGap = (a: number) => Math.min(Math.abs(a - h0), 360 - Math.abs(a - h0));
   // A clearly different hue wins when the sleeve has one; otherwise the strongest same-hue
   // family still works because readable() pushes it away from the ground in lightness.
   const candidates = bins.filter(b => b.count / total > .015).map(b => ({ ...b, hue: (Math.atan2(b.y, b.x) * 180 / Math.PI + 360) % 360 }))
@@ -107,6 +134,38 @@ export function ensureContrast(color: string, grounds: string[], minimum: number
   if (grounds.every(ground => contrast(color, ground) >= minimum)) return color;
   const dark = contrast('#ffffff', grounds[0]) > contrast('#000000', grounds[0]);
   return readable(hslOf(color), grounds, minimum, dark);
+}
+
+// A server with no picture of an artist hands out a stock one: a pale grey figure on flat pale
+// grey. Told apart from a photograph (a black-and-white one too) by having no colour and only two
+// tones, and from a black-and-white logo by those two tones being light and close together.
+export function isStandIn(pixels: Uint8ClampedArray | readonly number[]): boolean {
+  const tones = new Map<number, number>();
+  let count = 0, grey = 0;
+  for (let i = 0; i + 3 < pixels.length; i += 4) {
+    if (pixels[i + 3] < 128) continue;
+    const r = pixels[i], g = pixels[i + 1], b = pixels[i + 2];
+    count++;
+    if (Math.max(r, g, b) - Math.min(r, g, b) <= 14) grey++;
+    const tone = Math.floor((r * 299 + g * 587 + b * 114) / 24000);
+    tones.set(tone, (tones.get(tone) ?? 0) + 1);
+  }
+  if (!count || grey / count < .97) return false;
+  const [[tone, first], [other, second] = [-1, 0]] = [...tones].sort((a, b) => b[1] - a[1]);
+  if ((first + second) / count < .85) return false;
+  // Tones are steps of 24 in 255: both from mid grey up, and no more than two steps apart.
+  return tone >= 5 && (second === 0 || (other >= 5 && Math.abs(tone - other) <= 2));
+}
+// Reads a picture the page has already loaded (with crossOrigin set), so nothing is fetched for it.
+export function standInOf(image: HTMLImageElement): boolean {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 32;
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return false;
+  try {
+    context.drawImage(image, 0, 0, 32, 32);
+    return isStandIn(context.getImageData(0, 0, 32, 32).data);
+  } catch { return false; }
 }
 
 export async function paletteFromImage(url: string): Promise<Palette> {

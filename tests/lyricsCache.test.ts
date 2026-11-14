@@ -74,6 +74,28 @@ describe('lyrics kept on this computer', () => {
     expect(either.calls).toBe(0);
   });
 
+  it('asks LRCLIB again for a miss kept before its matching changed', async () => {
+    const { lyrics } = await cache();
+    // Written by an earlier version: none, with lookup on, and no matching recorded.
+    await lyrics.answer('s1', true, asker(null), false);
+    const folder = join(dir, 'lyrics', (await readdir(join(dir, 'lyrics')))[0]);
+    const [name] = await readdir(folder);
+    await writeFile(join(folder, name), JSON.stringify({ id: 's1', at: 1_000_000, lookup: true, lyrics: null }));
+    const now = asker(sung('lrclib'));
+    expect((await lyrics.answer('s1', true, now, false)).lyrics).toEqual(sung('lrclib'));
+    expect(now.calls).toBe(1);
+    // A miss found the current way is trusted for its day.
+    const missed = asker(null);
+    await lyrics.answer('s2', true, missed, false);
+    await lyrics.answer('s2', true, missed, false);
+    expect(missed.calls).toBe(1);
+    // With lookup off, an old miss still answers: only the server is asked, and it had none.
+    const off = asker(sung('server'));
+    await writeFile(join(folder, name), JSON.stringify({ id: 's1', at: 1_000_000, lookup: true, lyrics: null }));
+    expect((await lyrics.answer('s1', false, off, false)).lyrics).toBeNull();
+    expect(off.calls).toBe(0);
+  });
+
   it('falls back to old lyrics when asking fails or the server is away, and keeps no failures', async () => {
     const { lyrics, clock } = await cache();
     await lyrics.answer('s1', true, asker(sung('lrclib')), false);

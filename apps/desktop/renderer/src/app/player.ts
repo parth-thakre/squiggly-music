@@ -2,7 +2,7 @@ import { useSyncExternalStore } from 'react';
 import type { AndroidPlayback, AndroidSession, AppSnapshot, AudioDevice, AudioPath, AutoplayView, ConnectOutcome, Connection, Diagnostics, Reachability, Result, SavedQueue, ServerState, Track, UpdateState } from '../../../../../packages/core/contracts';
 import type { RepeatMode } from '../../../../../packages/core/contracts';
 import { emptyDiagnostics, ONLINE } from '../../../../../packages/core/contracts';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, fallbackAsks, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../../../packages/core/autoplay';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, fallbackAsks, freshSongs, keepQueued, nearEnd, noAutoplay, RADIO_WAIT } from '../../../../../packages/core/autoplay';
 import { KEPT_MESSAGES, keptOnly } from '../../../../../packages/core/kept';
 import { OUT_OF_REACH } from '../../../../../packages/core/reach';
 import { following, preceding, RESTART_AFTER, repeatModes, shuffleOrder } from '../../../../../packages/core/playOrder';
@@ -469,7 +469,9 @@ async function autoplay() {
       if (fresh.length >= AUTOPLAY_SONGS) break;
       const result = await api.similarSongs(seed.id, AUTOPLAY_ASK);
       if (!current()) return;
-      if (!result.ok) { clearTimeout(autoplayRetry); autoplayRetry = setTimeout(topUp, 61_000); return; }
+      // A server that couldn't say in time gets the random songs below rather than ending the
+      // queue, and isn't asked about the other seeds, which would likely be as slow.
+      if (!result.ok) break;
       fresh.push(...freshSongs(result.value, taken, AUTOPLAY_SONGS - fresh.length));
     }
     let drawn = 0;
@@ -718,21 +720,39 @@ async function startStation(seed: RadioStart) {
   // Something else was played, or another station started, while this one was on its way.
   if (mine !== station) return;
   if (!start) { set({ error: 'Radio needs a song to start from, and none was found.' }); return; }
-  const result = await api.similarSongs(start.id, 40);
+  // Past RADIO_WAIT the station begins with its first song alone, and the rest follow once in.
+  const asking = api.similarSongs(start.id, 40);
+  const result = await Promise.race([asking, new Promise<null>(done => setTimeout(() => done(null), RADIO_WAIT))]);
   if (mine !== station) return;
-  if (!result.ok) { set({ error: result.error }); return; }
-  const tracks = [start, ...result.value.filter(t => t.id !== start!.id)];
-  if (tracks.length < 2) { set({ error: 'Your server found nothing similar to play. Radio needs artist information on the server.' }); return; }
+  if (result && !result.ok) { set({ error: result.error }); return; }
+  const tracks = [start, ...(result?.value ?? []).filter(t => t.id !== start!.id)];
+  if (result && tracks.length < 2) { set({ error: 'Your server found nothing similar to play. Radio needs artist information on the server.' }); return; }
   // Radio from the song that's playing carries on from it rather than starting it over.
   const playing = current(state), entry = currentEntry(state);
   if (playing?.id === start.id && entry && !(web?.active.ended || native?.ended)) {
     station++;
     set({ queue: [playing, ...tracks.slice(1)], entryIds: [entry, ...mint(tracks.length - 1)], index: 0, radio: { label: seed.label }, error: null, resumable: null });
     saveSoon();
-  } else await player.play(tracks, 0, { label: seed.label });
+  } else if (!await player.play(tracks, 0, { label: seed.label })) return;
+  if (!result) fillStation(asking);
   // Radio and repeat exclude each other, as on the desktop (setPlayMode in main/index.ts): radio
   // keeps adding songs, so a station turns repeat off, and turning repeat on stops the station.
   if (state.radio && state.repeat !== 'off') player.repeat('off');
+}
+
+// The station began before the server found songs like its first one: they follow it once in.
+// Until then the request is the station's top-up. One that fails is asked again by the next top-up;
+// an answer with nothing new ends the station, and its song plays on.
+function fillStation(asking: Promise<Result<Track[]>>) {
+  if (!state.radio) return;
+  const mine = topping = station;
+  void asking.then(result => {
+    if (topping === mine) topping = -1;
+    if (mine !== station || !state.radio || !result.ok) return;
+    const seen = new Set(state.queue.map(t => t.id));
+    const fresh = result.value.filter(t => !seen.has(t.id));
+    if (fresh.length) webAppend(fresh); else set({ radio: null });
+  });
 }
 
 // Turned on during the last song: that song's turn starts now.

@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
-import { parseFile, selectCover } from 'music-metadata';
 import type { Track } from '../../../packages/core/contracts';
 import { coverTypes } from '../../../packages/adapter-opensubsonic/client';
+
+// music-metadata is loaded the first time a file is read, not while the app starts.
+const metadata = () => import('music-metadata');
 
 // Files opened from this computer. Their title, artist, album, length, and format come from the
 // file's own tags (music-metadata reads them without decoding any audio); the file name stands in
@@ -58,7 +60,7 @@ async function readOne(path: string, folders: Map<string, Promise<string | null>
   };
   let embedded = false;
   try {
-    const { common, format } = await parseFile(path);
+    const { common, format } = await (await metadata()).parseFile(path);
     embedded = Boolean(common.picture?.length);
     track.title = common.title?.trim() || track.title;
     track.artist = common.artist?.trim() || common.albumartist?.trim() || track.artist;
@@ -109,6 +111,7 @@ export async function readLocalCover(id: string): Promise<{ bytes: Buffer; conte
       const contentType = IMAGE_TYPES[extname(source.path).toLowerCase()];
       return contentType ? { bytes: await readFile(source.path), contentType } : null;
     }
+    const { parseFile, selectCover } = await metadata();
     const picture = selectCover((await parseFile(source.path)).common.picture);
     if (!picture) return null;
     // The type is whatever the tag says. Only a raster image type is served (the list the server's

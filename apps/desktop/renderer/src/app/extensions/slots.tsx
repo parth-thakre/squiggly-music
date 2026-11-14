@@ -60,7 +60,6 @@ export function ExtensionSections() {
     {sections.map(section => <ExtensionSection key={section.serial} section={section} />)}
     {pages.length > 0 && <section className="shelf-section" aria-labelledby="extension-pages">
       <h2 id="extension-pages">Extensions</h2>
-      <p className="section-note">Pages that extensions add.</p>
       <ul className="rows extension-pages">
         {pages.map(page => <li key={page.id}>
           <button type="button" onClick={() => openExtensionPage(page.id)}>

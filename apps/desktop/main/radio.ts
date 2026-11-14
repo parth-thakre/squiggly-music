@@ -1,5 +1,5 @@
-import { Effect } from 'effect';
-import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, fallbackAsks, freshSongs, keepQueued, nearEnd, noAutoplay } from '../../../packages/core/autoplay';
+import { Effect, Either, Fiber, Option, type Duration } from 'effect';
+import { AUTOPLAY_ASK, AUTOPLAY_SONGS, autoplayTurn, fallbackAsks, freshSongs, keepQueued, nearEnd, noAutoplay, RADIO_WAIT } from '../../../packages/core/autoplay';
 import type { AlbumDetail, AutoplayView, PlayerSnapshot, RadioSeed, RandomSongOptions, Track } from '../../../packages/core/contracts';
 
 export interface RadioClient {
@@ -16,6 +16,7 @@ export interface RadioShell<C extends RadioClient> {
   remember(tracks: readonly Track[]): void;
   replace(client: C, tracks: Track[]): Effect.Effect<void, Error>;
   // Keeps the current entry playing and puts tracks after it in place of the rest of the queue.
+  // None, for a station whose songs are still on their way: the rest of the queue just goes.
   follow(client: C, tracks: Track[]): Effect.Effect<void, Error>;
   append(client: C, tracks: Track[]): Effect.Effect<void, Error>;
   // Runs a background top-up (a bounded lane, with metrics).
@@ -29,6 +30,7 @@ export interface RadioShell<C extends RadioClient> {
   next(still: () => boolean): boolean;
 }
 type HeldNext = { turn: number; generation: number; entry: string };
+type Station = { generation: number; view: { label: string }; topping: boolean; tried: { entry: string; at: number } | null };
 const distinct = (tracks: readonly Track[]) => [...new Map(tracks.map(track => [track.id, track])).values()];
 
 // Radio lives in the main process, not in a window, so it keeps topping up while every window
@@ -38,7 +40,7 @@ const distinct = (tracks: readonly Track[]) => [...new Map(tracks.map(track => [
 // last one once that is playing, under the same counter.
 export class Radio<C extends RadioClient> {
   private generation = 0;
-  private station: { generation: number; view: { label: string }; topping: boolean; tried: { entry: string; at: number } | null } | null = null;
+  private station: Station | null = null;
   private autoplaying = false;
   private autoplayTried: { entry: string; at: number } | null = null;
   // Next was pressed on the last song while a turn was out: it moves on from that entry once the
@@ -49,7 +51,7 @@ export class Radio<C extends RadioClient> {
   // Songs appended and not yet seen in a snapshot: the audio host names their entries, and its
   // reply can come before the snapshot that shows them.
   private marking: { before: Set<string>; ids: Set<string> } | null = null;
-  constructor(private shell: RadioShell<C>, private limit = 1000) {}
+  constructor(private shell: RadioShell<C>, private limit = 1000, private wait: Duration.DurationInput = RADIO_WAIT) {}
 
   get view(): { label: string } | null { return this.station?.view ?? null; }
   get autoplayView(): AutoplayView { return this.autoplayed; }
@@ -89,7 +91,9 @@ export class Radio<C extends RadioClient> {
   }
 
   // Asking the server for songs like an artist can take over ten seconds, so artist and record
-  // radio start from a song: an artist's top song, or a record's first track. Succeeds with
+  // radio start from a song: an artist's top song, or a record's first track. Songs like that one
+  // can be slow too (the server may ask Last.fm and others first): past RADIO_WAIT the station
+  // begins with its first song alone, and the rest follow it once they're in (fill). Succeeds with
   // whether the station began: false when other playback took over while the queue was replaced.
   start(seed: RadioSeed): Effect.Effect<boolean, Error> {
     const radio = this;
@@ -101,20 +105,51 @@ export class Radio<C extends RadioClient> {
         : seed.kind === 'artist' ? (yield* client.topSongs(seed.id, 5))[0] : (yield* client.album(seed.id)).tracks[0];
       if (!start && seed.kind === 'song') return yield* Effect.fail(new Error('That song is no longer loaded. Refresh the library and try again.'));
       if (!start) return yield* Effect.fail(new Error('Radio needs a song to start from, and none was found.'));
-      const tracks = distinct([start, ...(yield* client.similarSongs(start.id, 40))]).slice(0, radio.limit);
-      if (tracks.length < 2) return yield* Effect.fail(new Error('Your server found nothing similar to play. Radio needs artist information on the server.'));
-      if (generation !== radio.generation || radio.shell.client() !== client) return yield* Effect.fail(new Error('Playback changed before the radio could start.'));
-      radio.shell.remember(tracks);
-      // The previous station ends here, so none of its top-ups can reach the new queue.
-      if (radio.station) { radio.station = null; radio.shell.changed(); }
-      // Radio from the song that's playing carries on from it rather than starting it over.
-      const player = radio.shell.player();
-      if (player.queue[player.currentIndex]?.id === start.id) yield* radio.shell.follow(client, tracks.slice(1));
-      else yield* radio.shell.replace(client, tracks);
-      if (generation !== radio.generation) return false;
-      radio.station = { generation, view: { label: seed.label }, topping: false, tried: null };
-      radio.shell.changed();
-      return true;
+      const asking = yield* Effect.forkDaemon(client.similarSongs(start.id, 40));
+      // Still out once the station has begun, the request is fill's; otherwise it's dropped.
+      let handed = false;
+      return yield* Effect.gen(function* () {
+        const early = yield* Fiber.join(asking).pipe(Effect.timeoutOption(radio.wait));
+        const tracks = distinct([start, ...Option.getOrElse(early, () => [])]).slice(0, radio.limit);
+        if (Option.isSome(early) && tracks.length < 2) return yield* Effect.fail(new Error('Your server found nothing similar to play. Radio needs artist information on the server.'));
+        if (generation !== radio.generation || radio.shell.client() !== client) return yield* Effect.fail(new Error('Playback changed before the radio could start.'));
+        radio.shell.remember(tracks);
+        // The previous station ends here, so none of its top-ups can reach the new queue.
+        if (radio.station) { radio.station = null; radio.shell.changed(); }
+        // Radio from the song that's playing carries on from it rather than starting it over.
+        const player = radio.shell.player();
+        if (player.queue[player.currentIndex]?.id === start.id) yield* radio.shell.follow(client, tracks.slice(1));
+        else yield* radio.shell.replace(client, tracks);
+        if (generation !== radio.generation) return false;
+        const station: Station = { generation, view: { label: seed.label }, topping: Option.isNone(early), tried: null };
+        radio.station = station;
+        radio.shell.changed();
+        if (Option.isNone(early)) { handed = true; radio.fill(station, client, asking); }
+        return true;
+      }).pipe(Effect.ensuring(Effect.suspend(() => handed ? Effect.void : Fiber.interruptFork(asking))));
+    });
+  }
+
+  // The station began before the server found songs like its first one: they follow it once
+  // they're in. Until then the request counts as the station's top-up, so no other asks the same.
+  // One that fails is asked again by the usual top-up a minute on. An answer with nothing new ends
+  // the station, and its song plays on (autoplay, if it's on, takes over from there).
+  private fill(station: Station, client: C, asking: Fiber.Fiber<Track[], Error>) {
+    const radio = this;
+    const task = Effect.gen(function* () {
+      const similar = yield* Fiber.join(asking);
+      if (radio.station !== station || radio.shell.client() !== client) return;
+      const queue = radio.shell.player().queue;
+      const queued = new Set(queue.map(track => track.id));
+      const fresh = distinct(similar.filter(track => !queued.has(track.id))).slice(0, radio.limit - queue.length);
+      if (!fresh.length) { radio.station = null; radio.shell.changed(); return; }
+      radio.shell.remember(fresh);
+      yield* radio.shell.append(client, fresh);
+    });
+    void this.shell.background(task).finally(() => {
+      station.topping = false;
+      const entry = radio.shell.player().entryIds.at(-1);
+      if (entry) station.tried = { entry, at: Date.now() };
     });
   }
 
@@ -171,9 +206,12 @@ export class Radio<C extends RadioClient> {
       const fresh: Track[] = [];
       for (const seed of turn.seeds) {
         if (fresh.length >= room) break;
-        const similar = yield* client.similarSongs(seed.id, AUTOPLAY_ASK);
+        const similar = yield* Effect.either(client.similarSongs(seed.id, AUTOPLAY_ASK));
         if (!current()) return;
-        fresh.push(...freshSongs(similar, taken, room - fresh.length));
+        // A server that couldn't say in time gets the random songs below rather than ending the
+        // queue, and isn't asked about the other seeds, which would likely be as slow.
+        if (Either.isLeft(similar)) break;
+        fresh.push(...freshSongs(similar.right, taken, room - fresh.length));
       }
       let drawn = 0;
       for (const ask of fallbackAsks(turn.seeds[0])) {

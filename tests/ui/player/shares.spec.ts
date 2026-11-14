@@ -50,7 +50,7 @@ test.describe('shares', () => {
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('https://music.example.com/share/sh-1');
 
     await shares.getByRole('button', { name: 'Delete' }).click();
-    await expect(shares.getByText('Delete this link? Anyone who has it can no longer listen.')).toBeVisible();
+    await expect(shares.getByText('Delete this link?')).toBeVisible();
     await shares.getByRole('button', { name: 'Delete' }).click();
     await expect(shares).toBeHidden();
     expect(fake.shareList).toEqual([]);

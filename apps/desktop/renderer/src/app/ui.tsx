@@ -1,11 +1,11 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, onLibraryReset } from './library';
-import { neutral, paletteFromImage, type Palette } from './palette';
+import { neutral, paletteFromImage, standInOf, type Palette } from './palette';
 
 // The palette before any art loads; it lives with the contrast rules it is tested against.
 export { neutral };
 
-export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'volume' | 'star' | 'starred' }) {
+export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'volume' | 'star' | 'starred' | 'heart' | 'hearted' }) {
   const paths = {
     play: <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" />,
     pause: <><rect x="6.5" y="5" width="4" height="14" rx="1" /><rect x="13.5" y="5" width="4" height="14" rx="1" /></>,
@@ -14,6 +14,9 @@ export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'vo
     volume: <><path d="M4 9.5h3.2L12 5.2v13.6l-4.8-4.3H4z" /><path d="M15.5 8.8a4.6 4.6 0 0 1 0 6.4M18 6.4a8 8 0 0 1 0 11.2" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" /></>,
     star: <path d="M12 4.2l2.3 4.9 5.3.6-3.9 3.6 1.1 5.3L12 16l-4.8 2.6 1.1-5.3-3.9-3.6 5.3-.6z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
     starred: <path d="M12 4.2l2.3 4.9 5.3.6-3.9 3.6 1.1 5.3L12 16l-4.8 2.6 1.1-5.3-3.9-3.6 5.3-.6z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
+    // Favorites are a heart, so they never read as a rating's stars.
+    heart: <path d="M12 19.3s-7.2-4.4-7.2-9.6A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.2 2.5c0 5.2-7.2 9.6-7.2 9.6z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
+    hearted: <path d="M12 19.3s-7.2-4.4-7.2-9.6A4.1 4.1 0 0 1 12 7.2a4.1 4.1 0 0 1 7.2 2.5c0 5.2-7.2 9.6-7.2 9.6z" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">{paths[kind]}</svg>;
 }
@@ -37,12 +40,32 @@ export function Wave({ playing }: { playing: boolean }) {
 }
 
 // Covers are requested near their displayed size; the library never loads full-size art for thumbnails.
-export function Cover({ id, name, size, className }: { id: string | null | undefined; name: string; size: number; className?: string }) {
+// Whether the server's picture of an artist is its stock one (palette.ts), read from the picture
+// once the page has loaded it, so a long list fetches nothing it isn't showing. Until it's known,
+// and if it can't be read, the picture counts as real.
+const standIns = new Map<string, boolean>();
+onLibraryReset(() => standIns.clear());
+
+// `portrait`: an artist's picture. The server's stock picture gives way to the artist's initial,
+// so every artist without a picture looks the same.
+export function Cover({ id, name, size, className, portrait = false }: { id: string | null | undefined; name: string; size: number; className?: string; portrait?: boolean }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [id]);
+  const known = portrait && !!id && standIns.get(id) === true;
+  const [plain, setPlain] = useState(known);
+  useEffect(() => { setFailed(false); setPlain(known); }, [id, known]);
   const classes = `cover${className ? ` ${className}` : ''}`;
-  if (!id || failed) return <div className={`${classes} cover-type`} role="img" aria-label={`${name}, no cover art`}><span>{name}</span></div>;
-  return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  if (!id || failed || plain) return <div className={`${classes} cover-type${size <= 160 ? ' initial' : ''}`} role="img" aria-label={`${name}, no cover art`}><span>{size <= 160 ? Array.from(name.trim())[0]?.toUpperCase() : splitTitle(name).main}</span></div>;
+  if (!portrait) return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  return <img className={classes} crossOrigin="anonymous" src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)}
+    onLoad={event => {
+      let stock = standIns.get(id);
+      if (stock === undefined) {
+        stock = standInOf(event.currentTarget);
+        standIns.set(id, stock);
+        if (standIns.size > 400) standIns.delete(standIns.keys().next().value!);
+      }
+      if (stock) setPlain(true);
+    }} />;
 }
 
 // Palettes are keyed by cover art id, which only means something on one server.
@@ -72,6 +95,9 @@ function paletteOf(coverArt: string) {
 // rather than seconds after it on a slow connection. It waits a few seconds, after the song playing
 // has its own art and its stream has started. The image is held so the page keeps it.
 let early: HTMLImageElement | null = null;
+let earlyArt: string | null = null;
+const earlyListeners = new Set<() => void>();
+const onEarly = (listener: () => void) => { earlyListeners.add(listener); return () => { earlyListeners.delete(listener); }; };
 export function useNextCover(coverArt: string | null | undefined, size: number) {
   useEffect(() => {
     if (!coverArt) return;
@@ -80,10 +106,15 @@ export function useNextCover(coverArt: string | null | undefined, size: number) 
       early = new Image();
       early.decoding = 'async';
       early.src = api.coverUrl(coverArt, size);
+      earlyArt = coverArt;
+      for (const listener of earlyListeners) listener();
     }, 4000);
     return () => clearTimeout(timer);
   }, [coverArt, size]);
 }
+// Whether the next song's sleeve has been asked for yet, so showing it small (the deck's next
+// song) waits its turn too rather than asking the moment a song starts.
+export const useNextCoverAsked = (coverArt: string | null | undefined) => useSyncExternalStore(onEarly, () => !!coverArt && earlyArt === coverArt);
 
 // Real titles carry qualifiers: "(Original Motion Picture Soundtrack)", "- Single", "[From "Film"]".
 // Only recognised release qualifiers split off, so "I'm Gonna Be (500 Miles)" stays whole.
@@ -115,11 +146,15 @@ export function shuffled<T>(items: readonly T[]): T[] {
   for (let i = copy.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [copy[i], copy[j]] = [copy[j], copy[i]]; }
   return copy;
 }
-export const plural = (n: number, word: string) => `${n.toLocaleString()} ${n === 1 ? word : `${word}s`}`;
+// One formatter each, made once: toLocaleString builds a new one on every call, which made
+// plural() a tenth of the work of scrolling a long artist list.
+const count = new Intl.NumberFormat();
+const kilohertz = new Intl.NumberFormat('en', { maximumFractionDigits: 1 });
+export const plural = (n: number, word: string) => `${count.format(n)} ${n === 1 ? word : `${word}s`}`;
 export function length(seconds: number) {
   const minutes = Math.round(seconds / 60);
   return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
 }
-export const kHz = (rate: number | null | undefined) => rate ? `${(rate / 1000).toLocaleString('en', { maximumFractionDigits: 1 })} kHz` : null;
+export const kHz = (rate: number | null | undefined) => rate ? `${kilohertz.format(rate / 1000)} kHz` : null;
 
 export function Status({ children }: { children: ReactNode }) { return <p className="status">{children}</p>; }

@@ -48,7 +48,6 @@ class Boundary extends Component<{ owner: string; title: string; onError(owner: 
   render() {
     if (this.state.error) return <section className="extension-page"><h1>{this.props.title}</h1>
       <p className="note" role="alert">This page stopped working: {this.state.error}</p>
-      <p className="note">Fix the extension and save; it reloads by itself.</p>
     </section>;
     return this.props.children;
   }

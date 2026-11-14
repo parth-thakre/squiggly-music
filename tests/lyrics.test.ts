@@ -61,6 +61,30 @@ describe('LRCLIB', () => {
     expect(mock.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(['/api/get', '/api/search']);
     expect(Object.fromEntries(new URL(String(mock.mock.calls[1][0])).searchParams)).toEqual({ track_name: 'Song', artist_name: 'Artist', album_name: 'Record' });
   });
+  it('asks again with the lead artist and no record when every writer is credited', async () => {
+    const credited = { ...query, artist: 'Carly Rae Jepsen, Jacob Kasher Hindlin & Peter Svensson', album: 'E•MO•TION (Deluxe Expanded Edition)' };
+    const mock = vi.fn((input: string | URL | Request) => {
+      const url = new URL(String(input));
+      const found = url.pathname === '/api/search' && url.searchParams.get('artist_name') === 'Carly Rae Jepsen' && !url.searchParams.has('album_name');
+      return Promise.resolve(found ? Response.json([record({ duration: 260, syncedLyrics: '[00:01.00]Other song' }), record({ syncedLyrics: '[00:04.00]Found' })])
+        : url.pathname === '/api/search' ? Response.json([]) : Response.json({ code: 404 }, { status: 404 }));
+    });
+    expect(await Effect.runPromise(lrclibLyrics(credited, { baseUrl: 'http://lrclib.test/', fetch: mock as unknown as typeof fetch }))).toMatchObject({ lines: [{ start: 4, text: 'Found' }] });
+    expect(mock.mock.calls.map(([url]) => Object.fromEntries(new URL(String(url)).searchParams).artist_name)).toEqual([credited.artist, credited.artist, 'Carly Rae Jepsen']);
+  });
+  it.each([
+    ['Ajay-Atul, Shreya Ghoshal & Guru Thakur', 'Ajay-Atul'], ['Vishal Bhardwaj • Suresh Wadkar', 'Vishal Bhardwaj'],
+    ['Calvin Harris feat. Rihanna', 'Calvin Harris'], ['Simon & Garfunkel', 'Simon'], ['ABBA', 'ABBA'],
+  ])('takes the lead artist of %j as %j', async (artist, lead) => {
+    const { mock, options } = service({});
+    await Effect.runPromise(lrclibLyrics({ ...query, artist }, options));
+    expect(new URL(String(mock.mock.calls.at(-1)![0])).searchParams.get('artist_name')).toBe(lead);
+  });
+  it('does not ask the same search twice for a lone artist without a record', async () => {
+    const { mock, options } = service({});
+    await Effect.runPromise(lrclibLyrics({ ...query, album: '', duration: null }, options));
+    expect(mock).toHaveBeenCalledOnce();
+  });
   it('searches directly without a duration or album and then matches by title', async () => {
     const { mock, options } = service({ '/api/search': () => Response.json([record({ trackName: 'Other song' }), record({ trackName: ' SONG ', syncedLyrics: null })]) });
     expect(await Effect.runPromise(lrclibLyrics({ ...query, album: '', duration: null }, options))).toMatchObject({ synced: false, lines: [{ text: 'Plain one' }, { text: 'Plain two' }] });

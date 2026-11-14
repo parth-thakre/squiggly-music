@@ -117,7 +117,7 @@ function Dialog({ target }: { target: ShareRequest }) {
         </fieldset>
         <label className="share-field"><span>Description</span>
           <input value={description} maxLength={1024} autoComplete="off" placeholder="Optional" onChange={event => setDescription(event.target.value)} /></label>
-        <p className="menu-note">Anyone with the link can listen without signing in, until it expires.</p>
+        <p className="menu-note">Anyone with the link can listen until it expires.</p>
         {error && <p className="menu-note error" role="alert">{error}</p>}
         <div className="actions share-actions">
           <button type="submit" className="text-button" disabled={busy}>{busy ? 'Creating' : 'Create'}</button>
@@ -146,7 +146,6 @@ export function SharesSettings() {
   if (!result?.ok || !result.value.length) return null;
   return <section className="settings shares-settings" aria-labelledby={headingId}>
     <h2 id={headingId}>Shares</h2>
-    <p className="note">Public links made on your server. Anyone with one can listen without signing in, until it expires.</p>
     {status && <p className="note" role="status">{status}</p>}
     <ul className="share-list">{result.value.map(share => <ShareRow key={share.id} share={share} report={setStatus} />)}</ul>
   </section>;
@@ -168,7 +167,7 @@ function ShareRow({ share, report }: { share: Share; report(message: string): vo
         <button type="button" className="text-button" onClick={async () => { const result = await copyText(share.url); report(result.ok ? `Copied the link to ${name}.` : result.error); }}>Copy</button>
         <button type="button" className="text-button quiet" onClick={() => setConfirming(true)}>Delete</button>
       </> : <>
-        <span className="note">Delete this link? Anyone who has it can no longer listen.</span>
+        <span className="note">Delete this link?</span>
         <button type="button" className="text-button danger" disabled={busy} onClick={async () => {
           setBusy(true);
           const result = await api.deleteShare(share.id);

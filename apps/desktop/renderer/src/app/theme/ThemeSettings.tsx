@@ -21,17 +21,17 @@ export function ThemeSettings() {
         <Sample theme={theme} cover={cover} />
       </label>)}
     </div>
-    {chosen !== active.id && <p className="note">The theme you picked isn't loaded right now, so Cover is showing. It returns when its file or extension does.</p>}
+    {chosen !== active.id && <p className="note">Your theme isn't loaded, so Cover is showing.</p>}
     {problems.length > 0 && <div className="problems" role="alert">
       <p className="problems-head">{problems.length === 1 ? 'One theme problem' : `${problems.length} theme problems`}</p>
       <ul>{problems.map(problem => <li key={problem}>{problem}</li>)}</ul>
     </div>}
     {notes.length > 0 && <div className="problems"><p className="problems-head">Colours adjusted to stay readable</p><ul className="quiet">{notes.map(note => <li key={note}>{note}</li>)}</ul></div>}
     {configApi ? <>
-      <p className="note">Add your own by saving a .json file in the themes folder, inside the config folder. Changes apply when you save.</p>
+      <p className="note">Your own themes are .json files in the themes folder.</p>
       <div className="actions settings-actions"><button type="button" className="text-button" onClick={async () => setOpened(await openConfigFolder())}>Open the config folder</button></div>
       {opened && <p className="note" role="alert">{opened}</p>}
-    </> : <p className="note hint">Themes from files load in the desktop app, from the themes folder in its config folder.</p>}
+    </> : null}
   </>;
 }
 

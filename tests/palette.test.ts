@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blend, contrast, MARK_CONTRAST, neutral, paletteFromPixels, selectedTint, TEXT_CONTRAST, type Palette } from '../apps/desktop/renderer/src/app/palette';
+import { blend, contrast, isStandIn, MARK_CONTRAST, neutral, paletteFromPixels, selectedTint, TEXT_CONTRAST, type Palette } from '../apps/desktop/renderer/src/app/palette';
 
 // A 48 x 48 sleeve, as paletteFromImage samples it, filled with the given colors in bands.
 function sleeve(...colors: [number, number, number][]) {
@@ -20,6 +20,35 @@ function expectReadable(palette: Palette) {
     expect(contrast(palette.accent, ground), `accent on ${ground}`).toBeGreaterThanOrEqual(MARK_CONTRAST);
   }
 }
+
+// The hue of a #rrggbb colour, in degrees.
+function hueOf(hex: string) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+  if (!d) return 0;
+  const h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return (h * 60 + 360) % 360;
+}
+
+describe('the room follows the colour you see', () => {
+  it('a yellow sleeve with a large purple-black shadow gets a yellow room, not a purple one', () => {
+    const palette = paletteFromPixels(sleeve([43, 31, 48], [43, 31, 48], [43, 31, 48], [230, 190, 40], [230, 190, 40]));
+    const hue = hueOf(palette.ground);
+    expect(hue, `ground ${palette.ground}`).toBeGreaterThan(30);
+    expect(hue, `ground ${palette.ground}`).toBeLessThan(65);
+    // The accent is still the sleeve's yellow.
+    expect(hueOf(palette.accent), `accent ${palette.accent}`).toBeGreaterThan(30);
+    expect(hueOf(palette.accent), `accent ${palette.accent}`).toBeLessThan(65);
+    expectReadable(palette);
+  });
+
+  it('a sleeve whose largest patch already shares its vivid hue keeps that patch\'s hue', () => {
+    const palette = paletteFromPixels(sleeve([20, 26, 46], [20, 26, 46], [20, 26, 46], [60, 90, 200]));
+    const hue = hueOf(palette.ground);
+    expect(hue, `ground ${palette.ground}`).toBeGreaterThan(200);
+    expect(hue, `ground ${palette.ground}`).toBeLessThan(240);
+  });
+});
 
 describe('palette contrast', () => {
   it('measures contrast and compositing like the browser', () => {
@@ -52,5 +81,24 @@ describe('palette contrast', () => {
 
   it('meets the same rules with the neutral palette used before any art loads', () => {
     expectReadable(neutral);
+  });
+});
+
+describe('a server\'s stock picture of an artist', () => {
+  const pixels = (colours: [number, number, number][]) => colours.flatMap(([r, g, b]) => [r, g, b, 255]);
+  const fill = (count: number, colour: [number, number, number]) => Array.from({ length: count }, () => colour);
+  it('is a grey figure on flat grey: no colour, two tones', () => {
+    expect(isStandIn(pixels([...fill(800, [222, 222, 222]), ...fill(200, [196, 196, 196]), ...fill(24, [209, 209, 209])]))).toBe(true);
+  });
+  it('is not a black-and-white photograph, whose greys run the whole range', () => {
+    expect(isStandIn(pixels(Array.from({ length: 1024 }, (_, i) => { const v = (i * 37) % 256; return [v, v, v] as [number, number, number]; })))).toBe(false);
+  });
+  it('is not a black-and-white logo, whose two tones are far apart, nor a dark two-tone picture', () => {
+    expect(isStandIn(pixels([...fill(700, [255, 255, 255]), ...fill(324, [0, 0, 0])]))).toBe(false);
+    expect(isStandIn(pixels([...fill(700, [40, 40, 40]), ...fill(324, [70, 70, 70])]))).toBe(false);
+  });
+  it('is not a flat picture in colour, nor an empty one', () => {
+    expect(isStandIn(pixels([...fill(900, [230, 60, 60]), ...fill(124, [200, 40, 40])]))).toBe(false);
+    expect(isStandIn([])).toBe(false);
   });
 });

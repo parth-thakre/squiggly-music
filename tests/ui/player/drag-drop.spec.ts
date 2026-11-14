@@ -223,6 +223,8 @@ test.describe('drag and drop', () => {
   test('a drop onto a queued song goes before that song, even if the queue changed while the record loaded', async ({ app, fake, page }) => {
     await app.play('Test Pressing', 'Long Run');
     await app.section('Records').click();
+    // The record page shows Ada Brass's other records too: start from Records, once it's there.
+    await expect(app.heading).toHaveText('Records');
     await dragStart(sleeve(app, 'Hollow Pines'));
     await dragOver(queueButton(app));
     await expect(app.heading).toHaveText('Queue');

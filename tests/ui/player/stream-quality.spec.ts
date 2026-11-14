@@ -19,7 +19,7 @@ test('a lower streaming quality is saved, and the deck says when a song streams 
   // The host says the playing song streams as a 128 kbps MP3; the original's format still shows.
   await page.evaluate(value => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(value),
     { queue: [song], entryIds: ['e.1'], currentIndex: 0, duration: 360, playId: 'p.1', playing: true, position: 10, streamKbps: 128, audio: { buffering: false } });
-  await expect(page.locator('.deck .signal')).toContainText('Streaming a 128 kbps MP3 of it, as set in Settings.');
+  await expect(page.locator('.deck .signal')).toContainText('Streaming a 128 kbps MP3.');
   // Back to the original: nothing more to say about it.
   await page.evaluate(value => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(value), { streamKbps: null });
   await expect(page.locator('.deck .signal')).not.toContainText('kbps MP3');

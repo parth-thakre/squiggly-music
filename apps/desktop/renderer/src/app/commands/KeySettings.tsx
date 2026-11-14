@@ -26,7 +26,7 @@ export function KeySettings() {
     <h2 id="keys">Keys</h2>
     <p className="note">
       {palette ? <>Press <kbd>{palette.join(' then ')}</kbd> to find any command. </> : null}
-      {fileBacked ? 'Change keys in keybindings.json, in the config folder. Saved changes apply at once.' : 'Your keys are kept in this browser.'}
+      {fileBacked && 'Change them in keybindings.json.'}
     </p>
     {fileBacked && <div className="actions settings-actions">
       <button type="button" className="text-button" onClick={async () => setOpened(await openConfigFolder())}>Open the config folder</button>
@@ -78,7 +78,7 @@ function BrowserBindings({ text }: { text: string }) {
       <button type="button" className="text-button quiet" onClick={() => { setDraft('[]'); setMessage(saveBrowserBindings('') ?? 'Back to the default keys.'); }}>Use the default keys</button>
     </div>
     {message && <p className="note" role="status">{message}</p>}
-    <p className="note hint">A list of entries like <code>{'{ "key": "ctrl+k", "command": "builtin:palette" }'}</code>. Put “-” before a command to remove its key. A chord is two keys with a space between, such as “g r”. For example:</p>
+    <p className="note hint">“-” before a command removes its key. A chord is two keys with a space, like “g r”.</p>
     <pre className="key-example">{EXAMPLE}</pre>
   </div>;
 }

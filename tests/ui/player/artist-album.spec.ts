@@ -122,7 +122,7 @@ test.describe('artist and record pages', () => {
     await expect(app.row('Night Two 1')).toHaveCount(0);
     const title = 'Live at the Royal Albert Hall, London, 1971';
     const second = app.main.getByRole('heading', { level: 2, name: title });
-    await app.main.evaluate(main => main.scrollBy(0, 100 * 44));
+    await app.main.evaluate(main => main.scrollBy(0, 100 * parseFloat(getComputedStyle(main.querySelector('ol.tracks li:not(.group-head)')!).height)));
     await expect(second).toBeVisible();
 
     // Selection runs across the heading.

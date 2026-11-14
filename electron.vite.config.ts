@@ -42,7 +42,9 @@ function diagnosticsDefines() {
 export default defineConfig({
   main: {
     define: diagnosticsDefines(),
-    plugins: [externalizeDepsPlugin(), moduleTypeMarker],
+    // Effect is bundled: loaded from node_modules, its index pulls in every module it has, about
+    // 140 ms before the window can open. Bundled, only what main uses is there.
+    plugins: [externalizeDepsPlugin({ exclude: ['effect'] }), moduleTypeMarker],
     build: { rollupOptions: { input: {
       index: resolve('apps/desktop/main/index.ts'),
       player: resolve('packages/player-mpv/host.ts'),
