@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, onLibraryReset } from './library';
-import { neutral, paletteFromImage, standInFromImage, type Palette } from './palette';
+import { neutral, paletteFromImage, standInOf, type Palette } from './palette';
 
 // The palette before any art loads; it lives with the contrast rules it is tested against.
 export { neutral };
@@ -40,37 +40,32 @@ export function Wave({ playing }: { playing: boolean }) {
 }
 
 // Covers are requested near their displayed size; the library never loads full-size art for thumbnails.
-// Whether the server's picture of an artist is its stock one (palette.ts), looked at once per
-// picture. Until it's known, and if it can't be read, the picture counts as real.
-const standIns = new Map<string, Promise<boolean>>();
+// Whether the server's picture of an artist is its stock one (palette.ts), read from the picture
+// once the page has loaded it, so a long list fetches nothing it isn't showing. Until it's known,
+// and if it can't be read, the picture counts as real.
+const standIns = new Map<string, boolean>();
 onLibraryReset(() => standIns.clear());
-function useStandIn(id: string | null | undefined, size: number): boolean {
-  const [plain, setPlain] = useState(false);
-  useEffect(() => {
-    setPlain(false);
-    if (!id) return;
-    let live = true;
-    let entry = standIns.get(id);
-    if (!entry) {
-      entry = standInFromImage(api.coverUrl(id, size)).catch(() => false);
-      standIns.set(id, entry);
-      if (standIns.size > 400) standIns.delete(standIns.keys().next().value!);
-    }
-    void entry.then(value => { if (live) setPlain(value); });
-    return () => { live = false; };
-  }, [id, size]);
-  return plain;
-}
 
 // `portrait`: an artist's picture. The server's stock picture gives way to the artist's initial,
 // so every artist without a picture looks the same.
 export function Cover({ id, name, size, className, portrait = false }: { id: string | null | undefined; name: string; size: number; className?: string; portrait?: boolean }) {
   const [failed, setFailed] = useState(false);
-  useEffect(() => setFailed(false), [id]);
-  const plain = useStandIn(portrait ? id : null, size);
+  const known = portrait && !!id && standIns.get(id) === true;
+  const [plain, setPlain] = useState(known);
+  useEffect(() => { setFailed(false); setPlain(known); }, [id, known]);
   const classes = `cover${className ? ` ${className}` : ''}`;
   if (!id || failed || plain) return <div className={`${classes} cover-type${size <= 160 ? ' initial' : ''}`} role="img" aria-label={`${name}, no cover art`}><span>{size <= 160 ? Array.from(name.trim())[0]?.toUpperCase() : splitTitle(name).main}</span></div>;
-  return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  if (!portrait) return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
+  return <img className={classes} crossOrigin="anonymous" src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)}
+    onLoad={event => {
+      let stock = standIns.get(id);
+      if (stock === undefined) {
+        stock = standInOf(event.currentTarget);
+        standIns.set(id, stock);
+        if (standIns.size > 400) standIns.delete(standIns.keys().next().value!);
+      }
+      if (stock) setPlain(true);
+    }} />;
 }
 
 // Palettes are keyed by cover art id, which only means something on one server.

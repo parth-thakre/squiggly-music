@@ -93,6 +93,10 @@ describe('a server\'s stock picture of an artist', () => {
   it('is not a black-and-white photograph, whose greys run the whole range', () => {
     expect(isStandIn(pixels(Array.from({ length: 1024 }, (_, i) => { const v = (i * 37) % 256; return [v, v, v] as [number, number, number]; })))).toBe(false);
   });
+  it('is not a black-and-white logo, whose two tones are far apart, nor a dark two-tone picture', () => {
+    expect(isStandIn(pixels([...fill(700, [255, 255, 255]), ...fill(324, [0, 0, 0])]))).toBe(false);
+    expect(isStandIn(pixels([...fill(700, [40, 40, 40]), ...fill(324, [70, 70, 70])]))).toBe(false);
+  });
   it('is not a flat picture in colour, nor an empty one', () => {
     expect(isStandIn(pixels([...fill(900, [230, 60, 60]), ...fill(124, [200, 40, 40])]))).toBe(false);
     expect(isStandIn([])).toBe(false);

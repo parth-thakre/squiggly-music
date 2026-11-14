@@ -136,8 +136,9 @@ export function ensureContrast(color: string, grounds: string[], minimum: number
   return readable(hslOf(color), grounds, minimum, dark);
 }
 
-// A server with no picture of an artist hands out a stock one: a grey figure on flat grey. Told
-// apart from a photograph (a black-and-white one too) by having no colour and only two tones.
+// A server with no picture of an artist hands out a stock one: a pale grey figure on flat pale
+// grey. Told apart from a photograph (a black-and-white one too) by having no colour and only two
+// tones, and from a black-and-white logo by those two tones being light and close together.
 export function isStandIn(pixels: Uint8ClampedArray | readonly number[]): boolean {
   const tones = new Map<number, number>();
   let count = 0, grey = 0;
@@ -150,19 +151,21 @@ export function isStandIn(pixels: Uint8ClampedArray | readonly number[]): boolea
     tones.set(tone, (tones.get(tone) ?? 0) + 1);
   }
   if (!count || grey / count < .97) return false;
-  const [first = 0, second = 0] = [...tones.values()].sort((a, b) => b - a);
-  return (first + second) / count >= .85;
+  const [[tone, first], [other, second] = [-1, 0]] = [...tones].sort((a, b) => b[1] - a[1]);
+  if ((first + second) / count < .85) return false;
+  // Tones are steps of 24 in 255: both from mid grey up, and no more than two steps apart.
+  return tone >= 5 && (second === 0 || (other >= 5 && Math.abs(tone - other) <= 2));
 }
-export async function standInFromImage(url: string): Promise<boolean> {
-  const image = new Image();
-  image.crossOrigin = 'anonymous';
-  image.src = url;
-  await image.decode();
+// Reads a picture the page has already loaded (with crossOrigin set), so nothing is fetched for it.
+export function standInOf(image: HTMLImageElement): boolean {
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 32;
-  const context = canvas.getContext('2d', { willReadFrequently: true })!;
-  context.drawImage(image, 0, 0, 32, 32);
-  return isStandIn(context.getImageData(0, 0, 32, 32).data);
+  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (!context) return false;
+  try {
+    context.drawImage(image, 0, 0, 32, 32);
+    return isStandIn(context.getImageData(0, 0, 32, 32).data);
+  } catch { return false; }
 }
 
 export async function paletteFromImage(url: string): Promise<Palette> {

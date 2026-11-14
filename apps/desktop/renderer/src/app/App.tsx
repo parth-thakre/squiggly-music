@@ -56,7 +56,7 @@ export function App() {
   // The room takes the colour of the record that is playing, unless the theme fixes its colours.
   const palette = useRoomPalette(usePlayer(s => current(s)?.coverArt ?? null));
   // At the deck's size (see Deck).
-  useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), 600);
+  useNextCover(usePlayer(s => s.queue[following(s.index, s.queue.length, s.repeat, 'skip')]?.coverArt ?? null), 600);
   useCommandKeys();
   useFileDrops();
   useEffect(startWarming, []);
