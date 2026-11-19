@@ -614,7 +614,8 @@ const MOST_PLAYED_RECORDS = 50;
 // a compilation they guest on is one of their records): credited to them by id (artistId or one of
 // artists[]), or on their own record (albumArtist, their name). By the name it's credited to only
 // when it has no ids. "Queen & David Bowie" on a Queen record is Queen's; another performer's
-// song on a compilation Queen is on isn't. Most played and All songs (every order) both use it.
+// song on a compilation Queen is on isn't. Most played, All songs (every order) and the page's
+// Play and Shuffle all use it.
 function creditsArtist(track: Track, artist: Pick<Artist, 'id' | 'name'>) {
   const name = artist.name.toLocaleLowerCase();
   if (track.artistId === artist.id || track.artists?.some(a => a.id === artist.id)) return true;
@@ -655,8 +656,10 @@ export function ArtistPage({ id }: { id: string }) {
     const tracks = await tracksOf({ kind: 'artist', artist });
     setBusy(false);
     if (!tracks.ok) { setProblem(tracks.error); return; }
-    if (!tracks.value.length) { setProblem(`There are no songs by ${artist.name} on this server.`); return; }
-    await player.play(shuffle ? shuffled(tracks.value) : tracks.value, 0);
+    // The songs All songs lists: not another performer's on a compilation of theirs.
+    const theirs = tracks.value.filter(t => creditsArtist(t, artist));
+    if (!theirs.length) { setProblem(`There are no songs by ${artist.name} on this server.`); return; }
+    await player.play(shuffle ? shuffled(theirs) : theirs, 0);
     showNowPlaying();
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => {

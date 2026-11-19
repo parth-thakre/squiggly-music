@@ -214,6 +214,15 @@ test.describe('editorial pages', () => {
     await expect(songs).toContainText('Short Stop');
     await expect(songs).not.toContainText('Second Wind 7');
     await expect(songs).not.toContainText('Second Wind 13');
+    // Their records hold 121 songs; two are strangers'. The artist's Play queues the songs All
+    // songs lists, and no others.
+    await expect(app.main.locator('.tracks-artist .facts')).toHaveText(/^119 songs, /);
+    await app.main.locator('.tracks-artist').getByRole('button', { name: 'Ada Brass', exact: true }).click();
+    await expect(app.heading).toHaveText('Ada Brass');
+    await app.main.locator('.artist-head').getByRole('button', { name: 'Play', exact: true }).click();
+    // Play opens the queue.
+    await expect(app.heading).toHaveText('Queue');
+    await expect(app.main.getByText('118 songs to come')).toBeVisible();
   });
 
   test('liner notes count every song in its file group, and number a two-disc record\'s songs by disc', async ({ app, page }) => {
