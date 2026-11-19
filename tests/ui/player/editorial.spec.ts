@@ -160,11 +160,13 @@ test.describe('editorial pages', () => {
     await expect(app.heading).toHaveText('Quiet Harbor');
   });
 
-  test('a queue heading names the record\'s artist when its songs agree on one, though some don\'t say', async ({ app, page }) => {
+  // Quiet Harbor's two songs queued after Long Run, as the server answers them with `change`
+  // applied; the queue's heading for them, under it.
+  async function headingFor(app: import('../fixtures/test').App, page: import('@playwright/test').Page, change: Record<string, Record<string, unknown>>) {
     await page.route('**/api/album', async route => {
       const response = await route.fetch();
       const result = await response.json() as { ok: boolean; value?: { tracks: Record<string, unknown>[] } };
-      if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t => t.id === 'tr-2-1' ? { ...t, albumArtist: 'Harbor Players' } : t);
+      if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t => ({ ...t, ...change[t.id as string] }));
       await route.fulfill({ response, json: result });
     });
     await app.play('Test Pressing', 'Long Run');
@@ -174,7 +176,20 @@ test.describe('editorial pages', () => {
     await app.openQueue();
     const records = app.main.locator('ol.tracks > li.group-record');
     await expect(records.locator('.queue-record-name')).toHaveText('Quiet Harbor');
-    await expect(records.locator('.queue-record-by')).toHaveText(/^Harbor Players, 2 songs, /);
+    return records.locator('.queue-record-by');
+  }
+  test('a queue heading names the record\'s artist when its songs agree on one, though some don\'t say', async ({ app, page }) => {
+    // Only the second song says, so the first one's silence isn't taken as the answer.
+    const by = await headingFor(app, page, { 'tr-2-2': { albumArtist: 'Harbor Players' } });
+    await expect(by).toHaveText(/^Harbor Players, 2 songs, /);
+  });
+  test('a queue heading whose songs name different record artists names the performer they share', async ({ app, page }) => {
+    // Neither record artist is the run's, but both songs are Bell Tower's alone.
+    const by = await headingFor(app, page, {
+      'tr-2-1': { albumArtist: 'Harbor Players' },
+      'tr-2-2': { albumArtist: 'Pier Players', artist: 'Bell Tower', artists: undefined },
+    });
+    await expect(by).toHaveText(/^Bell Tower, 2 songs, /);
   });
 
   test('an artist\'s Most played and All songs count only songs that credit them, not everyone on their records', async ({ app, page }) => {
