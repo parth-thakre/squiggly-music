@@ -9,7 +9,7 @@ import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
 import { nav } from './route';
-import { RatingStars } from './ratings';
+import { RatingStars, ratingOf, useRatingsVersion } from './ratings';
 import { useActiveTheme } from './theme';
 import { Cover, Glyph, plural, splitTitle, time, useWide, Wave } from './ui';
 import { isKept, keptSupported, useKeptVersion } from './keptState';
@@ -291,6 +291,17 @@ export function TrackTable({
   </>;
 }
 
+// A row's rating: the stars while the row is pointed at, selected, or focused, else a compact
+// figure. Both follow a rating set anywhere (the deck, a menu), not only the one the list loaded.
+function RowRating({ track }: { track: Track }) {
+  useRatingsVersion();
+  const rating = ratingOf(track.id, track.userRating);
+  return <span className={`row-rating${rating ? ' rated' : ''}`}>
+    {!!rating && <span className="rating-compact" title={plural(rating, 'star')} aria-hidden="true">{rating}<Glyph kind="starred" /></span>}
+    <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />
+  </span>;
+}
+
 interface RowHandlers {
   click(event: ReactMouseEvent, index: number, isNow: boolean): void;
   rowTap(event: ReactMouseEvent, index: number, isNow: boolean): void;
@@ -364,10 +375,7 @@ const TrackRow = memo(function TrackRow({
       </span>
     </span>
     <span className="song-meta">
-      {wide && track.source === 'navidrome' && !away && <span className={`row-rating${track.userRating ? ' rated' : ''}`}>
-        {!!track.userRating && <span className="rating-compact" title={plural(track.userRating, 'star')} aria-hidden="true">{track.userRating}<Glyph kind="starred" /></span>}
-        <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />
-      </span>}
+      {wide && track.source === 'navidrome' && !away && <RowRating track={track} />}
       {isStation(track) || away ? null : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
         aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
         onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'hearted' : 'heart'} /></button>}
