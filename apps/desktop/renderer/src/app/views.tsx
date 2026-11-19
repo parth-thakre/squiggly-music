@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import type { RadioStation } from '../../../../../packages/core/contracts';
-import { stationTrack } from '../../../../../packages/core/stations';
+import { isStation, stationTrack } from '../../../../../packages/core/stations';
 import { sinkSentence } from '../../../../../packages/core/sinks';
 import { addedRuns } from '../../../../../packages/core/autoplay';
 import { api, load, onInvalidate, onLibraryReset, playlistEditor, useKept, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
@@ -189,6 +189,8 @@ const sorts: readonly OrderOption<TrackSort>[] = [
   { value: 'highest', label: 'Top rated', triggerLabel: 'top rated' },
 ];
 const trackSorts: readonly OrderOption<TrackSort>[] = sorts.map(s => ({ value: s.value, label: s.label }));
+// A records route can carry any album list (an old link may say 'starred'); the menu only offers sorts.
+const isSort = (value: AlbumListType): value is TrackSort => sorts.some(s => s.value === value);
 function pickSort(list: 'records' | 'tracks', currentType: AlbumListType, next: TrackSort) {
   if (next === 'random' && currentType !== 'random') paged.delete(`${list}:random`);
   if (next === 'highest' && currentType !== 'highest') paged.delete(`${list}:highest`);
@@ -203,6 +205,7 @@ export function Records() {
   const route = useRoute();
   const decade = route.view === 'records' ? decadeOf(route.decade) : null;
   const sort = route.view === 'records' && route.sort ? route.sort : 'newest';
+  const orderValue: TrackSort = isSort(sort) ? sort : 'newest';
   const type = decade !== null ? 'byYear' : sort;
   const list = decade !== null ? `byYear:${decade}` : type;
   const albums = usePaged<Album>(`records:${list}`, PAGE, (offset, seed) =>
@@ -226,7 +229,7 @@ export function Records() {
   return <div className="records-page">
     <p className="facts crate-line">
       {albums.items.length > 0 && <>{plural(albums.items.length, 'record')}{albums.done ? '' : '+'},{' '}</>}
-      <OrderMenu value={sort} options={sorts} onSelect={next => pickSort('records', type, next)} ariaLabel="Order" className="crate-order-menu" />
+      <OrderMenu value={orderValue} options={sorts} onSelect={next => pickSort('records', type, next)} ariaLabel="Order" className="crate-order-menu" />
       <Decades sort={route.view === 'records' ? route.sort : undefined} decade={decade} />
     </p>
     {albums.items.length ? (yearGroups ? <div className="crate">
