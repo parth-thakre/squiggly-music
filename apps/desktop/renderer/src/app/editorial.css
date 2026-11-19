@@ -497,8 +497,7 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
 .disc-name { display: block; font: var(--display-weight) var(--t-subhead)/1.18 var(--font-display); letter-spacing: -0.005em; text-wrap: balance; }
 .disc-tail { display: block; margin-top: 3px; color: var(--soft); font: 400 var(--t-small)/1.2 var(--font-body); }
 .disc-facts { display: block; margin-top: 4px; color: var(--soft); font-size: var(--t-small); line-height: 1.35; font-variant-numeric: tabular-nums; }
-.disc > .play-over.small { position: absolute; left: 22px; top: 22px; margin: 0; }
-.artist-page .bio { margin-top: 32px; }
+.disc-entry > .play-over.small { position: absolute; left: 22px; top: 22px; margin: 0; }
 
 /* ---------- Queue page ---------- */
 .queue-now { margin-top: 6px; padding-left: 36px; }

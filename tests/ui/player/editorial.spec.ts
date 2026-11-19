@@ -29,6 +29,35 @@ test.describe('editorial pages', () => {
     await expect(app.main.getByRole('region', { name: 'Records', exact: true })).toBeVisible();
   });
 
+  test('an artist\'s Most played ranks their songs by how often they were played, and opens All songs in that order', async ({ app, page }) => {
+    // The server's play counts for three of Ada Brass's songs; the rest were never played.
+    const plays: Record<string, number> = { 'tr-1-2': 9, 'tr-1-4': 3, 'tr-1-1': 3 };
+    await page.route('**/api/album', async route => {
+      const response = await route.fetch();
+      const result = await response.json() as { ok: boolean; value?: { tracks: { id: string }[] } };
+      if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t => plays[t.id] ? { ...t, playCount: plays[t.id] } : t);
+      await route.fulfill({ response, json: result });
+    });
+    await app.section('Artists').click();
+    await app.main.getByRole('button', { name: /^Ada Brass/ }).first().click();
+    await expect(app.heading).toHaveText('Ada Brass');
+    const most = app.main.getByRole('region', { name: 'Most played' });
+    // Most first, a tie by name, and only songs played at all.
+    await expect.poll(() => app.titles(most)).toEqual(['Lyric Line', 'Long Run', 'Thirty Two']);
+    await expect(app.row('Lyric Line', most)).toContainText('9 plays');
+    await most.getByRole('button', { name: 'Most played', exact: true }).click();
+    await expect(app.heading).toHaveText('Ada Brass');
+    await app.expectOrder('Most played');
+    expect((await app.titles()).slice(0, 3)).toEqual(['Lyric Line', 'Long Run', 'Thirty Two']);
+    // An artist none of whose songs were played has no Most played.
+    await page.goBack();
+    await app.section('Artists').click();
+    await app.main.getByRole('button', { name: /^Bell Tower/ }).first().click();
+    await expect(app.heading).toHaveText('Bell Tower');
+    await expect(app.main.getByRole('region', { name: 'Records', exact: true })).toBeVisible();
+    await expect(app.main.locator('.artist-top')).toHaveCount(0);
+  });
+
   test('the order menu opens on the order in use, and the keyboard picks another', async ({ app, page }) => {
     const trigger = app.order;
     await app.expectOrder('newest first');

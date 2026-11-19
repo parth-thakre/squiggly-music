@@ -1,7 +1,7 @@
 import { expect, test, trackOf, type App } from '../fixtures/test';
 
-// An artist's biography and similar artists (from the server's agents, shown only when there are
-// some), and a record on more than one disc, grouped by disc in one song list.
+// An artist's similar artists (from the server's agents, shown only when there are some, and no
+// biography), and a record on more than one disc, grouped by disc in one song list.
 async function openArtist(app: App, name: string) {
   await app.section('Artists').click();
   await expect(app.heading).toHaveText('Artists');
@@ -12,24 +12,19 @@ async function openArtist(app: App, name: string) {
 test.describe('artist and record pages', () => {
   test.beforeEach(async ({ app }) => { await app.signIn(); });
 
-  test('an artist\'s biography is plain text, a few sentences first, with similar artists to follow', async ({ app, page }) => {
+  test('an artist\'s page leaves their biography out, and similar artists follow their records', async ({ app, page }) => {
     await openArtist(app, 'Ada Brass');
-    const bio = app.main.getByRole('region', { name: 'About' });
-    await expect(bio).toHaveText('Ada Brass is a brass quartet from the coast. They formed in 2009 & toured every harbour town. Their records are slow and warm. More');
-    // The server's HTML never reaches the page: no bold, no link to Last.fm.
-    await expect(bio.locator('b, a')).toHaveCount(0);
-    await expect(bio).not.toContainText('Read more on Last.fm');
-    await bio.getByRole('button', { name: 'More' }).click();
-    await expect(bio).toContainText('Critics compare them to foghorns. They still rehearse in a boathouse.');
-    await expect(bio.getByRole('button', { name: 'Less' })).toHaveAttribute('aria-expanded', 'true');
+    // The server has a biography of Ada Brass; the page is about the records, so it isn't shown.
+    await expect(app.main.getByRole('region', { name: 'Records', exact: true })).toBeVisible();
+    await expect(app.main.getByRole('region', { name: 'About' })).toHaveCount(0);
+    await expect(app.main).not.toContainText('brass quartet');
 
     const similar = app.main.getByRole('region', { name: 'Similar artists' });
     await expect(similar.getByRole('button')).toHaveText(['Bell Tower']);
     await similar.getByRole('button', { name: 'Bell Tower' }).click();
     await expect(app.heading).toHaveText('Bell Tower');
-    // Nothing known about Bell Tower: no biography, no similar artists, no placeholders.
-    await expect(app.main.getByRole('region', { name: 'Records' })).toBeVisible();
-    await expect(app.main.getByRole('region', { name: 'About' })).toHaveCount(0);
+    // Nothing known about Bell Tower: no similar artists, no placeholders.
+    await expect(app.main.getByRole('region', { name: 'Records', exact: true })).toBeVisible();
     await expect(app.main.getByRole('heading', { name: 'Similar artists' })).toHaveCount(0);
     await page.goBack();
     await expect(app.heading).toHaveText('Ada Brass');
@@ -72,14 +67,6 @@ test.describe('artist and record pages', () => {
     const card = app.main.locator('ul.grid > li').filter({ hasText: 'Amber Field' });
     await card.locator('.grid-sub').getByRole('button', { name: 'Cinder Lane' }).click();
     await expect(app.heading).toHaveText('Cinder Lane');
-  });
-
-  test('a biography of broken HTML shows as text, with no tag left in it', async ({ app }) => {
-    await openArtist(app, 'Cinder Lane');
-    const bio = app.main.getByRole('region', { name: 'About' });
-    await expect(bio).toHaveText('Cinder Lane began as a duo in a alert(1) garage. They sing about weather & tides.');
-    expect(await bio.textContent()).not.toContain('<');
-    await expect(bio.locator('b, i, a, script')).toHaveCount(0);
   });
 
   test('a record on two discs has a heading per disc, one numbering per disc, and one list', async ({ app, page }) => {

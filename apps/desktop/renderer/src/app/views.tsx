@@ -35,7 +35,6 @@ import { exportM3u } from './exports';
 import { SharesSettings } from './share';
 import { ContainerMark, KeepButton, KeptSection, KeptSettings } from './kept';
 import { keptSupported } from './keptState';
-import { TOP_SONGS } from './warm';
 
 // Tag the touched sleeve so it travels to the page it opens (see transition() in route.ts).
 const travel = (id: string, target: EventTarget) => {
@@ -586,18 +585,24 @@ function ArtistIndex({ artists }: { artists: Artist[] }) {
   </>;
 }
 
-// An artist's page asks for three things, which reaching for a link to it asks for early (warm.ts).
-// Whether any artist has had popular songs this run: a server whose agents find none (no Last.fm,
-// say) never has, and its pages don't keep room for them.
-let popularFound: boolean | null = null;
-// How long the rest of a page waits for the about and popular songs above its records, so they
-// don't push the records down when they arrive.
+// An artist's page asks for the artist and their similar artists, which reaching for a link to it
+// asks for early (warm.ts), then for their songs, whose own play counts rank Most played.
+// Whether any artist has had played songs this run: a library nothing has been played from
+// never has, and its pages don't keep room for them.
+let playedFound: boolean | null = null;
+// How long the rest of a page waits for the most played songs above its records, so they don't
+// push the records down when they arrive.
 const TOGETHER_MS = 700;
+const MOST_PLAYED = 6;
 export function ArtistPage({ id }: { id: string }) {
   const result = useKept(`artist:${id}`, from => from.artist(id));
-  const top = useKept(`top:${id}`, from => from.topSongs(id, TOP_SONGS));
   const info = useKept(`artistInfo:${id}`, from => from.artistInfo(id));
-  if (top?.ok) popularFound = popularFound || top.value.length > 0;
+  // The same songs All songs lists, under the same key; asked for once the artist's name is known.
+  const name = result?.ok ? result.value.artist.name : null;
+  const songs = useResource(name !== null ? `artistTracks:${id}` : null, () => tracksOf({ kind: 'artist', artist: { id, name: name ?? '' } }));
+  const mostPlayed = useMemo(() => !songs?.ok ? [] : songs.value.filter(t => (t.playCount ?? 0) > 0)
+    .sort((a, b) => b.playCount! - a.playCount! || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' })).slice(0, MOST_PLAYED), [songs]);
+  if (songs?.ok) playedFound = playedFound || mostPlayed.length > 0;
   const [waited, setWaited] = useState<string | null>(null);
   const arrived = !!result;
   useEffect(() => {
@@ -605,7 +610,7 @@ export function ArtistPage({ id }: { id: string }) {
     const timer = setTimeout(() => setWaited(id), TOGETHER_MS);
     return () => clearTimeout(timer);
   }, [arrived, id]);
-  const together = waited === id || (top !== undefined && info !== undefined);
+  const together = waited === id || songs !== undefined;
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const playAll = async (artist: Pick<Artist, 'id' | 'name'>, shuffle: boolean) => {
@@ -618,13 +623,13 @@ export function ArtistPage({ id }: { id: string }) {
     showNowPlaying();
   };
   return <Pending result={result} waiting="Finding their records">{({ artist, albums, appearsOn }) => {
-    const totalSongs = albums.reduce((sum, a) => sum + (a.songCount ?? 0), 0);
-    const totalSeconds = albums.reduce((sum, a) => sum + (a.duration ?? 0), 0);
+    // A total only when every record says its own; a partial sum would disagree with All songs.
+    const totalSongs = albums.every(a => a.songCount > 0) ? albums.reduce((sum, a) => sum + a.songCount, 0) : 0;
+    const totalSeconds = albums.every(a => (a.duration ?? 0) > 0) ? albums.reduce((sum, a) => sum + a.duration!, 0) : 0;
     const facts = albums.length || !appearsOn
       ? [plural(Math.max(artist.albumCount ?? 0, albums.length), 'record'), totalSongs > 0 ? plural(totalSongs, 'song') : null, totalSeconds > 0 ? length(totalSeconds) : null].filter(Boolean).join(', ')
       : `${plural(appearsOn.tracks.length, 'song')} on ${plural(appearsOn.albums.length, 'record')}`;
-    const openAllSongs = () => nav.go({ view: 'tracks', sort: 'alphabeticalByName', artistId: artist.id, artistName: artist.name });
-    const topShown = top?.ok ? top.value.slice(0, 6) : [];
+    const openAllSongs = (sort: 'alphabeticalByName' | 'frequent') => nav.go({ view: 'tracks', sort, artistId: artist.id, artistName: artist.name });
     return <div className="artist-page">
       <header className="head feature artist-head">
         <div className="head-text">
@@ -636,7 +641,7 @@ export function ArtistPage({ id }: { id: string }) {
             </button>
             <button type="button" className="text-button icon-action" title="Shuffle" disabled={busy} onClick={() => void playAll(artist, true)}><ShuffleIcon aria-hidden="true" /><span className="action-label">Shuffle</span></button>
             <button type="button" className="text-button icon-action labelled" title="Radio" onClick={() => player.radio({ kind: 'artist', id: artist.id, label: artist.name })}><RadioIcon aria-hidden="true" /><span className="action-label">Radio</span></button>
-            <button type="button" className="text-button icon-action labelled" onClick={openAllSongs}><List aria-hidden="true" /><span className="action-label">All songs</span></button>
+            <button type="button" className="text-button icon-action labelled" onClick={() => openAllSongs('alphabeticalByName')}><List aria-hidden="true" /><span className="action-label">All songs</span></button>
             <StarButton target="artist" id={artist.id} starred={artist.starred} name={artist.name} />
             <MoreButton target={{ kind: 'artist', artist }} />
           </div>
@@ -644,21 +649,20 @@ export function ArtistPage({ id }: { id: string }) {
         </div>
       </header>
       {!together ? <p className="status loading">Finding their songs</p> : <>
-        {topShown.length > 0 && <section className="artist-top" aria-labelledby="artist-most-played">
+        {mostPlayed.length > 0 && <section className="artist-top" aria-labelledby="artist-most-played">
           <div className="heading">
-            <h2 id="artist-most-played"><button type="button" className="heading-link" onClick={openAllSongs}>Most played</button></h2>
+            <h2 id="artist-most-played"><button type="button" className="heading-link" onClick={() => openAllSongs('frequent')}>Most played</button></h2>
           </div>
-          <TrackTable tracks={topShown} albumArtist={artist.name} leadingCover columns={2}
+          <TrackTable tracks={mostPlayed} albumArtist={artist.name} leadingCover columns={2}
             noteOf={t => t.playCount ? plural(t.playCount, 'play') : null} />
         </section>}
-        {top === undefined && popularFound !== false && <section className="artist-top" aria-busy="true"><h2>Most played</h2>
-          <p className="status loading popular-waiting">Finding their popular songs</p></section>}
+        {songs === undefined && playedFound !== false && <section className="artist-top" aria-busy="true"><h2>Most played</h2>
+          <p className="status loading popular-waiting">Counting what you play of theirs</p></section>}
         {albums.length > 0 && <>
           <SquiggleRule seed={`${artist.name} records`} className="artist-break" />
           <ArtistDiscography albums={albums} />
         </>}
         {appearsOn && <section className="shelf-section"><h2>Appears on</h2><AlbumGrid albums={appearsOn.albums} cols={5} /></section>}
-        {info?.ok && info.value.biography && <Biography text={info.value.biography} />}
         {info?.ok && info.value.similar.length > 0 && <SimilarArtists artists={info.value.similar} />}
       </>}
     </div>;
@@ -1372,34 +1376,9 @@ export function DiagnosticsView() {
   </>;
 }
 
-// Artist bios and similar artists ---------------------------------------------------------
-// What the server's agents (Last.fm, Spotify) know. Nothing shows when they know nothing.
-
-// The first few sentences, and the rest behind More. The text is plain (client.ts strips the
-// server's HTML), and it is rendered as text.
-const BIO_SENTENCES = 3, BIO_LENGTH = 420;
-function bioSummary(text: string): string {
-  const sentences = text.match(/[^.!?]+(?:[.!?]+["'”’)\]]*|$)\s*/g) ?? [text];
-  let summary = '';
-  for (const sentence of sentences.slice(0, BIO_SENTENCES)) {
-    if (summary && summary.length + sentence.length > BIO_LENGTH) break;
-    summary += sentence;
-  }
-  summary = summary.trim();
-  // One long sentence: cut at a word.
-  if (summary.length > BIO_LENGTH) summary = `${summary.slice(0, BIO_LENGTH).replace(/\s+\S*$/, '')}…`;
-  return summary;
-}
-function Biography({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  const summary = useMemo(() => bioSummary(text), [text]);
-  const more = summary !== text;
-  return <section className="bio" aria-label="About">
-    <p>{open || !more ? text : summary}{more && <>
-      {' '}<button type="button" className="link" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? 'Less' : 'More'}</button>
-    </>}</p>
-  </section>;
-}
+// Similar artists ---------------------------------------------------------------------------
+// What the server's agents (Last.fm, Spotify) know. Nothing shows when they know nothing. An
+// artist's biography is left out: the page is about their records.
 function SimilarArtists({ artists }: { artists: ArtistInfo['similar'] }) {
   return <section className="shelf-section" aria-labelledby="similar-artists">
     <h2 id="similar-artists">Similar artists</h2>
