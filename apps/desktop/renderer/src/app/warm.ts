@@ -4,10 +4,8 @@ import { loadKept } from './library';
 // it opens shows, so by the click the page usually opens whole. Links say what they open with
 // data-warm: "artist:<id>" or "album:<id>". The requests are the pages' own, under the same keys.
 
-export const TOP_SONGS = 10;
 export function warmArtist(id: string) {
   void loadKept(`artist:${id}`, from => from.artist(id));
-  void loadKept(`top:${id}`, from => from.topSongs(id, TOP_SONGS));
   void loadKept(`artistInfo:${id}`, from => from.artistInfo(id));
 }
 export const warmAlbum = (id: string) => void loadKept(`album:${id}`, from => from.album(id));

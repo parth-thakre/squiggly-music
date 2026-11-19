@@ -32,8 +32,8 @@ test.describe('autoplay', () => {
     await expect.poll(() => app.titles()).toEqual([...record, ...similar.slice(0, 10)]);
     expect(fake.callsTo('similarSongs').map(call => call.args)).toEqual([[special.tailLight, 30]]);
     await expect(app.main.getByRole('heading', { name: 'Added by autoplay' })).toHaveCount(1);
-    await expect(app.main.getByText('10 songs up next')).toBeVisible();
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.main.getByText('10 songs to come')).toBeVisible();
+    await expect(app.upNext).toContainText(similar[0]);
     await expect(app.tracks().nth(4)).toHaveClass(/\bnow\b/);
 
     // Turned off in Settings: the songs it added stay, marked, and nothing more comes.
@@ -64,7 +64,7 @@ test.describe('autoplay', () => {
     await app.deck.getByRole('button', { name: 'Test Pressing', exact: true }).click();
     await expect(app.heading).toHaveText('Test Pressing');
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
-    await expect(app.deck.getByText('Next:')).toBeVisible();
+    await expect(app.upNext).toBeVisible();
     expect(fake.callsTo('randomSongs').at(-1)?.args).toEqual([{ size: 30, genre: 'Folk' }]);
     await app.openQueue();
     await expect.poll(() => app.titles()).toHaveLength(11);
@@ -118,7 +118,7 @@ test.describe('autoplay', () => {
     await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
     await app.deck.getByRole('button', { name: 'Previous', exact: true }).click();
     await asked[0].continue();
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.upNext).toContainText(similar[0]);
     await app.expectPlaying('Tail Light');
 
     // Next while it asks, then another song played: that song's answer, in first, moves nothing.
@@ -130,7 +130,7 @@ test.describe('autoplay', () => {
     await expect.poll(() => asked.length).toBe(3);
     await asked[2].continue();
     await asked[1].continue();
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.upNext).toContainText(similar[0]);
     await app.expectPlaying('Short Stop');
   });
 
@@ -149,7 +149,7 @@ test.describe('autoplay', () => {
     await page.keyboard.press('ArrowRight');
     await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(5);
     await asked[0].route.fulfill({ json: asked[0].json });
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.upNext).toContainText(similar[0]);
     await app.expectPlaying('Tail Light');
 
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
@@ -194,18 +194,66 @@ test('the desktop marks the entries its main process says autoplay added', async
   });
   await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
   const main = page.locator('main.page');
-  // The played song is folded away; Now playing heads the playing song; above the first song
-  // autoplay added (straight after it), its quiet heading in place of Up next; the song after
-  // them isn't marked.
+  // The played song is folded away and the playing one heads the page above the list; above the
+  // first song autoplay added (straight after it), its quiet heading; the song after them, queued
+  // by hand from another record, is set off from them by a bare rule, so it doesn't read as added.
   const rows = main.locator('ol.tracks > li');
-  await expect(rows).toHaveCount(7);
+  await expect(main.getByRole('heading', { level: 2, name: 'Tail Light' })).toBeVisible();
+  const order = () => rows.evaluateAll(lis => lis.map(li => li.classList.contains('rule') ? '—'
+    : li.classList.contains('group-head') ? `# ${li.textContent}` : li.querySelector('.title .name')?.textContent ?? ''));
+  await expect.poll(order).toEqual(['Long Run', 'Tail Light', '# Added by autoplay', 'Opening 2', 'Second Wind 2', '—', 'Lyric Line']);
   await expect(rows.nth(0)).toBeHidden();
-  await expect(rows.nth(1)).toHaveText('Now playing');
-  await expect(rows.nth(3)).toHaveClass(/\bgroup-head\b/);
-  await expect(rows.nth(3)).toHaveText('Added by autoplay');
+  await expect(rows.nth(1)).toBeHidden();
+  await expect(rows.nth(2)).toHaveClass(/\bquiet\b/);
+  await expect(rows.nth(5)).toHaveAttribute('aria-hidden', 'true');
   await expect(main.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
   // Shown again, the played song has its heading.
-  await main.getByRole('button', { name: 'Show 1 played song' }).click();
+  await main.getByRole('button', { name: 'Show played' }).click();
   await expect(rows.nth(0)).toHaveText('Played');
-  await expect(rows.nth(4)).toHaveText('Added by autoplay');
+  await expect(rows.nth(3)).toHaveText('Added by autoplay');
+});
+
+// The queue's rows as read: a bare rule, a heading (a record's by its name), or a song's title.
+const queueRows = (page: import('@playwright/test').Page) => page.locator('main.page ol.tracks > li').evaluateAll(lis => lis.map(li =>
+  li.classList.contains('rule') ? '—'
+  : li.classList.contains('group-record') ? `# ${li.querySelector('.queue-record-name')?.textContent}`
+  : li.classList.contains('group-head') ? `# ${li.textContent}` : li.querySelector('.title .name')?.textContent ?? ''));
+async function desktopQueue(page: import('@playwright/test').Page, queue: string[], added: string[], currentIndex = 0) {
+  await installDesktopBridge(page, { settings: { autoplay: true } });
+  await page.goto('/');
+  await page.evaluate(value => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(value), {
+    queue: queue.map(trackOf), entryIds: queue.map((_, i) => `e${i + 1}`), currentIndex, playId: 'p.1', playing: true, duration: 20,
+    autoplay: { added, missed: null },
+  });
+  await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
+  await expect(page.locator('main.page').getByRole('heading', { level: 2, name: trackOf(queue[currentIndex]).title })).toBeVisible();
+}
+
+test('a song queued by hand after autoplay\'s songs from its record is set off from them, not headed as one of them', async ({ page }) => {
+  // Autoplay added Opening 2, then two songs of Amber Field; Amber Field's third was queued by hand.
+  await desktopQueue(page, ['tr-1-1', 'tr-2-1', 'tr-3-1', 'tr-3-2', 'tr-3-3'], ['e2', 'e3', 'e4']);
+  await expect.poll(() => queueRows(page)).toEqual(['Long Run', '# Added by autoplay', 'Opening 2', '# Amber Field', 'Opening 3', 'Second Wind 3', '—', 'Middle Distance 3']);
+  await expect(page.locator('main.page .queue-record-by')).toHaveText(/^Cinder Lane, 2 songs, /);
+});
+
+test('playing the last song autoplay added, the song queued by hand after it is still set off', async ({ page }) => {
+  await desktopQueue(page, ['tr-1-1', 'tr-2-1', 'tr-2-2', 'tr-1-2'], ['e2', 'e3'], 2);
+  await expect.poll(async () => (await queueRows(page)).slice(-2)).toEqual(['—', 'Lyric Line']);
+});
+
+test('past 120 songs the queue heads no records, but still sets off the songs after autoplay\'s', async ({ page }) => {
+  const byHand = allTracks.filter(track => track.albumId !== 'al-2' && track.id !== 'tr-1-1').slice(0, 122).map(track => track.id);
+  await desktopQueue(page, ['tr-1-1', 'tr-2-1', 'tr-2-2', ...byHand], ['e2', 'e3']);
+  await expect.poll(async () => (await queueRows(page)).slice(0, 6)).toEqual(['Long Run', '# Added by autoplay', 'Opening 2', 'Second Wind 2', '—', trackOf(byHand[0]).title]);
+  await expect(page.locator('main.page ol.tracks > li.group-record')).toHaveCount(0);
+  // Drawn, not only marked: a windowed list styles its rows apart from a short one's.
+  const line = await page.locator('main.page ol.tracks.windowed > li.rule').first().evaluate(li => {
+    const before = getComputedStyle(li, '::before'), box = li.getBoundingClientRect();
+    return { content: before.content, style: before.borderTopStyle, width: before.borderTopWidth, color: before.borderTopColor, opacity: before.opacity, visibility: before.visibility, height: box.height, across: box.width };
+  });
+  // The queue is reorderable: its rows' hover wash is a ::before too, hidden until hover.
+  expect(line).toMatchObject({ content: '""', style: 'solid', width: '1px', opacity: '1', visibility: 'visible' });
+  expect(line.color).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+  expect(line.height).toBeGreaterThan(0);
+  expect(line.across).toBeGreaterThan(200);
 });

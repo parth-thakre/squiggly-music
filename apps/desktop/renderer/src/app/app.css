@@ -192,7 +192,8 @@ img:is(.deck-cover, .head-cover) {
 .status { margin: 0; padding: 20px 0; color: var(--soft); }
 /* Room for an artist's popular songs (ArtistPage): fewer than ten, often, in a personal library. */
 .popular-waiting { box-sizing: border-box; min-height: calc(var(--row-two, 52px) * 5); }
-.sentinel { height: 1px; }
+/* Never the scroll anchor: held in view as rows arrive above it, it would ask for every page in turn. */
+.sentinel { height: 1px; overflow-anchor: none; }
 
 .head { margin-bottom: 22px; }
 /* A record's or an artist's page: a band in the sleeve's colour behind the head, fading into the
@@ -1235,11 +1236,8 @@ html:is([data-motion='reduced'], [data-motion='none'])::view-transition-old(*),
 html:is([data-motion='reduced'], [data-motion='none'])::view-transition-new(*) { animation: none !important; }
 html[data-motion='none'] *, html[data-motion='none'] *::before, html[data-motion='none'] *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 
-/* An artist's biography and similar artists (views.tsx). Text only; nothing shows when the
-   server's agents found nothing. */
-.bio { max-width: 68ch; margin: -6px 0 8px; }
-.bio p { margin: 0; font-size: calc(15px * var(--text)); line-height: 1.6; }
-.bio .link { font-size: calc(14px * var(--text)); }
+/* An artist's similar artists (views.tsx). Text only; nothing shows when the server's agents
+   found nothing. */
 .similar { display: flex; flex-wrap: wrap; gap: 6px 24px; margin: 0; padding: 0; list-style: none; }
 .similar .link { font-size: calc(15.5px * var(--text)); }
 /* A heading between songs: a record's discs. It takes one row's height, as windowing expects. */

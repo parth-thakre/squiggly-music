@@ -200,7 +200,7 @@ test.describe('repeat and shuffle', () => {
     await expect(repeat(app)).toHaveAccessibleName('Repeat all');
     await expect(repeat(app)).toHaveAttribute('aria-pressed', 'true');
     // The last song now has a next: the first.
-    await expect(app.deck.getByText('Next:')).toContainText('Long Run');
+    await expect(app.upNext).toContainText('Long Run');
     await (await pressSeek(app, .95)).up();
     await app.expectPlaying('Long Run', { timeout: 10_000 });
 

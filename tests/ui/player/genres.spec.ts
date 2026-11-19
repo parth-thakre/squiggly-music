@@ -88,7 +88,7 @@ test.describe('genres', () => {
     await expect(records.first()).toContainText('Test Pressing');
     // The decades are only looked for once asked.
     expect(decadeLookups(fake)).toEqual([]);
-    await app.main.getByRole('group', { name: 'Sort records' }).getByRole('button', { name: 'A to Z', exact: true }).click();
+    await app.sortBy('A to Z');
     await expect(records.first()).toContainText('Amber Field');
     await toggle.click();
     await expect(toggle).toHaveAttribute('aria-expanded', 'true');
@@ -101,7 +101,10 @@ test.describe('genres', () => {
     expect(await records.locator('.grid-name').allInnerTexts()).toEqual(['Quartz Evening', 'Xylophone Dusk', 'Slow Carousel', 'Cedar Lines', 'Jade Frequency']);
     expect(fake.callsTo('albums').at(-1)!.args).toEqual(['byYear', 0, 60, { fromYear: 1990, toYear: 1999 }]);
     // Records by year aren't in any of the sorts.
-    await expect(app.main.getByRole('button', { name: 'A to Z', exact: true })).toHaveAttribute('aria-pressed', 'false');
+    await app.expectOrder('by year');
+    await app.order.click();
+    await expect(page.getByRole('menu', { name: 'Order' }).getByRole('menuitemradio', { checked: true })).toHaveCount(0);
+    await page.keyboard.press('Escape');
 
     await records.getByRole('button', { name: /^Cedar Lines/ }).click();
     await expect(app.heading).toHaveText('Cedar Lines');
@@ -113,11 +116,11 @@ test.describe('genres', () => {
     // All returns to the sort the decade was chosen from.
     await decades.getByRole('button', { name: 'All' }).click();
     await expect(records.first()).toContainText('Amber Field');
-    await expect(app.main.getByRole('button', { name: 'A to Z', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('A to Z');
     // Choosing a sort drops the decade too, and so does closing Decade.
     await decades.getByRole('button', { name: '2000s' }).click();
     await expect(records.first()).toContainText('Rust Belt Hymns');
-    await app.main.getByRole('button', { name: 'Newest', exact: true }).click();
+    await app.sortBy('Newest', 'newest first');
     await expect(decades.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
     await expect(records.first()).toContainText('Test Pressing');
     await decades.getByRole('button', { name: '2010s' }).click();

@@ -55,6 +55,7 @@ const AlbumFields = {
   duration: Schema.optional(DurationSchema), coverArt: Schema.optional(ReferenceSchema), starred: Schema.optional(Schema.String),
   artists: ArtistRefsSchema,
   userRating: RatingSchema,
+  playCount: Schema.optional(Schema.Unknown),
 };
 const AlbumSchema = Schema.Struct({ ...AlbumFields, song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))),
   // OpenSubsonic: the names some releases give their discs.
@@ -107,6 +108,7 @@ const SongPageSchema = Schema.Struct({ searchResult3: Schema.Struct({ song: Sche
 // Navidrome's own API (/api/song), which can sort. Its song is model.MediaFile as JSON.
 const NativeSongSchema = Schema.Struct({
   id: IdSchema, title: Schema.String, artist: Schema.optional(Schema.String), album: Schema.optional(Schema.String),
+  albumArtist: Schema.optional(Schema.String),
   duration: Schema.optional(DurationSchema), suffix: Schema.optional(Schema.String),
   sampleRate: Schema.optional(KnownCountSchema), bitDepth: Schema.optional(KnownCountSchema),
   albumId: Schema.optional(ReferenceSchema), artistId: Schema.optional(ReferenceSchema),
@@ -135,7 +137,7 @@ const nativeSorts: Record<TrackSort, [sort: string, order: 'asc' | 'desc']> = {
 // getCoverArt doesn't need.
 const nativeHash = (id: string, hash: string | undefined) => hash ? `${id}_${hash}` : id;
 const fromNative = (song: NativeSong): Song => ({
-  id: song.id, title: song.title, artist: song.artist, album: song.album,
+  id: song.id, title: song.title, artist: song.artist, album: song.album, displayAlbumArtist: song.albumArtist,
   duration: song.duration === undefined ? undefined : Math.trunc(song.duration), suffix: song.suffix,
   samplingRate: song.sampleRate, bitDepth: song.bitDepth, albumId: song.albumId, artistId: song.artistId,
   coverArt: song.hasCoverArt ? nativeHash(`mf-${song.id}`, song.imageHash)
@@ -143,6 +145,7 @@ const fromNative = (song: NativeSong): Song => ({
   track: song.trackNumber, discNumber: song.discNumber, year: song.year, genre: song.genre,
   starred: song.starred ? song.starredAt ?? 'starred' : undefined, artists: song.participants?.artist,
   userRating: song.rating ?? undefined,
+  playCount: song.playCount,
   path: song.path,
   size: song.size,
 });
@@ -308,18 +311,20 @@ const artistRefs = (refs: readonly { id: string; name: string }[] | undefined) =
 };
 // A whole number from 1 to 5, or nothing.
 const rated = (rating: number | undefined) => rating !== undefined && Number.isInteger(rating) && rating >= 1 && rating <= 5 ? { userRating: rating } : {};
+const playedCount = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value > 0 ? { playCount: value } : {};
 function toAlbum(album: Schema.Schema.Type<Schema.Struct<typeof AlbumFields>>): Album {
   return {
     id: album.id, name: album.name, artist: album.artist ?? 'Unknown artist', songCount: album.songCount ?? 0,
     artistId: album.artistId || null, year: album.year ?? null, genre: album.genre || null, duration: album.duration ?? null,
     coverArt: album.coverArt || null, starred: Boolean(album.starred), ...artistRefs(album.artists),
-    ...rated(album.userRating),
+    ...rated(album.userRating), ...playedCount(album.playCount),
   };
 }
 function toArtist(artist: Schema.Schema.Type<typeof ArtistSchema>): Artist {
   return { id: artist.id, name: artist.name, albumCount: artist.albumCount ?? 0, coverArt: artist.coverArt || null, starred: Boolean(artist.starred), ...rated(artist.userRating) };
 }
 function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
+  const albumArtist = (song.displayAlbumArtist || album?.artist)?.trim();
   return {
     id: song.id, title: song.title, artist: song.artist ?? album?.artist ?? 'Unknown artist', album: song.album ?? album?.name ?? '',
     duration: song.duration ?? null, source: 'navidrome', sourceFormat: song.suffix ?? null,
@@ -327,9 +332,10 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     albumId: song.albumId || null, artistId: song.artistId || null, coverArt: song.coverArt || null,
     trackNumber: song.track ?? null, discNumber: song.discNumber ?? null, year: song.year ?? null,
     genre: song.genre || null, starred: Boolean(song.starred), ...artistRefs(song.artists),
-    ...rated(song.userRating),
+    ...rated(song.userRating), ...playedCount(song.playCount),
     ...(song.path?.trim() ? { path: song.path } : {}),
     ...(song.size ? { size: song.size } : {}),
+    ...(albumArtist ? { albumArtist } : {}),
   };
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max

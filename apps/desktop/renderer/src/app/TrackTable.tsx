@@ -1,75 +1,97 @@
-import { memo, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from 'react';
 import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Track } from '../../../../../packages/core/contracts';
-import { Clock, GripVertical, Heart, Star, X } from 'lucide-react';
+import { GripVertical, X } from 'lucide-react';
 import { Credits } from './credits';
 import { canDrag, carriesItems, readPayload, startDrag, type DragPayload } from './drag';
+import { trackInitial } from './editorial';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
 import { openMenu } from './menu';
 import { current, player, usePlayer } from './player';
 import { nav } from './route';
-import { RatingStars } from './ratings';
+import { RatingStars, ratingOf, useRatingsVersion } from './ratings';
 import { useActiveTheme } from './theme';
-import { Glyph, splitTitle, time, useWide, Wave } from './ui';
+import { Cover, Glyph, plural, splitTitle, time, useWide, Wave } from './ui';
 import { isKept, keptSupported, useKeptVersion } from './keptState';
 import { KeptMark } from './keptMark';
 import './kept.css';
 
 // Song rows are --row-height tall, or --row-two where rows also show the artists or the record
 // under the name (compact themes shorten both); windowing uses the same number.
-const rowHeight = (two: boolean) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(two ? '--row-two' : '--row-height')) || (two ? 52 : 44);
+// Each song's place on its disc, from 1: what a record's song with no number of its own goes by,
+// in the tracklist and the liner notes alike (2-2, not 5, under disc two).
+export function discPlaces(tracks: readonly Track[]): number[] {
+  const placed = new Map<number, number>();
+  return tracks.map(t => { const disc = t.discNumber || 1, place = (placed.get(disc) ?? 0) + 1; placed.set(disc, place); return place; });
+}
+const rowHeight = (two: boolean) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(two ? '--row-two' : '--row-height')) || (two ? 56 : 44);
 const WINDOWED = 120;
-// A click that came from a finger. Chrome sends clicks as pointer events that say so; a browser
-// that doesn't goes by the screen.
 const tapped = (event: ReactMouseEvent) => {
   const type = (event.nativeEvent as Partial<PointerEvent>).pointerType;
   return type ? type === 'touch' : matchMedia('(pointer: coarse)').matches;
 };
 
-// Rows outside the queue are known by song id and occurrence ("a", "a#2"), so a fresh array
-// holding the same songs keeps its selection, and a structural change keeps what still exists.
 function occurrenceKeys(tracks: Track[]) {
   const seen = new Map<string, number>();
   return tracks.map(track => { const n = (seen.get(track.id) ?? 0) + 1; seen.set(track.id, n); return n === 1 ? track.id : `${track.id}#${n}`; });
 }
 
-// A song list. Click plays (on a touch screen, a tap anywhere on the row); ctrl/cmd-click and
-// shift-click select; right-click or long-press opens the menu for the selection. Rows (or the
-// selection) drag onto the queue and playlists (drag.ts). Where the list is editable, rows drag to reorder, Alt+Up and Alt+Down move the
-// focused or selected song, and Delete removes the selection. With `onDropItems`, records,
-// artists, and songs from elsewhere drop between rows, before the row under the pointer.
-// A heading between rows (a record's discs): it sits above the row at index `at`. A quiet one is
-// a small note rather than a title (songs autoplay added to the queue).
-export interface TrackGroup { at: number; label: string; quiet?: boolean }
+// A heading between rows: discs on a multi-disc record, quiet autoplay labels, or record-change
+// dividers in the queue (with the record's sleeve, title, and artist/count). A rule is a bare
+// line with no words, closing a record's run in the queue before a song from elsewhere.
+export interface TrackGroup {
+  at: number;
+  label: string;
+  quiet?: boolean;
+  rule?: true;
+  record?: { id?: string | null; name: string; sub: string; coverArt?: string | null };
+}
 const noGroups: TrackGroup[] = [];
+// The list's own move, for a control outside it that stands in for a row (the queue's playing
+// song): `focus` false leaves focus where it is.
+export type Mover = (from: number, to: number, focus?: boolean) => void;
 
-export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue, onMove, onRemove, onDropItems, groups = noGroups, keptMarks = true }: {
-  tracks: Track[]; album?: string; albumArtist?: string; showAlbum?: boolean; numbered?: 'position' | 'track';
-  // In the queue, the entry id the click saw comes along: pass it to player.jump.
+export function TrackTable({
+  tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue,
+  onMove, onRemove, onDropItems, groups = noGroups, keptMarks = true,
+  columns = 1, large = false, leadingCover = false, bookIndex = false, lettered = false,
+  noteOf, hideIndex = -1, mover,
+}: {
+  tracks: Track[]; album?: string; albumArtist?: string; showAlbum?: boolean; numbered?: 'position' | 'track' | 'none';
   onPick?(index: number, entryId?: string): void;
-  // Where these songs live, for menu items like "Remove from this playlist".
   playlist?: Playlist; queue?: boolean;
   onMove?(from: number, to: number): void;
   onRemove?(indexes: number[]): void;
-  // A drop from outside the list, to go before the song at `at`.
   onDropItems?(payload: DragPayload, at: number): void;
-  // Headings only: rows keep one numbering of indexes, one selection, and one keyboard.
   groups?: TrackGroup[];
-  // Off where every song listed is kept (the Kept page), so the mark would say nothing.
   keptMarks?: boolean;
+  // Editorial presentation options:
+  // columns: 2 or 'auto' (2 columns from 4+ songs up, desktop single-disc non-windowed).
+  columns?: 1 | 2 | 'auto';
+  // large: bigger type for short 1–3 song records (singles/EPs).
+  large?: boolean | 'auto';
+  // leadingCover: 44px sleeve beside the number (artist's Most played).
+  leadingCover?: boolean;
+  // bookIndex: Tracks page style — letter/number gutter, record+singers stacked on line 2, 40px sleeve on the right.
+  bookIndex?: boolean;
+  // lettered: show large Young Serif initial letters ("#", "A", "B") on the first song of each group in bookIndex mode.
+  lettered?: boolean;
+  // Optional quiet note printed before the duration (e.g., "16 plays").
+  noteOf?(track: Track): string | null;
+  // Queue: index of the currently playing song when it is already shown in the queue's hero header.
+  hideIndex?: number;
+  // Filled with the list's move (Mover).
+  mover?: { current: Mover | null };
 }) {
   useActiveTheme();
-  // Two lines when some row credits other artists than the record's (the record, when shown, has a column).
-  const twoLine = useMemo(() => tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist]);
+  const twoLine = useMemo(() => bookIndex || leadingCover || showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist, bookIndex, leadingCover, showAlbum]);
   const ROW = rowHeight(twoLine);
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);
   const playing = usePlayer(s => s.playing);
-  // Queue rows are known by entry, so two copies of a song stay two rows.
   const entryIds = usePlayer(s => queue ? s.entryIds : null);
   useFavoritesVersion();
   useKeptVersion();
-  // Away, server songs that aren't kept can't play, and stars can't be changed.
   const away = usePlayer(s => s.reach.away);
   const wide = useWide();
   const table = useRef<HTMLOListElement>(null);
@@ -77,11 +99,9 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   const keys = useMemo(() => entryIds && entryIds.length === tracks.length ? entryIds : occurrenceKeys(tracks), [tracks, entryIds]);
   const positions = useMemo(() => new Map(keys.map((key, i) => [key, i])), [keys]);
   const [selected, setSelected] = useState<ReadonlySet<string>>(() => new Set());
-  // The row a context menu is open for, when it isn't part of the selection.
   const [menuRow, setMenuRow] = useState<string | null>(null);
   const anchor = useRef<string | null>(null);
   const [drag, setDrag] = useState<{ from: number; to: number } | null>(null);
-  // Where a drop from outside would land: before this row.
   const [into, setInto] = useState<number | null>(null);
   useEffect(() => {
     if (into === null) return;
@@ -90,12 +110,28 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     return () => { removeEventListener('dragend', clear, true); removeEventListener('drop', clear, true); };
   }, [into !== null]);
   const draggable = !!onMove || canDrag();
-  // A keyboard move on its way: once the row lands, focus follows it and the move is announced.
-  const moving = useRef<{ key: string; to: number; title: string; at: number } | null>(null);
+  const moving = useRef<{ key: string; to: number; title: string; at: number; focus: boolean } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const windowed = tracks.length > WINDOWED;
 
-  // Only a structural change touches the selection, and then only to drop rows that are gone.
+  // Two-column printed listing on desktop when requested, non-windowed, and no group headings split it.
+  const twoCol = wide && !windowed && !groups.length && !bookIndex && (columns === 2 || (columns === 'auto' && tracks.length >= 4));
+  const isLarge = wide && !windowed && !showAlbum && !bookIndex && !leadingCover && (large === true || (large === 'auto' && tracks.length > 0 && tracks.length <= 3));
+
+  // A record's song with no number of its own goes by its place on its disc, as the liner notes say.
+  const places = useMemo(() => numbered === 'track' ? discPlaces(tracks) : null, [numbered, tracks]);
+  // Precompute book-index initial letters so windowed rows still know when a new letter opens.
+  const initials = useMemo(() => {
+    if (!bookIndex || !lettered || tracks.length < 24) return null;
+    const result: (string | null)[] = new Array(tracks.length);
+    let prev = '';
+    for (let i = 0; i < tracks.length; i++) {
+      const letter = trackInitial(tracks[i].title);
+      if (letter !== prev) { result[i] = letter; prev = letter; } else { result[i] = null; }
+    }
+    return result;
+  }, [bookIndex, lettered, tracks]);
+
   useEffect(() => {
     setSelected(previous => [...previous].every(key => positions.has(key)) ? previous : new Set([...previous].filter(key => positions.has(key))));
     if (anchor.current !== null && !positions.has(anchor.current)) anchor.current = null;
@@ -103,18 +139,18 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     if (pending && positions.get(pending.key) === pending.to) {
       moving.current = null;
       setAnnouncement(`Moved ${pending.title} to position ${pending.to + 1} of ${keys.length}.`);
+      if (!pending.focus) return;
       const row = table.current?.querySelector<HTMLElement>(`li[data-key="${CSS.escape(pending.key)}"] .track-play`);
       row?.focus(); row?.scrollIntoView({ block: 'nearest' });
     }
   }, [positions]);
-  // Long lists render only the rows near the viewport.
+
   useEffect(() => {
     if (!windowed) return;
     const scroller = nav.scroller;
     if (!scroller) return;
     const update = () => {
       const top = table.current!.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-      // Headings take a row's height each, so a row sits up to groups.length rows lower.
       const first = Math.max(0, Math.floor(-top / ROW) - 10 - groups.length);
       const last = Math.min(tracks.length, Math.ceil((scroller.clientHeight - top) / ROW) + 10);
       setRange(r => r[0] === first && r[1] === last ? r : [first, last]);
@@ -124,20 +160,18 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     addEventListener('resize', update);
     return () => { scroller.removeEventListener('scroll', update); removeEventListener('resize', update); };
   }, [windowed, tracks.length, ROW, groups.length]);
-  // Where a row or heading sits, in rows, counting the headings above it.
-  const slot = (index: number, heading = false) => index + groups.filter(group => heading ? group.at < index : group.at <= index).length;
 
+  const slot = (index: number, heading = false) => index + groups.filter(group => heading ? group.at < index : group.at <= index).length;
   const [first, last] = windowed ? range : [0, tracks.length];
   const selectedIndexes = () => [...selected].map(key => positions.get(key)).filter((i): i is number => i !== undefined).sort((a, b) => a - b);
-  const move = (from: number, to: number) => {
+  const move: Mover = (from, to, focus = true) => {
     if (!onMove || from < 0 || from >= tracks.length) return;
     if (to < 0 || to >= tracks.length) { setAnnouncement(to < 0 ? 'Already at the top.' : 'Already at the bottom.'); return; }
-    // One move at a time: indexes refer to the list as it is, so a second request sent before
-    // the first lands would move the wrong row.
     if (moving.current && performance.now() - moving.current.at < 3000) return;
-    moving.current = { key: keys[from], to, title: splitTitle(tracks[from].title, album).main, at: performance.now() };
+    moving.current = { key: keys[from], to, title: splitTitle(tracks[from].title, album).main, at: performance.now(), focus };
     onMove(from, to);
   };
+  if (mover) mover.current = move;
   const click = (event: ReactMouseEvent, index: number, isNow: boolean) => {
     const key = keys[index];
     if (event.metaKey || event.ctrlKey) {
@@ -154,23 +188,18 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     if (away && keptSupported && track.source === 'navidrome' && !isKept(track.id) && !isNow) { player.showError('This song isn\'t kept on this device, and your server is out of reach.'); return; }
     if (isNow) player.toggle(); else if (onPick) onPick(index, entryIds?.[index]); else void player.play(tracks, index);
   };
-  // A tap on a touch screen plays from anywhere on the row: its length and the space around the
-  // name too, not only the name's button. The row's own buttons (the star) keep their taps, and
-  // a mouse keeps its target.
   const rowTap = (event: ReactMouseEvent, index: number, isNow: boolean) => {
     if (!tapped(event) || (event.target as Element).closest('button, a, input')) return;
     click(event, index, isNow);
   };
   const menu = (event: ReactMouseEvent, index: number) => {
     const key = keys[index];
-    // A row outside the selection is only marked while its menu is open; the selection stays.
     const indexes = selected.has(key) ? selectedIndexes() : [index];
     if (!selected.has(key)) setMenuRow(key);
     openMenu(event, { kind: 'tracks', tracks: indexes.map(i => tracks[i]), indexes, from: { playlist, queue },
       reorder: onMove && indexes.length === 1 ? { index, length: tracks.length, move: to => move(index, to) } : undefined },
       () => setMenuRow(null));
   };
-  // A selected row carries the whole selection; any other row carries itself.
   const dragStart = (event: ReactDragEvent, index: number) => {
     const indexes = selected.has(keys[index]) ? selectedIndexes() : [index];
     startDrag(event, { kind: 'tracks', tracks: indexes.map(i => tracks[i]) }, { reorder: !!onMove });
@@ -184,15 +213,12 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
   };
   const drop = (event: ReactDragEvent, index: number) => {
     if (drag) { event.preventDefault(); event.stopPropagation(); if (drag.from !== drag.to) onMove?.(drag.from, drag.to); setDrag(null); return; }
-    // Anything else is left to the page around the list, if it takes drops.
     if (!onDropItems || !carriesItems(event.dataTransfer, true)) return;
     event.preventDefault(); event.stopPropagation();
     setInto(null);
     const payload = readPayload(event.dataTransfer);
     if (payload) onDropItems(payload, index);
   };
-  // The rows' handlers, current as of this render, behind one reference that doesn't change, so
-  // a row redraws only when what it shows does (TrackRow).
   const handlers = useRef<RowHandlers>(null!);
   handlers.current = { click, rowTap, menu, dragStart, dragOver, drop, dragEnd: () => setDrag(null), remove: index => onRemove?.([index]) };
   const keyDown = (event: ReactKeyboardEvent) => {
@@ -210,35 +236,89 @@ export function TrackTable({ tracks, album, albumArtist, showAlbum = false, numb
     if ((event.metaKey || event.ctrlKey) && event.key === 'a') { event.preventDefault(); setSelected(new Set(keys)); }
   };
 
+  const olClasses = [
+    'tracks',
+    showAlbum && 'with-album',
+    twoLine && 'two-line',
+    queue && 'queue-list',
+    onMove && 'reorderable',
+    windowed && 'windowed',
+    drag && 'dragging',
+    twoCol && 'listing-two',
+    isLarge && 'listing-large',
+    leadingCover && 'has-leading-cover',
+    bookIndex && 'book-index',
+    initials && 'lettered',
+  ].filter(Boolean).join(' ');
+
+  const olStyle: CSSProperties | undefined = windowed
+    ? { height: (tracks.length + groups.length) * ROW, position: 'relative' }
+    : twoCol ? { '--rows': Math.ceil(tracks.length / 2) } as CSSProperties : undefined;
+
   return <>
-    {/* Column names over the rows, wider than a phone. Only for the eye: each row names its own parts. */}
-    {wide && tracks.length > 0 && <div className={`tracks-head${showAlbum ? ' with-album' : ''}${onMove ? ' reorderable' : ''}`} aria-hidden="true">
-      <span className="track"><span className="n">#</span><span>Title</span>{showAlbum && <span>Record</span>}</span>
-      <span className="row-rating" title="Rating"><Star aria-hidden="true" /><span className="sr-only">Rating</span></span><span className="star"><Heart /></span><span className="figure"><Clock /></span>
-      {keptSupported && keptMarks && <span className="kept-slot" />}<span className="row-remove" />
-    </div>}
-    <ol ref={table} className={`tracks${showAlbum ? ' with-album' : ''}${twoLine ? ' two-line' : ''}${queue ? ' queue-list' : ''}${onMove ? ' reorderable' : ''}${windowed ? ' windowed' : ''}${drag ? ' dragging' : ''}`} onKeyDown={keyDown}
+    <ol ref={table} className={olClasses} onKeyDown={keyDown}
       onDragLeave={event => { if (!(event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget))) setInto(null); }}
-      style={windowed ? { height: (tracks.length + groups.length) * ROW, position: 'relative' } : undefined}>
+      style={olStyle}>
       {tracks.slice(first, last).map((track, offset) => {
         const index = first + offset;
         const key = keys[index];
         const isNow = queue ? index === nowIndex : track.id === nowId;
         const kept = keptSupported && track.source === 'navidrome' && isKept(track.id);
-        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} number={queue ? (index > nowIndex ? index - nowIndex : '') : numbered === 'track' ? track.trackNumber ?? index + 1 : index + 1} played={!!queue && index < nowIndex} reorderable={!!onMove} removable={!!onRemove} playing={isNow && playing}
+        const hiddenHero = hideIndex >= 0 && index === hideIndex;
+        const num = queue ? (index > nowIndex ? index - nowIndex : '')
+          : numbered === 'none' ? ''
+          : numbered === 'track' ? track.trackNumber ?? places![index]
+          : index + 1;
+        const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} hiddenHero={hiddenHero}
+          number={num} initial={initials ? initials[index] : undefined}
+          played={!!queue && index < nowIndex} reorderable={!!onMove} removable={!!onRemove} playing={isNow && playing}
           isSelected={selected.has(key) || menuRow === key} selecting={selected.size > 0} starred={isStarred(track.id, track.starred)}
           kept={kept} unavailable={away && keptSupported && track.source === 'navidrome' && !kept} away={away} wide={wide}
           drop={drag && drag.to === index && drag.from !== index ? (drag.from < index ? 'drop-after' : 'drop-before') : !drag && into === index ? 'drop-before' : null}
-          top={windowed ? slot(index) * ROW : null} draggable={draggable} album={album} albumArtist={albumArtist} showAlbum={showAlbum}
+          top={windowed ? slot(index) * ROW : null} draggable={draggable} album={album} albumArtist={albumArtist}
+          showAlbum={showAlbum} leadingCover={leadingCover} bookIndex={bookIndex}
+          note={noteOf ? noteOf(track) : null}
           keptMarks={keptMarks} handlers={handlers} />;
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
-        return group ? [<li key={`group-${index}`} className={`group-head${group.quiet ? ' quiet' : ''}`}
+        if (!group) return row;
+        const head = group.rule ? <li key={`group-${index}`} className="group-head rule" aria-hidden="true"
+          style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined} />
+        : group.record ? <li key={`group-${index}`} className="group-head group-record"
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
-          <h2 title={group.label} aria-label={group.label}>{group.label}</h2></li>, row] : row;
+          {group.record.id ? <button type="button" className="queue-record" data-warm={`album:${group.record.id}`}
+            onClick={() => nav.go({ view: 'album', id: group.record!.id! })}>
+            <Cover id={group.record.coverArt} name={group.record.name} size={160} className="queue-sleeve" />
+            <span className="queue-record-words">
+              <span className="queue-record-name">{group.record.name}</span>
+              <span className="queue-record-by">{group.record.sub}</span>
+            </span>
+          </button> : <div className="queue-record">
+            <Cover id={group.record.coverArt} name={group.record.name} size={160} className="queue-sleeve" />
+            <span className="queue-record-words">
+              <span className="queue-record-name">{group.record.name}</span>
+              <span className="queue-record-by">{group.record.sub}</span>
+            </span>
+          </div>}
+        </li> : <li key={`group-${index}`} className={`group-head${group.quiet ? ' quiet' : ''}`}
+          style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
+          <h2 title={group.label} aria-label={group.label}>{group.label}</h2>
+        </li>;
+        return [head, row];
       })}
     </ol>
     {onMove && <p className="sr-only" aria-live="polite">{announcement}</p>}
   </>;
+}
+
+// A row's rating: the stars while the row is pointed at, selected, or focused, else a compact
+// figure. Both follow a rating set anywhere (the deck, a menu), not only the one the list loaded.
+function RowRating({ track }: { track: Track }) {
+  useRatingsVersion();
+  const rating = ratingOf(track.id, track.userRating);
+  return <span className={`row-rating${rating ? ' rated' : ''}`}>
+    {!!rating && <span className="rating-compact" title={plural(rating, 'star')} aria-hidden="true">{rating}<Glyph kind="starred" /></span>}
+    <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} />
+  </span>;
 }
 
 interface RowHandlers {
@@ -251,54 +331,86 @@ interface RowHandlers {
   dragEnd(): void;
   remove(index: number): void;
 }
-// One song row. Everything it shows comes in as plain values, so playing, pausing, or moving to
-// the next song redraws the rows that changed rather than every row in the list.
-const TrackRow = memo(function TrackRow({ track, index, rowKey, isNow, number, played, reorderable, removable, playing, isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable, album, albumArtist, showAlbum, keptMarks, handlers }: {
-  track: Track; index: number; rowKey: string; isNow: boolean; number: number | string; played: boolean; reorderable: boolean; removable: boolean; playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
+
+const TrackRow = memo(function TrackRow({
+  track, index, rowKey, isNow, hiddenHero, number, initial, played, reorderable, removable, playing,
+  isSelected, selecting, starred, kept, unavailable, away, wide, drop, top, draggable,
+  album, albumArtist, showAlbum, leadingCover, bookIndex, note, keptMarks, handlers,
+}: {
+  track: Track; index: number; rowKey: string; isNow: boolean; hiddenHero: boolean;
+  number: number | string; initial?: string | null; played: boolean; reorderable: boolean; removable: boolean;
+  playing: boolean; isSelected: boolean; selecting: boolean; starred: boolean;
   kept: boolean; unavailable: boolean; away: boolean; wide: boolean; drop: string | null; top: number | null; draggable: boolean;
-  album?: string; albumArtist?: string; showAlbum: boolean; keptMarks: boolean;
+  album?: string; albumArtist?: string; showAlbum: boolean; leadingCover: boolean; bookIndex: boolean;
+  note: string | null; keptMarks: boolean;
   handlers: { current: RowHandlers };
 }) {
   const name = splitTitle(track.title, album);
   const credit = track.artist !== albumArtist ? track.artist : null;
-  const classes = [isNow && 'now', played && 'played', isSelected && 'selected', unavailable && 'unavailable', drop].filter(Boolean).join(' ');
+  const recordName = track.album ? splitTitle(track.album).main : '';
+  const classes = [isNow && 'now', hiddenHero && 'hidden-hero', played && 'played', isSelected && 'selected', unavailable && 'unavailable', drop].filter(Boolean).join(' ');
+  const isLatinInitial = initial ? /^[A-Z#]$/.test(initial) : true;
   return <li data-key={rowKey} data-index={index} className={classes || undefined}
+    aria-current={isNow ? 'true' : undefined}
     style={top !== null ? { position: 'absolute', top, left: 0, right: 0 } : undefined}
     draggable={draggable} onContextMenu={event => handlers.current.menu(event, index)} onClick={event => handlers.current.rowTap(event, index, isNow)}
     onDragStart={event => handlers.current.dragStart(event, index)} onDragOver={event => handlers.current.dragOver(event, index)}
     onDrop={event => handlers.current.drop(event, index)} onDragEnd={() => handlers.current.dragEnd()}>
-    {/* The row's button covers the whole row (CSS), and the artists and the record are links
-        above it: a button can't hold buttons. */}
+    {wide && reorderable && <GripVertical className="queue-grip" aria-hidden="true" />}
     <span className="track">
-      <span className="n"><span className="n-mark">{isNow ? <Wave playing={playing} /> : number}</span>
-        {reorderable && <GripVertical className="grip" aria-hidden="true" />}</span>
-      <span className="title">
-        <button type="button" className="track-play" onClick={event => handlers.current.click(event, index, isNow)}
-          aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selecting ? isSelected : undefined}
-          aria-description={unavailable ? 'Not kept on this device' : undefined}>
-          <span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
-        </button>
-        {credit && <span className="credit"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
+      <span className="n">
+        <span className="n-mark">
+          {isNow ? <Wave playing={playing} />
+            : initial !== undefined ? (initial ? <span className={`tracks-initial${isLatinInitial ? '' : ' tracks-initial-other'}`}>{initial}</span> : '')
+            : number}
+        </span>
+        {reorderable && !wide && <GripVertical className="grip" aria-hidden="true" />}
       </span>
-      {showAlbum && <span className="album">{track.albumId && !isStation(track)
-        ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button>
-        : splitTitle(track.album).main}</span>}
+      {leadingCover && <Cover id={track.coverArt} name={track.album || track.title} size={96} className="song-sleeve" />}
+      <span className="title">
+        <span className="song-line">
+          <button type="button" className="track-play" onClick={event => handlers.current.click(event, index, isNow)}
+            aria-label={isNow ? `${playing ? 'Pause' : 'Resume'} ${track.title}` : `Play ${track.title}`} aria-pressed={selecting ? isSelected : undefined}
+            aria-description={unavailable ? 'Not kept on this device' : undefined}>
+            <span className="name">{name.main}</span>{name.extra && <span className="extra">{name.extra}</span>}
+          </button>
+          <span className="song-lead" aria-hidden="true" />
+        </span>
+        {bookIndex ? (recordName || credit) && <span className="tracks-under">
+          {recordName && <span className="tracks-from">{track.albumId && !isStation(track)
+            ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{recordName}</button>
+            : recordName}</span>}
+          {credit && <span className="credit tracks-by"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
+        </span>
+          : leadingCover ? recordName && <span className="credit">{track.albumId && !isStation(track)
+            ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{recordName}</button>
+            : recordName}</span>
+          : (credit || (showAlbum && recordName)) && <span className="song-sub">
+            {credit && <span className="credit"><Credits text={credit} artistId={track.artistId} artists={track.artists} /></span>}
+            {showAlbum && recordName && <span className="album">{track.albumId && !isStation(track)
+              ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{recordName}</button>
+              : recordName}</span>}
+          </span>}
+      </span>
     </span>
-    {/* Outside the row's button, which can't hold buttons. Only the server's songs can be rated,
-        and only while it's in reach; other rows keep the slot empty so the durations line up.
-        A phone's rows have no room for them (app.css): they're rated from the menu or the open deck. */}
-    {wide && <span className="row-rating">{track.source === 'navidrome' && !away && <>
-      {!!track.userRating && <span className="rating-compact" aria-hidden="true">{track.userRating}<Glyph kind="starred" /></span>}
-      <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} /></>}</span>}
-    {/* The heart, between the rating and the time in every list. A station can't be a favorite: the
-        server stars songs, records, and artists. Away, stars wait for the server. */}
-    {isStation(track) || away ? <span className="star" aria-hidden="true" /> : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
-      aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
-      onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'hearted' : 'heart'} /></button>}
-    <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
-    {/* Beside the button, so the row's name stays "Play <title>". */}
-    {keptSupported && keptMarks && <span className="kept-slot">{kept && <KeptMark />}</span>}
-    {wide && (!removable || isNow ? <span className="row-remove" aria-hidden="true" /> : <button type="button" className="row-remove" aria-label={`Remove ${track.title}`} title="Remove"
-      onClick={event => { event.stopPropagation(); handlers.current.remove(index); }}><X aria-hidden="true" /></button>)}
+    <span className="song-meta">
+      {wide && track.source === 'navidrome' && !away && <RowRating track={track} />}
+      {isStation(track) || away ? null : <button type="button" className={`star${starred ? ' on' : ''}`} aria-pressed={starred}
+        aria-label={starred ? `Remove ${track.title} from favorites` : `Add ${track.title} to favorites`}
+        onClick={() => void setStarred('track', [track.id], !starred)}><Glyph kind={starred ? 'hearted' : 'heart'} /></button>}
+      {note && <span className="song-note">{note}</span>}
+      <span className="figure">{isStation(track) ? 'Live' : time(track.duration)}</span>
+      {keptSupported && keptMarks && kept && <span className="kept-slot"><KeptMark /></span>}
+    </span>
+    {wide && removable && !isNow && <button type="button" className="row-remove" aria-label={`Remove ${track.title}`} title="Remove"
+      onClick={event => { event.stopPropagation(); handlers.current.remove(index); }}><X aria-hidden="true" /></button>}
+    {bookIndex && wide && <span className="tracks-sleeve">
+      {track.albumId && !isStation(track)
+        ? <button type="button" className="tracks-sleeve-btn" tabIndex={-1} aria-hidden="true" data-warm={`album:${track.albumId}`}
+            onClick={() => nav.go({ view: 'album', id: track.albumId! })}>
+            <Cover id={track.coverArt} name={track.album || track.title} size={96} className="tracks-art" />
+          </button>
+        : <Cover id={track.coverArt} name={track.album || track.title} size={96} className="tracks-art" />}
+    </span>}
   </li>;
 });

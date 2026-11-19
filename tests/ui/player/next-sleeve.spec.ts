@@ -20,8 +20,12 @@ test('the next song\'s sleeve and colours are there when it starts, however slow
   await page.goto('/');
   const push = (value: object) => page.evaluate(v => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(v), value);
   const ground = () => page.locator('.room').evaluate(room => (room as HTMLElement).style.getPropertyValue('--ground'));
+  // The room takes its colours from the sleeve (lifted to a readable room, not the sleeve's own
+  // ground), so the test notes what the first sleeve gave and that the next one changes it.
+  const neutral = await ground();
   await push({ queue: [trackOf('tr-1-1'), trackOf('tr-2-1')], entryIds: ['e.1', 'e.2'], currentIndex: 0, duration: 200, playId: 'p.1', playing: true, position: 10 });
-  await expect.poll(ground).toBe('#141a2e');
+  await expect.poll(ground).not.toBe(neutral);
+  const first = await ground();
   // A few seconds into the song, the next one's art arrives.
   await expect.poll(() => asked.filter(id => id === 'al-2').length, { timeout: 10_000 }).toBe(2);
   await page.waitForTimeout(3200);
@@ -30,6 +34,8 @@ test('the next song\'s sleeve and colours are there when it starts, however slow
   await push({ currentIndex: 1, playId: 'p.2', position: 0 });
   // At once: no empty sleeve, no wait for the colours, nothing asked again.
   await expect.poll(() => page.locator('.deck img.deck-cover').evaluate(img => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0), { timeout: 300 }).toBe(true);
-  await expect.poll(ground, { timeout: 300 }).not.toBe('#141a2e');
+  await expect.poll(ground, { timeout: 300 }).not.toBe(first);
+  // The second sleeve's own colours, not the plain room a song without them falls back to.
+  expect(await ground()).not.toBe(neutral);
   expect(asked.filter(id => id.endsWith('after'))).toEqual([]);
 });

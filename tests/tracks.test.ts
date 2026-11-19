@@ -23,7 +23,7 @@ const natives = [
     participants: { albumartist: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal', missing: false }], artist: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal', missing: false }] },
   },
   {
-    playCount: 3, playDate: '2026-09-27T00:00:00Z', imageHash: 'aa11', id: 'duet', title: 'Duet', album: 'Pairs', artistId: 'ar-a', artist: 'A & B', albumId: 'al-pairs',
+    playCount: 3, playDate: '2026-09-27T00:00:00Z', imageHash: 'aa11', id: 'duet', title: 'Duet', album: 'Pairs', artistId: 'ar-a', artist: 'A & B', albumArtist: 'Various Artists', albumId: 'al-pairs',
     hasCoverArt: false, trackNumber: 2, discNumber: 2, year: 0, suffix: 'wav', duration: 61.9, sampleRate: 96000, bitDepth: 24, genre: 'Jazz', rating: 3,
     participants: { artist: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B', subRole: '' }] },
   },
@@ -40,8 +40,8 @@ const subsonics = [
     artists: [{ id: '7i6ciuZJca8cG0V2xXwDcC', name: 'The New Deal' }], displayArtist: 'The New Deal', userRating: 5,
   },
   {
-    id: 'duet', title: 'Duet', album: 'Pairs', artist: 'A & B', track: 2, coverArt: 'dc-al-pairs:2_aa11', suffix: 'wav', duration: 61, discNumber: 2,
-    albumId: 'al-pairs', artistId: 'ar-a', samplingRate: 96000, bitDepth: 24, genre: 'Jazz', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }], userRating: 3,
+    id: 'duet', title: 'Duet', album: 'Pairs', artist: 'A & B', displayAlbumArtist: 'Various Artists', track: 2, coverArt: 'dc-al-pairs:2_aa11', suffix: 'wav', duration: 61, discNumber: 2,
+    playCount: 3, albumId: 'al-pairs', artistId: 'ar-a', samplingRate: 96000, bitDepth: 24, genre: 'Jazz', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }], userRating: 3,
   },
   {
     id: 'loose', title: 'Loose', album: 'Singles', artist: 'C', year: 1999, coverArt: 'al-al-singles_0f0f', suffix: 'mp3', duration: 12, albumId: 'al-singles', artistId: 'ar-c',
@@ -181,7 +181,7 @@ describe("Navidrome's own API", () => {
     const subsonic = (await run((await navidrome({ type: 'gonic' })).client.tracks('newest', 0, 3, ''))).tracks;
     expect(native.slice(0, 2)).toEqual(subsonic.slice(0, 2));
     expect(native[0]).toMatchObject({ coverArt: 'mf-3KB8ZWlZgex99I9sWcgXb1_51f5041620034dc3', duration: 178, starred: true, sourceFormat: 'flac', sourceSampleRate: 44100 });
-    expect(native[1]).toMatchObject({ coverArt: 'dc-al-pairs:2_aa11', year: null, artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }] });
+    expect(native[1]).toMatchObject({ coverArt: 'dc-al-pairs:2_aa11', year: null, albumArtist: 'Various Artists', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }] });
     // Album art: the same image, without the cache hash this API leaves out.
     expect({ ...native[2], coverArt: subsonic[2].coverArt }).toEqual(subsonic[2]);
     expect(native[2].coverArt).toBe('al-al-singles');

@@ -269,7 +269,7 @@ test.describe('drag and drop', () => {
     await app.page.waitForTimeout(500);
     await expect(notice(app)).toHaveCount(0);
     await app.openQueue();
-    await expect(app.main.locator('.byline')).toContainText('999 songs up next');
+    await expect(app.main.getByText('999 songs to come')).toBeVisible();
   });
 
   test('a drop on a nearly full queue announces only the songs that joined', async ({ app, fake }) => {
@@ -281,7 +281,7 @@ test.describe('drag and drop', () => {
     await expect(app.deck.getByRole('alert')).toContainText('The queue holds up to 1,000 songs, so 1 song wasn\'t added.');
     await expect(notice(app)).toHaveText(/^Added 2 songs to the queue\./);
     await app.openQueue();
-    await expect(app.main.locator('.byline')).toContainText('999 songs up next');
+    await expect(app.main.getByText('999 songs to come')).toBeVisible();
   });
 
   test('the browser build ignores files dropped from the computer', async ({ app, page }) => {

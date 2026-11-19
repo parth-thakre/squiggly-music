@@ -70,7 +70,7 @@ test.describe('internet radio stations', () => {
     await app.play('Test Pressing', 'Long Run');
     const stations = await openStations(app);
     await app.chooseFromMenu(stations.getByRole('button', { name: /^Night Signal/ }), 'Play next');
-    await expect(app.deck.getByText('Next:')).toContainText('Night Signal');
+    await expect(app.upNext).toContainText('Night Signal');
     await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
     await app.expectPlaying('Night Signal');
     await expect(app.clock).toHaveText('Live');

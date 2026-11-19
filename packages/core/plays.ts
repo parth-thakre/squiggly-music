@@ -46,20 +46,23 @@ export class PlayReports {
   }
   get size() { return this.#queue.length; }
 
-  async report(trackId: string, event: 'started' | 'finished'): Promise<void> {
+  // True when the play counts for the account bound now: the server took it, or a finished one
+  // waits in the queue. False for a refusal, or a send for an account no longer bound.
+  async report(trackId: string, event: 'started' | 'finished'): Promise<boolean> {
     const generation = this.#generation;
     if (event === 'started') {
-      if (this.d.away()) return;
+      if (this.d.away()) return false;
       const outcome = await this.d.send(trackId, 'started');
       if (outcome === 'unreachable' && generation === this.#generation) this.d.failed();
-      return;
+      return outcome === 'sent' && generation === this.#generation;
     }
     const play = { trackId, at: this.now() };
-    if (this.d.away()) { this.push(play); return; }
+    if (this.d.away()) { this.push(play); return true; }
     const outcome = await this.d.send(trackId, 'finished', play.at);
-    if (generation !== this.#generation) return;
-    if (outcome === 'unreachable') { this.push(play); this.d.failed(); }
-    else if (outcome === 'sent' && this.#queue.length) void this.flush();
+    if (generation !== this.#generation) return false;
+    if (outcome === 'unreachable') { this.push(play); this.d.failed(); return true; }
+    if (outcome === 'sent' && this.#queue.length) void this.flush();
+    return outcome === 'sent';
   }
 
   // Oldest first, one at a time. A refused play (a song deleted from the server) is dropped; no

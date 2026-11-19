@@ -1,7 +1,7 @@
 import { ChevronLeft, ListMusic, MessageSquareQuote, PictureInPicture2, Search as SearchIcon } from 'lucide-react';
 import { createContext, memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type FormEvent, type ReactNode } from 'react';
 import type { Connection, Track } from '../../../../../packages/core/contracts';
-import { current, currentEntry, optimisticVolume, player, usePlayer } from './player';
+import { current, currentEntry, optimisticVolume, outputDescription, player, usePlayer } from './player';
 import { nav, useCanGoBack, useRoute, type Route } from './route';
 import { DeckLyrics, Lyrics } from './lyrics';
 import { ContextMenu, onMenuError, openMenu } from './menu';
@@ -31,6 +31,7 @@ import { keptCount, keptSupported, useKeptVersion } from './keptState';
 import { pageFor, serverPages } from './offline';
 import { DiagnosticsSwitch, showDiagnosticsSetting } from './views';
 import { diagnosticsBuilt, useSettings } from './settings';
+import { formatTrackSpec } from './editorial';
 import { startWarming } from './warm';
 
 onMenuError(message => player.showError(message));
@@ -76,7 +77,7 @@ export function App() {
   // Songs from this computer play without a server: the deck, queue, and settings stay usable.
   const shell = (connected && !choosing) || (mode === 'desktop' && hasQueue);
   const cover = useCoverScreen();
-  return <PaletteContext.Provider value={palette}><div className="room" style={paletteStyle(palette)}>
+  return <PaletteContext.Provider value={palette}><div className="room" data-scheme={palette.scheme} data-accent={palette.neutralAccent ? 'neutral' : 'colour'} style={paletteStyle(palette)}>
     {/* First, so everything clickable after it wins: Electron applies drag regions in page order,
         and a later drag region would swallow the header's buttons where they overlap it. */}
     {window.squiggly?.window.frameless && <div className="drag-strip" aria-hidden="true" />}
@@ -92,12 +93,12 @@ export function App() {
   </div></PaletteContext.Provider>;
 }
 
-// The mark: the app's own seek bar. Played squiggle, the thumb, the unplayed rest.
+// The mark: a short wave, the playhead tick, a dot.
 function Mark() {
-  return <svg className="mark" viewBox="79 170 355 172" aria-hidden="true">
-    <path d="M96.0 256.0 L98.8 250.3 L101.7 244.6 L104.5 239.2 L107.3 234.0 L110.2 229.2 L113.0 224.9 L115.8 221.1 L118.7 217.9 L121.5 215.3 L124.3 213.5 L127.2 212.4 L130.0 212.0 L132.8 212.4 L135.7 213.5 L138.5 215.3 L141.3 217.9 L144.2 221.1 L147.0 224.9 L149.8 229.2 L152.7 234.0 L155.5 239.2 L158.3 244.6 L161.2 250.3 L164.0 256.0 L166.8 261.7 L169.7 267.4 L172.5 272.8 L175.3 278.0 L178.2 282.8 L181.0 287.1 L183.8 290.9 L186.7 294.1 L189.5 296.7 L192.3 298.5 L195.2 299.6 L198.0 300.0 L200.8 299.6 L203.7 298.5 L206.5 296.7 L209.3 294.1 L212.2 290.9 L215.0 287.1 L217.8 282.8 L220.7 278.0 L223.5 272.8 L226.3 267.4 L229.2 261.7 L232.0 256.0 L234.8 250.3 L237.7 244.6 L240.5 239.2 L243.3 234.0 L246.2 229.2 L249.0 224.9 L251.8 221.1 L254.7 217.9 L257.5 215.3 L260.3 213.5 L263.2 212.4 L266.0 212.0 L268.8 212.4 L271.7 213.5 L274.5 215.3 L277.3 217.9 L280.2 221.1 L283.0 224.9 L285.8 229.2 L288.7 234.0 L291.5 239.2 L294.3 244.6 L297.2 250.3 L300.0 256.0" fill="none" stroke="currentColor" strokeWidth="34" strokeLinecap="round" strokeLinejoin="round"/>
-    <rect x="336" y="170" width="34" height="172" rx="17" fill="currentColor"/>
-    <path d="M404 256 H428" stroke="currentColor" strokeOpacity=".35" strokeWidth="12" strokeLinecap="round"/>
+  return <svg className="mark" width="34" height="20" viewBox="0 0 34 20" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M2 12.5C3.6 6.5 6.2 5.6 8 10.2s4 6.3 6 1.2S18 3.2 20.2 9.4" />
+    <path d="M25.5 3.5v13" />
+    <circle cx="31" cy="10" r="1.5" fill="currentColor" stroke="none" />
   </svg>;
 }
 
@@ -234,7 +235,7 @@ const Deck = memo(function Deck() {
   useEffect(() => { if (expanded) return () => nav.closeOverlay(); }, [expanded]);
   // Nothing on the platter: the saved queue's song where there is one (the one place it's
   // offered), else a line saying how to start. No empty sleeve.
-  if (!track) return <aside className="deck" aria-label="Now playing">
+  if (!track) return <aside className="deck deck-idle" aria-label="Now playing">
     {starting ? <p className="deck-empty" role="status">Finding songs like {starting}…</p>
       : <Resume fallback={<p className="deck-empty">Nothing playing.</p>} />}
     {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
@@ -253,24 +254,27 @@ const Deck = memo(function Deck() {
         <button type="button" className="deck-hide text-button" aria-pressed={sheetLyrics} onClick={() => setSheetLyrics(v => !v)}>{sheetLyrics ? 'Sleeve' : 'Lyrics'}</button>
       </div>
       {/* Keyed by song, so a new sleeve settles in rather than snapping. */}
-      {expanded && sheetLyrics ? <Lyrics compact /> : <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />}
+      {expanded && sheetLyrics ? <Lyrics compact />
+        : track.albumId && !isStation(track)
+          ? <button type="button" className="deck-sleeve-btn" aria-label={`Open ${splitTitle(track.album).main}`} data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>
+              <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />
+            </button>
+          : <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />}
     </div>
     <div className="deck-bottom">
       <div className="deck-text">
-        <h2 className={`deck-title${name.main.length > 27 ? ' longer' : name.main.length > 20 ? ' long' : ''}`} title={name.main}>{name.main}</h2>
+        <h2 className={`deck-title${name.main.length > 27 ? ' longer' : name.main.length > 20 ? ' long' : ''}`} title={name.main}>{name.main}{name.extra && <span className="deck-tail"> {name.extra}</span>}</h2>
         <p className="deck-sub">
           {isStation(track) ? announced ?? 'Internet radio' : <>
             <span className="deck-artists"><Credits text={track.artist} artistId={track.artistId} artists={track.artists} /></span>
             {track.album && <span className="deck-album">
-              {' on '}
+              <span className="deck-on">{' on '}</span>
               {track.albumId ? <button type="button" className="link" data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>{splitTitle(track.album).main}</button> : splitTitle(track.album).main}
             </span>}
           </>}
         </p>
         <DeckSlots placement="under-title" track={track} />
       </div>
-      {/* Songs from this computer have no rating to set, and a server out of reach can't take one. */}
-      {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
       <button type="button" className="deck-open" aria-label={`Open now playing: ${name.main}`} onClick={open} />
       <Position track={track} palette={palette} />
       <div className="transport">
@@ -279,30 +283,34 @@ const Deck = memo(function Deck() {
         <RepeatButton />
         <Volume />
       </div>
-      {/* What the page shows next to the deck: toggles, so icons, each named for screen readers
-          and in a tooltip. */}
+      {/* What the page shows next to the deck: Lyrics, Queue, Mini player, plus inline rating and heart. */}
       <div className="deck-actions">
-        <button type="button" className="icon-button labelled" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /><span className="icon-label" aria-hidden="true">Lyrics</span></button>
+        <button type="button" className="icon-button labelled" aria-label="Lyrics" title="Lyrics" aria-pressed={route.view === 'lyrics'} aria-current={route.view === 'lyrics' ? 'page' : undefined} onClick={toggleLyrics}><MessageSquareQuote aria-hidden="true" /><span className="icon-label" aria-hidden="true">Lyrics</span></button>
         <QueueToggle open={route.view === 'queue'} />
         {window.squiggly && <button type="button" className="icon-button" aria-label="Mini player" title="Mini player" onClick={() => void window.squiggly!.window.toggleMini()}><PictureInPicture2 aria-hidden="true" /></button>}
-        <FavoriteToggle track={track} />
+        <span className="deck-set">
+          {track.source === 'navidrome' && !away && <RatingStars target="track" id={track.id} rating={track.userRating} name={track.title} className="deck-rating" />}
+          <FavoriteToggle track={track} />
+        </span>
       </div>
       <DeckSlots placement="under-controls" track={track} />
-      <SignalPath track={track} />
-      <DeckSlots placement="quiet-line" track={track} />
-      <SleepNote />
-      {/* The next song: on a desktop, with room (no lyrics under it), its sleeve and artist too. */}
-      {upNext && <p className="up-next">Next: <button type="button" className="link next-song" onClick={() => nav.go({ view: 'queue' })}>
-        {!upNext.coverArt || nextAsked || upNext.coverArt === track.coverArt
-          ? <Cover id={upNext.coverArt} name={upNext.album || upNext.title} size={upNext.coverArt ? 600 : 80} /> : <span className="cover" />}
-        <span className="next-text"><span className="next-title">{splitTitle(upNext.title).main}</span>{!isStation(upNext) && upNext.artist && <span className="next-artist">{upNext.artist}</span>}</span>
-      </button></p>}
-      {!upNext && missed && <p className="up-next">Autoplay found nothing new like this song.</p>}
-      {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
-        : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
-      {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
-      <DeckLyrics />
-      <DeckLinks />
+      <div className="deck-foot">
+        <DeckLyrics />
+        {/* The next song: compact sleeve, title, artist. Label stays screen-reader accessible. */}
+        {upNext && <p className="up-next"><span className="up-next-label">Next: </span><button type="button" className="link next-song" onClick={() => nav.go({ view: 'queue' })}>
+          {!upNext.coverArt || nextAsked || upNext.coverArt === track.coverArt
+            ? <Cover id={upNext.coverArt} name={upNext.album || upNext.title} size={upNext.coverArt ? 600 : 80} /> : <span className="cover" />}
+          <span className="next-text"><span className="next-title">{splitTitle(upNext.title).main}</span>{!isStation(upNext) && upNext.artist && <span className="next-artist">{upNext.artist}</span>}</span>
+        </button></p>}
+        {!upNext && missed && <p className="up-next">Autoplay found nothing new like this song.</p>}
+        {starting ? <p className="up-next" role="status">Finding songs like {starting}…</p>
+          : radio && <p className="up-next">Radio from {radio.label}. <button type="button" className="link" onClick={player.stopRadio}>Stop</button></p>}
+        <SignalPath track={track} />
+        <DeckSlots placement="quiet-line" track={track} />
+        <SleepNote />
+        {engine === 'unavailable' || engine === 'crashed' ? <EngineError /> : error && <DeckError message={error} />}
+        <DeckLinks />
+      </div>
     </div>
   </aside>;
 });
@@ -312,7 +320,7 @@ const Deck = memo(function Deck() {
 function QueueToggle({ open }: { open: boolean }) {
   const { over, handlers } = useDropTarget(payload => void dropOnQueue(payload));
   const spring = useSpringOpen(() => { if (nav.current.view !== 'queue') nav.go({ view: 'queue' }); });
-  return <button type="button" className={`icon-button labelled${over ? ' drop-over' : ''}`} aria-label="Queue" title="Queue" aria-pressed={open}
+  return <button type="button" className={`icon-button labelled${over ? ' drop-over' : ''}`} aria-label="Queue" title="Queue" aria-pressed={open} aria-current={open ? 'page' : undefined}
     onClick={() => open ? nav.back() : nav.go({ view: 'queue' })} {...handlers}
     onDragEnter={event => { handlers.onDragEnter(event); spring.onDragEnter(event); }}
     onDragLeave={event => { handlers.onDragLeave(event); spring.onDragLeave(event); }}><ListMusic aria-hidden="true" /><span className="icon-label" aria-hidden="true">Queue</span></button>;
@@ -404,34 +412,60 @@ function Volume() {
   </label>;
 }
 
-// The signal path as a sentence. Unknown stays unknown, and a request is called a request:
-// asking Navidrome for the original file doesn't prove the original arrived.
-// One quiet line: what the file is. Notes appear only when something changes what you hear.
-// The output device is in Settings; decoder and output detail is on the Diagnostics page.
+// The signal path: two stops on a line — what the file is, and what the player honestly knows
+// about where it goes. Unknown stays unknown; a raw stream request never claims bit-perfect output.
 function SignalPath({ track }: { track: Track }) {
   const volume = usePlayer(s => Math.round(s.volume));
   const mode = usePlayer(s => s.mode);
   const buffering = usePlayer(s => s.buffering);
   const delivery = usePlayer(s => s.delivery);
   const streamKbps = usePlayer(s => s.streamKbps);
-  const codec = usePlayer(s => s.audio?.codec ?? null);
-  const decoderRate = usePlayer(s => s.audio?.decoderRate ?? null);
-  // Linux: the sound server resamples what mpv sends (AudioPath.sink). Nothing when it doesn't or isn't known.
+  const audio = usePlayer(s => s.audio);
+  const device = usePlayer(s => s.device);
   const resampled = usePlayer(s => resampledNote(s.audio?.sink));
-  const format = [track.sourceFormat?.toUpperCase(), kHz(track.sourceSampleRate), track.sourceBitDepth && `${track.sourceBitDepth}-bit`].filter(Boolean).join(' · ');
-  // A kept song is a file on this device: said only when the player really opened it.
-  const notes = [delivery === 'mp3-fallback' && 'Playing a 320 kbps MP3.',
+  const format = formatTrackSpec(track);
+  const notes = [
+    delivery === 'mp3-fallback' && 'Playing a 320 kbps MP3.',
     delivery === 'reduced' && `Streaming a ${streamKbps} kbps MP3.`,
     delivery === 'device' && 'Playing the kept copy.',
-    volume < 100 && `Volume at ${volume}%.`, resampled, buffering && delivery !== 'device' && 'Buffering.'].filter(Boolean).join(' ');
-  // A station: a live stream, and what mpv says it decodes, if anything. The server's list says
-  // nothing about the stream.
-  const decoded = [codec?.toUpperCase(), kHz(decoderRate)].filter(Boolean).join(' at ');
-  const live = mode === 'desktop' && decoded ? `A live stream, ${decoded}.` : 'A live stream.';
-  // What the file is. The Android app asks for the original file too, and plays it itself.
-  const line = isStation(track) ? [live, notes].filter(Boolean).join(' ') : [mode !== 'web' && format, notes].filter(Boolean).join('. ');
-  return line ? <p className="signal">{line}</p> : null;
+    volume < 100 && `Volume at ${volume}%.`,
+    resampled,
+    buffering && delivery !== 'device' && 'Buffering.',
+  ].filter(Boolean).join(' ');
+  const decoded = [audio?.codec?.toUpperCase(), kHz(audio?.decoderRate)].filter(Boolean).join(', ');
+  const live = mode === 'desktop' && decoded ? `Live stream, ${decoded}` : 'A live stream.';
+  const fileLine = isStation(track) ? live : mode !== 'web' ? format : '';
+  // The second stop on the desktop, when nothing above changed what plays: the device mpv was
+  // asked for (the sound server can move the stream elsewhere, docs/audio.md), else the output
+  // mpv uses, and that exclusive use was asked for, never that it was granted. A sink whose rate
+  // matches says nothing here; Diagnostics says it.
+  const asked = device !== 'auto' ? outputDescription(device) : null;
+  const backend = backendName(audio?.outputBackend);
+  const exclusive = audio?.exclusiveRequested === true;
+  const desktopOut = mode !== 'desktop' || notes ? ''
+    : asked ? `Asked for ${asked}${exclusive ? ', exclusive' : ''}`
+    : backend ? (exclusive ? `${backend}, exclusive use requested` : backend)
+    : exclusive ? 'Exclusive use requested' : '';
+  const outLine = notes || desktopOut;
+  if (!fileLine && !outLine) return null;
+  const both = Boolean(fileLine && outLine);
+  return <div className={`signal${both ? ' signal-two' : ''}`} role="group" aria-label="Signal path">
+    {both && <svg className="signal-path" width="11" height="44" viewBox="0 0 11 44" fill="none" aria-hidden="true">
+      <circle cx="5.5" cy="11" r="3.4" />
+      <path d="M5.5 16v11.5" strokeLinecap="round" />
+      <circle className="signal-out-dot" cx="5.5" cy="33" r="4" />
+    </svg>}
+    <p>
+      {fileLine && <span className="signal-file">{fileLine}</span>}
+      {both && <span className="sr-only">. </span>}
+      {outLine && <span className={`signal-out${notes ? ' signal-notes' : ''}`}>{outLine}</span>}
+    </p>
+  </div>;
 }
+
+// mpv's audio output by the name the system gives it.
+const backends: Record<string, string> = { pipewire: 'PipeWire', pulse: 'PulseAudio', alsa: 'ALSA', jack: 'JACK', wasapi: 'WASAPI', coreaudio: 'Core Audio', avfoundation: 'AVFoundation' };
+const backendName = (backend: string | null | undefined) => backend ? backends[backend] ?? backend : null;
 
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The server login on every build. The desktop's main process, the Android bridge, or the

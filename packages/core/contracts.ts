@@ -26,6 +26,9 @@ export interface Track {
   // When the server splits the credit ("A & B") into several artists, each with a page;
   // `artist` stays the display text. Absent for a single artist.
   artists?: ArtistRef[];
+  // The record's artist as its credit reads (OpenSubsonic displayAlbumArtist), when the server
+  // gives it. Absent otherwise.
+  albumArtist?: string;
   trackNumber?: number | null;
   discNumber?: number | null;
   year?: number | null;
@@ -38,6 +41,8 @@ export interface Track {
   path?: string | null;
   // The file's size in bytes as the server reports it (Subsonic song.size). Absent when it sends none.
   size?: number;
+  // How many times this account has played the song, when the server reports it.
+  playCount?: number;
 }
 // One credited artist with their own page. See Track.artists.
 export interface ArtistRef { id: string; name: string }
@@ -49,6 +54,8 @@ export interface Album {
   artists?: ArtistRef[];
   // The account's own rating, 1 to 5. Absent when unrated.
   userRating?: number;
+  // How many times this account has played the record, when the server reports it.
+  playCount?: number;
 }
 export interface Artist { id: string; name: string; albumCount: number; coverArt: string | null; starred: boolean; userRating?: number }
 export interface AlbumDetail {
@@ -469,11 +476,16 @@ export interface SystemMediaApi {
   subscribe(listener: (state: SystemMediaState | null) => void): () => void;
 }
 
+export interface PlayReported { trackId: string; albumId: string | null }
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
   // Library answers kept on this computer (packages/core/stored.ts). Absent from older bridges.
   stored?: StoredLibrary;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
+  // A finished play the main process has reported (or kept for the server, when it's away). Sent
+  // to every window, hidden ones too, so the next look at the song's record reads it again.
+  // Absent from older bridges.
+  onPlayReported?(listener: (play: PlayReported) => void): () => void;
   command(command: PlayerCommand): Promise<Result>;
   openFiles(): Promise<Result>;
   // Files dropped on the window, opened as openFiles opens its choice. The preload looks up each

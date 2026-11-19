@@ -4,6 +4,8 @@ import { expect, test, trackOf } from '../fixtures/test';
 
 // The desktop deck's seek squiggle against host snapshots. On Windows the range input's change
 // event for a release arrives late, after a frame has put the playing position back in the input.
+// Leaving the squiggle clicks the page's empty corner: the window's top left is the deck's sleeve,
+// which opens the record.
 
 const song = trackOf('tr-1-1');
 const seeks = (page: Page) => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls
@@ -26,7 +28,7 @@ test('after a click, the squiggle follows playback, and leaving it seeks nothing
   // The host lands the seek and plays on; the thumb and clock go with it.
   for (const position of [180, 181, 182]) { await push(page, { position }); await page.waitForTimeout(150); }
   await expect(seek).toHaveAttribute('aria-valuetext', /^3:0[2-3] of 6:00$/);
-  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.locator('main.page').click({ position: { x: 5, y: 5 } });
   await page.waitForTimeout(200);
   const sent = await seeks(page);
   expect(sent).toHaveLength(1);
@@ -39,7 +41,7 @@ test('the keyboard seeks once its key is let go, and assistive tech setting the 
   await seek.focus();
   await page.keyboard.press('End');
   await expect.poll(() => seeks(page)).toEqual([360]);
-  await page.locator('body').click({ position: { x: 5, y: 5 } });
+  await page.locator('main.page').click({ position: { x: 5, y: 5 } });
   await push(page, { position: 50 });
   // As a screen reader's increment: an input event with no key or press.
   // Through the element's own setter, as the browser sets it, so React sees a change.

@@ -11,7 +11,7 @@ import { isStation, repeatFor, stationIdOf } from '../../../../../packages/core/
 import { onDisconnected, onSignedOut, webReach, webSession, type WebSessionStatus } from '../bridge/previewLibrary';
 import { isKept, keptSupported } from './keptState';
 import { VolumeCommandCoalescer } from '../volumeCommands';
-import { api, resetLibraryCaches } from './library';
+import { api, playReported, resetLibraryCaches } from './library';
 import { clearSearches, searchesFor } from './searches';
 import { getSettings, subscribeSettings } from './settings';
 
@@ -262,7 +262,9 @@ if (desktop) {
   let received = false;
   const unsubscribe = desktop.subscribe(snapshot => { received = true; apply(snapshot); });
   void desktop.snapshot().then(snapshot => { if (!received) apply(snapshot); });
-  import.meta.hot?.dispose(unsubscribe);
+  // The main process reports plays itself (main/plays.ts), and says when it has, hidden or not.
+  const unreported = desktop.onPlayReported?.(play => playReported(play.albumId));
+  import.meta.hot?.dispose(() => { unsubscribe(); unreported?.(); });
 }
 
 // Browser playback ----------------------------------------------------------------------
@@ -337,7 +339,12 @@ function listened(seconds: number) {
   if (plays.started !== instance) { plays.started = instance; if (!state.reach.away) void api.reportPlay(track.id, 'started'); }
   plays.listened += seconds;
   const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration), getSettings().playCountsAt);
-  if (plays.finished !== instance && threshold !== null && plays.listened >= threshold) { plays.finished = instance; void api.reportPlay(track.id, 'finished'); }
+  if (plays.finished !== instance && threshold !== null && plays.listened >= threshold) {
+    plays.finished = instance;
+    // Once the server has taken it (or Android has queued it), its record and Most played are
+    // read again (playReported). A refusal or no answer keeps them: offline, they're all there is.
+    void api.reportPlay(track.id, 'finished').then(result => { if (result.ok) playReported(track.albumId); }, () => undefined);
+  }
 }
 if (web) {
   for (const element of [web.active, web.standby]) {

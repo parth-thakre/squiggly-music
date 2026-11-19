@@ -5,7 +5,7 @@ import type { AlbumListType, TrackSort } from '../../../../../packages/core/cont
 
 export type Route =
   // The sort is part of the place, so Back returns to the same order (and the same scroll offset).
-  | { view: 'records'; sort?: AlbumListType; decade?: number } | { view: 'artists' } | { view: 'tracks'; sort?: TrackSort } | { view: 'playlists' } | { view: 'favorites' }
+  | { view: 'records'; sort?: AlbumListType; decade?: number } | { view: 'artists' } | { view: 'tracks'; sort?: TrackSort; artistId?: string; artistName?: string } | { view: 'playlists' } | { view: 'favorites' }
   | { view: 'album'; id: string } | { view: 'artist'; id: string }
   | { view: 'playlist'; id: string } | { view: 'mix'; id: string }
   // Search's tab (All when left out) is part of the place too, replaced in place like a sort.

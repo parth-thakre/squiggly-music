@@ -36,7 +36,9 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   const session = epoch;
   const mine: Promise<Result<T>> = !kept ? asked : new Promise(resolve => {
     let shown: Result<T> | null = null;
-    const keeping = kept().catch(unreachable<T>);
+    const ask = kept;
+    // Not asked once the server has answered while it waited for a turn.
+    const keeping = keptSlot(() => shown ? Promise.resolve(unreachable<T>()) : ask()).catch(unreachable<T>);
     void keeping.then(answer => { if (!shown && answer.ok) resolve(shown = answer); });
     void asked.then(async fresh => {
       // A failure that comes first (away answers at once) waits for what was kept, which shows
@@ -52,22 +54,29 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   cache.set(key, entry);
   void entry.then(result => {
     if (cache.get(key) !== entry) return;
-    if (result.ok) settled.set(key, result); else cache.delete(key);
+    if (result.ok && !unkept.has(result)) settled.set(key, result); else cache.delete(key);
   });
-  while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); stale.delete(oldest); }
+  while (cache.size > LIMIT) drop(cache.keys().next().value!);
   return entry as Promise<Result<T>>;
 }
-// Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
-// would otherwise ask for dozens at once (the desktop refuses past 32 requests in flight, and the
-// server has its own limits). A record already read comes from load's cache without waiting.
-const ALBUMS_AT_ONCE = 6;
-let albumsReading = 0;
-const albumWaiting: (() => void)[] = [];
-async function albumSlot<T>(task: () => Promise<T>) {
-  // A finished read hands its slot straight to the next waiting one, so none slips in between.
-  if (albumsReading < ALBUMS_AT_ONCE) albumsReading++; else await new Promise<void>(resolve => albumWaiting.push(resolve));
-  try { return await task(); } finally { const next = albumWaiting.shift(); if (next) next(); else albumsReading--; }
+// Reads that take turns, `size` at a time; a finished one hands its turn straight to the next
+// waiting, so none slips in between.
+function turns(size: number) {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return async <T,>(task: () => Promise<T>) => {
+    if (running < size) running++; else await new Promise<void>(resolve => waiting.push(resolve));
+    try { return await task(); } finally { const next = waiting.shift(); if (next) next(); else running--; }
+  };
 }
+// Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
+// would otherwise ask for dozens at once (the desktop refuses past 32 requests in flight, a Pause
+// among them, and the server has its own limits). A record already read comes from load's cache
+// without waiting.
+const albumSlot = turns(6);
+// What the host kept is read a few at a time too: an artist's forty records would otherwise ask
+// for forty kept answers at once, beside the six asked of the server.
+const keptSlot = turns(6);
 // A record the host kept answers at once (an artist's Play, a mix), and is read again in turn.
 export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)), stored ? () => stored.album(id) : undefined);
 export const albumDetails = (ids: readonly string[]) => Promise.all(ids.map(albumDetail));
@@ -76,6 +85,25 @@ export function invalidate(prefix: string) {
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); stale.delete(key); listeners.forEach(listener => listener(key)); }
   invalidations.forEach(listener => listener(prefix));
 }
+// Drops answers so the next page to ask reads them again, while pages showing them stay as they
+// are (an artist's songs, sorted by rating, don't move under a rating being set).
+export function forget(prefix: string) {
+  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) drop(key);
+}
+// The same, for one answer only (`artistTracks:a1` is a prefix of `artistTracks:a10`).
+export function drop(key: string) { cache.delete(key); settled.delete(key); stale.delete(key); }
+// A play the server has been told of changes its song's play count: its record and any artist's
+// songs (Most played) are read again by the next page to ask. Every artist's, as the record's
+// artist may not be the song's. Pages showing them now stay as they are.
+export function playReported(albumId: string | null | undefined) {
+  if (albumId) drop(`album:${albumId}`);
+  forget('artistTracks:');
+}
+// Whether an answer is what the host kept, shown because the server's read failed.
+export const isStale = (key: string) => stale.has(key);
+// Answers handed to the page that asked but not kept for the next (see notKept).
+const unkept = new WeakSet<object>();
+export function notKept<T>(result: Result<T>): Result<T> { unkept.add(result); return result; }
 // For state built from answers but kept outside the cache, such as the pages of Records and Tracks.
 const invalidations = new Set<(prefix: string) => void>();
 export const onInvalidate = (listener: (prefix: string) => void) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; };

@@ -118,20 +118,28 @@ export const useNextCoverAsked = (coverArt: string | null | undefined) => useSyn
 
 // Real titles carry qualifiers: "(Original Motion Picture Soundtrack)", "- Single", "[From "Film"]".
 // Only recognised release qualifiers split off, so "I'm Gonna Be (500 Miles)" stays whole.
-const qualifier = /\b(soundtrack|single|ep|version|remix|mix|edit|live|remaster(ed)?|deluxe|edition|acoustic|instrumental|demo|mono|stereo|title track|bonus|feat\.?|ft\.|from)\b/i;
+// On a record title (no `album` argument), a tail that only says it is a soundtrack is dropped.
+const qualifier = /\b(soundtrack|single|ep|version|remix|mix|edit|live|remaster(ed)?|deluxe|edition|acoustic|instrumental|demo|mono|stereo|title track|bonus|feat\.?|ft\.|from|reprise|unplugged|explicit|clean|film|radio)\b/i;
+const cleanHyphens = (text: string) => text.replace(/[‐‑]/g, '-');
 export function splitTitle(title: string, album?: string): { main: string; extra: string } {
-  let main = title.trim();
+  let main = cleanHyphens(title).trim();
   const extras: string[] = [];
   for (let guard = 0; guard < 6; guard++) {
     const bracket = main.match(/\s*[([]([^()[\]]+)[)\]]\s*$/);
     if (bracket?.index && qualifier.test(bracket[1])) { extras.unshift(bracket[1].trim()); main = main.slice(0, bracket.index).trim(); continue; }
-    const dash = main.match(/\s+-\s+([^-]+)$/);
+    const dash = main.match(/\s+[-–—]\s+([^-–—]+)$/);
     if (dash?.index && qualifier.test(dash[1])) { extras.unshift(dash[1].trim()); main = main.slice(0, dash.index).trim(); continue; }
     break;
   }
   const own: string | undefined = album ? splitTitle(album).main.toLowerCase() : undefined;
-  const extra = extras.filter(e => !(own && /^from\s/i.test(e) && e.toLowerCase().includes(own))).join(', ');
-  return { main: main || title, extra };
+  const filtered = extras.filter(e => {
+    if (own && /^from\s/i.test(e) && e.toLowerCase().includes(own)) return false;
+    if (!album && /\bsoundtrack\b/i.test(e)) return false;
+    return true;
+  });
+  const joined = filtered.join(', ');
+  const extra = joined ? joined[0].toUpperCase() + joined.slice(1) : '';
+  return { main: main || cleanHyphens(title), extra };
 }
 
 // Minutes and seconds, "--:--" when unknown.

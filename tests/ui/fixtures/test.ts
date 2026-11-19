@@ -36,6 +36,8 @@ export class App {
   get main() { return this.page.locator('main.page'); }
   get heading() { return this.main.getByRole('heading', { level: 1 }); }
   get menu() { return this.page.getByRole('menu'); }
+  /** The deck's line naming the next song ("Next: …"). */
+  get upNext() { return this.deck.locator('p.up-next').filter({ hasText: /^Next:/ }); }
   get seek() { return this.deck.getByRole('slider', { name: /^Position in / }); }
   /** The squiggle's running clock (the first of its two time labels). */
   get clock() { return this.deck.locator('.squiggle-time').first(); }
@@ -44,6 +46,18 @@ export class App {
   row(title: string, scope: Locator = this.main) { return this.tracks(scope).filter({ has: this.page.getByRole('button', { name: new RegExp(`^(Play|Pause|Resume) ${escape(title)}$`) }) }); }
   rowButton(row: Locator) { return row.locator('button.track-play'); }
   section(name: 'Records' | 'Artists' | 'Tracks' | 'Playlists' | 'Favorites' | 'Genres') { return this.page.getByRole('navigation', { name: 'Library' }).getByRole('button', { name, exact: true }); }
+
+  /** The order menu of Records or Tracks, named by the order it shows ("Order: newest first"). */
+  get order() { return this.main.getByRole('button', { name: /^Order: / }); }
+  /** Picks an order from the menu by its name in the menu, and waits for the list's menu to show it. */
+  async sortBy(label: string, shown = label) {
+    await this.order.click();
+    const menu = this.page.getByRole('menu', { name: 'Order' });
+    await menu.getByRole('menuitemradio', { name: label, exact: true }).click();
+    await expect(menu).toBeHidden();
+    await this.expectOrder(shown);
+  }
+  async expectOrder(shown: string) { await expect(this.order).toHaveAccessibleName(`Order: ${shown}`); }
 
   /** Signs in the way a browser does: the session cookie lands in this page's context. The app
    *  opens at Home; most specs start from Records, one place further on, unless `home` is set. */

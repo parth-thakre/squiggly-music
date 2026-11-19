@@ -1,7 +1,8 @@
 import type { PlayerSnapshot } from '../../../packages/core/contracts';
 import { finishThreshold, type PlayCountsAt } from '../../../packages/core/plays';
 
-export interface PlayEvent { trackId: string; event: 'started' | 'finished' }
+// albumId: the song's record, which windows read again once a finished play is reported.
+export interface PlayEvent { trackId: string; event: 'started' | 'finished'; albumId?: string }
 export { finishThreshold };
 
 // Derives play reports from native snapshots (about 4 Hz). Only server tracks are reported.
@@ -34,7 +35,7 @@ export class PlayTracker {
     if (!play.started) { play.started = true; events.push({ trackId: track.id, event: 'started' }); }
     const threshold = finishThreshold(player.duration > 0 ? player.duration : track.duration ?? 0, percent);
     if (!play.finished && threshold !== null && play.played >= threshold) {
-      play.finished = true; events.push({ trackId: track.id, event: 'finished' });
+      play.finished = true; events.push({ trackId: track.id, event: 'finished', ...(track.albumId ? { albumId: track.albumId } : {}) });
     }
     return events;
   }

@@ -2,11 +2,8 @@ import { allTracks, expect, test, type App } from '../fixtures/test';
 
 // Tracks: every track on the server, sorted as records are, a page at a time, played like any
 // other song list. Sorting comes from Navidrome's own API; without it the app sorts them itself.
-const sorts = (app: App) => app.main.getByRole('group', { name: 'Sort tracks' });
-async function sortBy(app: App, label: string) {
-  await sorts(app).getByRole('button', { name: label, exact: true }).click();
-  await expect(sorts(app).getByRole('button', { name: label, exact: true })).toHaveAttribute('aria-pressed', 'true');
-}
+// The order menu names the order it shows; Tracks shows each order by its name in the menu.
+const sortBy = (app: App, label: string) => app.sortBy(label);
 const first = async (app: App, count: number) => (await app.titles()).slice(0, count);
 
 test.describe('tracks', () => {
@@ -17,7 +14,7 @@ test.describe('tracks', () => {
     await expect(app.heading).toHaveText('Tracks');
     await expect(app.section('Tracks')).toHaveAttribute('aria-current', 'page');
     // Newest first: the record added last, its last track first.
-    await expect(sorts(app).getByRole('button', { name: 'Newest' })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('Newest');
     await expect(app.tracks().first()).toContainText('Take 100');
     expect(await first(app, 3)).toEqual(['Take 100', 'Take 99', 'Take 98']);
 
@@ -71,7 +68,7 @@ test.describe('tracks', () => {
     await expect(app.heading).toHaveText('Records');
     await page.goBack();
     await expect(app.heading).toHaveText('Tracks');
-    await expect(sorts(app).getByRole('button', { name: 'A to Z' })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('A to Z');
     await expect.poll(() => app.main.evaluate(main => Math.round(main.scrollTop))).toBe(at);
     await expect(app.row(title!)).toBeInViewport();
     expect(fake.nativeQueries.length).toBe(asked);
@@ -98,7 +95,7 @@ test.describe('tracks', () => {
     await app.rowButton(app.row('Take 99')).click();
     await app.expectPlaying('Take 99');
     await app.openQueue();
-    await expect(app.main.getByText(`${allTracks.length - 2} songs up next`)).toBeVisible();
+    await expect(app.main.getByText(`${allTracks.length - 2} songs to come`)).toBeVisible();
   });
 
   test('with a mouse, only the song\'s name plays it; its length doesn\'t', async ({ app, page }) => {
@@ -122,7 +119,7 @@ test.describe('tracks', () => {
   test('without Navidrome\'s own API, the app sorts the tracks itself, the same way', async ({ app, fake, page }) => {
     fake.nativeApi = false;
     await app.section('Tracks').click();
-    await expect(sorts(app).getByRole('button', { name: 'Newest' })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('Newest');
     await expect(app.tracks().first()).toContainText('Take 100');
     expect(await first(app, 3)).toEqual(['Take 100', 'Take 99', 'Take 98']);
     await sortBy(app, 'A to Z');
@@ -153,7 +150,7 @@ test.describe('tracks', () => {
     });
     await app.section('Tracks').click();
     await expect(app.tracks().first()).toBeVisible();
-    await expect(sorts(app)).toHaveCount(0);
+    await expect(app.order).toHaveCount(0);
     await expect(app.main.getByText('Sorting a library this big needs HTTPS.', { exact: false })).toBeVisible();
   });
 

@@ -22,14 +22,24 @@ export const alpha = (hex: string, a: number) => {
 // A surface set back from the room (the deck): further from the ink, so text on it reads at least
 // as well as on the room itself: darker in a dark room, lighter in a light one.
 const setBack = (palette: Palette) => {
+  if (palette.deck) return palette.deck;
   const dark = contrast(palette.ground, '#000000') < contrast(palette.ground, '#ffffff');
-  return blend(palette.ground, dark ? '#000000' : '#ffffff', dark ? .24 : .4);
+  return blend(palette.ground, dark ? '#000000' : '#ffffff', dark ? .24 : .16);
 };
-export const paletteStyle = (palette: Palette) => ({
-  '--ground': palette.ground, '--ink': palette.ink, '--soft': palette.soft, '--accent': palette.accent,
-  '--accent-text': palette.accentText ?? palette.accent, '--line': palette.line ?? alpha(palette.ink, .16),
-  '--set-back': setBack(palette),
-}) as CSSProperties;
+export const paletteStyle = (palette: Palette) => {
+  const deck = setBack(palette);
+  const neutralAccent = palette.neutralAccent ?? palette.accent === palette.ink;
+  return {
+    '--ground': palette.ground, '--deck': deck, '--set-back': deck,
+    '--ink': palette.ink, '--soft': palette.soft, '--accent': palette.accent,
+    '--accent-text': palette.accentText ?? palette.accent,
+    '--play': neutralAccent ? palette.ink : palette.accent,
+    '--line': palette.line ?? alpha(palette.ink, .15),
+    '--line-strong': alpha(palette.ink, .38),
+    '--leader': alpha(palette.ink, .25),
+    '--wash': alpha(palette.ink, .07),
+  } as CSSProperties;
+};
 
 // The room's palette: the theme's fixed colours, or the playing record's sleeve. Each window
 // (main and mini) applies the chosen theme's type, spacing, and motion to its own document.
@@ -88,7 +98,7 @@ export function Position({ track, palette }: { track: Track; palette: Palette })
   const live = isStation(track);
   return <Squiggle label={live ? `${track.title}, live. There is no position to seek to.` : `Position in ${track.title}`} identity={entry ?? track.id}
     position={position} duration={duration || (track.duration ?? 0)} playing={playing}
-    color={palette.accent} rest={alpha(palette.ink, .42)} onSeek={player.seek} live={live} />;
+    color={palette.accent} rest={alpha(palette.ink, .38)} head={palette.ink} onSeek={player.seek} live={live} />;
 }
 
 // The line under the title: the artist, or for a station, what it says is on. When it says nothing

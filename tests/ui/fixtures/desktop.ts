@@ -21,6 +21,7 @@ export interface FakeExtension { id: string; name: string; url: string; error?: 
 // `mini` makes the page the mini player window. `commands` records player commands in bridgeCalls.
 // window.pushPlayer(patch) sends a snapshot with the player state changed as the audio host would
 // report it (PlayerSnapshot); its `audio` fields merge into the audio path rather than replace it.
+// window.pushPlayReported({ trackId, albumId }) says a finished play was reported, as main does.
 //
 // Keep on this device, against a thin fake of the main process:
 // `server: true` sends library calls to the browser build's host (/api, the fake Navidrome), as
@@ -188,6 +189,8 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
       const next = snapshot();
       listeners.forEach(listener => listener(next));
     } });
+    const reportedListeners = new Set<(play: unknown) => void>();
+    Object.assign(window, { pushPlayReported: (play: object) => reportedListeners.forEach(listener => listener(play)) });
     const disabled = new Set<string>(), removed = new Set<string>();
     let reloads = 0;
     const fresh = new Set(given.filter(extension => extension.isNew).map(extension => extension.id));
@@ -201,7 +204,13 @@ export async function installDesktopBridge(page: Page, options: { extensions?: F
     Object.assign(window, { squiggly: {
       snapshot: async () => snapshot(),
       subscribe: (listener: (snapshot: unknown) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+      onPlayReported: (listener: (play: unknown) => void) => { reportedListeners.add(listener); return () => reportedListeners.delete(listener); },
       command: async (command: unknown) => { if (mediaHost || commands) calls.push(`command:${JSON.stringify(command)}`); return { ok: true, value: undefined }; },
+      // Queue edits are recorded and change nothing: the host's snapshot (pushPlayer) says what came of them.
+      queue: {
+        move: async (from: number, to: number) => { calls.push(`queue:move:${from}:${to}`); return { ok: true, value: undefined }; },
+        remove: async (indexes: number[]) => { calls.push(`queue:remove:${indexes.join(',')}`); return { ok: true, value: undefined }; },
+      },
       ...(useServer ? {
         playTracks: async (ids: string[], start: number) => {
           const queue = ids.map(id => known.get(id)).filter((track): track is Track => !!track);

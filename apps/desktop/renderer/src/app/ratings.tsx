@@ -1,6 +1,6 @@
 import { useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react';
 import type { Rating, Result, StarTarget } from '../../../../../packages/core/contracts';
-import { api, invalidate, onLibraryReset } from './library';
+import { api, forget, invalidate, onLibraryReset } from './library';
 import { player } from './player';
 import { Glyph } from './ui';
 
@@ -38,6 +38,7 @@ export async function setRating(target: StarTarget, ids: string[], rating: Ratin
   emit();
   // The next read of these comes from the server.
   invalidate(target === 'track' ? 'tracks:highest' : 'albums:highest');
+  if (target === 'track') forget('artistTracks:');
   if (target !== 'track') ids.forEach(id => invalidate(`${target}:${id}`));
   const failed = results.find(result => !result.ok);
   if (failed) { player.showError(ids.length > 1 ? `Some ratings were not saved. ${failed.error}` : `The rating was not saved. ${failed.error}`); return failed; }

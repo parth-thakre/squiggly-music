@@ -90,7 +90,8 @@ test.describe('mixes', () => {
     await expect(names(app, 'By genre')).toHaveCount(3);
     // A reload keeps the page and forgets the answers, so these are the page's own lookups.
     fake.failNext('genres', 'The server is busy.');
-    fake.failNext('albums', 'The server is not answering.');
+    // The history lookup itself, not the On repeat tile's draw, which can ask first.
+    fake.failNextWhere('albums', args => args[0] === 'frequent' && args[2] === 1, 'The server is not answering.');
     await page.reload();
     await expect(app.heading).toHaveText('Mixes');
     await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['From what you play', 'By genre', 'By decade']);
@@ -103,16 +104,20 @@ test.describe('mixes', () => {
   });
 
   test('a mix that answers after another song started leaves that song playing', async ({ app, fake, page }) => {
-    await page.setViewportSize({ width: 1100, height: 480 });
+    // Low enough that the 1990s stay more than the 200px a tile draws ahead of the fold.
+    await page.setViewportSize({ width: 1100, height: 440 });
     await app.signIn();
     await app.main.focus();
     await page.keyboard.press('g');
     await page.keyboard.press('m');
     await expect(names(app, 'By decade')).toHaveCount(4);
     // The 1990s sit below the fold, so nothing has drawn them yet. Their draw takes four seconds.
-    const nineties = () => fake.callsTo('randomSongs').filter(call => { const args = call.args[0] as { size: number; fromYear?: number }; return args.size === 50 && args.fromYear === 1990; });
+    // Only theirs: slow draws for the tiles beside them would take all six of the browser's
+    // connections to the server, and the record page's own request would wait behind them.
+    const isNineties = (args: unknown[]) => { const options = args[0] as { size: number; fromYear?: number }; return options.size === 50 && options.fromYear === 1990; };
+    const nineties = () => fake.callsTo('randomSongs').filter(call => isNineties(call.args));
     expect(nineties()).toHaveLength(0);
-    fake.delay('randomSongs', ...Array<number>(20).fill(4000));
+    fake.delayWhere('randomSongs', isNineties, 4000);
     const tile = group(app, 'By decade').locator('li').filter({ hasText: 'The 1990s' });
     await tile.hover();
     await tile.getByRole('button', { name: 'Play The 1990s' }).click();
@@ -123,9 +128,10 @@ test.describe('mixes', () => {
     await app.expectPlaying('Long Run');
   });
 
-  test('See all on Home and on Playlists lands here, and Playlists keeps only the first eight', async ({ app, page }) => {
+  test('Your mixes on Home and See all on Playlists land here, and Playlists keeps only the first eight', async ({ app, page }) => {
     await app.signIn({ home: true });
-    await seeAll(app, 'Your mixes').click();
+    // Home's shelf heading is the way in.
+    await group(app, 'Your mixes').getByRole('heading', { level: 2 }).getByRole('button', { name: 'Your mixes', exact: true }).click();
     await expect(app.heading).toHaveText('Mixes');
     await expect(names(app, 'By decade')).toHaveCount(4);
     await page.goBack();

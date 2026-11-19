@@ -1,5 +1,5 @@
 import { installDesktopBridge } from '../fixtures/desktop';
-import { expect, test } from '../fixtures/test';
+import { expect, test, trackOf } from '../fixtures/test';
 
 // Desktop-only Settings, through a stand-in for the preload bridge (fixtures/desktop.ts).
 test.beforeEach(async ({ page }) => { await installDesktopBridge(page); });
@@ -79,6 +79,27 @@ test('a saved output that is unplugged shows as disconnected, by the name it had
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await setDevices([system]);
   await expect(output.locator('option')).toHaveText(['USB DAC (disconnected)', 'System default']);
+});
+
+test('the deck names the output mpv was asked for, never where the sound ended up, and reads its notes whole', async ({ page }) => {
+  const system = { name: 'auto', description: 'System default' };
+  const dac = { name: 'pipewire/alsa_output.usb-dac', description: 'USB DAC' };
+  await installDesktopBridge(page, { settings: { outputDevice: dac.name } });
+  await page.goto('/');
+  const push = (value: object) => page.evaluate(v => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(v), value);
+  await push({ queue: [trackOf('tr-1-1')], entryIds: ['e1'], currentIndex: 0, duration: 45, playId: 'p1', playing: true, position: 1, devices: [system, dac],
+    audio: { requestedDevice: dac.name, outputBackend: 'pipewire', exclusiveRequested: true } });
+  const out = page.locator('.deck .signal-out');
+  // PipeWire's session manager can move the stream, so the device is the one asked for.
+  await expect(out).toHaveText('Asked for USB DAC, exclusive');
+  await push({ audio: { requestedDevice: 'auto', exclusiveRequested: true } });
+  await expect(out).toHaveText('PipeWire, exclusive use requested');
+  await push({ audio: { exclusiveRequested: false } });
+  await expect(out).toHaveText('PipeWire');
+  // What changes the sound takes as many lines as it needs, the last note as readable as the first.
+  await push({ streamKbps: 128, volume: 40 });
+  await expect(out).toHaveText('Streaming a 128 kbps MP3. Volume at 40%.');
+  expect(await out.evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 });
 
 test('news from the engine goes when the engine takes it back; an error stays until dismissed', async ({ page }) => {

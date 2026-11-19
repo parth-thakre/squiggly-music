@@ -4,6 +4,7 @@ import '@fontsource/young-serif/400.css';
 import '@fontsource-variable/familjen-grotesk/index.css';
 import './app/app.css';
 import './app/shell.css';
+import './app/editorial.css';
 import { App } from './app/App';
 import { Mini } from './app/Mini';
 import { startExtensions } from './app/extensions';
