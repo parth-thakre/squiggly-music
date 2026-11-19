@@ -435,13 +435,14 @@ function SignalPath({ track }: { track: Track }) {
   const decoded = [audio?.codec?.toUpperCase(), kHz(audio?.decoderRate)].filter(Boolean).join(', ');
   const live = mode === 'desktop' && decoded ? `Live stream, ${decoded}` : 'A live stream.';
   const fileLine = isStation(track) ? live : mode !== 'web' ? format : '';
-  // Honest second line on desktop when nothing else altered the path: exclusive request, sink match,
-  // or the output device mpv was asked for. Never claims bit-perfect.
-  const desktopOut = mode === 'desktop' && !notes ? (
-    audio?.exclusiveRequested ? 'Exclusive output requested'
-      : audio?.sink && audio.sink.resampling === false ? `${audio.sink.server === 'pipewire' ? 'PipeWire' : 'PulseAudio'} sink matches`
-      : outputDescription(device) ?? audio?.outputBackend ?? ''
-  ) : '';
+  // The second stop on the desktop, when nothing above changed what plays: where mpv sends it (the
+  // device asked for, else its output), and that exclusive use was asked for, never that it was
+  // granted. A sink whose rate matches says nothing here (docs/audio.md); Diagnostics says it.
+  const output = outputDescription(device) ?? backendName(audio?.outputBackend);
+  const exclusive = audio?.exclusiveRequested === true;
+  const desktopOut = mode !== 'desktop' || notes ? ''
+    : output ? (exclusive ? `${output}, exclusive use requested` : output)
+    : exclusive ? 'Exclusive use requested' : '';
   const outLine = notes || desktopOut;
   if (!fileLine && !outLine) return null;
   const both = Boolean(fileLine && outLine);
@@ -453,10 +454,15 @@ function SignalPath({ track }: { track: Track }) {
     </svg>}
     <p>
       {fileLine && <span className="signal-file">{fileLine}</span>}
+      {both && <span className="sr-only">. </span>}
       {outLine && <span className="signal-out">{outLine}</span>}
     </p>
   </div>;
 }
+
+// mpv's audio output by the name the system gives it.
+const backends: Record<string, string> = { pipewire: 'PipeWire', pulse: 'PulseAudio', alsa: 'ALSA', jack: 'JACK', wasapi: 'WASAPI', coreaudio: 'Core Audio', avfoundation: 'AVFoundation' };
+const backendName = (backend: string | null | undefined) => backend ? backends[backend] ?? backend : null;
 
 const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 // The server login on every build. The desktop's main process, the Android bridge, or the
