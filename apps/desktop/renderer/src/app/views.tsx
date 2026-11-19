@@ -1558,20 +1558,21 @@ export function Home() {
   const newestList = newest?.ok ? newest.value : [];
   const frequentList = frequent?.ok ? frequent.value : [];
 
-  // Lead with the record played last; if that one is already on the deck, lead with the one before
-  // it. With no history yet, lead with the newest arrival. The lead is chosen once a visit, so it
-  // doesn't change under the pointer: when what was played lately is known, or after a moment
-  // without it, and it stays when its Play starts it or another record.
+  // Lead with the record played last, as the latest answer has it (on the desktop, what was kept
+  // from last time, then the server's); with no history yet, the newest arrival. Until what was
+  // played lately is known, or a moment without it, nothing leads. The record on the deck when
+  // the lead was first chosen is passed over for the one before it, for the whole visit, so
+  // pressing the lead's Play doesn't swap it for another.
   const [patient, setPatient] = useState(true);
   useEffect(() => { const timer = setTimeout(() => setPatient(false), TOGETHER_MS); return () => clearTimeout(timer); }, []);
-  const chosen = useRef<{ album: Album | null; fromRecent: boolean } | null>(null);
-  if (!chosen.current && (recentList.length > 0 || ((recent !== undefined || !patient) && newest !== undefined))) {
-    const fromRecent = recentList.length > 0;
-    const pool = fromRecent ? recentList : newestList;
-    chosen.current = { album: pool.length > 1 && pool[0].id === playingAlbumId ? pool[1] : pool[0] ?? null, fromRecent };
-  }
-  const lead = chosen.current?.album ?? null;
-  const leadFromRecent = chosen.current?.fromRecent ?? false;
+  const passedOver = useRef<{ id: string | null } | null>(null);
+  const leadFromRecent = recentList.length > 0;
+  const pool = leadFromRecent ? recentList : newestList;
+  const skip = passedOver.current ? passedOver.current.id : playingAlbumId ?? null;
+  const ready = !!passedOver.current || recentList.length > 0 || ((recent !== undefined || !patient) && newest !== undefined);
+  const lead = !ready ? null : pool.length > 1 && pool[0].id === skip ? pool[1] : pool[0] ?? null;
+  // Only once there's a lead to keep: an empty one is never the visit's.
+  if (lead && !passedOver.current) passedOver.current = { id: playingAlbumId ?? null };
   // The lead shows once on the page: not again among the records played lately or the arrivals.
   const lately = recentList.filter(r => r.id !== lead?.id).slice(0, 6);
   const arrivals = newestList.filter(r => r.id !== lead?.id);

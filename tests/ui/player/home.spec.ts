@@ -171,15 +171,16 @@ test.describe('home', () => {
     // Still on its way, it holds its place without sleeves, so the shelves below don't move.
     await expect(shelf(app, 'Played lately')).toHaveAttribute('aria-busy', 'true');
     await expect(shelf(app, 'Played lately').locator('img')).toHaveCount(0);
-    // The lead doesn't wait past a moment for it: the newest record leads, and it stays when
-    // Played lately arrives, so it never changes under the pointer.
+    // The lead doesn't wait past a moment for it: meanwhile the newest record leads.
     await expect(lead(app).getByRole('heading', { level: 2 })).toHaveText('Test Pressing');
     await expect(lead(app)).toContainText('new arrival');
-    await expect(sleeves(app, 'Played lately')).toHaveCount(2, { timeout: 5000 });
-    await expect(sleeves(app, 'Played lately').locator('.grid-name')).toHaveText(['Glass Orchard', 'Quiet Harbor']);
+    // Then the record played last leads, and the one before it is played lately.
+    await expect(sleeves(app, 'Played lately')).toHaveCount(1, { timeout: 5000 });
+    await expect(sleeves(app, 'Played lately')).toContainText('Quiet Harbor');
     await expect(shelf(app, 'Played lately')).not.toHaveAttribute('aria-busy');
-    await expect(lead(app).getByRole('heading', { level: 2 })).toHaveText('Test Pressing');
-    await expect(sleeves(app, 'New arrivals').filter({ hasText: 'Test Pressing' })).toHaveCount(0);
+    await expect(lead(app).getByRole('heading', { level: 2 })).toHaveText('Glass Orchard');
+    await expect(lead(app)).toContainText('played last');
+    await expect(sleeves(app, 'New arrivals').filter({ hasText: 'Glass Orchard' })).toHaveCount(0);
   });
 
   test('Your mixes waits for Most played, which says whether there is history', async ({ app, fake }) => {
