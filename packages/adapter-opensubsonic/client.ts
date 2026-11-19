@@ -144,6 +144,7 @@ const fromNative = (song: NativeSong): Song => ({
   track: song.trackNumber, discNumber: song.discNumber, year: song.year, genre: song.genre,
   starred: song.starred ? song.starredAt ?? 'starred' : undefined, artists: song.participants?.artist,
   userRating: song.rating ?? undefined,
+  playCount: song.playCount,
   path: song.path,
   size: song.size,
 });

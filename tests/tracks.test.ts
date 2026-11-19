@@ -41,7 +41,7 @@ const subsonics = [
   },
   {
     id: 'duet', title: 'Duet', album: 'Pairs', artist: 'A & B', track: 2, coverArt: 'dc-al-pairs:2_aa11', suffix: 'wav', duration: 61, discNumber: 2,
-    albumId: 'al-pairs', artistId: 'ar-a', samplingRate: 96000, bitDepth: 24, genre: 'Jazz', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }], userRating: 3,
+    playCount: 3, albumId: 'al-pairs', artistId: 'ar-a', samplingRate: 96000, bitDepth: 24, genre: 'Jazz', artists: [{ id: 'ar-a', name: 'A' }, { id: 'ar-b', name: 'B' }], userRating: 3,
   },
   {
     id: 'loose', title: 'Loose', album: 'Singles', artist: 'C', year: 1999, coverArt: 'al-al-singles_0f0f', suffix: 'mp3', duration: 12, albumId: 'al-singles', artistId: 'ar-c',
