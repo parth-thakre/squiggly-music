@@ -1540,10 +1540,19 @@ export function Home() {
   const frequentList = frequent?.ok ? frequent.value : [];
 
   // Lead with the record played last; if that one is already on the deck, lead with the one before
-  // it. With no history yet, lead with the newest arrival.
-  const leadFromRecent = recentList.length > 0;
-  const pool = leadFromRecent ? recentList : newestList;
-  const lead = pool.length > 1 && pool[0].id === playingAlbumId ? pool[1] : pool[0] ?? null;
+  // it. With no history yet, lead with the newest arrival. The lead is chosen once a visit, so it
+  // doesn't change under the pointer: when what was played lately is known, or after a moment
+  // without it, and it stays when its Play starts it or another record.
+  const [patient, setPatient] = useState(true);
+  useEffect(() => { const timer = setTimeout(() => setPatient(false), TOGETHER_MS); return () => clearTimeout(timer); }, []);
+  const chosen = useRef<{ album: Album | null; fromRecent: boolean } | null>(null);
+  if (!chosen.current && (recentList.length > 0 || ((recent !== undefined || !patient) && newest !== undefined))) {
+    const fromRecent = recentList.length > 0;
+    const pool = fromRecent ? recentList : newestList;
+    chosen.current = { album: pool.length > 1 && pool[0].id === playingAlbumId ? pool[1] : pool[0] ?? null, fromRecent };
+  }
+  const lead = chosen.current?.album ?? null;
+  const leadFromRecent = chosen.current?.fromRecent ?? false;
   // The lead shows once on the page: not again among the records played lately or the arrivals.
   const lately = recentList.filter(r => r.id !== lead?.id).slice(0, 6);
   const arrivals = newestList.filter(r => r.id !== lead?.id);
