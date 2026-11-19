@@ -1140,8 +1140,9 @@ export function Queue() {
       const track = queue[i];
       const recKey = recordOf(track);
       // Where autoplay's songs start or stop: a record's run never crosses one, so a song queued
-      // by hand after autoplay's from the same record isn't headed as one of them.
-      const crossed = i > index + 1 && isAdded(i - 1) !== isAdded(i);
+      // by hand after autoplay's from the same record isn't headed as one of them. The playing
+      // entry counts when autoplay added it: the songs after the last of its run are set off too.
+      const crossed = (i > index + 1 || isAdded(index)) && isAdded(i - 1) !== isAdded(i);
       const ruled = (i === headEnd || (crossed && !isAdded(i))) && !addedAt.has(i);
       if (headed && recKey && (recKey !== prevKey || crossed) && !addedAt.has(i)) {
         let end = i + 1;
