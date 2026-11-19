@@ -146,6 +146,23 @@ test.describe('editorial pages', () => {
     await expect(app.heading).toHaveText('Quiet Harbor');
   });
 
+  test('a queue heading names the record\'s artist when its songs agree on one, though some don\'t say', async ({ app, page }) => {
+    await page.route('**/api/album', async route => {
+      const response = await route.fetch();
+      const result = await response.json() as { ok: boolean; value?: { tracks: Record<string, unknown>[] } };
+      if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t => t.id === 'tr-2-1' ? { ...t, albumArtist: 'Harbor Players' } : t);
+      await route.fulfill({ response, json: result });
+    });
+    await app.play('Test Pressing', 'Long Run');
+    await app.openAlbum('Quiet Harbor');
+    await app.chooseFromMenu(app.row('Opening 2'), 'Add to queue');
+    await app.chooseFromMenu(app.row('Second Wind 2'), 'Add to queue');
+    await app.openQueue();
+    const records = app.main.locator('ol.tracks > li.group-record');
+    await expect(records.locator('.queue-record-name')).toHaveText('Quiet Harbor');
+    await expect(records.locator('.queue-record-by')).toHaveText(/^Harbor Players, 2 songs, /);
+  });
+
   test('an artist\'s Most played and All songs count only songs that credit them, not everyone on their records', async ({ app, page }) => {
     // With participations a compilation Ada Brass guests on is one of their records; its other
     // performers' songs are no song of theirs. A song with no artist ids at all is matched by name,

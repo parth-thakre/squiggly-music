@@ -1143,6 +1143,10 @@ export function Queue() {
           const run = queue.slice(i, end);
           const recTitle = splitTitle(track.album);
           const dur = run.reduce((sum, t) => sum + (t.duration ?? 0), 0);
+          // The record's artist when its songs agree on one (a song that doesn't say isn't against
+          // it); otherwise the singer only when every song is theirs.
+          const albumArtists = new Set(run.map(t => t.albumArtist).filter(Boolean));
+          const credit = albumArtists.size === 1 ? [...albumArtists][0] : run.every(t => t.artist === track.artist) ? track.artist : null;
           parts.push({
             at: i,
             label: recTitle.main,
@@ -1150,8 +1154,7 @@ export function Queue() {
               id: track.albumId,
               name: recTitle.main,
               coverArt: track.coverArt,
-              // The record's artist; without it, the singer only when every song is theirs.
-              sub: [track.albumArtist ?? (run.every(t => t.artist === track.artist) ? track.artist : null), recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
+              sub: [credit, recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
             },
           });
           headEnd = end;
