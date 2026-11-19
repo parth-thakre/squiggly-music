@@ -124,7 +124,9 @@ test.describe('editorial pages', () => {
     const records = app.main.locator('ol.tracks > li.group-record');
     await expect(records).toHaveCount(1);
     await expect(records.locator('.queue-record-name')).toHaveText('Quiet Harbor');
-    await expect(records.locator('.queue-record-by')).toContainText('Bell Tower, 2 songs');
+    // The server names no record artist here, and the run's two songs aren't by the same act (one
+    // is a duet), so the heading names neither performer.
+    await expect(records.locator('.queue-record-by')).toHaveText(/^2 songs, /);
     expect(await app.titles()).toEqual(['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light', 'Opening 2', 'Second Wind 2', 'Opening 3']);
     // Quiet Harbor's heading ends where its songs end: a bare rule, with no words, comes before
     // Amber Field's lone song, which gets no heading of its own.

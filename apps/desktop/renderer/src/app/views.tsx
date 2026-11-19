@@ -1106,18 +1106,20 @@ export function Queue() {
   const groups = useMemo<TrackGroup[]>(() => {
     const added = addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true }));
     const addedAt = new Set(added.map(g => g.at));
+    const addedIds = new Set(autoplay.added);
     const parts: TrackGroup[] = [];
     if (index > 0 && !folded) parts.push({ at: 0, label: 'Played', quiet: true });
     if (queue.length <= QUEUE_FOLD_LIMIT) {
       const recordOf = (track: Track) => isStation(track) ? '' : track.albumId ?? track.album;
       let prevKey = nowTrack ? recordOf(nowTrack) : '';
-      // Where the last headed run ended: a song there that heads nothing gets a bare rule, so it
-      // doesn't read as one of the run's songs.
+      // Where the last headed run ended, a record's or autoplay's: a song there that heads
+      // nothing gets a bare rule, so it doesn't read as one of the run's songs.
       let headEnd = -1;
       for (let i = index + 1; i < queue.length; i++) {
         const track = queue[i];
         const recKey = recordOf(track);
-        const ruled = i === headEnd && !addedAt.has(i);
+        const afterAdded = i > index + 1 && addedIds.has(entryIds[i - 1]) && !addedIds.has(entryIds[i]);
+        const ruled = (i === headEnd || afterAdded) && !addedAt.has(i);
         if (recKey && recKey !== prevKey && !addedAt.has(i)) {
           let end = i + 1;
           while (end < queue.length && recordOf(queue[end]) === recKey && !addedAt.has(end)) end++;
@@ -1132,7 +1134,8 @@ export function Queue() {
                 id: track.albumId,
                 name: recTitle.main,
                 coverArt: track.coverArt,
-                sub: [track.albumArtist ?? track.artist, recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
+                // The record's artist; without it, the singer only when every song is theirs.
+                sub: [track.albumArtist ?? (run.every(t => t.artist === track.artist) ? track.artist : null), recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
               },
             });
             headEnd = end;

@@ -108,6 +108,7 @@ const SongPageSchema = Schema.Struct({ searchResult3: Schema.Struct({ song: Sche
 // Navidrome's own API (/api/song), which can sort. Its song is model.MediaFile as JSON.
 const NativeSongSchema = Schema.Struct({
   id: IdSchema, title: Schema.String, artist: Schema.optional(Schema.String), album: Schema.optional(Schema.String),
+  albumArtist: Schema.optional(Schema.String),
   duration: Schema.optional(DurationSchema), suffix: Schema.optional(Schema.String),
   sampleRate: Schema.optional(KnownCountSchema), bitDepth: Schema.optional(KnownCountSchema),
   albumId: Schema.optional(ReferenceSchema), artistId: Schema.optional(ReferenceSchema),
@@ -136,7 +137,7 @@ const nativeSorts: Record<TrackSort, [sort: string, order: 'asc' | 'desc']> = {
 // getCoverArt doesn't need.
 const nativeHash = (id: string, hash: string | undefined) => hash ? `${id}_${hash}` : id;
 const fromNative = (song: NativeSong): Song => ({
-  id: song.id, title: song.title, artist: song.artist, album: song.album,
+  id: song.id, title: song.title, artist: song.artist, album: song.album, displayAlbumArtist: song.albumArtist,
   duration: song.duration === undefined ? undefined : Math.trunc(song.duration), suffix: song.suffix,
   samplingRate: song.sampleRate, bitDepth: song.bitDepth, albumId: song.albumId, artistId: song.artistId,
   coverArt: song.hasCoverArt ? nativeHash(`mf-${song.id}`, song.imageHash)
