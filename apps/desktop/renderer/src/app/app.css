@@ -192,7 +192,8 @@ img:is(.deck-cover, .head-cover) {
 .status { margin: 0; padding: 20px 0; color: var(--soft); }
 /* Room for an artist's popular songs (ArtistPage): fewer than ten, often, in a personal library. */
 .popular-waiting { box-sizing: border-box; min-height: calc(var(--row-two, 52px) * 5); }
-.sentinel { height: 1px; }
+/* Never the scroll anchor: held in view as rows arrive above it, it would ask for every page in turn. */
+.sentinel { height: 1px; overflow-anchor: none; }
 
 .head { margin-bottom: 22px; }
 /* A record's or an artist's page: a band in the sleeve's colour behind the head, fading into the
