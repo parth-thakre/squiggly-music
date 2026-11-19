@@ -32,8 +32,8 @@ test.describe('autoplay', () => {
     await expect.poll(() => app.titles()).toEqual([...record, ...similar.slice(0, 10)]);
     expect(fake.callsTo('similarSongs').map(call => call.args)).toEqual([[special.tailLight, 30]]);
     await expect(app.main.getByRole('heading', { name: 'Added by autoplay' })).toHaveCount(1);
-    await expect(app.main.getByText('10 songs up next')).toBeVisible();
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.main.getByText('10 songs to come')).toBeVisible();
+    await expect(app.upNext).toContainText(similar[0]);
     await expect(app.tracks().nth(4)).toHaveClass(/\bnow\b/);
 
     // Turned off in Settings: the songs it added stay, marked, and nothing more comes.
@@ -64,7 +64,7 @@ test.describe('autoplay', () => {
     await app.deck.getByRole('button', { name: 'Test Pressing', exact: true }).click();
     await expect(app.heading).toHaveText('Test Pressing');
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
-    await expect(app.deck.getByText('Next:')).toBeVisible();
+    await expect(app.upNext).toBeVisible();
     expect(fake.callsTo('randomSongs').at(-1)?.args).toEqual([{ size: 30, genre: 'Folk' }]);
     await app.openQueue();
     await expect.poll(() => app.titles()).toHaveLength(11);
@@ -118,7 +118,7 @@ test.describe('autoplay', () => {
     await app.deck.getByRole('button', { name: 'Next', exact: true }).click();
     await app.deck.getByRole('button', { name: 'Previous', exact: true }).click();
     await asked[0].continue();
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.upNext).toContainText(similar[0]);
     await app.expectPlaying('Tail Light');
 
     // Next while it asks, then another song played: that song's answer, in first, moves nothing.
@@ -130,7 +130,7 @@ test.describe('autoplay', () => {
     await expect.poll(() => asked.length).toBe(3);
     await asked[2].continue();
     await asked[1].continue();
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.upNext).toContainText(similar[0]);
     await app.expectPlaying('Short Stop');
   });
 
@@ -149,7 +149,7 @@ test.describe('autoplay', () => {
     await page.keyboard.press('ArrowRight');
     await expect.poll(() => app.seconds()).toBeGreaterThanOrEqual(5);
     await asked[0].route.fulfill({ json: asked[0].json });
-    await expect(app.deck.getByText('Next:')).toContainText(similar[0]);
+    await expect(app.upNext).toContainText(similar[0]);
     await app.expectPlaying('Tail Light');
 
     await app.chooseFromMenu(app.row('Tail Light'), 'Play');
@@ -194,18 +194,21 @@ test('the desktop marks the entries its main process says autoplay added', async
   });
   await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
   const main = page.locator('main.page');
-  // The played song is folded away; Now playing heads the playing song; above the first song
-  // autoplay added (straight after it), its quiet heading in place of Up next; the song after
-  // them isn't marked.
+  // The played song is folded away and the playing one heads the page above the list; above the
+  // first song autoplay added (straight after it), its quiet heading; the song after them, from
+  // another record, is headed by its record, not marked as added.
   const rows = main.locator('ol.tracks > li');
+  await expect(main.getByRole('heading', { level: 2, name: 'Tail Light' })).toBeVisible();
   await expect(rows).toHaveCount(7);
   await expect(rows.nth(0)).toBeHidden();
-  await expect(rows.nth(1)).toHaveText('Now playing');
-  await expect(rows.nth(3)).toHaveClass(/\bgroup-head\b/);
-  await expect(rows.nth(3)).toHaveText('Added by autoplay');
+  await expect(rows.nth(1)).toBeHidden();
+  await expect(rows.nth(2)).toHaveClass(/\bgroup-head\b/);
+  await expect(rows.nth(2)).toHaveText('Added by autoplay');
+  await expect(rows.nth(5)).toHaveClass(/\bgroup-record\b/);
+  await expect(rows.nth(5)).not.toContainText('Added by autoplay');
   await expect(main.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
   // Shown again, the played song has its heading.
-  await main.getByRole('button', { name: 'Show 1 played song' }).click();
+  await main.getByRole('button', { name: 'Show played' }).click();
   await expect(rows.nth(0)).toHaveText('Played');
-  await expect(rows.nth(4)).toHaveText('Added by autoplay');
+  await expect(rows.nth(3)).toHaveText('Added by autoplay');
 });

@@ -41,11 +41,13 @@ test.describe('web play reporting', () => {
     await app.play('Test Pressing', 'Thirty Two');
     await expect.poll(reportsFor(fake, special.thirtyTwo)).toEqual(['started']);
     await app.openQueue();
+    // The playing song heads the page; its row shows with the played ones.
+    await app.main.getByRole('button', { name: 'Show played' }).click();
     await app.rowButton(app.row('Thirty Two')).focus();
     await page.keyboard.press('Alt+ArrowUp');
     await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', 'Thirty Two', 'Short Stop', 'Tail Light']);
     await app.expectPlaying('Thirty Two');
-    await expect(app.deck.getByText('Next:')).toContainText('Short Stop', { timeout: 15_000 });
+    await expect(app.upNext).toContainText('Short Stop', { timeout: 15_000 });
     await app.expectPlaying('Short Stop', { timeout: 10_000 });
     expect(reportsFor(fake, special.thirtyTwo)()).toEqual(['started', 'finished']);
   });

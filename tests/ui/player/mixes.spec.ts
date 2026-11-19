@@ -103,7 +103,8 @@ test.describe('mixes', () => {
   });
 
   test('a mix that answers after another song started leaves that song playing', async ({ app, fake, page }) => {
-    await page.setViewportSize({ width: 1100, height: 480 });
+    // Low enough that the 1990s stay more than the 200px a tile draws ahead of the fold.
+    await page.setViewportSize({ width: 1100, height: 440 });
     await app.signIn();
     await app.main.focus();
     await page.keyboard.press('g');
@@ -123,9 +124,10 @@ test.describe('mixes', () => {
     await app.expectPlaying('Long Run');
   });
 
-  test('See all on Home and on Playlists lands here, and Playlists keeps only the first eight', async ({ app, page }) => {
+  test('Your mixes on Home and See all on Playlists land here, and Playlists keeps only the first eight', async ({ app, page }) => {
     await app.signIn({ home: true });
-    await seeAll(app, 'Your mixes').click();
+    // Home's shelf heading is the way in.
+    await group(app, 'Your mixes').getByRole('heading', { level: 2 }).getByRole('button', { name: 'Your mixes', exact: true }).click();
     await expect(app.heading).toHaveText('Mixes');
     await expect(names(app, 'By decade')).toHaveCount(4);
     await page.goBack();

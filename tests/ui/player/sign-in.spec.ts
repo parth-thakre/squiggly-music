@@ -46,7 +46,8 @@ test.describe('sign-in', () => {
     await app.signInPassword.fill(webPassword);
     await app.signInPassword.press('Enter');
     await expect(app.heading).toHaveText('Home');
-    await expect(app.main.getByRole('button', { name: /^Test Pressing/ })).toBeVisible();
+    // Home leads with the newest record.
+    await expect(app.main.getByRole('heading', { level: 2, name: 'Test Pressing' })).toBeVisible();
 
     await app.openSettings();
     await app.main.getByRole('button', { name: 'Sign out' }).click();

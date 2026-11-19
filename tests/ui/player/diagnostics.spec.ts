@@ -2,7 +2,8 @@ import { installDesktopBridge } from '../fixtures/desktop';
 import { expect, test } from '../fixtures/test';
 
 // The sink line (AudioPath.sink): what the Linux sound server says it runs the sink at, on the
-// Diagnostics page, and a note on the deck only when it resamples what mpv sends.
+// Diagnostics page, and a note on the deck only when it resamples what mpv sends. The deck's line
+// has two stops: what the file is, then where it goes (mpv's output, or what changed on the way).
 const song = {
   id: 'song-1', title: 'Dawn Chorus', artist: 'The Larks', album: 'Morning', duration: 200, source: 'navidrome',
   sourceFormat: 'flac', sourceSampleRate: 44100, sourceBitDepth: 16, albumId: 'album-1', artistId: 'artist-1', coverArt: null,
@@ -22,7 +23,7 @@ test('a resampling server shows on Diagnostics and in the deck\'s line', async (
   await open(page, audio(44100, true));
   await page.goto('/');
   const deck = page.getByRole('complementary', { name: 'Now playing' });
-  await expect(deck.locator('.signal')).toHaveText('FLAC · 44.1 kHz · 16-bit. Resampled by PipeWire.');
+  await expect(deck.locator('.signal')).toHaveText('FLAC, 16-bit, 44.1 kHz. Resampled by PipeWire.');
   await deck.getByRole('button', { name: 'Diagnostics' }).click();
   const row = page.locator('.facts tr').filter({ has: page.getByRole('rowheader', { name: 'Sink' }) });
   await expect(row).toContainText('Example DAC Analog Stereo');
@@ -34,7 +35,9 @@ test('a matching sink leaves the deck\'s line alone', async ({ page }) => {
   await open(page, audio(48000, false));
   await page.goto('/');
   const deck = page.getByRole('complementary', { name: 'Now playing' });
-  await expect(deck.locator('.signal')).toHaveText('FLAC · 44.1 kHz · 16-bit');
+  // A matching sink is said on Diagnostics, with what it compares; the deck only names the output.
+  await expect(deck.locator('.signal')).toHaveText('FLAC, 16-bit, 44.1 kHz. PipeWire');
+  await expect(deck.locator('.signal')).not.toContainText(/match|bit-perfect/i);
   await deck.getByRole('button', { name: 'Diagnostics' }).click();
   await expect(page.getByText('PipeWire runs the sink at 48 kHz, s32, which matches the rate mpv sends.')).toBeVisible();
 });
@@ -43,7 +46,7 @@ test('no report, no sink row', async ({ page }) => {
   await open(page, audio(44100, null, false));
   await page.goto('/');
   const deck = page.getByRole('complementary', { name: 'Now playing' });
-  await expect(deck.locator('.signal')).toHaveText('FLAC · 44.1 kHz · 16-bit');
+  await expect(deck.locator('.signal')).toHaveText('FLAC, 16-bit, 44.1 kHz. PipeWire');
   await deck.getByRole('button', { name: 'Diagnostics' }).click();
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Diagnostics');
   await expect(page.getByText('Handed to')).toBeVisible();
@@ -54,7 +57,7 @@ test('a guessed sink says so, and the deck says nothing about resampling', async
   await open(page, audio(44100, null, true, 'default'));
   await page.goto('/');
   const deck = page.getByRole('complementary', { name: 'Now playing' });
-  await expect(deck.locator('.signal')).toHaveText('FLAC · 44.1 kHz · 16-bit');
+  await expect(deck.locator('.signal')).toHaveText('FLAC, 16-bit, 44.1 kHz. PipeWire');
   await deck.getByRole('button', { name: 'Diagnostics' }).click();
   const row = page.locator('.facts tr').filter({ has: page.getByRole('rowheader', { name: 'Sink' }) });
   await expect(row).toContainText('PipeWire runs the default sink at 48 kHz, s32. Whether PipeWire resamples isn\'t known: mpv\'s stream wasn\'t found, so it may be playing into another sink.');

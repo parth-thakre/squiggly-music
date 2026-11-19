@@ -12,12 +12,12 @@ test.describe('queue', () => {
 
   test('Add to queue and Play next from the right-click menu show up in the queue', async ({ app }) => {
     await app.chooseFromMenu(app.row('Tail Light'), 'Play next');
-    await expect(app.deck.getByText('Next:')).toContainText('Tail Light');
+    await expect(app.upNext).toContainText('Tail Light');
     await app.chooseFromMenu(app.row('Short Stop'), 'Add to queue');
     await app.openQueue();
     expect(await app.titles()).toEqual(['Long Run', 'Tail Light', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light', 'Short Stop']);
     await expect(app.tracks().nth(0)).toHaveClass(/\bnow\b/);
-    await expect(app.main.getByText('6 songs up next')).toBeVisible();
+    await expect(app.main.getByText('6 songs to come')).toBeVisible();
   });
 
   test('Alt+ArrowDown moves the focused song and focus follows it', async ({ app, page }) => {
@@ -38,15 +38,22 @@ test.describe('queue', () => {
 
   test('Delete removes a selected song that is not playing, and never the playing one', async ({ app, page }) => {
     await app.openQueue();
+    // The playing song heads the page; its row stays in the list, out of sight.
+    await expect(app.main.getByRole('heading', { level: 2, name: 'Long Run' })).toBeVisible();
+    await expect(app.row('Long Run')).toBeHidden();
     await app.rowButton(app.row('Short Stop')).click({ modifiers: ['ControlOrMeta'] });
     await expect(app.row('Short Stop')).toHaveClass(/\bselected\b/);
     await page.keyboard.press('Delete');
     await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', 'Thirty Two', 'Tail Light']);
 
-    await app.rowButton(app.row('Long Run')).click({ modifiers: ['ControlOrMeta'] });
+    // Everything selected, the playing song with it: Delete leaves only the playing song.
+    await app.rowButton(app.row('Lyric Line')).focus();
+    await page.keyboard.press('ControlOrMeta+a');
+    await expect(app.row('Thirty Two')).toHaveClass(/\bselected\b/);
     await page.keyboard.press('Delete');
-    await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', 'Thirty Two', 'Tail Light']);
+    await expect.poll(() => app.titles()).toEqual(['Long Run']);
     await app.expectPlaying('Long Run');
+    await expect(app.main.getByText('This is the last song.')).toBeVisible();
   });
 
   test('with a song queued twice, clicking the second copy plays that copy', async ({ app }) => {
@@ -58,13 +65,16 @@ test.describe('queue', () => {
     await expect(app.tracks().nth(5)).toHaveClass(/\bnow\b/);
     await expect(app.tracks().nth(4)).not.toHaveClass(/\bnow\b/);
 
-    // The first copy has played, so it is folded away until asked for.
+    // The first copy has played, so it is folded away until asked for; the playing copy heads the page.
     await expect(app.tracks().nth(4)).toBeHidden();
-    await app.main.getByRole('button', { name: 'Show 5 played songs' }).click();
+    await expect(app.tracks().nth(5)).toBeHidden();
+    await app.main.getByRole('button', { name: 'Show played' }).click();
+    await expect(app.main.getByRole('button', { name: 'Hide played' })).toHaveAttribute('aria-expanded', 'true');
+    await expect(app.tracks().nth(5)).toBeVisible();
     await app.rowButton(app.tracks().nth(4)).click();
     await expect(app.tracks().nth(4)).toHaveClass(/\bnow\b/);
     await expect(app.tracks().nth(5)).not.toHaveClass(/\bnow\b/);
-    await expect(app.main.getByText('1 song up next')).toBeVisible();
+    await expect(app.main.getByText('1 song to come')).toBeVisible();
   });
 
   test('radio from the playing song keeps it playing, with the station after it', async ({ app }) => {

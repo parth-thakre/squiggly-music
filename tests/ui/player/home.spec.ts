@@ -1,12 +1,15 @@
 import type { Page } from '@playwright/test';
 import { expect, test, trackOf, type App } from '../fixtures/test';
 
-// Home: where the app opens. Shelves of records played lately, the newest, and the most played,
-// the automatic playlists, the saved queue, and what other accounts are playing. Each shelf loads
-// by itself, except that Your mixes waits for Most played, and is hidden when it has nothing to show.
+// Home: where the app opens. It leads with the record played last (the newest, with no history),
+// then the most played and the records played lately, the new arrivals, the automatic playlists,
+// and what other accounts are playing. Each shelf loads by itself, except that Your mixes waits for
+// Most played, and is hidden when it has nothing to show. A shelf's heading opens Records in its sort.
 const shelf = (app: App, name: string) => app.main.getByRole('region', { name, exact: true });
 const sleeves = (app: App, name: string) => shelf(app, name).locator('ul.grid > li');
-const seeAll = (app: App, name: string) => shelf(app, name).getByRole('button', { name: /^See all/ });
+const ranks = (app: App) => shelf(app, 'Most played').locator('ol.home-ranks > li');
+const heading = (app: App, name: string) => shelf(app, name).getByRole('heading', { level: 2 }).getByRole('button', { name, exact: true });
+const lead = (app: App) => app.main.locator('.home-lead');
 const wordmark = (page: Page) => page.getByRole('button', { name: 'Squiggly home' });
 
 test.describe('home', () => {
@@ -15,14 +18,18 @@ test.describe('home', () => {
     await expect(wordmark(page)).toHaveAttribute('aria-current', 'page');
     // No Home tab: the six tabs are all the bar has room for, and none is lit here.
     await expect(page.getByRole('navigation', { name: 'Library' }).locator('button[aria-current]')).toHaveCount(0);
-    await expect(sleeves(app, 'Newest')).toHaveCount(12);
-    await expect(sleeves(app, 'Newest').first()).toContainText('Test Pressing');
+    // No history: the newest record leads, and the arrivals after it don't repeat it.
+    await expect(lead(app).getByRole('heading', { level: 2 })).toHaveText('Test Pressing');
+    await expect(lead(app)).toContainText('new arrival');
+    await expect(sleeves(app, 'New arrivals')).toHaveCount(11);
+    await expect(sleeves(app, 'New arrivals').filter({ hasText: 'Test Pressing' })).toHaveCount(0);
     expect(fake.callsTo('albums').map(call => call.args)).toEqual(expect.arrayContaining([['recent', 0, 12], ['newest', 0, 12], ['frequent', 0, 12]]));
     // The mixes, as Playlists lists them, without history: no On repeat or Lately.
     await expect(shelf(app, 'Your mixes').locator('.grid-name')).toHaveText(['Everything, shuffled', 'Recently added', 'Rock', 'Folk', 'Ambient']);
     // Nothing played, no saved queue, nobody else listening: those shelves aren't there at all.
-    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Newest', 'Your mixes']);
+    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Test Pressing', 'New arrivals', 'Your mixes']);
     await expect(app.main.getByText('Played lately')).toHaveCount(0);
+    await expect(app.main.getByText('Most played')).toHaveCount(0);
     await expect(app.main.getByText('Playing elsewhere')).toHaveCount(0);
     // A tile draws its songs once in view, as on Playlists, but the decades aren't looked for.
     expect(fake.callsTo('randomSongs').filter(call => (call.args[0] as { fromYear?: number }).fromYear)).toEqual([]);
@@ -33,21 +40,22 @@ test.describe('home', () => {
     fake.recent = ['al-5', 'al-2', 'al-9'];
     fake.frequent = ['al-3', 'al-5'];
     await app.signIn({ home: true });
-    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Played lately', 'Newest', 'Most played', 'Your mixes']);
-    await expect(sleeves(app, 'Played lately').locator('.grid-name')).toHaveText(['Glass Orchard', 'Quiet Harbor', 'Paper Lanterns']);
-    await expect(sleeves(app, 'Most played').locator('.grid-name')).toHaveText(['Amber Field', 'Glass Orchard']);
+    // The record played last leads; the rest played lately follow, without it.
+    await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['Glass Orchard', 'Most played', 'Played lately', 'New arrivals', 'Your mixes']);
+    await expect(lead(app)).toContainText('played last');
+    await expect(sleeves(app, 'Played lately').locator('.grid-name')).toHaveText(['Quiet Harbor', 'Paper Lanterns']);
+    await expect(ranks(app).locator('.song-title')).toHaveText(['Amber Field', 'Glass Orchard']);
     await expect(shelf(app, 'Your mixes').locator('.grid-name')).toContainText(['On repeat', 'Lately']);
 
-    const sort = app.main.getByRole('group', { name: 'Sort records' });
-    for (const [name, pressed] of [['Played lately', 'Recently played'], ['Most played', 'Most played'], ['Newest', 'Newest']] as const) {
-      await seeAll(app, name).click();
+    for (const [name, shown] of [['Played lately', 'recently played'], ['Most played', 'most played'], ['New arrivals', 'newest first']] as const) {
+      await heading(app, name).click();
       await expect(app.heading).toHaveText('Records');
-      await expect(sort.getByRole('button', { name: pressed, exact: true })).toHaveAttribute('aria-pressed', 'true');
+      await app.expectOrder(shown);
       await expect(app.section('Records')).toHaveAttribute('aria-current', 'page');
       await page.goBack();
       await expect(app.heading).toHaveText('Home');
     }
-    await seeAll(app, 'Your mixes').click();
+    await heading(app, 'Your mixes').click();
     await expect(app.heading).toHaveText('Mixes');
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(app.heading).toHaveText('Home');
@@ -55,7 +63,7 @@ test.describe('home', () => {
 
   test('a sleeve opens its record, plays from its button, and has the record menu', async ({ app }) => {
     await app.signIn({ home: true });
-    const quiet = sleeves(app, 'Newest').filter({ hasText: 'Quiet Harbor' });
+    const quiet = sleeves(app, 'New arrivals').filter({ hasText: 'Quiet Harbor' });
     await app.openMenuOn(quiet.getByRole('button', { name: /^Quiet Harbor/ }));
     await expect(app.menu.getByRole('menuitem', { name: 'Go to artist' })).toBeVisible();
     await app.page.keyboard.press('Escape');
@@ -92,7 +100,7 @@ test.describe('home', () => {
     const everything = shelf(app, 'Your mixes').locator('li').filter({ hasText: 'Everything, shuffled' });
     await everything.hover();
     await everything.getByRole('button', { name: 'Play Everything, shuffled' }).click();
-    const quiet = sleeves(app, 'Newest').filter({ hasText: 'Quiet Harbor' });
+    const quiet = sleeves(app, 'New arrivals').filter({ hasText: 'Quiet Harbor' });
     await quiet.hover();
     await quiet.getByRole('button', { name: 'Play Quiet Harbor' }).click();
     await app.expectPlaying('Opening 2');
@@ -128,7 +136,7 @@ test.describe('home', () => {
     fake.saved = { tracks: [{ ...trackOf('tr-1-1') }], currentIndex: 0, positionSeconds: 5, changed: null, changedBy: null };
     await app.signIn({ home: true });
     await expect(app.deck).toContainText('Pick up where you left off');
-    await sleeves(app, 'Newest').getByRole('button', { name: /^Quiet Harbor/ }).click();
+    await sleeves(app, 'New arrivals').getByRole('button', { name: /^Quiet Harbor/ }).click();
     await expect(app.heading).toHaveText('Quiet Harbor');
     await app.play('Quiet Harbor', 'Opening 2');
     await app.page.goBack();
@@ -147,46 +155,51 @@ test.describe('home', () => {
     fake.listening = [];
     await page.goBack();
     await expect(app.heading).toHaveText('Home');
-    await expect(shelf(app, 'Newest')).toBeVisible();
+    await expect(shelf(app, 'New arrivals')).toBeVisible();
     await expect.poll(() => fake.callsTo('nowPlaying').length).toBe(2);
     await expect(elsewhere).toHaveCount(0);
   });
 
   test('a slow shelf holds up only itself', async ({ app, fake }) => {
-    fake.recent = ['al-5'];
-    // Played lately asks first; Newest and the rest arrive while it waits.
-    fake.delay('albums', 2500);
+    fake.recent = ['al-5', 'al-2'];
+    // Most played asks first (Your mixes asks for the same list), then Played lately, which waits
+    // while the new arrivals and the rest arrive.
+    fake.delay('albums', 0, 2500);
     await app.signIn({ home: true });
-    await expect(sleeves(app, 'Newest')).toHaveCount(12);
+    await expect(sleeves(app, 'New arrivals')).toHaveCount(11);
     await expect(shelf(app, 'Your mixes')).toBeVisible();
     // Still on its way, it holds its place without sleeves, so the shelves below don't move.
     await expect(shelf(app, 'Played lately')).toHaveAttribute('aria-busy', 'true');
     await expect(shelf(app, 'Played lately').locator('img')).toHaveCount(0);
+    // Then the record played last leads, and the one before it is played lately.
     await expect(sleeves(app, 'Played lately')).toHaveCount(1, { timeout: 5000 });
+    await expect(sleeves(app, 'Played lately')).toContainText('Quiet Harbor');
     await expect(shelf(app, 'Played lately')).not.toHaveAttribute('aria-busy');
+    await expect(lead(app).getByRole('heading', { level: 2 })).toHaveText('Glass Orchard');
+    await expect(sleeves(app, 'New arrivals').filter({ hasText: 'Glass Orchard' })).toHaveCount(0);
   });
 
   test('Your mixes waits for Most played, which says whether there is history', async ({ app, fake }) => {
     fake.frequent = ['al-3'];
-    // Most played asks third; the mixes share its answer, so they arrive with it.
-    fake.delay('albums', 0, 0, 2500);
+    // Most played asks first; the mixes share its answer, so they arrive with it.
+    fake.delay('albums', 2500);
     await app.signIn({ home: true });
-    await expect(sleeves(app, 'Newest')).toHaveCount(12);
+    await expect(sleeves(app, 'New arrivals')).toHaveCount(11);
     await expect.poll(() => fake.callsTo('genres').length).toBe(1);
     await expect(shelf(app, 'Your mixes')).toHaveAttribute('aria-busy', 'true');
     await expect(shelf(app, 'Most played')).toHaveAttribute('aria-busy', 'true');
-    await expect(sleeves(app, 'Most played')).toHaveCount(1, { timeout: 5000 });
+    await expect(ranks(app)).toHaveCount(1, { timeout: 5000 });
     await expect(shelf(app, 'Your mixes').locator('.grid-name')).toContainText(['On repeat', 'Lately']);
     // The shelf's list of twelve is asked for once; the On repeat tile's own draw asks for ten.
     expect(fake.callsTo('albums').filter(call => call.args[0] === 'frequent' && call.args[2] === 12)).toHaveLength(1);
   });
 
   test('a shelf that fails says why', async ({ app, fake }) => {
+    // Most played asks first.
     fake.failNext('albums', 'The server is busy.');
     await app.signIn({ home: true });
-    await expect(shelf(app, 'Played lately')).toContainText('The server is busy.');
-    await expect(seeAll(app, 'Played lately')).toHaveCount(0);
-    await expect(sleeves(app, 'Newest')).toHaveCount(12);
+    await expect(shelf(app, 'Most played')).toContainText('The server is busy.');
+    await expect(sleeves(app, 'New arrivals')).toHaveCount(11);
   });
 
   test('the wordmark and G then H go Home', async ({ app, page }) => {

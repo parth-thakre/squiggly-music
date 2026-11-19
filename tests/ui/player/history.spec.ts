@@ -34,25 +34,23 @@ test.describe('history', () => {
   });
 
   test('the Records sort survives opening a record and coming Back', async ({ app, page }) => {
-    const sort = app.main.getByRole('group', { name: 'Sort records' });
-    await expect(sort.getByRole('button', { name: 'Newest' })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('newest first');
     const firstRecord = app.main.locator('ul.grid > li').first();
     await expect(firstRecord).toContainText('Test Pressing');
 
-    await sort.getByRole('button', { name: 'A to Z' }).click();
-    await expect(sort.getByRole('button', { name: 'A to Z' })).toHaveAttribute('aria-pressed', 'true');
+    await app.sortBy('A to Z');
     await expect(firstRecord).toContainText('Amber Field');
     await firstRecord.getByRole('button', { name: /^Amber Field/ }).click();
     await expect(app.heading).toHaveText('Amber Field');
 
     await page.getByRole('button', { name: 'Back', exact: true }).click();
     await expect(app.heading).toHaveText('Records');
-    await expect(sort.getByRole('button', { name: 'A to Z' })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('A to Z');
     await expect(firstRecord).toContainText('Amber Field');
     await page.goForward();
     await expect(app.heading).toHaveText('Amber Field');
     await page.goBack();
-    await expect(sort.getByRole('button', { name: 'A to Z' })).toHaveAttribute('aria-pressed', 'true');
+    await app.expectOrder('A to Z');
   });
 
   test('Back to a search restores its query, and a pending search never pulls you back', async ({ app, page }) => {
