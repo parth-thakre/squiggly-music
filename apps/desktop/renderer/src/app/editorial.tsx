@@ -1,5 +1,5 @@
 import { ChevronDown } from 'lucide-react';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import type { Track } from '../../../../../packages/core/contracts';
 import { kHz } from './ui';
 
@@ -137,8 +137,11 @@ export function FitTitle({ children, className, sizes = [110, 96, 84, 72], wrapp
 // Inline sort/order dropdown ("newest first v", "A to Z v"). Opens a clean menu anchored below the
 // trigger, keeping the page free of seven competing sort pills.
 export interface OrderOption<T extends string> { value: T; label: string; triggerLabel?: string }
-export function OrderMenu<T extends string>({ value, options, onSelect, ariaLabel, className, extra }: {
-  value: T;
+// `value` is null when the list is in an order the menu doesn't offer (Records by decade, which
+// lists by year); the trigger then says `otherwise` and no option is checked.
+export function OrderMenu<T extends string>({ value, options, onSelect, ariaLabel, className, extra, otherwise }: {
+  value: T | null;
+  otherwise?: string;
   options: readonly OrderOption<T>[];
   onSelect(value: T): void;
   ariaLabel: string;
@@ -148,25 +151,42 @@ export function OrderMenu<T extends string>({ value, options, onSelect, ariaLabe
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLSpanElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const current = options.find(o => o.value === value) ?? options[0];
+  const popover = useRef<HTMLDivElement>(null);
+  const current = options.find(o => o.value === value);
+  const close = (refocus: boolean) => { setOpen(false); if (refocus) trigger.current?.focus(); };
   useEffect(() => {
     if (!open) return;
+    // Focus goes to the order in use, as a menu's would.
+    (popover.current?.querySelector<HTMLElement>('[aria-checked="true"]') ?? popover.current?.querySelector<HTMLElement>('[role^="menuitem"]'))?.focus();
     const onPointer = (event: PointerEvent) => { if (!root.current?.contains(event.target as Node)) setOpen(false); };
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); trigger.current?.focus(); } };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopPropagation(); close(true); } };
     addEventListener('pointerdown', onPointer, true);
     addEventListener('keydown', onKey, true);
     return () => { removeEventListener('pointerdown', onPointer, true); removeEventListener('keydown', onKey, true); };
   }, [open]);
+  // Up and Down step through the orders, Home and End go to either end, and Tab leaves the menu.
+  const step = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = [...event.currentTarget.querySelectorAll<HTMLElement>('[role^="menuitem"]')];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const to = event.key === 'ArrowDown' ? (at + 1) % items.length : event.key === 'ArrowUp' ? (at - 1 + items.length) % items.length
+      : event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : null;
+    if (event.key === 'Tab') { setOpen(false); return; }
+    if (to === null || !items.length) return;
+    event.preventDefault();
+    items[to].focus();
+  };
+  const shown = current ? current.triggerLabel ?? current.label : otherwise ?? options[0].label;
   return <span ref={root} className={`order-menu${className ? ` ${className}` : ''}`}>
-    <button ref={trigger} type="button" className="order-trigger" aria-haspopup="menu" aria-expanded={open} aria-label={`${ariaLabel}: ${current.label}`}
+    {/* Named by what it shows, so the words on screen are the words to say to it. */}
+    <button ref={trigger} type="button" className="order-trigger" aria-haspopup="menu" aria-expanded={open} aria-label={`${ariaLabel}: ${shown}`}
       onClick={() => setOpen(v => !v)}>
-      <span>{current.triggerLabel ?? current.label}</span>
+      <span>{shown}</span>
       <ChevronDown className="order-chevron" aria-hidden="true" />
     </button>
-    {open && <div className="order-popover" role="menu" aria-label={ariaLabel}>
-      {options.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={option.value === value}
+    {open && <div ref={popover} className="order-popover" role="menu" aria-label={ariaLabel} onKeyDown={step}>
+      {options.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={option.value === value} tabIndex={-1}
         className={`order-option${option.value === value ? ' active' : ''}`}
-        onClick={() => { setOpen(false); onSelect(option.value); }}>{option.label}</button>)}
+        onClick={() => { close(true); onSelect(option.value); }}>{option.label}</button>)}
       {extra}
     </div>}
   </span>;

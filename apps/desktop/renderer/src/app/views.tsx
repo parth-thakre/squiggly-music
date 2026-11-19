@@ -230,7 +230,7 @@ export function Records() {
     <h1 className="sr-only">Records</h1>
     <p className="facts crate-line">
       {albums.items.length > 0 && <>{plural(albums.items.length, 'record')}{albums.done ? '' : '+'},{' '}</>}
-      <OrderMenu value={orderValue} options={sorts} onSelect={next => pickSort('records', type, next)} ariaLabel="Order" className="crate-order-menu" />
+      <OrderMenu value={decade !== null ? null : orderValue} otherwise="by year" options={sorts} onSelect={next => pickSort('records', type, next)} ariaLabel="Order" className="crate-order-menu" />
       <Decades sort={route.view === 'records' ? route.sort : undefined} decade={decade} />
     </p>
     {albums.items.length ? (yearGroups ? <div className="crate">
