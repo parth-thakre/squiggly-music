@@ -595,6 +595,8 @@ describe('credited artists', () => {
     expect(detail.albums).toEqual([]);
     expect(detail.artist.coverArt).toBe('ar-ar-sc');
     expect(detail.appearsOn?.tracks.map(track => track.id)).toEqual(['sheila', 'beedi', 'naina']);
+    // Each song says whose record it is on, as the record's credit reads.
+    expect(detail.appearsOn?.tracks[0].albumArtist).toBe('Vishal-Shekhar');
     expect(detail.appearsOn?.albums).toEqual([
       expect.objectContaining({ id: 'al-Tees Maar Khan', name: 'Tees Maar Khan', artist: 'Vishal-Shekhar', songCount: 2, coverArt: 'al-Tees Maar Khan', year: 2010 }),
       expect.objectContaining({ id: 'al-Omkara', name: 'Omkara', songCount: 1 }),

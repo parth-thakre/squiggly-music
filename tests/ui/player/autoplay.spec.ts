@@ -195,17 +195,17 @@ test('the desktop marks the entries its main process says autoplay added', async
   await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
   const main = page.locator('main.page');
   // The played song is folded away and the playing one heads the page above the list; above the
-  // first song autoplay added (straight after it), its quiet heading; the song after them, from
-  // another record, is headed by its record, not marked as added.
+  // first song autoplay added (straight after it), its quiet heading; the song after them, alone
+  // from another record, has no heading of its own and isn't marked as added.
   const rows = main.locator('ol.tracks > li');
   await expect(main.getByRole('heading', { level: 2, name: 'Tail Light' })).toBeVisible();
-  await expect(rows).toHaveCount(7);
+  await expect(rows).toHaveCount(6);
   await expect(rows.nth(0)).toBeHidden();
   await expect(rows.nth(1)).toBeHidden();
   await expect(rows.nth(2)).toHaveClass(/\bgroup-head\b/);
   await expect(rows.nth(2)).toHaveText('Added by autoplay');
-  await expect(rows.nth(5)).toHaveClass(/\bgroup-record\b/);
-  await expect(rows.nth(5)).not.toContainText('Added by autoplay');
+  await expect(rows.nth(5)).not.toHaveClass(/\bgroup-head\b/);
+  await expect(main.locator('li.group-head')).toHaveCount(1);
   await expect(main.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
   // Shown again, the played song has its heading.
   await main.getByRole('button', { name: 'Show played' }).click();

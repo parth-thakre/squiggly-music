@@ -131,7 +131,8 @@ it('maps every library endpoint, writes repeated IDs, and serves cover art throu
     expect(await run(client.albumList('starred', 5, 9999))).toEqual([album]);
     const detail = await run(client.album('a1'));
     expect(detail.album).toEqual(album);
-    expect(detail.tracks).toEqual([track, { ...track, id: 's2', title: 'Song s2', coverArt: 'mf-s2', year: null, trackNumber: null, genre: null, starred: true }]);
+    // A record's songs carry the record's artist, for the queue's record headings.
+    expect(detail.tracks).toEqual([{ ...track, albumArtist: 'Artist' }, { ...track, albumArtist: 'Artist', id: 's2', title: 'Song s2', coverArt: 'mf-s2', year: null, trackNumber: null, genre: null, starred: true }]);
     expect(await run(client.artists())).toEqual([artist, { id: 'ar2', name: 'Band', albumCount: 0, coverArt: null, starred: true }]);
     expect(await run(client.artist('ar1'))).toEqual({ artist, albums: [album] });
     expect(await run(client.playlists())).toEqual([

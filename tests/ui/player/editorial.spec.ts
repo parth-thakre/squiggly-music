@@ -58,19 +58,23 @@ test.describe('editorial pages', () => {
     await expect(app.main.locator('ul.grid > li').first()).toContainText('Amber Field');
   });
 
-  test('the queue heads each record after the playing one, and a heading opens its record', async ({ app }) => {
+  test('the queue heads each run of a record after the playing one, and a heading opens its record', async ({ app }) => {
     await app.play('Test Pressing', 'Long Run');
     await app.openAlbum('Quiet Harbor');
+    await app.chooseFromMenu(app.row('Opening 2'), 'Add to queue');
     await app.chooseFromMenu(app.row('Second Wind 2'), 'Add to queue');
+    await app.openAlbum('Amber Field');
+    await app.chooseFromMenu(app.row('Opening 3'), 'Add to queue');
     await app.openQueue();
-    // The playing song leads, its record's other songs follow unheaded, then a heading for the next record.
+    // The playing song leads, its record's other songs follow unheaded, then a heading for the next
+    // record's two songs. A song alone from a record (a shuffle, a playlist) gets no heading.
     await expect(app.main.getByRole('heading', { level: 2, name: 'Long Run' })).toBeVisible();
-    await expect(app.main.getByText('5 songs to come')).toBeVisible();
+    await expect(app.main.getByText('7 songs to come')).toBeVisible();
     const records = app.main.locator('ol.tracks > li.group-record');
     await expect(records).toHaveCount(1);
     await expect(records.locator('.queue-record-name')).toHaveText('Quiet Harbor');
-    await expect(records.locator('.queue-record-by')).toContainText('1 song');
-    expect(await app.titles()).toEqual(['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light', 'Second Wind 2']);
+    await expect(records.locator('.queue-record-by')).toContainText('Bell Tower, 2 songs');
+    expect(await app.titles()).toEqual(['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light', 'Opening 2', 'Second Wind 2', 'Opening 3']);
     await records.getByRole('button').click();
     await expect(app.heading).toHaveText('Quiet Harbor');
   });

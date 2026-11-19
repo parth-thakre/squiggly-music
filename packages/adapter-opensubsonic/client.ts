@@ -323,6 +323,7 @@ function toArtist(artist: Schema.Schema.Type<typeof ArtistSchema>): Artist {
   return { id: artist.id, name: artist.name, albumCount: artist.albumCount ?? 0, coverArt: artist.coverArt || null, starred: Boolean(artist.starred), ...rated(artist.userRating) };
 }
 function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
+  const albumArtist = (song.displayAlbumArtist || album?.artist)?.trim();
   return {
     id: song.id, title: song.title, artist: song.artist ?? album?.artist ?? 'Unknown artist', album: song.album ?? album?.name ?? '',
     duration: song.duration ?? null, source: 'navidrome', sourceFormat: song.suffix ?? null,
@@ -333,6 +334,7 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     ...rated(song.userRating), ...playedCount(song.playCount),
     ...(song.path?.trim() ? { path: song.path } : {}),
     ...(song.size ? { size: song.size } : {}),
+    ...(albumArtist ? { albumArtist } : {}),
   };
 }
 const songList = (songs: readonly Song[] | undefined, max: number) => (songs ?? []).length > max

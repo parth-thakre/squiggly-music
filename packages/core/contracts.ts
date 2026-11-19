@@ -26,6 +26,9 @@ export interface Track {
   // When the server splits the credit ("A & B") into several artists, each with a page;
   // `artist` stays the display text. Absent for a single artist.
   artists?: ArtistRef[];
+  // The record's artist as its credit reads (OpenSubsonic displayAlbumArtist), when the server
+  // gives it. Absent otherwise.
+  albumArtist?: string;
   trackNumber?: number | null;
   discNumber?: number | null;
   year?: number | null;

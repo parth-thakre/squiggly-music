@@ -1073,35 +1073,38 @@ export function Queue() {
   const foldable = index > 0 && queue.length <= QUEUE_FOLD_LIMIT;
   const folded = foldable && !showPlayed;
   const nowTrack = queue[index];
-  // Group upcoming songs by record when the record changes (first run stays unheaded while it is
-  // still the playing record), and keep quiet autoplay labels where autoplay appended runs.
+  // Group upcoming songs by record where two or more in a row come from one record that isn't the
+  // playing one (a shuffled queue, a playlist or radio stays a plain list), and keep quiet
+  // autoplay labels where autoplay appended runs. Stopped, every song is upcoming.
   const groups = useMemo<TrackGroup[]>(() => {
     const added = addedRuns(autoplay, entryIds).map(at => ({ at, label: 'Added by autoplay', quiet: true }));
     const addedAt = new Set(added.map(g => g.at));
     const parts: TrackGroup[] = [];
     if (index > 0 && !folded) parts.push({ at: 0, label: 'Played', quiet: true });
-    if (queue.length <= QUEUE_FOLD_LIMIT && nowTrack) {
-      let prevKey = nowTrack.albumId ?? nowTrack.album;
+    if (queue.length <= QUEUE_FOLD_LIMIT) {
+      const recordOf = (track: Track) => isStation(track) ? '' : track.albumId ?? track.album;
+      let prevKey = nowTrack ? recordOf(nowTrack) : '';
       for (let i = index + 1; i < queue.length; i++) {
         const track = queue[i];
-        if (isStation(track)) { prevKey = ''; continue; }
-        const recKey = track.albumId ?? track.album;
+        const recKey = recordOf(track);
         if (recKey && recKey !== prevKey && !addedAt.has(i)) {
           let end = i + 1;
-          while (end < queue.length && !isStation(queue[end]) && (queue[end].albumId ?? queue[end].album) === recKey && !addedAt.has(end)) end++;
-          const run = queue.slice(i, end);
-          const recTitle = splitTitle(track.album);
-          const dur = run.reduce((sum, t) => sum + (t.duration ?? 0), 0);
-          parts.push({
-            at: i,
-            label: recTitle.main,
-            record: {
-              id: track.albumId,
-              name: recTitle.main,
-              coverArt: track.coverArt,
-              sub: [track.artist, recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
-            },
-          });
+          while (end < queue.length && recordOf(queue[end]) === recKey && !addedAt.has(end)) end++;
+          if (end - i >= 2) {
+            const run = queue.slice(i, end);
+            const recTitle = splitTitle(track.album);
+            const dur = run.reduce((sum, t) => sum + (t.duration ?? 0), 0);
+            parts.push({
+              at: i,
+              label: recTitle.main,
+              record: {
+                id: track.albumId,
+                name: recTitle.main,
+                coverArt: track.coverArt,
+                sub: [track.albumArtist ?? track.artist, recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
+              },
+            });
+          }
         }
         prevKey = recKey;
       }
@@ -1110,7 +1113,7 @@ export function Queue() {
   }, [autoplay, entryIds, index, folded, queue, nowTrack]);
   const drop = useDropTarget(payload => void dropOnQueue(payload));
   const area = `drop-area queue-page${drop.over ? ' drop-over' : ''}`;
-  if (!queue.length || !nowTrack) return <div className={area} {...drop.handlers}><h1 className="sr-only">Queue</h1><Status>Nothing queued.</Status></div>;
+  if (!queue.length) return <div className={area} {...drop.handlers}><h1 className="sr-only">Queue</h1><Status>Nothing queued.</Status></div>;
   const upcoming = queue.length - index - 1;
   const upcomingSeconds = queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0);
   const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
@@ -1118,10 +1121,19 @@ export function Queue() {
   const follows = !radio && repeat === 'off';
   const endsOnSong = follows && upcoming === 0 && queue.at(-1)?.source === 'navidrome';
   const offer = endsOnSong && !settings.autoplay && !away;
-  const nowTitle = splitTitle(nowTrack.title, nowTrack.album);
+  const nowTitle = nowTrack ? splitTitle(nowTrack.title, nowTrack.album) : null;
+  // The header stands in for the playing song's row, so its menu moves the song as the row's does.
+  const reorder = { index, length: queue.length, move: (to: number) => {
+    if (to >= 0 && to < queue.length) void player.move(index, to);
+  } };
   return <div className={area} {...drop.handlers}>
     <h1 className="sr-only">Queue</h1>
-    <header className="queue-now" onContextMenu={event => openMenu(event, { kind: 'tracks', tracks: [nowTrack], indexes: [index], from: { queue: true } })}>
+    {nowTrack && nowTitle && <header className="queue-now" onContextMenu={event => openMenu(event, { kind: 'tracks', tracks: [nowTrack], indexes: [index], from: { queue: true }, reorder })}
+      onKeyDown={event => {
+        if (!event.altKey || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+        event.preventDefault();
+        reorder.move(index + (event.key === 'ArrowUp' ? -1 : 1));
+      }}>
       <FitTitle level={2} sizes={[56, 48, 40]} wrapped={[40, 34]} title={nowTitle.main}>
         <span className="queue-mark"><Wave playing={playing} /></span>
         <button type="button" className="queue-now-toggle" onClick={player.toggle}>{nowTitle.main}</button>
@@ -1133,7 +1145,7 @@ export function Queue() {
           ? <button type="button" className="link queue-from" data-warm={`album:${nowTrack.albumId}`} onClick={() => nav.go({ view: 'album', id: nowTrack.albumId! })}>{splitTitle(nowTrack.album).main}</button>
           : <span className="queue-from">{splitTitle(nowTrack.album).main}</span>)}
       </p>
-    </header>
+    </header>}
     <div className="queue-tally">
       <p>
         {upcoming > 0 ? <><b>{plural(upcoming, 'song')} to come,</b> {length(upcomingSeconds)}</> : <b>This is the last song.</b>}

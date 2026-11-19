@@ -1,4 +1,5 @@
-import { expect, test } from '../fixtures/test';
+import { installDesktopBridge } from '../fixtures/desktop';
+import { expect, test, trackOf } from '../fixtures/test';
 
 // Playing "Long Run" from its record queues the whole record from there:
 // Long Run (45 s, playing), Lyric Line, Short Stop, Thirty Two, Tail Light.
@@ -94,6 +95,24 @@ test.describe('queue', () => {
     expect(await app.seconds()).toBeGreaterThanOrEqual(before);
   });
 
+  test('the playing song moves from its heading\'s menu and with Alt and the arrows, as its row would', async ({ app, page }) => {
+    await app.openQueue();
+    const now = app.main.locator('header.queue-now');
+    // First in the queue: it can go down, not up.
+    await app.openMenuOn(now);
+    await expect(app.menu.getByRole('menuitem', { name: 'Move up', exact: true })).toHaveCount(0);
+    await app.menu.getByRole('menuitem', { name: 'Move down', exact: true }).click();
+    await expect.poll(() => app.titles()).toEqual(['Lyric Line', 'Long Run', 'Short Stop', 'Thirty Two', 'Tail Light']);
+    await app.expectPlaying('Long Run');
+    await now.getByRole('button', { name: 'Long Run' }).focus();
+    await page.keyboard.press('Alt+ArrowDown');
+    await expect.poll(() => app.titles()).toEqual(['Lyric Line', 'Short Stop', 'Long Run', 'Thirty Two', 'Tail Light']);
+    await page.keyboard.press('Alt+ArrowUp');
+    await page.keyboard.press('Alt+ArrowUp');
+    await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light']);
+    await app.expectPlaying('Long Run');
+  });
+
   test('a selection survives position updates while a song plays', async ({ app }) => {
     await app.openQueue();
     await app.rowButton(app.row('Thirty Two')).click({ modifiers: ['ControlOrMeta'] });
@@ -105,4 +124,25 @@ test.describe('queue', () => {
     await expect(app.rowButton(app.row('Thirty Two'))).toHaveAttribute('aria-pressed', 'true');
     await expect(app.rowButton(app.row('Short Stop'))).toHaveAttribute('aria-pressed', 'false');
   });
+});
+
+// Stopped with songs still queued (the desktop's engine at the end of a queue, or before one
+// starts): the queue lists them all, with no song at its head.
+test('a stopped queue still lists its songs, with its count and actions', async ({ page }) => {
+  await installDesktopBridge(page, { commands: true, player: {
+    queue: [trackOf('tr-1-1'), trackOf('tr-1-2'), trackOf('tr-2-1')], entryIds: ['e1', 'e2', 'e3'], currentIndex: -1, playing: false,
+  } });
+  await page.goto('/');
+  await page.locator('main').focus();
+  await page.keyboard.press('g');
+  await page.keyboard.press('q');
+  const main = page.locator('main');
+  await expect(main.locator('ol.tracks > li[data-index]')).toHaveCount(3);
+  await expect(main).not.toContainText('Nothing queued.');
+  await expect(main.locator('header.queue-now')).toHaveCount(0);
+  // Two songs from one record share a heading; a song alone from another has none.
+  await expect(main.locator('li.group-record .queue-record-name')).toHaveText(['Test Pressing']);
+  await expect(main.getByText('3 songs to come')).toBeVisible();
+  await expect(main.getByRole('button', { name: 'Save as playlist' })).toBeVisible();
+  await expect(main.getByRole('button', { name: 'Clear' })).toBeEnabled();
 });
