@@ -146,14 +146,16 @@ test.describe('editorial pages', () => {
     await expect(app.heading).toHaveText('Quiet Harbor');
   });
 
-  test('an artist\'s Most played ranks only songs that credit them, not everyone on their records', async ({ app, page }) => {
+  test('an artist\'s Most played and All songs count only songs that credit them, not everyone on their records', async ({ app, page }) => {
     // With participations a compilation Ada Brass guests on is one of their records; its other
-    // performers' songs are no song of theirs. A song with no artist ids at all is matched by name.
+    // performers' songs are no song of theirs. A song with no artist ids at all is matched by name,
+    // and a duet credited to the pair as one act counts on Ada Brass's own record (albumArtist).
     await page.route('**/api/album', async route => {
       const response = await route.fetch();
       const result = await response.json() as { ok: boolean; value?: { tracks: Record<string, unknown>[] } };
       if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t =>
         t.id === 'tr-1-2' ? { ...t, playCount: 9 }
+        : t.id === 'tr-1-3' ? { ...t, artist: 'Ada Brass & Hob Nail', artistId: 'ar-duo', artists: [{ id: 'ar-duo', name: 'Ada Brass & Hob Nail' }], albumArtist: 'Ada Brass', playCount: 6 }
         // Someone else's song, played most of all.
         : t.id === 'tr-7-2' ? { ...t, artist: 'Hob Nail', artistId: 'ar-hob', artists: [{ id: 'ar-hob', name: 'Hob Nail' }], playCount: 40 }
         // Gale Guest's duet with Ada Brass: theirs too.
@@ -168,9 +170,19 @@ test.describe('editorial pages', () => {
     await app.main.getByRole('button', { name: /^Ada Brass/ }).first().click();
     await expect(app.heading).toHaveText('Ada Brass');
     const most = app.main.getByRole('region', { name: 'Most played' });
-    await expect.poll(() => app.titles(most)).toEqual(['Lyric Line', 'Opening 7', 'Opening 13']);
+    await expect.poll(() => app.titles(most)).toEqual(['Lyric Line', 'Short Stop', 'Opening 7', 'Opening 13']);
     await expect(most).not.toContainText('Second Wind 7');
     await expect(most).not.toContainText('Second Wind 13');
+    // All songs, most played first, ranks the same songs, and lists no stranger's in any order.
+    await most.getByRole('button', { name: 'Most played' }).click();
+    const songs = app.main.getByRole('region', { name: 'Songs' });
+    await expect.poll(async () => (await app.titles(songs)).slice(0, 4)).toEqual(['Lyric Line', 'Short Stop', 'Opening 7', 'Opening 13']);
+    await expect(songs).not.toContainText('Second Wind 7');
+    await expect(songs).not.toContainText('Second Wind 13');
+    await app.sortBy('A to Z');
+    await expect(songs).toContainText('Short Stop');
+    await expect(songs).not.toContainText('Second Wind 7');
+    await expect(songs).not.toContainText('Second Wind 13');
   });
 
   test('liner notes count every song in its file group, and number a two-disc record\'s songs by disc', async ({ app, page }) => {

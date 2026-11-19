@@ -605,12 +605,17 @@ const MOST_PLAYED = 6;
 // Past this many records (Various Artists, say) Most played would read every one of them on
 // opening the page; it isn't shown, and All songs reads them when asked.
 const MOST_PLAYED_RECORDS = 50;
-// Whether a song credits this artist, not only someone on a record of theirs (with participations,
-// a compilation they guest on is one of their records).
-const creditsArtist = (track: Track, artist: Pick<Artist, 'id' | 'name'>) =>
-  track.artistId || track.artists?.some(a => a.id)
-    ? track.artistId === artist.id || !!track.artists?.some(a => a.id === artist.id)
-    : track.artist.toLocaleLowerCase() === artist.name.toLocaleLowerCase();
+// Whether a song is this artist's, not only someone's on a record of theirs (with participations,
+// a compilation they guest on is one of their records): credited to them by id (artistId or one of
+// artists[]), or on their own record (albumArtist, their name). By the name it's credited to only
+// when it has no ids. "Queen & David Bowie" on a Queen record is Queen's; another performer's
+// song on a compilation Queen is on isn't. Most played and All songs (every order) both use it.
+function creditsArtist(track: Track, artist: Pick<Artist, 'id' | 'name'>) {
+  const name = artist.name.toLocaleLowerCase();
+  if (track.artistId === artist.id || track.artists?.some(a => a.id === artist.id)) return true;
+  if (track.albumArtist?.toLocaleLowerCase() === name) return true;
+  return !track.artistId && !track.artists?.some(a => a.id) && track.artist.toLocaleLowerCase() === name;
+}
 // An artist's songs (artistTracks:) are put together for one visit, from their records as they
 // are held then: leaving the page, or another artist's, lets them go, and the next visit puts
 // them together again. Plays and ratings since then show there without anything to keep in step.
@@ -814,13 +819,14 @@ function ArtistTracks({ artistId, artistName, sort }: { artistId: string; artist
   const order: 'alphabeticalByName' | 'frequent' | 'highest' = sort === 'frequent' || sort === 'highest' ? sort : 'alphabeticalByName';
   const sorted = useMemo(() => {
     if (!result?.ok) return [];
-    const list = [...result.value];
+    // Only theirs, as Most played on their page counts them.
+    const list = result.value.filter(t => creditsArtist(t, { id: artistId, name: artistName }));
     if (order === 'frequent') return list.sort((a, b) => (b.playCount ?? 0) - (a.playCount ?? 0) || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
     // The ratings as they stand when the list is sorted, not as the server last said; rating a
     // song here doesn't move it until the list is sorted again.
     if (order === 'highest') return list.sort((a, b) => ratingOf(b.id, b.userRating) - ratingOf(a.id, a.userRating) || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
     return list.sort((a, b) => a.title.localeCompare(b.title, 'en', { sensitivity: 'base', numeric: true }) || a.album.localeCompare(b.album));
-  }, [result, order]);
+  }, [result, order, artistId, artistName]);
   const totalSeconds = useMemo(() => sorted.reduce((sum, t) => sum + (t.duration ?? 0), 0), [sorted]);
   return <div className="tracks-page">
     <header className="tracks-artist">
