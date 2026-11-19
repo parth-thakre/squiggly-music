@@ -224,6 +224,8 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   .signal-file, .signal-out { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .signal-file { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
   .signal-out { color: var(--soft); }
+  /* What changed the sound (a smaller stream, the volume, resampling) is read whole. */
+  .signal-out.signal-notes { overflow: visible; white-space: normal; text-wrap: pretty; }
 
   .deck .deck-links {
     border-top: 0; margin: 13px 0 0; padding-top: 0; gap: 6px 18px;

@@ -435,13 +435,16 @@ function SignalPath({ track }: { track: Track }) {
   const decoded = [audio?.codec?.toUpperCase(), kHz(audio?.decoderRate)].filter(Boolean).join(', ');
   const live = mode === 'desktop' && decoded ? `Live stream, ${decoded}` : 'A live stream.';
   const fileLine = isStation(track) ? live : mode !== 'web' ? format : '';
-  // The second stop on the desktop, when nothing above changed what plays: where mpv sends it (the
-  // device asked for, else its output), and that exclusive use was asked for, never that it was
-  // granted. A sink whose rate matches says nothing here (docs/audio.md); Diagnostics says it.
-  const output = outputDescription(device) ?? backendName(audio?.outputBackend);
+  // The second stop on the desktop, when nothing above changed what plays: the device mpv was
+  // asked for (the sound server can move the stream elsewhere, docs/audio.md), else the output
+  // mpv uses, and that exclusive use was asked for, never that it was granted. A sink whose rate
+  // matches says nothing here; Diagnostics says it.
+  const asked = device !== 'auto' ? outputDescription(device) : null;
+  const backend = backendName(audio?.outputBackend);
   const exclusive = audio?.exclusiveRequested === true;
   const desktopOut = mode !== 'desktop' || notes ? ''
-    : output ? (exclusive ? `${output}, exclusive use requested` : output)
+    : asked ? `Asked for ${asked}${exclusive ? ', exclusive' : ''}`
+    : backend ? (exclusive ? `${backend}, exclusive use requested` : backend)
     : exclusive ? 'Exclusive use requested' : '';
   const outLine = notes || desktopOut;
   if (!fileLine && !outLine) return null;
@@ -455,7 +458,7 @@ function SignalPath({ track }: { track: Track }) {
     <p>
       {fileLine && <span className="signal-file">{fileLine}</span>}
       {both && <span className="sr-only">. </span>}
-      {outLine && <span className="signal-out">{outLine}</span>}
+      {outLine && <span className={`signal-out${notes ? ' signal-notes' : ''}`}>{outLine}</span>}
     </p>
   </div>;
 }
