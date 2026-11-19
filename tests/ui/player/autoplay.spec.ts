@@ -212,3 +212,33 @@ test('the desktop marks the entries its main process says autoplay added', async
   await expect(rows.nth(0)).toHaveText('Played');
   await expect(rows.nth(3)).toHaveText('Added by autoplay');
 });
+
+// The queue's rows as read: a bare rule, a heading (a record's by its name), or a song's title.
+const queueRows = (page: import('@playwright/test').Page) => page.locator('main.page ol.tracks > li').evaluateAll(lis => lis.map(li =>
+  li.classList.contains('rule') ? '—'
+  : li.classList.contains('group-record') ? `# ${li.querySelector('.queue-record-name')?.textContent}`
+  : li.classList.contains('group-head') ? `# ${li.textContent}` : li.querySelector('.title .name')?.textContent ?? ''));
+async function desktopQueue(page: import('@playwright/test').Page, queue: string[], added: string[]) {
+  await installDesktopBridge(page, { settings: { autoplay: true } });
+  await page.goto('/');
+  await page.evaluate(value => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(value), {
+    queue: queue.map(trackOf), entryIds: queue.map((_, i) => `e${i + 1}`), currentIndex: 0, playId: 'p.1', playing: true, duration: 20,
+    autoplay: { added, missed: null },
+  });
+  await page.getByRole('complementary', { name: 'Now playing' }).getByRole('button', { name: 'Queue', exact: true }).click();
+  await expect(page.locator('main.page').getByRole('heading', { level: 2, name: 'Long Run' })).toBeVisible();
+}
+
+test('a song queued by hand after autoplay\'s songs from its record is set off from them, not headed as one of them', async ({ page }) => {
+  // Autoplay added Opening 2, then two songs of Amber Field; Amber Field's third was queued by hand.
+  await desktopQueue(page, ['tr-1-1', 'tr-2-1', 'tr-3-1', 'tr-3-2', 'tr-3-3'], ['e2', 'e3', 'e4']);
+  await expect.poll(() => queueRows(page)).toEqual(['Long Run', '# Added by autoplay', 'Opening 2', '# Amber Field', 'Opening 3', 'Second Wind 3', '—', 'Middle Distance 3']);
+  await expect(page.locator('main.page .queue-record-by')).toHaveText(/^Cinder Lane, 2 songs, /);
+});
+
+test('past 120 songs the queue heads no records, but still sets off the songs after autoplay\'s', async ({ page }) => {
+  const byHand = allTracks.filter(track => track.albumId !== 'al-2' && track.id !== 'tr-1-1').slice(0, 122).map(track => track.id);
+  await desktopQueue(page, ['tr-1-1', 'tr-2-1', 'tr-2-2', ...byHand], ['e2', 'e3']);
+  await expect.poll(async () => (await queueRows(page)).slice(0, 6)).toEqual(['Long Run', '# Added by autoplay', 'Opening 2', 'Second Wind 2', '—', trackOf(byHand[0]).title]);
+  await expect(page.locator('main.page ol.tracks > li.group-record')).toHaveCount(0);
+});

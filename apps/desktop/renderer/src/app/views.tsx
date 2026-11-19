@@ -1120,41 +1120,45 @@ export function Queue() {
     const addedIds = new Set(autoplay.added);
     const parts: TrackGroup[] = [];
     if (index > 0 && !folded) parts.push({ at: 0, label: 'Played', quiet: true });
-    if (queue.length <= QUEUE_FOLD_LIMIT) {
-      const recordOf = (track: Track) => isStation(track) ? '' : track.albumId ?? track.album;
-      let prevKey = nowTrack ? recordOf(nowTrack) : '';
-      // Where the last headed run ended, a record's or autoplay's: a song there that heads
-      // nothing gets a bare rule, so it doesn't read as one of the run's songs.
-      let headEnd = -1;
-      for (let i = index + 1; i < queue.length; i++) {
-        const track = queue[i];
-        const recKey = recordOf(track);
-        const afterAdded = i > index + 1 && addedIds.has(entryIds[i - 1]) && !addedIds.has(entryIds[i]);
-        const ruled = (i === headEnd || afterAdded) && !addedAt.has(i);
-        if (recKey && recKey !== prevKey && !addedAt.has(i)) {
-          let end = i + 1;
-          while (end < queue.length && recordOf(queue[end]) === recKey && !addedAt.has(end)) end++;
-          if (end - i >= 2) {
-            const run = queue.slice(i, end);
-            const recTitle = splitTitle(track.album);
-            const dur = run.reduce((sum, t) => sum + (t.duration ?? 0), 0);
-            parts.push({
-              at: i,
-              label: recTitle.main,
-              record: {
-                id: track.albumId,
-                name: recTitle.main,
-                coverArt: track.coverArt,
-                // The record's artist; without it, the singer only when every song is theirs.
-                sub: [track.albumArtist ?? (run.every(t => t.artist === track.artist) ? track.artist : null), recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
-              },
-            });
-            headEnd = end;
-          }
+    // Record headings only in a queue short enough to fold; autoplay's labels, and the rule
+    // closing each of its runs, at any length.
+    const headed = queue.length <= QUEUE_FOLD_LIMIT;
+    const isAdded = (i: number) => addedIds.has(entryIds[i]);
+    const recordOf = (track: Track) => isStation(track) ? '' : track.albumId ?? track.album;
+    let prevKey = nowTrack ? recordOf(nowTrack) : '';
+    // Where the last headed run ended, a record's or autoplay's: a song there that heads
+    // nothing gets a bare rule, so it doesn't read as one of the run's songs.
+    let headEnd = -1;
+    for (let i = index + 1; i < queue.length; i++) {
+      const track = queue[i];
+      const recKey = recordOf(track);
+      // Where autoplay's songs start or stop: a record's run never crosses one, so a song queued
+      // by hand after autoplay's from the same record isn't headed as one of them.
+      const crossed = i > index + 1 && isAdded(i - 1) !== isAdded(i);
+      const ruled = (i === headEnd || (crossed && !isAdded(i))) && !addedAt.has(i);
+      if (headed && recKey && (recKey !== prevKey || crossed) && !addedAt.has(i)) {
+        let end = i + 1;
+        while (end < queue.length && recordOf(queue[end]) === recKey && isAdded(end) === isAdded(i) && !addedAt.has(end)) end++;
+        if (end - i >= 2) {
+          const run = queue.slice(i, end);
+          const recTitle = splitTitle(track.album);
+          const dur = run.reduce((sum, t) => sum + (t.duration ?? 0), 0);
+          parts.push({
+            at: i,
+            label: recTitle.main,
+            record: {
+              id: track.albumId,
+              name: recTitle.main,
+              coverArt: track.coverArt,
+              // The record's artist; without it, the singer only when every song is theirs.
+              sub: [track.albumArtist ?? (run.every(t => t.artist === track.artist) ? track.artist : null), recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
+            },
+          });
+          headEnd = end;
         }
-        if (ruled && headEnd <= i) parts.push({ at: i, label: '', rule: true });
-        prevKey = recKey;
       }
+      if (ruled && headEnd <= i) parts.push({ at: i, label: '', rule: true });
+      prevKey = recKey;
     }
     return [...parts, ...added].sort((a, b) => a.at - b.at);
   }, [autoplay, entryIds, index, folded, queue, nowTrack]);
