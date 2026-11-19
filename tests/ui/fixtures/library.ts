@@ -171,6 +171,8 @@ export class FakeNavidrome {
   private delaysWhere = new Map<string, { when: (args: unknown[]) => boolean; ms: number }>();
   /** Errors returned, one per call, by the named method instead of answering. */
   private failures = new Map<string, string[]>();
+  /** An error returned once, instead of answering, by the next call to the named method whose arguments match. */
+  private failuresWhere = new Map<string, { when: (args: unknown[]) => boolean; error: string }>();
   /** Adds Two Nights Live (special.twoNights) and its genre, Live, to the library. */
   large = false;
   /** Listening history by record id, as getAlbumList2's recent and frequent list it. Empty: nothing played. */
@@ -207,7 +209,7 @@ export class FakeNavidrome {
     this.playlists = initialPlaylists(); this.calls = []; this.reports = []; this.starred.clear();
     this.saved = null; this.delays.clear(); this.delaysWhere.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
-    this.ratings.clear(); this.failures.clear(); this.large = false;
+    this.ratings.clear(); this.failures.clear(); this.failuresWhere.clear(); this.large = false;
     this.recent = []; this.frequent = []; this.listening = [];
     this.shareList = []; this.sharing = true; this.sharesMade = 0;
     this.stationStreams = []; this.listedStations.clear();
@@ -216,6 +218,7 @@ export class FakeNavidrome {
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
   delayWhere(method: string, when: (args: unknown[]) => boolean, ms: number) { this.delaysWhere.set(method, { when, ms }); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
+  failNextWhere(method: string, when: (args: unknown[]) => boolean, error: string) { this.failuresWhere.set(method, { when, error }); }
   /** A new native session token, as a sign-in or any answer gives out. */
   issueToken() { const token = `jwt-${++this.issued}`; this.sessions.add(token); return token; }
   /** The server forgets every session (a restart with a new key); the next request signs in again. */
@@ -236,10 +239,11 @@ export class FakeNavidrome {
     return Effect.suspend(() => {
       if (this.unreachable) return Effect.fail(new Unreachable(unanswered));
       this.calls.push({ method, args, at: Date.now() });
-      const failure = this.failures.get(method)?.shift();
+      const where = this.failuresWhere.get(method);
+      const failure = this.failures.get(method)?.shift() ?? (where?.when(args) ? (this.failuresWhere.delete(method), where.error) : undefined);
       if (failure) return fail(failure);
-      const where = this.delaysWhere.get(method);
-      const wait = this.delays.get(method)?.shift() ?? (where?.when(args) ? where.ms : 0);
+      const slow = this.delaysWhere.get(method);
+      const wait = this.delays.get(method)?.shift() ?? (slow?.when(args) ? slow.ms : 0);
       return wait ? Effect.promise(() => sleep(wait)).pipe(Effect.flatMap(run)) : run();
     });
   }

@@ -90,7 +90,8 @@ test.describe('mixes', () => {
     await expect(names(app, 'By genre')).toHaveCount(3);
     // A reload keeps the page and forgets the answers, so these are the page's own lookups.
     fake.failNext('genres', 'The server is busy.');
-    fake.failNext('albums', 'The server is not answering.');
+    // The history lookup itself, not the On repeat tile's draw, which can ask first.
+    fake.failNextWhere('albums', args => args[0] === 'frequent' && args[2] === 1, 'The server is not answering.');
     await page.reload();
     await expect(app.heading).toHaveText('Mixes');
     await expect(app.main.getByRole('heading', { level: 2 })).toHaveText(['From what you play', 'By genre', 'By decade']);
