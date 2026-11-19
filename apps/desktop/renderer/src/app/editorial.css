@@ -535,6 +535,20 @@ button.queue-record:hover .queue-record-name { text-decoration: underline; text-
 .tracks-index { margin-top: 26px; }
 
 /* ---------- narrow desktop & phone fallbacks ---------- */
+/* Beside the deck there isn't room for the wordmark, Back, six tabs and the search field on one
+   line below about 1240px: the tabs take a line of their own under the others. */
+@media (min-width: 761px) and (max-width: 1240px) {
+  .room { grid-template-rows: auto minmax(0, 1fr); }
+  .bar { height: auto; flex-wrap: wrap; row-gap: 2px; padding-top: 12px; padding-bottom: 6px; }
+  .sections { order: 3; flex-basis: 100%; gap: 22px; }
+}
+@media (min-width: 761px) and (max-width: 900px) {
+  .sections { gap: 14px; }
+  .sections button { font-size: calc(14px * var(--text)); }
+  /* The mark alone; the button keeps its name. */
+  .bar .wordmark, .bar .bar-top:not(:has(.back)) .wordmark { font-size: 0; gap: 0; margin-right: 18px; }
+}
+
 @media (min-width: 761px) and (max-width: 1120px) {
   .home-lead { grid-template-columns: minmax(0, 1fr) 220px; column-gap: 28px; }
   .home-sleeve-btn, .home-art { width: 220px; height: 220px; }
