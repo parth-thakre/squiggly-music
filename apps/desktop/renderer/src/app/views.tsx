@@ -227,6 +227,7 @@ export function Records() {
     return groups.length < albums.items.length || type === 'byYear' ? groups : null;
   }, [albums.items, type]);
   return <div className="records-page">
+    <h1 className="sr-only">Records</h1>
     <p className="facts crate-line">
       {albums.items.length > 0 && <>{plural(albums.items.length, 'record')}{albums.done ? '' : '+'},{' '}</>}
       <OrderMenu value={orderValue} options={sorts} onSelect={next => pickSort('records', type, next)} ariaLabel="Order" className="crate-order-menu" />
@@ -751,6 +752,7 @@ function LibraryTracks({ sort }: { sort: TrackSort }) {
   const played = tracksSorted && (sort === 'frequent' || sort === 'recent');
   const alpha = sort === 'alphabeticalByName';
   return <div className="tracks-page">
+    <h1 className="sr-only">Tracks</h1>
     <div className="tracks-head-bar">
       <div className="actions">
         <button type="button" className="play-action" disabled={!tracks.items.length} onClick={() => void player.play(tracks.items, 0).then(showNowPlaying)}>
@@ -1108,7 +1110,7 @@ export function Queue() {
   }, [autoplay, entryIds, index, folded, queue, nowTrack]);
   const drop = useDropTarget(payload => void dropOnQueue(payload));
   const area = `drop-area queue-page${drop.over ? ' drop-over' : ''}`;
-  if (!queue.length || !nowTrack) return <div className={area} {...drop.handlers}><Status>Nothing queued.</Status></div>;
+  if (!queue.length || !nowTrack) return <div className={area} {...drop.handlers}><h1 className="sr-only">Queue</h1><Status>Nothing queued.</Status></div>;
   const upcoming = queue.length - index - 1;
   const upcomingSeconds = queue.slice(index + 1).reduce((sum, t) => sum + (t.duration ?? 0), 0);
   const repeats = repeat === 'all' ? 'the queue repeats' : repeat === 'one' ? 'this song repeats' : null;
@@ -1118,8 +1120,9 @@ export function Queue() {
   const offer = endsOnSong && !settings.autoplay && !away;
   const nowTitle = splitTitle(nowTrack.title, nowTrack.album);
   return <div className={area} {...drop.handlers}>
+    <h1 className="sr-only">Queue</h1>
     <header className="queue-now" onContextMenu={event => openMenu(event, { kind: 'tracks', tracks: [nowTrack], indexes: [index], from: { queue: true } })}>
-      <FitTitle sizes={[56, 48, 40]} wrapped={[40, 34]} title={nowTitle.main}>
+      <FitTitle level={2} sizes={[56, 48, 40]} wrapped={[40, 34]} title={nowTitle.main}>
         <span className="queue-mark"><Wave playing={playing} /></span>
         <button type="button" className="queue-now-toggle" onClick={player.toggle}>{nowTitle.main}</button>
       </FitTitle>
@@ -1545,6 +1548,7 @@ export function Home() {
   const showLately = !recent || !recent.ok || lately.length > 0;
 
   return <div className="home-page">
+    <h1 className="sr-only">Home</h1>
     {lead && <HomeLead album={lead} reason={leadFromRecent ? 'played last' : 'new arrival'} />}
     {(showMost || showLately) && <div className={`home-lower${showMost && showLately ? '' : ' single'}`}>
       {showMost && <section className="home-most" aria-labelledby="home-frequent" aria-busy={!frequent || undefined}>
@@ -1590,7 +1594,7 @@ function HomeLead({ album, reason }: { album: Album; reason: string }) {
   const play = async () => { setBusy(true); try { await playTarget({ kind: 'album', album }); } finally { setBusy(false); } };
   return <div className="home-lead">
     <header ref={firstRef} className="home-first">
-      <FitTitle sizes={[88]} wrapped={[88, 78, 68, 60, 52, 46, 40]} maxLines={3}
+      <FitTitle level={2} sizes={[88]} wrapped={[88, 78, 68, 60, 52, 46, 40]} maxLines={3}
         maxHeightOf={() => ({ box: firstRef.current, limit: sleeveRef.current })} title={title.main}>
         <button type="button" className="heading-link" data-warm={`album:${album.id}`} onClick={open}>{title.main}</button>
       </FitTitle>

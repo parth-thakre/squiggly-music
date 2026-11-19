@@ -74,10 +74,13 @@ export function SquiggleRule({ seed, width = 148, height = 14, amp = 5, pace = 9
   </div>;
 }
 
-// Sizes a display <h1> to the largest step that fits on one line (from `sizes`), or else balanced
+// Sizes a display heading to the largest step that fits on one line (from `sizes`), or else balanced
 // across up to `maxLines` lines (from `wrapped`). Runs cleanly on mount, resize, and font load.
-export function FitTitle({ children, className, sizes = [110, 96, 84, 72], wrapped = [84, 72, 64, 56, 48, 40], maxLines = 2, maxHeightOf, title }: {
+// It is the page's <h1> unless `level` says otherwise: Home and Queue lead with a record or a song,
+// under a hidden <h1> that names the place.
+export function FitTitle({ children, className, sizes = [110, 96, 84, 72], wrapped = [84, 72, 64, 56, 48, 40], maxLines = 2, maxHeightOf, title, level = 1 }: {
   children: ReactNode;
+  level?: 1 | 2;
   className?: string;
   sizes?: readonly number[];
   wrapped?: readonly number[];
@@ -127,7 +130,8 @@ export function FitTitle({ children, className, sizes = [110, 96, 84, 72], wrapp
     document.fonts?.ready.then(() => { if (live) fit(); }, () => undefined);
     return () => { live = false; observer.disconnect(); };
   }, [children, sizes, wrapped, maxLines]);
-  return <h1 ref={ref} className={`display${className ? ` ${className}` : ''}`} title={title}>{children}</h1>;
+  const Heading = level === 1 ? 'h1' : 'h2';
+  return <Heading ref={ref} className={`display${className ? ` ${className}` : ''}`} title={title}>{children}</Heading>;
 }
 
 // Inline sort/order dropdown ("newest first v", "A to Z v"). Opens a clean menu anchored below the
