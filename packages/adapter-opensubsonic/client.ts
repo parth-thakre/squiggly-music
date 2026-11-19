@@ -55,6 +55,7 @@ const AlbumFields = {
   duration: Schema.optional(DurationSchema), coverArt: Schema.optional(ReferenceSchema), starred: Schema.optional(Schema.String),
   artists: ArtistRefsSchema,
   userRating: RatingSchema,
+  playCount: Schema.optional(Schema.Unknown),
 };
 const AlbumSchema = Schema.Struct({ ...AlbumFields, song: Schema.optional(Schema.Array(SongSchema).pipe(Schema.maxItems(500))),
   // OpenSubsonic: the names some releases give their discs.
@@ -308,12 +309,13 @@ const artistRefs = (refs: readonly { id: string; name: string }[] | undefined) =
 };
 // A whole number from 1 to 5, or nothing.
 const rated = (rating: number | undefined) => rating !== undefined && Number.isInteger(rating) && rating >= 1 && rating <= 5 ? { userRating: rating } : {};
+const playedCount = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value > 0 ? { playCount: value } : {};
 function toAlbum(album: Schema.Schema.Type<Schema.Struct<typeof AlbumFields>>): Album {
   return {
     id: album.id, name: album.name, artist: album.artist ?? 'Unknown artist', songCount: album.songCount ?? 0,
     artistId: album.artistId || null, year: album.year ?? null, genre: album.genre || null, duration: album.duration ?? null,
     coverArt: album.coverArt || null, starred: Boolean(album.starred), ...artistRefs(album.artists),
-    ...rated(album.userRating),
+    ...rated(album.userRating), ...playedCount(album.playCount),
   };
 }
 function toArtist(artist: Schema.Schema.Type<typeof ArtistSchema>): Artist {
@@ -327,7 +329,7 @@ function toTrack(song: Song, album?: { name: string; artist?: string }): Track {
     albumId: song.albumId || null, artistId: song.artistId || null, coverArt: song.coverArt || null,
     trackNumber: song.track ?? null, discNumber: song.discNumber ?? null, year: song.year ?? null,
     genre: song.genre || null, starred: Boolean(song.starred), ...artistRefs(song.artists),
-    ...rated(song.userRating),
+    ...rated(song.userRating), ...playedCount(song.playCount),
     ...(song.path?.trim() ? { path: song.path } : {}),
     ...(song.size ? { size: song.size } : {}),
   };
