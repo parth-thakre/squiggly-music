@@ -25,7 +25,7 @@ import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
 import { ExtensionSections } from './extensions';
 import { ThemeSettings } from './theme/ThemeSettings';
-import { RatingStars } from './ratings';
+import { RatingStars, ratingOf } from './ratings';
 import { invalidate } from './library';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 import { List, MoreHorizontal, Plus, Radio as RadioIcon, Shuffle as ShuffleIcon } from 'lucide-react';
@@ -211,27 +211,17 @@ export function Records() {
     [`albums:${list}:${offset}:${PAGE}${type === 'random' ? `:${seed}` : ''}`, () => decade !== null
       ? api.albums(type, offset, PAGE, { fromYear: decade, toYear: decade + 9 }) : api.albums(type, offset, PAGE)], type === 'random');
   const sentinel = useMore(albums.more, albums.items.length);
-  // Year dividers in the crate when browsing newest or a decade and albums carry years.
-  const yearGroups = useMemo(() => {
-    if (type !== 'newest' && type !== 'byYear') return null;
-    if (!albums.items.some(a => a.year)) return null;
-    const groups: { year: number | null; albums: Album[] }[] = [];
-    for (const album of albums.items) {
-      const y = album.year ?? null;
-      const last = groups[groups.length - 1];
-      if (!last || last.year !== y) groups.push({ year: y, albums: [album] });
-      else last.albums.push(album);
-    }
-    // Only use year sections when records actually cluster into years (otherwise a flat shelf is cleaner).
-    return groups.length < albums.items.length || type === 'byYear' ? groups : null;
-  }, [albums.items, type]);
+  // Year dividers in the crate when browsing a decade, or newest where albums carry years and
+  // each year comes as one run. Newest is the order records were added, so a year that comes
+  // back later would get a second section: then the crate is one flat shelf.
+  const yearGroups = useMemo(() => yearSections(albums.items, type), [albums.items, type]);
   return <div className="records-page">
     <h1 className="sr-only">Records</h1>
-    <p className="facts crate-line">
-      {albums.items.length > 0 && <>{plural(albums.items.length, 'record')}{albums.done ? '' : '+'},{' '}</>}
+    <div className="facts crate-line">
+      {albums.items.length > 0 && <span>{plural(albums.items.length, 'record')}{albums.done ? '' : '+'},</span>}
       <OrderMenu value={decade !== null ? null : orderValue} otherwise="by year" options={sorts} onSelect={next => pickSort('records', type, next)} ariaLabel="Order" className="crate-order-menu" />
       <Decades sort={route.view === 'records' ? route.sort : undefined} decade={decade} />
-    </p>
+    </div>
     {albums.items.length ? (yearGroups ? <div className="crate">
       {yearGroups.map((group, idx) => <section key={`${group.year ?? 'undated'}-${idx}`} className="crate-year" aria-label={group.year ? String(group.year) : 'Undated'}>
         {group.year && <h2 className="crate-year-name">{group.year}</h2>}
@@ -245,6 +235,22 @@ export function Records() {
     {albums.error && albums.items.length > 0 && <Status>{albums.error}</Status>}
     <div ref={sentinel} className="sentinel" />
   </div>;
+}
+
+export function yearSections(albums: readonly Album[], type: AlbumListType): { year: number | null; albums: Album[] }[] | null {
+  if (type !== 'newest' && type !== 'byYear') return null;
+  if (!albums.some(a => a.year)) return null;
+  const groups: { year: number | null; albums: Album[] }[] = [];
+  for (const album of albums) {
+    const y = album.year ?? null;
+    const last = groups[groups.length - 1];
+    if (!last || last.year !== y) groups.push({ year: y, albums: [album] });
+    else last.albums.push(album);
+  }
+  if (type === 'byYear') return groups;
+  // Sections only where records cluster into years, each year once (otherwise a flat shelf is cleaner).
+  const once = new Set(groups.map(g => g.year)).size === groups.length;
+  return once && groups.length < albums.length ? groups : null;
 }
 
 // Grids past this size render only the rows near the viewport.
@@ -266,7 +272,10 @@ export function AlbumGrid({ albums, cols, sub = 'artist', wideSingle = false }: 
       const item = element.querySelector('li');
       if (!item) return;
       const columns = Math.max(1, style.gridTemplateColumns.split(' ').filter(Boolean).length);
-      const stride = item.getBoundingClientRect().height + (parseFloat(style.rowGap) || 0);
+      // Windowed captions keep room for every line they could have (editorial.css), so the rows
+      // are one height; the tallest rendered stands in for all of them.
+      const tallest = Math.max(...[...element.children].map(li => li.getBoundingClientRect().height));
+      const stride = tallest + (parseFloat(style.rowGap) || 0);
       setShape(s => s && s.columns === columns && Math.abs(s.stride - stride) < .5 ? s : (lastGrid = { columns, stride }));
     };
     measure();
@@ -285,7 +294,7 @@ export function AlbumGrid({ albums, cols, sub = 'artist', wideSingle = false }: 
     ...(cols ? { '--cols': cols } as CSSProperties : {}),
     ...(active ? { paddingTop: first * active.stride, paddingBottom: (rows - last) * active.stride } : {}),
   };
-  return <ul ref={list} className={`grid${cols ? ' shelf-cols' : ''}${wide ? ' shelf-wide-one' : ''}`} style={Object.keys(style).length ? style : undefined}>
+  return <ul ref={list} className={`grid${cols ? ' shelf-cols' : ''}${wide ? ' shelf-wide-one' : ''}${windowed ? ' windowed' : ''}`} style={Object.keys(style).length ? style : undefined}>
     {shown.map(album => {
       const title = splitTitle(album.name);
       return <li key={album.id} className={`playable${wide ? ' sleeve-wide' : ''}`}>
@@ -791,7 +800,9 @@ function ArtistTracks({ artistId, artistName, sort }: { artistId: string; artist
     if (!result?.ok) return [];
     const list = [...result.value];
     if (order === 'frequent') return list.sort((a, b) => (b.playCount ?? 0) - (a.playCount ?? 0) || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
-    if (order === 'highest') return list.sort((a, b) => (b.userRating ?? 0) - (a.userRating ?? 0) || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
+    // The ratings as they stand when the list is sorted, not as the server last said; rating a
+    // song here doesn't move it until the list is sorted again.
+    if (order === 'highest') return list.sort((a, b) => ratingOf(b.id, b.userRating) - ratingOf(a.id, a.userRating) || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' }));
     return list.sort((a, b) => a.title.localeCompare(b.title, 'en', { sensitivity: 'base', numeric: true }) || a.album.localeCompare(b.album));
   }, [result, order]);
   const totalSeconds = useMemo(() => sorted.reduce((sum, t) => sum + (t.duration ?? 0), 0), [sorted]);

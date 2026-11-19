@@ -58,6 +58,28 @@ test.describe('editorial pages', () => {
     await expect(app.main.locator('.artist-top')).toHaveCount(0);
   });
 
+  test('Records parts newest records by year only when each year comes once', async ({ app, page }) => {
+    // Newest is the order records were added, so a year can come back after another.
+    let yearOf = (i: number) => i < 4 ? 2019 : i < 6 ? 2003 : 2019;
+    await page.route('**/api/albums', async route => {
+      const [type] = route.request().postDataJSON() as [string];
+      const response = await route.fetch();
+      if (type !== 'newest') return route.fulfill({ response });
+      const result = await response.json() as { ok: boolean; value: { year: number | null }[] };
+      return route.fulfill({ response, json: { ...result, value: result.value.map((album, i) => ({ ...album, year: yearOf(i) })) } });
+    });
+    await page.reload();
+    await expect(app.heading).toHaveText('Records');
+    // 2019, 2003, then 2019 again: one flat shelf, not a second 2019.
+    await expect(app.main.locator('ul.grid > li').first()).toBeVisible();
+    await expect(app.main.locator('.crate-year')).toHaveCount(0);
+    await expect(app.main.locator('ul.grid')).toHaveCount(1);
+    // Each year in one run: a section for each.
+    yearOf = i => i < 4 ? 2019 : 2003;
+    await page.reload();
+    await expect(app.main.locator('.crate-year-name')).toHaveText(['2019', '2003']);
+  });
+
   test('the order menu opens on the order in use, and the keyboard picks another', async ({ app, page }) => {
     const trigger = app.order;
     await app.expectOrder('newest first');

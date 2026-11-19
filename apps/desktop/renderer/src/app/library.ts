@@ -76,6 +76,11 @@ export function invalidate(prefix: string) {
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); stale.delete(key); listeners.forEach(listener => listener(key)); }
   invalidations.forEach(listener => listener(prefix));
 }
+// Drops answers so the next page to ask reads them again, while pages showing them stay as they
+// are (an artist's songs, sorted by rating, don't move under a rating being set).
+export function forget(prefix: string) {
+  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); stale.delete(key); }
+}
 // For state built from answers but kept outside the cache, such as the pages of Records and Tracks.
 const invalidations = new Set<(prefix: string) => void>();
 export const onInvalidate = (listener: (prefix: string) => void) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; };
