@@ -339,11 +339,11 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
 .tracks li:is(:hover, .selected, :focus-within) .song-meta .row-rating { width: 72px; overflow: visible; }
 .song-meta .rating-compact { position: static; gap: 2px; font-size: calc(13.5px * var(--text)); color: var(--soft); }
 .song-meta .rating-compact svg { width: 12px; color: currentColor; }
+/* The stars come up while the row is pointed at, selected, or has focus anywhere in it, so Tab
+   from the song's name reaches them. */
 .song-meta .row-rating .rating { display: none; }
-.tracks li:is(:hover, .selected) .song-meta .row-rating .rating-compact,
-.song-meta .row-rating:focus-within .rating-compact { display: none; }
-.tracks li:is(:hover, .selected) .song-meta .row-rating .rating,
-.song-meta .row-rating:focus-within .rating { display: flex; }
+.tracks li:is(:hover, .selected, :focus-within) .song-meta .row-rating .rating-compact { display: none; }
+.tracks li:is(:hover, .selected, :focus-within) .song-meta .row-rating .rating { display: flex; }
 .song-meta .star { width: 18px; height: 23px; opacity: 0; color: var(--soft); }
 .song-meta .star svg { width: 14px; }
 .song-meta .star.on { opacity: 1; color: var(--soft); }
@@ -394,7 +394,8 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
     position: absolute; top: 50%; display: grid; place-items: center; width: 28px; height: 28px;
     margin-top: -14px; padding: 0; border: 0; border-radius: 3px; background: none; color: var(--soft); opacity: 0; z-index: 2;
   }
-  .tracks li .queue-grip { left: -34px; cursor: grab; pointer-events: none; width: 18px; height: 18px; margin-top: -9px; left: -30px; }
+  /* Part of the row: pressing it starts the row's drag. */
+  .tracks li .queue-grip { left: -30px; cursor: grab; width: 18px; height: 18px; margin-top: -9px; }
   .tracks li .row-remove { right: -34px; }
   .tracks li:is(:hover, .selected, :focus-within) .queue-grip,
   .tracks li:is(:hover, .selected, :focus-within) .row-remove,

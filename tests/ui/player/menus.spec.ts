@@ -259,6 +259,25 @@ test.describe('ratings', () => {
     await expect(app.row('Opening 2').getByRole('radio', { name: '5 stars' })).toBeChecked();
   });
 
+  test('a row\'s stars are reached from the keyboard alone, with nothing pointed at', async ({ app, page, fake }) => {
+    await app.openAlbum('Quiet Harbor');
+    await page.mouse.move(0, 0);
+    const row = app.row('Late Call 2');
+    const stars = row.getByRole('radiogroup', { name: 'Rating for Late Call 2' });
+    await app.rowButton(row).focus();
+    // Tab on from the song's name: the stars are next, or close after.
+    let reached = false;
+    for (let i = 0; i < 4 && !reached; i++) {
+      await page.keyboard.press('Tab');
+      reached = await stars.evaluate(group => group.contains(document.activeElement));
+    }
+    expect(reached).toBe(true);
+    await expect(stars).toBeVisible();
+    await page.keyboard.press('ArrowRight');
+    await expect.poll(() => fake.ratings.get('tr-2-4')).toBe(1);
+    await expect(stars.getByRole('radio', { name: '1 star' })).toBeFocused();
+  });
+
   test('Delete on the stars in a queue row clears the rating and leaves the queue alone', async ({ app, page, fake }) => {
     await app.play('Quiet Harbor', 'Opening 2');
     await page.getByRole('button', { name: 'Queue', exact: true }).click();
