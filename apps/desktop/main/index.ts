@@ -421,12 +421,14 @@ function observePlayer() {
 }
 // Silent by design: failures appear only in operation metrics. A finished play that gets no
 // answer waits in plays.json for the server (PlayReports). Once a finished play is reported (or
-// kept), every window is told, hidden ones too: they get no snapshots, but this reaches them.
+// kept) for the account bound now, every window is told, hidden ones too: they get no snapshots,
+// but this reaches them. A refused play, or one for an account since left, tells none.
 // Each forgets the song's record and any artist's songs, so the next look reads the new count.
 function reportPlay({ trackId, albumId, event }: PlayEvent) {
   const reported = reports?.report(trackId, event);
   if (event !== 'finished' || !reported) return;
-  void reported.then(() => {
+  void reported.then(counted => {
+    if (!counted) return;
     for (const target of appWindows()) if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:play-reported', { trackId, albumId: albumId ?? null } satisfies PlayReported);
   });
 }

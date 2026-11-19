@@ -341,8 +341,9 @@ function listened(seconds: number) {
   const threshold = finishThreshold(track.duration ?? (web ? web.active.duration : state.duration), getSettings().playCountsAt);
   if (plays.finished !== instance && threshold !== null && plays.listened >= threshold) {
     plays.finished = instance;
-    // Once the server has been told, its record and Most played are read again (playReported).
-    void api.reportPlay(track.id, 'finished').catch(() => undefined).then(() => playReported(track.albumId));
+    // Once the server has taken it (or Android has queued it), its record and Most played are
+    // read again (playReported). A refusal or no answer keeps them: offline, they're all there is.
+    void api.reportPlay(track.id, 'finished').then(result => { if (result.ok) playReported(track.albumId); }, () => undefined);
   }
 }
 if (web) {

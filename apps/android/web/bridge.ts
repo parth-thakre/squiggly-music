@@ -212,8 +212,9 @@ const library: LibraryApi = {
   similarSongs: (id, count) => call('similarSongs', [id, count]),
   topSongs: (artistId, count) => call('topSongs', [artistId, count]),
   lyrics: (track, lookup) => call('lyrics', [{ id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration }, lookup]),
-  // Through PlayReports: a finished play waits while the server is out of reach.
-  reportPlay: async (trackId, event) => { await plays.report(trackId, event); return { ok: true, value: undefined }; },
+  // Through PlayReports: a finished play waits while the server is out of reach. Refused, or for
+  // an account since left: not ok, so the page keeps what it has (playReported).
+  reportPlay: async (trackId, event) => (await plays.report(trackId, event)) ? { ok: true, value: undefined } : { ok: false, error: 'The play was not counted.' },
   savedQueue: () => call('savedQueue', []),
   saveQueue: (trackIds, currentIndex, positionSeconds) => call('saveQueue', [trackIds, currentIndex, positionSeconds]),
   rate: (target, id, rating) => call('rate', [target, id, rating]),

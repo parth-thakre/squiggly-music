@@ -30,18 +30,20 @@ describe('play reports while the server is away', () => {
     const { subject, sent, setAway, saved } = reports();
     setAway(true);
     await subject.report('a', 'started');
-    await subject.report('a', 'finished');
+    expect(await subject.report('a', 'finished')).toBe(true);
     expect(sent).toEqual([]);
     expect(subject.size).toBe(1);
     expect(saved.at(-1)).toEqual({ account: 'k', plays: [{ trackId: 'a', at: 1000 }] });
   });
   it('queues a finished play that got no answer and asks about the server; drops a refused one', async () => {
-    const { subject, failed } = reports(['unreachable', 'refused']);
-    await subject.report('a', 'finished');
+    const { subject, failed } = reports(['unreachable', 'refused', 'sent']);
+    expect(await subject.report('a', 'finished')).toBe(true);
     expect(subject.size).toBe(1);
     expect(failed).toHaveBeenCalledOnce();
-    await subject.report('b', 'finished');
+    // Refused: not counted, so a page keeps what it has.
+    expect(await subject.report('b', 'finished')).toBe(false);
     expect(subject.size).toBe(1);
+    expect(await subject.report('c', 'finished')).toBe(true);
   });
   it('drops now playing that got no answer, and asks about the server', async () => {
     const { subject, failed } = reports(['unreachable']);
@@ -113,7 +115,8 @@ describe('play reports when the account changes during a send', () => {
     t.subject.clear();
     t.signIn('B');
     await t.answer('unreachable');
-    await report;
+    // Not counted for the account bound now.
+    expect(await report).toBe(false);
     expect(t.subject.size).toBe(0);
     expect(t.saved.at(-1)).toEqual({ account: 'B', plays: [] });
     expect(t.failed).not.toHaveBeenCalled();
@@ -125,7 +128,7 @@ describe('play reports when the account changes during a send', () => {
     const report = t.subject.report('a-song', 'finished');
     t.subject.clear();
     await t.answer('unreachable');
-    await report;
+    expect(await report).toBe(false);
     expect(t.subject.size).toBe(0);
     expect(t.saved).toEqual([]);
   });
