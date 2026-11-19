@@ -5,7 +5,7 @@ import type { RadioStation } from '../../../../../packages/core/contracts';
 import { isStation, stationTrack } from '../../../../../packages/core/stations';
 import { sinkSentence } from '../../../../../packages/core/sinks';
 import { addedRuns } from '../../../../../packages/core/autoplay';
-import { api, load, onInvalidate, onLibraryReset, playlistEditor, useKept, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
+import { api, drop, load, onInvalidate, onLibraryReset, playlistEditor, useKept, useLibraryEpoch, usePlaylist, useResource, type PlaylistView } from './library';
 import { buildMixes, knownDecades, libraryDecades, mixById, mixTracks, type Mix } from './mixes';
 import { current, outputDescription, player, playRequests, usePlayer } from './player';
 import { isStarred, setStarred, useFavoritesVersion } from './favorites';
@@ -611,13 +611,20 @@ const creditsArtist = (track: Track, artist: Pick<Artist, 'id' | 'name'>) =>
   track.artistId || track.artists?.some(a => a.id)
     ? track.artistId === artist.id || !!track.artists?.some(a => a.id === artist.id)
     : track.artist.toLocaleLowerCase() === artist.name.toLocaleLowerCase();
+// An artist's songs (artistTracks:) are put together for one visit, from their records as they
+// are held then: leaving the page, or another artist's, lets them go, and the next visit puts
+// them together again. Plays and ratings since then show there without anything to keep in step.
+const useArtistSongs = (id: string, name: string | null) => {
+  useEffect(() => () => drop(`artistTracks:${id}`), [id]);
+  return useResource(name !== null ? `artistTracks:${id}` : null, () => tracksOf({ kind: 'artist', artist: { id, name: name ?? '' } }));
+};
 export function ArtistPage({ id }: { id: string }) {
   const result = useKept(`artist:${id}`, from => from.artist(id));
   const info = useKept(`artistInfo:${id}`, from => from.artistInfo(id));
   // The same songs All songs lists, under the same key; asked for once the artist's name is known.
   const name = result?.ok ? result.value.artist.name : null;
   const ranked = result?.ok ? result.value.albums.length <= MOST_PLAYED_RECORDS : false;
-  const songs = useResource(name !== null && ranked ? `artistTracks:${id}` : null, () => tracksOf({ kind: 'artist', artist: { id, name: name ?? '' } }));
+  const songs = useArtistSongs(id, ranked ? name : null);
   const mostPlayed = useMemo(() => !songs?.ok || name === null ? [] : songs.value.filter(t => (t.playCount ?? 0) > 0 && creditsArtist(t, { id, name }))
     .sort((a, b) => b.playCount! - a.playCount! || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' })).slice(0, MOST_PLAYED), [songs, id, name]);
   if (songs?.ok) playedFound = playedFound || mostPlayed.length > 0;
@@ -803,7 +810,7 @@ const artistTrackSorts: readonly OrderOption<'alphabeticalByName' | 'frequent' |
   { value: 'highest', label: 'Top rated' },
 ];
 function ArtistTracks({ artistId, artistName, sort }: { artistId: string; artistName: string; sort: TrackSort }) {
-  const result = useResource(`artistTracks:${artistId}`, () => tracksOf({ kind: 'artist', artist: { id: artistId, name: artistName } }));
+  const result = useArtistSongs(artistId, artistName);
   const order: 'alphabeticalByName' | 'frequent' | 'highest' = sort === 'frequent' || sort === 'highest' ? sort : 'alphabeticalByName';
   const sorted = useMemo(() => {
     if (!result?.ok) return [];

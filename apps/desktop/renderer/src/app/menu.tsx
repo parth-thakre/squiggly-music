@@ -3,7 +3,7 @@ import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
-import { albumDetails, api, assemble, invalidate, load, playlistEditor } from './library';
+import { albumDetails, api, invalidate, isStale, load, notKept, playlistEditor } from './library';
 import { current, getPlayer, isAway, player, type PlayerState } from './player';
 import { forget, isContainerKept, isKept, keep, keptSupported } from './keptState';
 import { showNowPlaying } from './nowPlaying';
@@ -121,10 +121,10 @@ export async function tracksOf(target: MenuTarget): Promise<Result<Track[]>> {
     const first = missing[0] as Extract<Result, { ok: false }>;
     return { ok: false, error: `${plural(missing.length, 'record')} by ${target.artist.name} could not be loaded, so nothing was changed. ${first.error}` };
   }
-  // On the desktop the records answer first with what was kept; as the server's answers come,
-  // the artist's songs (Most played, All songs) are put together again from them.
-  return assemble(`artistTracks:${target.artist.id}`, ids.map(id => `album:${id}`), details,
-    (held): Result<Track[]> => ({ ok: true, value: held.flatMap(detail => detail.ok ? detail.value.tracks : []) }));
+  const songs: Result<Track[]> = { ok: true, value: details.flatMap(detail => detail.ok ? detail.value.tracks : []) };
+  // Put together from what was kept for a record the server couldn't read: shown, not kept for
+  // the next page (artistTracks:), which reads that record again.
+  return ids.some(id => isStale(`album:${id}`)) ? notKept(songs) : songs;
 }
 
 export function ContextMenu() {

@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { StoredLibrary } from '../../../packages/core/stored';
-import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, KeptApi, KeptProgress, LibraryApi, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
+import type { AppSnapshot, ConfigApi, ConfigFiles, DesktopBridge, ExtensionInfo, ExtensionsApi, KeptApi, KeptProgress, LibraryApi, PlayReported, SystemMediaApi, SystemMediaState, UpdatesApi } from '../../../packages/core/contracts';
 
 // The main process validates every argument. Covers load through its credential-free squiggly-art scheme.
 type Method = Exclude<keyof LibraryApi, 'coverUrl'>;
@@ -111,6 +111,7 @@ const bridge: DesktopBridge = {
     ipcRenderer.on('squiggly:snapshot', handler);
     return () => ipcRenderer.removeListener('squiggly:snapshot', handler);
   },
+  onPlayReported: listener => listen<PlayReported>('squiggly:play-reported', listener),
   command: command => ipcRenderer.invoke('squiggly:command', command),
   openFiles: () => ipcRenderer.invoke('squiggly:open-files'),
   // Files dropped on the window. Their paths are looked up here and go straight to the main

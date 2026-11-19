@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from 'vitest';
 import type { Result } from '../packages/core/contracts';
-import { assemble, forget, load, peek, resetLibraryCaches } from '../apps/desktop/renderer/src/app/library';
+import { drop, isStale, load, notKept, peek, playReported, resetLibraryCaches } from '../apps/desktop/renderer/src/app/library';
 
 // The desktop answers library reads with what it kept first, then the server's. An artist's page
 // reads every record of theirs, and the desktop refuses past 32 requests in flight, a Pause among
@@ -42,57 +42,45 @@ it("doesn't read what was kept once the server has answered while it waited", as
   expect(kept.calls()).toBe(6);
 });
 
-// An artist's songs are put together from their records' answers. When the server's answers come
-// after what was kept, the songs are put together again, so Most played isn't a session behind.
-type Detail = { tracks: { id: string; playCount: number }[] };
-function records(ids: string[], held: Record<string, Promise<void>> = {}) {
-  const fresh = new Map<string, (r: Result<Detail>) => void>();
-  const read = (id: string, plays: number) => load<Detail>(`album:${id}`,
-    () => new Promise(resolve => fresh.set(id, resolve)),
-    async () => { await held[id]; return ok({ tracks: [{ id: `${id}-1`, playCount: plays }] }); });
-  const songs = () => load('artistTracks:ar', async () => {
-    const details = await Promise.all(ids.map(id => read(id, 1)));
-    return assemble('artistTracks:ar', ids.map(id => `album:${id}`), details,
-      held => ok(held.flatMap(d => d.ok ? d.value.tracks : [])));
-  });
-  const answer = (id: string, plays: number) => fresh.get(id)!(ok({ tracks: [{ id: `${id}-1`, playCount: plays }] }));
-  return { songs, answer };
-}
-const counts = () => (peek<Detail['tracks']>('artistTracks:ar') as { value: Detail['tracks'] } | undefined)?.value.map(t => t.playCount);
-
-it("puts an artist's songs together again as their records' fresh answers come", async () => {
-  const { songs, answer } = records(['a', 'b']);
-  const first = await songs();
-  expect(first.ok && first.value.map(t => t.playCount)).toEqual([1, 1]);
+// A play the server has been told of changes its song's count: the next look at its record, or at
+// any artist's songs (Most played), reads them again. What a page shows now stays.
+it('a reported play forgets its record and every artist\'s songs, and nothing else', async () => {
+  let reads = 0;
+  const album = (id: string) => load(`album:${id}`, async () => { reads++; return ok(`${id} ${reads}`); });
+  await album('a'); await album('b');
+  await load('artistTracks:ar', async () => ok(['a-1']));
+  await load('artistTracks:other', async () => ok(['b-1']));
   await tick();
-  answer('a', 5); await tick();
-  expect(counts()).toEqual([5, 1]);
-  answer('b', 3); await tick();
-  expect(counts()).toEqual([5, 3]);
-  // Read again, they're the fresh ones.
-  const again = await songs();
-  expect(again.ok && again.value.map(t => t.playCount)).toEqual([5, 3]);
-});
-
-it('takes a fresh answer that came while the songs were being put together', async () => {
-  let release = () => {};
-  const { songs, answer } = records(['a', 'b'], { b: new Promise<void>(resolve => { release = resolve; }) });
-  const reading = songs();
-  await tick();
-  // The first record's kept answer has shown, and its fresh one lands before the second's kept one.
-  expect((peek<Detail>('album:a') as { value: Detail }).value.tracks[0].playCount).toBe(1);
-  answer('a', 7); await tick();
-  release();
-  const first = await reading;
-  expect(first.ok && first.value.map(t => t.playCount)).toEqual([7, 1]);
-});
-
-it('lets go of songs that were forgotten (a play counted): the next visit reads them again', async () => {
-  const { songs, answer } = records(['a']);
-  await songs(); await tick();
-  forget('artistTracks:');
-  answer('a', 9); await tick();
+  playReported('a');
+  expect(peek('album:a')).toBeUndefined();
   expect(peek('artistTracks:ar')).toBeUndefined();
-  const again = await songs();
-  expect(again.ok && again.value.map(t => t.playCount)).toEqual([9]);
+  expect(peek('artistTracks:other')).toBeUndefined();
+  expect(peek('album:b')).toEqual(ok('b 2'));
+  expect(await album('a')).toEqual(ok('a 3'));
+  expect(await album('b')).toEqual(ok('b 2'));
+});
+
+it('lets go of one answer by its whole key, not every key it begins', async () => {
+  await load('artistTracks:a1', async () => ok(1));
+  await load('artistTracks:a10', async () => ok(10));
+  await tick();
+  drop('artistTracks:a1');
+  expect(peek('artistTracks:a1')).toBeUndefined();
+  expect(peek('artistTracks:a10')).toEqual(ok(10));
+});
+
+// Songs put together from what was kept for a record the server couldn't read are shown, and not
+// kept for the next page, which reads that record again.
+it('marks what was kept as stale when the server fails, and keeps no answer marked notKept', async () => {
+  const shown = await load('album:away', async () => ({ ok: false, error: 'away' }) as Result<string>, async () => ok('kept'));
+  expect(shown).toEqual(ok('kept'));
+  // Already, as the songs are put together straight after (menu.tsx tracksOf).
+  expect(isStale('album:away')).toBe(true);
+  let builds = 0;
+  const songs = () => load('artistTracks:ar', async () => { builds++; return isStale('album:away') ? notKept(ok(['kept'])) : ok(['fresh']); });
+  expect(await songs()).toEqual(ok(['kept']));
+  await tick();
+  expect(peek('artistTracks:ar')).toBeUndefined();
+  await songs();
+  expect(builds).toBe(2);
 });

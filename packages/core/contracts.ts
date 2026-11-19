@@ -476,11 +476,16 @@ export interface SystemMediaApi {
   subscribe(listener: (state: SystemMediaState | null) => void): () => void;
 }
 
+export interface PlayReported { trackId: string; albumId: string | null }
 export interface DesktopBridge {
   snapshot(): Promise<AppSnapshot>;
   // Library answers kept on this computer (packages/core/stored.ts). Absent from older bridges.
   stored?: StoredLibrary;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
+  // A finished play the main process has reported (or kept for the server, when it's away). Sent
+  // to every window, hidden ones too, so the next look at the song's record reads it again.
+  // Absent from older bridges.
+  onPlayReported?(listener: (play: PlayReported) => void): () => void;
   command(command: PlayerCommand): Promise<Result>;
   openFiles(): Promise<Result>;
   // Files dropped on the window, opened as openFiles opens its choice. The preload looks up each

@@ -233,6 +233,12 @@ describe('play reporting', () => {
     expect(play(tracker, 50, 101, {}, 101_000)).toEqual([]);
   });
 
+  it("names the finished song's record, which windows read again once the play is reported", () => {
+    const tracker = new PlayTracker();
+    const queue = [{ ...track('a'), albumId: 'al-1' }, track('b')];
+    expect(play(tracker, 101, 0, { queue })).toEqual([{ trackId: 'a', event: 'started' }, { trackId: 'a', event: 'finished', albumId: 'al-1' }]);
+  });
+
   it('needs half of every song, however long, and never finishes songs of 30 seconds or less', () => {
     expect(finishThreshold(1200)).toBe(600);
     expect(finishThreshold(31)).toBe(15.5);

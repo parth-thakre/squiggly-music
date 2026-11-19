@@ -24,7 +24,7 @@ import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, PlaysFileSchema } f
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { stationIdOf } from '../../../packages/core/stations';
 import { NOT_STORED, storedKey } from '../../../packages/core/stored';
-import type { AppSnapshot, Connection, Lyrics, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Connection, Lyrics, PlayReported, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
 import { SubsonicClient, isLibraryMethod, libraryCall, libraryMethods, libraryTracks, reachOf, resolveServerAddress, ServerError, Unreachable, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
@@ -420,9 +420,15 @@ function observePlayer() {
   warmLyrics();
 }
 // Silent by design: failures appear only in operation metrics. A finished play that gets no
-// answer waits in plays.json for the server (PlayReports).
-function reportPlay({ trackId, event }: PlayEvent) {
-  void reports?.report(trackId, event);
+// answer waits in plays.json for the server (PlayReports). Once a finished play is reported (or
+// kept), every window is told, hidden ones too: they get no snapshots, but this reaches them.
+// Each forgets the song's record and any artist's songs, so the next look reads the new count.
+function reportPlay({ trackId, albumId, event }: PlayEvent) {
+  const reported = reports?.report(trackId, event);
+  if (event !== 'finished' || !reported) return;
+  void reported.then(() => {
+    for (const target of appWindows()) if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:play-reported', { trackId, albumId: albumId ?? null } satisfies PlayReported);
+  });
 }
 async function sendReport(trackId: string, event: 'started' | 'finished', at?: number): Promise<SendOutcome> {
   const client = server;

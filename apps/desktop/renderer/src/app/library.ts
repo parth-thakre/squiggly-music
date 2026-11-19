@@ -54,9 +54,9 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   cache.set(key, entry);
   void entry.then(result => {
     if (cache.get(key) !== entry) return;
-    if (result.ok) settled.set(key, result); else cache.delete(key);
+    if (result.ok && !unkept.has(result)) settled.set(key, result); else cache.delete(key);
   });
-  while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); stale.delete(oldest); wholes.delete(oldest); }
+  while (cache.size > LIMIT) drop(cache.keys().next().value!);
   return entry as Promise<Result<T>>;
 }
 // Reads that take turns, `size` at a time; a finished one hands its turn straight to the next
@@ -88,8 +88,22 @@ export function invalidate(prefix: string) {
 // Drops answers so the next page to ask reads them again, while pages showing them stay as they
 // are (an artist's songs, sorted by rating, don't move under a rating being set).
 export function forget(prefix: string) {
-  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) { cache.delete(key); settled.delete(key); stale.delete(key); }
+  for (const key of [...cache.keys()]) if (key.startsWith(prefix)) drop(key);
 }
+// The same, for one answer only (`artistTracks:a1` is a prefix of `artistTracks:a10`).
+export function drop(key: string) { cache.delete(key); settled.delete(key); stale.delete(key); }
+// A play the server has been told of changes its song's play count: its record and any artist's
+// songs (Most played) are read again by the next page to ask. Every artist's, as the record's
+// artist may not be the song's. Pages showing them now stay as they are.
+export function playReported(albumId: string | null | undefined) {
+  if (albumId) drop(`album:${albumId}`);
+  forget('artistTracks:');
+}
+// Whether an answer is what the host kept, shown because the server's read failed.
+export const isStale = (key: string) => stale.has(key);
+// Answers handed to the page that asked but not kept for the next (see notKept).
+const unkept = new WeakSet<object>();
+export function notKept<T>(result: Result<T>): Result<T> { unkept.add(result); return result; }
 // For state built from answers but kept outside the cache, such as the pages of Records and Tracks.
 const invalidations = new Set<(prefix: string) => void>();
 export const onInvalidate = (listener: (prefix: string) => void) => { invalidations.add(listener); return () => { invalidations.delete(listener); }; };
@@ -100,22 +114,6 @@ export const peek = <T,>(key: string) => settled.get(key) as Result<T> | undefin
 export function prime<T>(key: string, result: Result<T>) {
   cache.set(key, Promise.resolve(result)); settled.set(key, result);
   listeners.forEach(listener => listener(key));
-  for (const [whole, { parts, join }] of [...wholes]) {
-    if (!cache.has(whole)) { wholes.delete(whole); continue; }
-    if (whole === key || !parts.includes(key)) continue;
-    const held = parts.map(part => settled.get(part));
-    if (held.every(Boolean)) prime(whole, join(held as Result<unknown>[]));
-  }
-}
-// Answers put together from others, such as an artist's songs from their records': when the
-// server's answer to a part takes the place of what the host kept (prime), the whole is put
-// together again from the parts as now held, so its play counts aren't a session behind.
-// `answers`: the parts as they came; one refreshed since stands in for its part. Remembered only
-// while `key`'s own answer is being read or held.
-const wholes = new Map<string, { parts: readonly string[]; join(parts: Result<unknown>[]): Result<unknown> }>();
-export function assemble<P, T>(key: string, parts: readonly string[], answers: readonly Result<P>[], join: (parts: Result<P>[]) => Result<T>): Result<T> {
-  if (cache.has(key)) wholes.set(key, { parts, join: join as (parts: Result<unknown>[]) => Result<unknown> });
-  return join(parts.map((part, i) => (settled.get(part) as Result<P> | undefined) ?? answers[i]));
 }
 
 // Everything the renderer remembers about one account. A different server or user must not
@@ -125,7 +123,7 @@ export const onLibraryReset = (reset: () => void) => { resets.add(reset); return
 let epoch = 0;
 const epochListeners = new Set<() => void>();
 export function resetLibraryCaches() {
-  cache.clear(); settled.clear(); stale.clear(); changed.clear(); wholes.clear();
+  cache.clear(); settled.clear(); stale.clear(); changed.clear();
   playlistEditors.clear();
   resets.forEach(reset => reset());
   epoch++;
