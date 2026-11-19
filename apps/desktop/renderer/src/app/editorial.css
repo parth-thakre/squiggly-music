@@ -278,9 +278,11 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   /* Grid shelves with explicit column count */
   .grid.shelf-cols { grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); grid-auto-rows: auto; align-items: start; gap: 28px 24px; }
   .grid.shelf-cols .grid-name > span { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; text-wrap: balance; overflow-wrap: break-word; }
-  /* A windowed shelf places rows it hasn't drawn by one row height, so every caption keeps room
-     for two lines of name and the edition line, whether it has them or not. */
-  .grid.shelf-cols.windowed { grid-auto-rows: 1fr; }
+  /* A windowed grid (Records, Search, Favorites) places rows it hasn't drawn by one row height,
+     so every caption keeps room for every line it could have, whether it has them or not: the
+     name and the edition line, and on a shelf two lines of name. */
+  .grid.windowed { grid-auto-rows: 1fr; }
+  .grid.windowed .sleeve-words { min-height: 39px; }
   .grid.shelf-cols.windowed .sleeve-words { min-height: 59px; }
   .grid .sleeve-wide > button { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; align-items: end; }
   .grid .sleeve-wide .sleeve-words { margin: 0 0 -3px; }

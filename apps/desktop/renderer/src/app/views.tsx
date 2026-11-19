@@ -211,9 +211,9 @@ export function Records() {
     [`albums:${list}:${offset}:${PAGE}${type === 'random' ? `:${seed}` : ''}`, () => decade !== null
       ? api.albums(type, offset, PAGE, { fromYear: decade, toYear: decade + 9 }) : api.albums(type, offset, PAGE)], type === 'random');
   const sentinel = useMore(albums.more, albums.items.length);
-  // Year dividers in the crate when browsing a decade, or newest where albums carry years and
-  // each year comes as one run. Newest is the order records were added, so a year that comes
-  // back later would get a second section: then the crate is one flat shelf.
+  // Year dividers in the crate when browsing a decade, which comes in year order. Newest is the
+  // order records were added: a later page can bring back a year already passed, so its crate is
+  // one flat shelf that doesn't regroup (and lose focus and scroll) as pages arrive.
   const yearGroups = useMemo(() => yearSections(albums.items, type), [albums.items, type]);
   return <div className="records-page">
     <h1 className="sr-only">Records</h1>
@@ -238,8 +238,7 @@ export function Records() {
 }
 
 export function yearSections(albums: readonly Album[], type: AlbumListType): { year: number | null; albums: Album[] }[] | null {
-  if (type !== 'newest' && type !== 'byYear') return null;
-  if (!albums.some(a => a.year)) return null;
+  if (type !== 'byYear' || !albums.some(a => a.year)) return null;
   const groups: { year: number | null; albums: Album[] }[] = [];
   for (const album of albums) {
     const y = album.year ?? null;
@@ -247,10 +246,7 @@ export function yearSections(albums: readonly Album[], type: AlbumListType): { y
     if (!last || last.year !== y) groups.push({ year: y, albums: [album] });
     else last.albums.push(album);
   }
-  if (type === 'byYear') return groups;
-  // Sections only where records cluster into years, each year once (otherwise a flat shelf is cleaner).
-  const once = new Set(groups.map(g => g.year)).size === groups.length;
-  return once && groups.length < albums.length ? groups : null;
+  return groups;
 }
 
 // Grids past this size render only the rows near the viewport.
