@@ -95,8 +95,6 @@ test.describe('cover screen', () => {
   });
 
   test('the queue opens and closes, and a tap plays a song from it', async ({ page, app }, info) => {
-    // Phone/Android layout not yet updated for the editorial redesign
-    test.skip(info.project.name === 'cover-flip6', 'The Flip 6 cover queue fails colour contrast under the redesign palette.');
     await signIn(page, app.url);
     await playTestPressing(page);
     await screen(page).getByRole('button', { name: 'Queue' }).tap();
@@ -105,7 +103,10 @@ test.describe('cover screen', () => {
     await expect(screen(page).getByText('4 songs up next')).toBeVisible();
     expect(await underCameras(page, info), 'queue').toEqual([]);
     for (const name of ['Back', 'Pause']) await expect(screen(page).getByRole('button', { name, exact: true })).toBeInViewport({ ratio: 1 });
-    expect(await violations(page), 'queue').toEqual([]);
+    // Phone/Android layout not yet updated for the editorial redesign: on the Flip 6 the playing
+    // row's title fails colour contrast under the redesign palette, so only that check is left out.
+    const queueViolations = await violations(page);
+    expect(info.project.name === 'cover-flip6' ? queueViolations.filter(v => !v.startsWith('color-contrast')) : queueViolations, 'queue').toEqual([]);
     await screen(page).getByRole('button', { name: /^Short Stop/ }).tap();
     await expect(screen(page).getByRole('button', { name: /^Short Stop/ })).toHaveAttribute('aria-current', 'true');
     await screen(page).getByRole('button', { name: 'Back' }).tap();
