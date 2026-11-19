@@ -359,9 +359,11 @@ export function AlbumPage({ id }: { id: string }) {
 // across multiple songs) and honest file specs reported by the server. Unknown stays absent.
 function RecordCredits({ albumId, tracks }: { albumId: string; tracks: Track[] }) {
   const { cast, files } = useMemo(() => {
-    const voices = new Map<string, { id?: string; tracks: number[] }>();
+    const voices = new Map<string, { id?: string; tracks: (number | string)[] }>();
+    // On a record of more than one disc a song is its disc and number: 1-3, 2-3.
+    const discs = new Set(tracks.map(t => t.discNumber || 1)).size > 1;
     tracks.forEach((t, i) => {
-      const no = t.trackNumber ?? i + 1;
+      const no = discs ? `${t.discNumber || 1}-${t.trackNumber ?? i + 1}` : t.trackNumber ?? i + 1;
       if (t.artists?.length) {
         for (const a of t.artists) {
           const entry = voices.get(a.name) ?? { id: a.id, tracks: [] };
@@ -379,21 +381,21 @@ function RecordCredits({ albumId, tracks }: { albumId: string; tracks: Track[] }
       ? [...voices].map(([name, info]) => ({ name, id: info.id, on: info.tracks.length === tracks.length ? 'every song' : info.tracks.join(', ') }))
       : [];
     // A group's size only when every file in it says its own; a partial sum would read as the whole.
+    // Every song counts in its group, those the server says nothing about in Audio's.
     const kinds = new Map<string, { count: number; size: number; sized: boolean }>();
     for (const t of tracks) {
-      const kind = formatTrackSpec(t);
-      if (!kind && !t.size) continue;
-      const key = kind || 'Audio';
+      const key = formatTrackSpec(t) || 'Audio';
       const g = kinds.get(key) ?? { count: 0, size: 0, sized: true };
       g.count += 1;
       g.size += t.size ?? 0;
       g.sized &&= !!t.size;
       kinds.set(key, g);
     }
+    // "Audio" with nothing beside it says nothing, and is left out.
     const fileList = [...kinds].map(([kind, g]) => ({
       kind,
       detail: [kinds.size > 1 ? plural(g.count, 'song') : null, g.sized && g.size > 0 ? formatBytes(g.size) : null].filter(Boolean).join(', '),
-    }));
+    })).filter(f => f.kind !== 'Audio' || f.detail);
     return { cast: castList, files: fileList };
   }, [tracks]);
   if (!cast.length && !files.length) return null;

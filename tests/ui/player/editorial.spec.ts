@@ -173,6 +173,28 @@ test.describe('editorial pages', () => {
     await expect(most).not.toContainText('Second Wind 13');
   });
 
+  test('liner notes count every song in its file group, and number a two-disc record\'s songs by disc', async ({ app, page }) => {
+    await page.route('**/api/album', async route => {
+      const response = await route.fetch();
+      const result = await response.json() as { ok: boolean; value?: { tracks: Record<string, unknown>[] } };
+      const bare = { sourceFormat: null, sourceSampleRate: null, sourceBitDepth: null };
+      // Low Tide Radio: three songs on disc 1, two on disc 2. Gale Guest sings on the third of each.
+      // Two songs say nothing of their format, and only one of those its size.
+      if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t =>
+        t.id === 'tr-8-1' ? { ...t, ...bare, size: 4_000_000 }
+        : t.id === 'tr-8-2' ? { ...t, ...bare }
+        : t.id === 'tr-8-3' || t.id === 'tr-8-5' ? { ...t, artist: `${t.artist} & Gale Guest`, artists: [{ id: t.artistId, name: t.artist }, { id: 'ar-guest', name: 'Gale Guest' }], size: 1_000_000 }
+        : { ...t, size: 1_000_000 });
+      await route.fulfill({ response, json: result });
+    });
+    await app.openAlbum('Low Tide Radio');
+    const credits = app.main.getByRole('region', { name: 'Credits' });
+    await expect(credits.locator('.credits-cast')).toHaveText('Bell Tower (every song), Gale Guest (1-3, 2-2)');
+    // A size only for a group whose every file says its own: not the one song's 4 MB as the whole.
+    const rows = credits.locator('.credits-file-row');
+    await expect(rows).toHaveText(['Audio, 2 songs', 'WAV, 16-bit, 8 kHz, 3 songs, 3.0 MB']);
+  });
+
   test('a record\'s liner notes say who is on which song and what the server says the files are', async ({ app }) => {
     await app.openAlbum('Quiet Harbor');
     const credits = app.main.getByRole('region', { name: 'Credits' });
