@@ -207,11 +207,6 @@ export function formatTrackSpec(track: Pick<Track, 'sourceFormat' | 'sourceBitDe
   ].filter(Boolean).join(', ');
 }
 
-// Split a combined artist string ("Blaaze, Benny Dayal & Claire") into individual names for liner notes.
-export function splitSingers(text: string): string[] {
-  return text.replace(/[‐‑]/g, '-').split(/\s*,\s*|\s+&\s+/).map(s => s.trim()).filter(Boolean);
-}
-
 // Initial index letter for the Tracks book-index: figures file under "#" so a serif "1" isn't read as "I".
 export function trackInitial(text: string): string {
   const first = Array.from(text.replace(/^[^\p{L}\p{N}]+/u, ''))[0] || '';

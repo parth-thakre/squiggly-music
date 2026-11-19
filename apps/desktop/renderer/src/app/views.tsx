@@ -13,7 +13,7 @@ import { createPlaylist, openMenu, playTarget, tracksOf } from './menu';
 import { showNowPlaying } from './nowPlaying';
 import { Credits } from './credits';
 import { activeDrag, canDrag, carriesItems, dropOnPlaylist, dropOnQueue, refuseDrop, startDrag, useDropTarget, useSpringOpen } from './drag';
-import { FitTitle, formatBytes, formatTrackSpec, OrderMenu, splitSingers, SquiggleRule, type OrderOption } from './editorial';
+import { FitTitle, formatBytes, formatTrackSpec, OrderMenu, SquiggleRule, type OrderOption } from './editorial';
 import { morph, nav, useRoute } from './route';
 import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from './settings';
 import { PLAY_COUNTS_AT, type PlayCountsAt } from '../../../../../packages/core/plays';
@@ -373,29 +373,30 @@ function RecordCredits({ albumId, tracks }: { albumId: string; tracks: Track[] }
           voices.set(a.name, entry);
         }
       } else {
-        for (const name of splitSingers(t.artist)) {
-          const entry = voices.get(name) ?? { id: t.artistId ?? undefined, tracks: [] };
-          entry.tracks.push(no);
-          voices.set(name, entry);
-        }
+        // One credit as the server gives it: "Simon & Garfunkel" is one act, and its link is theirs.
+        const entry = voices.get(t.artist) ?? { id: t.artistId ?? undefined, tracks: [] };
+        entry.tracks.push(no);
+        voices.set(t.artist, entry);
       }
     });
     const castList = tracks.length > 1 && voices.size > 1
       ? [...voices].map(([name, info]) => ({ name, id: info.id, on: info.tracks.length === tracks.length ? 'every song' : info.tracks.join(', ') }))
       : [];
-    const kinds = new Map<string, { count: number; size: number }>();
+    // A group's size only when every file in it says its own; a partial sum would read as the whole.
+    const kinds = new Map<string, { count: number; size: number; sized: boolean }>();
     for (const t of tracks) {
       const kind = formatTrackSpec(t);
       if (!kind && !t.size) continue;
       const key = kind || 'Audio';
-      const g = kinds.get(key) ?? { count: 0, size: 0 };
+      const g = kinds.get(key) ?? { count: 0, size: 0, sized: true };
       g.count += 1;
       g.size += t.size ?? 0;
+      g.sized &&= !!t.size;
       kinds.set(key, g);
     }
     const fileList = [...kinds].map(([kind, g]) => ({
       kind,
-      detail: [kinds.size > 1 ? plural(g.count, 'song') : null, g.size > 0 ? formatBytes(g.size) : null].filter(Boolean).join(', '),
+      detail: [kinds.size > 1 ? plural(g.count, 'song') : null, g.sized && g.size > 0 ? formatBytes(g.size) : null].filter(Boolean).join(', '),
     }));
     return { cast: castList, files: fileList };
   }, [tracks]);
