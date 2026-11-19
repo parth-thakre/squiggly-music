@@ -167,6 +167,8 @@ export class FakeNavidrome {
   private sharesMade = 0;
   /** Delays (ms) taken, one per call, by the named method before it touches any state. */
   private delays = new Map<string, number[]>();
+  /** A delay (ms) taken by every call to the named method whose arguments match, until reset. */
+  private delaysWhere = new Map<string, { when: (args: unknown[]) => boolean; ms: number }>();
   /** Errors returned, one per call, by the named method instead of answering. */
   private failures = new Map<string, string[]>();
   /** Adds Two Nights Live (special.twoNights) and its genre, Live, to the library. */
@@ -203,7 +205,7 @@ export class FakeNavidrome {
 
   reset() {
     this.playlists = initialPlaylists(); this.calls = []; this.reports = []; this.starred.clear();
-    this.saved = null; this.delays.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
+    this.saved = null; this.delays.clear(); this.delaysWhere.clear(); this.created = 0; this.clock.now = Date.UTC(2026, 8, 25);
     this.nativeApi = true; this.logins = 0; this.sessions.clear(); this.nativeQueries = []; this.http = null;
     this.ratings.clear(); this.failures.clear(); this.large = false;
     this.recent = []; this.frequent = []; this.listening = [];
@@ -212,6 +214,7 @@ export class FakeNavidrome {
     this.unreachable = false; this.streamed = []; this.similar = true; this.random = true;
   }
   delay(method: string, ...ms: number[]) { this.delays.set(method, ms); }
+  delayWhere(method: string, when: (args: unknown[]) => boolean, ms: number) { this.delaysWhere.set(method, { when, ms }); }
   failNext(method: string, ...errors: string[]) { this.failures.set(method, errors); }
   /** A new native session token, as a sign-in or any answer gives out. */
   issueToken() { const token = `jwt-${++this.issued}`; this.sessions.add(token); return token; }
@@ -235,7 +238,8 @@ export class FakeNavidrome {
       this.calls.push({ method, args, at: Date.now() });
       const failure = this.failures.get(method)?.shift();
       if (failure) return fail(failure);
-      const wait = this.delays.get(method)?.shift() ?? 0;
+      const where = this.delaysWhere.get(method);
+      const wait = this.delays.get(method)?.shift() ?? (where?.when(args) ? where.ms : 0);
       return wait ? Effect.promise(() => sleep(wait)).pipe(Effect.flatMap(run)) : run();
     });
   }

@@ -35,5 +35,7 @@ test('the next song\'s sleeve and colours are there when it starts, however slow
   // At once: no empty sleeve, no wait for the colours, nothing asked again.
   await expect.poll(() => page.locator('.deck img.deck-cover').evaluate(img => (img as HTMLImageElement).complete && (img as HTMLImageElement).naturalWidth > 0), { timeout: 300 }).toBe(true);
   await expect.poll(ground, { timeout: 300 }).not.toBe(first);
+  // The second sleeve's own colours, not the plain room a song without them falls back to.
+  expect(await ground()).not.toBe(neutral);
   expect(asked.filter(id => id.endsWith('after'))).toEqual([]);
 });

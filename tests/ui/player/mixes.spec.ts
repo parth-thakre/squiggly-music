@@ -111,9 +111,12 @@ test.describe('mixes', () => {
     await page.keyboard.press('m');
     await expect(names(app, 'By decade')).toHaveCount(4);
     // The 1990s sit below the fold, so nothing has drawn them yet. Their draw takes four seconds.
-    const nineties = () => fake.callsTo('randomSongs').filter(call => { const args = call.args[0] as { size: number; fromYear?: number }; return args.size === 50 && args.fromYear === 1990; });
+    // Only theirs: slow draws for the tiles beside them would take all six of the browser's
+    // connections to the server, and the record page's own request would wait behind them.
+    const isNineties = (args: unknown[]) => { const options = args[0] as { size: number; fromYear?: number }; return options.size === 50 && options.fromYear === 1990; };
+    const nineties = () => fake.callsTo('randomSongs').filter(call => isNineties(call.args));
     expect(nineties()).toHaveLength(0);
-    fake.delay('randomSongs', ...Array<number>(20).fill(4000));
+    fake.delayWhere('randomSongs', isNineties, 4000);
     const tile = group(app, 'By decade').locator('li').filter({ hasText: 'The 1990s' });
     await tile.hover();
     await tile.getByRole('button', { name: 'Play The 1990s' }).click();
