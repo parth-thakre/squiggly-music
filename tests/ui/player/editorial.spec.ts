@@ -83,6 +83,20 @@ test.describe('editorial pages', () => {
     await expect(app.main.locator('ul.grid')).toHaveCount(1);
   });
 
+  test('a decade of Records, in year order, is parted into its years', async ({ app }) => {
+    await app.main.getByRole('button', { name: 'Decade', exact: true }).click();
+    await app.main.getByRole('group', { name: 'Decade' }).getByRole('button', { name: '1990s' }).click();
+    await expect(app.main.locator('ul.grid > li')).toHaveCount(5);
+    const years = app.main.locator('section.crate-year');
+    await expect(years).toHaveCount(5);
+    const names = await years.locator('.crate-year-name').allTextContents();
+    expect(names).toHaveLength(5);
+    for (const name of names) expect(name).toMatch(/^199\d$/);
+    expect(names).toEqual([...names].sort());
+    // Each year's section is named by it, and holds that year's records.
+    await expect(app.main.getByRole('region', { name: names[0] }).locator('ul.grid > li')).toHaveCount(1);
+  });
+
   test('the order menu opens on the order in use, and the keyboard picks another', async ({ app, page }) => {
     const trigger = app.order;
     await app.expectOrder('newest first');
