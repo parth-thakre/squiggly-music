@@ -246,4 +246,13 @@ test('past 120 songs the queue heads no records, but still sets off the songs af
   await desktopQueue(page, ['tr-1-1', 'tr-2-1', 'tr-2-2', ...byHand], ['e2', 'e3']);
   await expect.poll(async () => (await queueRows(page)).slice(0, 6)).toEqual(['Long Run', '# Added by autoplay', 'Opening 2', 'Second Wind 2', '—', trackOf(byHand[0]).title]);
   await expect(page.locator('main.page ol.tracks > li.group-record')).toHaveCount(0);
+  // Drawn, not only marked: a windowed list styles its rows apart from a short one's.
+  const line = await page.locator('main.page ol.tracks.windowed > li.rule').first().evaluate(li => {
+    const before = getComputedStyle(li, '::before'), box = li.getBoundingClientRect();
+    return { content: before.content, style: before.borderTopStyle, width: before.borderTopWidth, color: before.borderTopColor, height: box.height, across: box.width };
+  });
+  expect(line).toMatchObject({ content: '""', style: 'solid', width: '1px' });
+  expect(line.color).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+  expect(line.height).toBeGreaterThan(0);
+  expect(line.across).toBeGreaterThan(200);
 });
