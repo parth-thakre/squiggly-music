@@ -249,9 +249,10 @@ test('past 120 songs the queue heads no records, but still sets off the songs af
   // Drawn, not only marked: a windowed list styles its rows apart from a short one's.
   const line = await page.locator('main.page ol.tracks.windowed > li.rule').first().evaluate(li => {
     const before = getComputedStyle(li, '::before'), box = li.getBoundingClientRect();
-    return { content: before.content, style: before.borderTopStyle, width: before.borderTopWidth, color: before.borderTopColor, height: box.height, across: box.width };
+    return { content: before.content, style: before.borderTopStyle, width: before.borderTopWidth, color: before.borderTopColor, opacity: before.opacity, visibility: before.visibility, height: box.height, across: box.width };
   });
-  expect(line).toMatchObject({ content: '""', style: 'solid', width: '1px' });
+  // The queue is reorderable: its rows' hover wash is a ::before too, hidden until hover.
+  expect(line).toMatchObject({ content: '""', style: 'solid', width: '1px', opacity: '1', visibility: 'visible' });
   expect(line.color).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
   expect(line.height).toBeGreaterThan(0);
   expect(line.across).toBeGreaterThan(200);
