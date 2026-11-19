@@ -212,7 +212,9 @@ test.describe('editorial pages', () => {
       if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t =>
         t.id === 'tr-8-1' ? { ...t, ...bare, size: 4_000_000 }
         : t.id === 'tr-8-2' ? { ...t, ...bare }
-        : t.id === 'tr-8-3' || t.id === 'tr-8-5' ? { ...t, artist: `${t.artist} & Gale Guest`, artists: [{ id: t.artistId, name: t.artist }, { id: 'ar-guest', name: 'Gale Guest' }], size: 1_000_000 }
+        // Disc 2's second song has no number: it is 2-2 by its place on its disc, not 2-5.
+        : t.id === 'tr-8-5' ? { ...t, trackNumber: null, artist: `${t.artist} & Gale Guest`, artists: [{ id: t.artistId, name: t.artist }, { id: 'ar-guest', name: 'Gale Guest' }], size: 1_000_000 }
+        : t.id === 'tr-8-3' ? { ...t, artist: `${t.artist} & Gale Guest`, artists: [{ id: t.artistId, name: t.artist }, { id: 'ar-guest', name: 'Gale Guest' }], size: 1_000_000 }
         : { ...t, size: 1_000_000 });
       await route.fulfill({ response, json: result });
     });

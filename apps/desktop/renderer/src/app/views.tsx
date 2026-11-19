@@ -362,8 +362,13 @@ function RecordCredits({ albumId, tracks }: { albumId: string; tracks: Track[] }
     const voices = new Map<string, { id?: string; tracks: (number | string)[] }>();
     // On a record of more than one disc a song is its disc and number: 1-3, 2-3.
     const discs = new Set(tracks.map(t => t.discNumber || 1)).size > 1;
-    tracks.forEach((t, i) => {
-      const no = discs ? `${t.discNumber || 1}-${t.trackNumber ?? i + 1}` : t.trackNumber ?? i + 1;
+    // A song with no number of its own goes by its place on its disc, so 2-1 can't be read as 1-1's.
+    const placed = new Map<number, number>();
+    tracks.forEach(t => {
+      const disc = t.discNumber || 1;
+      const place = (placed.get(disc) ?? 0) + 1;
+      placed.set(disc, place);
+      const no = discs ? `${disc}-${t.trackNumber ?? place}` : t.trackNumber ?? place;
       if (t.artists?.length) {
         for (const a of t.artists) {
           const entry = voices.get(a.name) ?? { id: a.id, tracks: [] };
