@@ -623,7 +623,9 @@ function creditsArtist(track: Track, artist: Pick<Artist, 'id' | 'name'>) {
 }
 // An artist's songs (artistTracks:) are put together for one visit, from their records as they
 // are held then: leaving the page, or another artist's, lets them go, and the next visit puts
-// them together again. Plays and ratings since then show there without anything to keep in step.
+// them together again. A record a play or a rating has changed since is read from the server
+// for it, not from what the host kept (playReported, invalidate), so the new count shows there
+// without anything to keep in step.
 const useArtistSongs = (id: string, name: string | null) => {
   useEffect(() => () => drop(`artistTracks:${id}`), [id]);
   return useResource(name !== null ? `artistTracks:${id}` : null, () => tracksOf({ kind: 'artist', artist: { id, name: name ?? '' } }));

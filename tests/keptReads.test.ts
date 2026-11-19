@@ -51,13 +51,57 @@ it('a reported play forgets its record and every artist\'s songs, and nothing el
   await load('artistTracks:ar', async () => ok(['a-1']));
   await load('artistTracks:other', async () => ok(['b-1']));
   await tick();
-  playReported('a');
+  playReported({ albumId: 'a' });
   expect(peek('album:a')).toBeUndefined();
   expect(peek('artistTracks:ar')).toBeUndefined();
   expect(peek('artistTracks:other')).toBeUndefined();
   expect(peek('album:b')).toEqual(ok('b 2'));
   expect(await album('a')).toEqual(ok('a 3'));
   expect(await album('b')).toEqual(ok('b 2'));
+});
+
+// A server answer the test gives when it chooses.
+function held<T>() {
+  let give: (result: Result<T>) => void = () => undefined;
+  const asked = new Promise<Result<T>>(resolve => { give = resolve; });
+  return { loader: () => asked, give };
+}
+
+// What the host kept predates the play, so the next look at the song's record and artists waits
+// for the server, once; the kept answer shows only if the server can't answer.
+it('after a reported play, the next read of its record and artists waits for the server though an answer was kept', async () => {
+  expect(await load('album:x', async () => ok('before'), async () => ok('before'))).toEqual(ok('before'));
+  expect(await load('artist:guest', async () => ok('guest before'), async () => ok('guest before'))).toEqual(ok('guest before'));
+  await tick();
+  playReported({ albumId: 'x', artistId: 'main', artists: [{ id: 'guest', name: 'Guest' }] });
+  expect(peek('artist:guest')).toBeUndefined();
+  const server = held<string>(), artist = held<string>();
+  const record = load('album:x', server.loader, async () => ok('kept before'));
+  const guest = load('artist:guest', artist.loader, async () => ok('guest kept before'));
+  await tick(); await tick();
+  server.give(ok('after')); artist.give(ok('guest after'));
+  expect(await record).toEqual(ok('after'));
+  expect(await guest).toEqual(ok('guest after'));
+  // Once: dropped again, the kept answer shows first as before.
+  await tick();
+  drop('album:x');
+  expect(await load('album:x', never<string>, async () => ok('kept'))).toEqual(ok('kept'));
+});
+
+it('after a reported play, a record the server can\'t read shows what was kept, marked stale', async () => {
+  playReported({ albumId: 'away' });
+  expect(await load('album:away', async () => ({ ok: false, error: 'away' }) as Result<string>, async () => ok('kept'))).toEqual(ok('kept'));
+  expect(isStale('album:away')).toBe(true);
+});
+
+it('a read of the record already on its way when the play is reported lands', async () => {
+  const server = held<string>();
+  const shown = load('album:y', server.loader, async () => ok('kept'));
+  expect(await shown).toEqual(ok('kept'));
+  playReported({ albumId: 'y' });
+  server.give(ok('fresh'));
+  await tick();
+  expect(peek('album:y')).toEqual(ok('fresh'));
 });
 
 it('lets go of one answer by its whole key, not every key it begins', async () => {

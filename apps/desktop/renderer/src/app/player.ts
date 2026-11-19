@@ -263,7 +263,11 @@ if (desktop) {
   const unsubscribe = desktop.subscribe(snapshot => { received = true; apply(snapshot); });
   void desktop.snapshot().then(snapshot => { if (!received) apply(snapshot); });
   // The main process reports plays itself (main/plays.ts), and says when it has, hidden or not.
-  const unreported = desktop.onPlayReported?.(play => playReported(play.albumId));
+  // The song's artists come from the queue, where it almost always still is.
+  const unreported = desktop.onPlayReported?.(play => {
+    const track = state.queue.find(t => t.id === play.trackId);
+    playReported({ albumId: play.albumId, artistId: track?.artistId, artists: track?.artists });
+  });
   import.meta.hot?.dispose(() => { unsubscribe(); unreported?.(); });
 }
 
@@ -343,7 +347,7 @@ function listened(seconds: number) {
     plays.finished = instance;
     // Once the server has taken it (or Android has queued it), its record and Most played are
     // read again (playReported). A refusal or no answer keeps them: offline, they're all there is.
-    void api.reportPlay(track.id, 'finished').then(result => { if (result.ok) playReported(track.albumId); }, () => undefined);
+    void api.reportPlay(track.id, 'finished').then(result => { if (result.ok) playReported(track); }, () => undefined);
   }
 }
 if (web) {

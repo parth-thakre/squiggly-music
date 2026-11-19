@@ -20,6 +20,11 @@ const stale = new Set<string>();
 // What has changed since the host kept it (a rating, a star, an edit: see invalidate): until
 // the server's answer comes, the kept one would show it as it was.
 const changed = new Set<string>();
+// Answers a play has changed since the host kept them (playReported): the next read waits for
+// the server, and shows the kept one only if the server can't answer.
+const played = new Set<string>();
+// Entries whose server read is still on its way, by key.
+const asking = new Map<string, Promise<Result<unknown>>>();
 // Called with the key that changed, or '*' when everything did (a new session).
 const listeners = new Set<(key: string) => void>();
 const unreachable = <T,>(): Result<T> => ({ ok: false, error: 'Could not reach the library. Check your connection and try again.' });
@@ -32,6 +37,18 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   if (entry) { cache.delete(key); cache.set(key, entry); return entry as Promise<Result<T>>; }
   stale.delete(key);
   if (kept && [...changed].some(prefix => key.startsWith(prefix))) kept = undefined;
+  if (played.delete(key) && kept) {
+    const server = loader, ask = kept;
+    kept = undefined;
+    loader = async () => {
+      const fresh = await server().catch(unreachable<T>);
+      if (fresh.ok) return fresh;
+      const old = await keptSlot(ask).catch(unreachable<T>);
+      if (!old.ok) return fresh;
+      stale.add(key);
+      return old;
+    };
+  }
   const asked = loader().catch(unreachable<T>);
   const session = epoch;
   const mine: Promise<Result<T>> = !kept ? asked : new Promise(resolve => {
@@ -52,6 +69,8 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   });
   entry = mine;
   cache.set(key, entry);
+  asking.set(key, entry);
+  void asked.then(() => { if (asking.get(key) === mine) asking.delete(key); });
   void entry.then(result => {
     if (cache.get(key) !== entry) return;
     if (result.ok && !unkept.has(result)) settled.set(key, result); else cache.delete(key);
@@ -92,11 +111,18 @@ export function forget(prefix: string) {
 }
 // The same, for one answer only (`artistTracks:a1` is a prefix of `artistTracks:a10`).
 export function drop(key: string) { cache.delete(key); settled.delete(key); stale.delete(key); }
-// A play the server has been told of changes its song's play count: its record and any artist's
-// songs (Most played) are read again by the next page to ask. Every artist's, as the record's
-// artist may not be the song's. Pages showing them now stay as they are.
-export function playReported(albumId: string | null | undefined) {
-  if (albumId) drop(`album:${albumId}`);
+// A play the server has been told of changes its song's play count: its record, its artists
+// (a guest's songs are in their artist:, appearsOn) and any artist's songs (Most played) are
+// read again by the next page to ask, from the server, not from what the host kept before the
+// play. Every artist's songs, as the record's artist may not be the song's. A read of the record
+// or artist already on its way lands. Pages showing them now stay as they are.
+export function playReported(track: Pick<Track, 'albumId' | 'artistId' | 'artists'>) {
+  const keys = [track.albumId && `album:${track.albumId}`, track.artistId && `artist:${track.artistId}`, ...(track.artists ?? []).map(a => a.id && `artist:${a.id}`)];
+  for (const key of keys) {
+    if (!key) continue;
+    played.add(key);
+    if (!asking.has(key) || asking.get(key) !== cache.get(key)) drop(key);
+  }
   forget('artistTracks:');
 }
 // Whether an answer is what the host kept, shown because the server's read failed.
@@ -123,7 +149,7 @@ export const onLibraryReset = (reset: () => void) => { resets.add(reset); return
 let epoch = 0;
 const epochListeners = new Set<() => void>();
 export function resetLibraryCaches() {
-  cache.clear(); settled.clear(); stale.clear(); changed.clear();
+  cache.clear(); settled.clear(); stale.clear(); changed.clear(); played.clear(); asking.clear();
   playlistEditors.clear();
   resets.forEach(reset => reset());
   epoch++;
