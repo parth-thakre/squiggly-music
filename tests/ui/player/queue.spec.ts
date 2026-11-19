@@ -104,12 +104,19 @@ test.describe('queue', () => {
     await app.menu.getByRole('menuitem', { name: 'Move down', exact: true }).click();
     await expect.poll(() => app.titles()).toEqual(['Lyric Line', 'Long Run', 'Short Stop', 'Thirty Two', 'Tail Light']);
     await app.expectPlaying('Long Run');
-    await now.getByRole('button', { name: 'Long Run' }).focus();
+    const heading = now.getByRole('button', { name: 'Long Run' });
+    await heading.focus();
     await page.keyboard.press('Alt+ArrowDown');
     await expect.poll(() => app.titles()).toEqual(['Lyric Line', 'Short Stop', 'Long Run', 'Thirty Two', 'Tail Light']);
+    // Said as the row's move is, and focus stays on the heading.
+    await expect(app.main.getByText('Moved Long Run to position 3 of 5.')).toBeAttached();
+    await expect(heading).toBeFocused();
     await page.keyboard.press('Alt+ArrowUp');
+    await expect.poll(() => app.titles()).toEqual(['Lyric Line', 'Long Run', 'Short Stop', 'Thirty Two', 'Tail Light']);
     await page.keyboard.press('Alt+ArrowUp');
     await expect.poll(() => app.titles()).toEqual(['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light']);
+    await page.keyboard.press('Alt+ArrowUp');
+    await expect(app.main.getByText('Already at the top.')).toBeAttached();
     await app.expectPlaying('Long Run');
   });
 
@@ -145,4 +152,37 @@ test('a stopped queue still lists its songs, with its count and actions', async 
   await expect(main.getByText('3 songs to come')).toBeVisible();
   await expect(main.getByRole('button', { name: 'Save as playlist' })).toBeVisible();
   await expect(main.getByRole('button', { name: 'Clear' })).toBeEnabled();
+});
+
+// On the desktop a move is on its way to the audio host until the host's snapshot says where the
+// song is. A second Alt+Down from the playing song's heading meanwhile is let go, as a row's is,
+// instead of being sent again from where the song was, which would undo the first.
+test('the playing song\'s heading moves it once at a time on the desktop', async ({ page }) => {
+  const queue = [trackOf('tr-1-1'), trackOf('tr-1-2'), trackOf('tr-1-3')];
+  await installDesktopBridge(page, { commands: true, player: {
+    queue, entryIds: ['e1', 'e2', 'e3'], currentIndex: 0, playing: true, playId: 'p.1', duration: 45,
+  } });
+  await page.goto('/');
+  await page.locator('main').focus();
+  await page.keyboard.press('g');
+  await page.keyboard.press('q');
+  const main = page.locator('main');
+  const heading = main.locator('header.queue-now').getByRole('button', { name: 'Long Run' });
+  await heading.focus();
+  await page.keyboard.press('Alt+ArrowUp');
+  await expect(main.getByText('Already at the top.')).toBeAttached();
+  await page.keyboard.press('Alt+ArrowDown');
+  await page.keyboard.press('Alt+ArrowDown');
+  const calls = () => page.evaluate(() => (window as unknown as { bridgeCalls: string[] }).bridgeCalls.filter(call => call.startsWith('queue:')));
+  await expect.poll(calls).toEqual(['queue:move:0:1']);
+  await page.waitForTimeout(300);
+  expect(await calls()).toEqual(['queue:move:0:1']);
+  // The host has moved it: said aloud, and the heading keeps focus.
+  await page.evaluate(value => (window as unknown as { pushPlayer(p: object): void }).pushPlayer(value),
+    { queue: [queue[1], queue[0], queue[2]], entryIds: ['e2', 'e1', 'e3'], currentIndex: 1 });
+  await expect(main.getByText('Moved Long Run to position 2 of 3.')).toBeAttached();
+  await expect(heading).toBeFocused();
+  // Then the next press goes.
+  await page.keyboard.press('Alt+ArrowDown');
+  await expect.poll(calls).toEqual(['queue:move:0:1', 'queue:move:1:2']);
 });

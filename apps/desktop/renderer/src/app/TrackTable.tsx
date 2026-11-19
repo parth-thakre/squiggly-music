@@ -41,12 +41,15 @@ export interface TrackGroup {
   record?: { id?: string | null; name: string; sub: string; coverArt?: string | null };
 }
 const noGroups: TrackGroup[] = [];
+// The list's own move, for a control outside it that stands in for a row (the queue's playing
+// song): `focus` false leaves focus where it is.
+export type Mover = (from: number, to: number, focus?: boolean) => void;
 
 export function TrackTable({
   tracks, album, albumArtist, showAlbum = false, numbered = 'position', onPick, playlist, queue,
   onMove, onRemove, onDropItems, groups = noGroups, keptMarks = true,
   columns = 1, large = false, leadingCover = false, bookIndex = false, lettered = false,
-  noteOf, hideIndex = -1,
+  noteOf, hideIndex = -1, mover,
 }: {
   tracks: Track[]; album?: string; albumArtist?: string; showAlbum?: boolean; numbered?: 'position' | 'track' | 'none';
   onPick?(index: number, entryId?: string): void;
@@ -71,6 +74,8 @@ export function TrackTable({
   noteOf?(track: Track): string | null;
   // Queue: index of the currently playing song when it is already shown in the queue's hero header.
   hideIndex?: number;
+  // Filled with the list's move (Mover).
+  mover?: { current: Mover | null };
 }) {
   useActiveTheme();
   const twoLine = useMemo(() => bookIndex || leadingCover || showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist, bookIndex, leadingCover, showAlbum]);
@@ -99,7 +104,7 @@ export function TrackTable({
     return () => { removeEventListener('dragend', clear, true); removeEventListener('drop', clear, true); };
   }, [into !== null]);
   const draggable = !!onMove || canDrag();
-  const moving = useRef<{ key: string; to: number; title: string; at: number } | null>(null);
+  const moving = useRef<{ key: string; to: number; title: string; at: number; focus: boolean } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const windowed = tracks.length > WINDOWED;
 
@@ -126,6 +131,7 @@ export function TrackTable({
     if (pending && positions.get(pending.key) === pending.to) {
       moving.current = null;
       setAnnouncement(`Moved ${pending.title} to position ${pending.to + 1} of ${keys.length}.`);
+      if (!pending.focus) return;
       const row = table.current?.querySelector<HTMLElement>(`li[data-key="${CSS.escape(pending.key)}"] .track-play`);
       row?.focus(); row?.scrollIntoView({ block: 'nearest' });
     }
@@ -150,13 +156,14 @@ export function TrackTable({
   const slot = (index: number, heading = false) => index + groups.filter(group => heading ? group.at < index : group.at <= index).length;
   const [first, last] = windowed ? range : [0, tracks.length];
   const selectedIndexes = () => [...selected].map(key => positions.get(key)).filter((i): i is number => i !== undefined).sort((a, b) => a - b);
-  const move = (from: number, to: number) => {
+  const move: Mover = (from, to, focus = true) => {
     if (!onMove || from < 0 || from >= tracks.length) return;
     if (to < 0 || to >= tracks.length) { setAnnouncement(to < 0 ? 'Already at the top.' : 'Already at the bottom.'); return; }
     if (moving.current && performance.now() - moving.current.at < 3000) return;
-    moving.current = { key: keys[from], to, title: splitTitle(tracks[from].title, album).main, at: performance.now() };
+    moving.current = { key: keys[from], to, title: splitTitle(tracks[from].title, album).main, at: performance.now(), focus };
     onMove(from, to);
   };
+  if (mover) mover.current = move;
   const click = (event: ReactMouseEvent, index: number, isNow: boolean) => {
     const key = keys[index];
     if (event.metaKey || event.ctrlKey) {

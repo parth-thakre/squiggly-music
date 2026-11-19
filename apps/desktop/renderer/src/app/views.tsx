@@ -19,7 +19,7 @@ import { diagnosticsBuilt, updateSettings, useSettings, useSettingsError } from 
 import { PLAY_COUNTS_AT, type PlayCountsAt } from '../../../../../packages/core/plays';
 import { STREAM_QUALITIES, type StreamQuality } from '../../../../../packages/core/streamQuality';
 import { Lyrics } from './lyrics';
-import { TrackTable, type TrackGroup } from './TrackTable';
+import { TrackTable, type Mover, type TrackGroup } from './TrackTable';
 import { Cover, Glyph, kHz, length, plural, shuffled, splitTitle, Status, Wave } from './ui';
 import { KeySettings } from './commands/KeySettings';
 import { ExtensionsSettings } from './extensions';
@@ -1096,6 +1096,7 @@ export function Queue() {
   const settings = useSettings();
   const [saved, setSaved] = useState<string | null>(null);
   const [showPlayed, setShowPlayed] = useState(false);
+  const mover = useRef<Mover | null>(null);
   const foldable = index > 0 && queue.length <= QUEUE_FOLD_LIMIT;
   const folded = foldable && !showPlayed;
   const nowTrack = queue[index];
@@ -1154,10 +1155,9 @@ export function Queue() {
   const endsOnSong = follows && upcoming === 0 && queue.at(-1)?.source === 'navidrome';
   const offer = endsOnSong && !settings.autoplay && !away;
   const nowTitle = nowTrack ? splitTitle(nowTrack.title, nowTrack.album) : null;
-  // The header stands in for the playing song's row, so its menu moves the song as the row's does.
-  const reorder = { index, length: queue.length, move: (to: number) => {
-    if (to >= 0 && to < queue.length) void player.move(index, to);
-  } };
+  // The header stands in for the playing song's row, so its menu and Alt+Up/Down move the song as
+  // the row's do, through the list's own move: one at a time, and said aloud.
+  const reorder = { index, length: queue.length, move: (to: number) => mover.current?.(index, to, false) };
   return <div className={area} {...drop.handlers}>
     <h1 className="sr-only">Queue</h1>
     {nowTrack && nowTitle && <header className="queue-now" onContextMenu={event => openMenu(event, { kind: 'tracks', tracks: [nowTrack], indexes: [index], from: { queue: true }, reorder })}
@@ -1195,7 +1195,7 @@ export function Queue() {
     </div>
     {saved && <p className="note" role="alert">{saved}</p>}
     <div className={`queue-next${folded ? ' played-folded' : ''}`}>
-      <TrackTable tracks={queue} queue hideIndex={!showPlayed && queue.length <= QUEUE_FOLD_LIMIT ? index : -1}
+      <TrackTable tracks={queue} queue mover={mover} hideIndex={!showPlayed && queue.length <= QUEUE_FOLD_LIMIT ? index : -1}
         onPick={(i, entry) => player.jump(i, entry)} onMove={(from, to) => void player.move(from, to)} onRemove={indexes => void player.remove(indexes)}
         onDropItems={(payload, at) => void dropOnQueue(payload, at)} groups={groups} />
     </div>
