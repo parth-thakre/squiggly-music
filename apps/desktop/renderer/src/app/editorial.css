@@ -362,12 +362,13 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   color: var(--ink); letter-spacing: -0.01em;
 }
 .tracks-initial-other { font-family: "Noto Serif CJK KR", "Noto Serif KR", var(--font-display); font-size: 32px; font-weight: 700; }
-.tracks-under { display: block; font-size: var(--t-small); line-height: 1.38; text-wrap: pretty; }
+/* The record and its singers share one line under the name: the rows are a fixed height. */
+.tracks-under { display: block; overflow: hidden; font-size: var(--t-small); line-height: 1.38; white-space: nowrap; text-overflow: ellipsis; }
 .tracks-from { white-space: nowrap; color: var(--ink); }
 .tracks-from .link { position: relative; z-index: 1; color: var(--ink); font-weight: 400; }
 .tracks-by { color: var(--soft); }
 .tracks-from + .tracks-by { margin-left: 14px; }
-.tracks-under .tracks-by { display: inline; }
+.tracks .track .tracks-under .tracks-by { display: inline; white-space: nowrap; }
 .tracks-sleeve { flex: none; align-self: center; margin-left: 16px; }
 .tracks-sleeve-btn { display: block; padding: 0; border: 0; background: none; }
 .tracks-art { width: 40px; height: 40px; object-fit: cover; border-radius: 1px; }
@@ -484,7 +485,8 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
 .disc-group:first-child { padding-top: 0; border-top: 0; }
 .disc-year { margin: 0; font: var(--display-weight) calc(42px * var(--display-size))/76px var(--font-display); letter-spacing: -0.012em; font-variant-numeric: lining-nums tabular-nums; }
 .disc-records { display: grid; grid-template-columns: minmax(0, 1fr) calc(50% + 34px); gap: 20px 40px; margin: 0; padding: 0; list-style: none; }
-.disc { position: relative; min-width: 0; }
+/* Not .disc: that is the round play button everywhere else. */
+.disc-entry { position: relative; min-width: 0; }
 .disc-record {
   display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 18px; align-items: center;
   width: 100%; min-width: 0; min-height: 76px; padding: 0; border: 0; background: none; text-align: left;

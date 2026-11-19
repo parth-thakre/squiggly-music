@@ -690,7 +690,7 @@ function ArtistDiscography({ albums }: { albums: Album[] }) {
         {group.records.map(album => {
           const title = splitTitle(album.name);
           const facts = [album.songCount ? plural(album.songCount, 'song') : null, album.duration ? length(album.duration) : null].filter(Boolean).join(', ');
-          return <li key={album.id} className="disc playable">
+          return <li key={album.id} className="disc-entry playable">
             <PlayOver small label={title.main} play={() => playTarget({ kind: 'album', album })} />
             <button type="button" className="disc-record" data-warm={`album:${album.id}`}
               onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
