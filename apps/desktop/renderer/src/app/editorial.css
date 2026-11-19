@@ -104,7 +104,7 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
     background: none; color: var(--soft);
   }
   .bar .bar-top > .back:hover { background: var(--wash); color: var(--ink); }
-  .sections { gap: 26px; }
+  .sections { gap: 26px; margin-right: 24px; }
   .sections button { padding: 7px 0 6px; font-size: var(--t-body); font-weight: 500; }
   .sections button[aria-current]::after { bottom: 0; height: 2px; border-radius: 0; background: var(--ink); }
   .bar .bar-top > .search-field {
@@ -174,7 +174,7 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
 
   /* Lyrics, Queue, Mini, inline rating & heart */
   .deck .deck-actions {
-    display: flex; align-items: center; gap: 18px; margin: 12px 0 0; padding-top: 0; border-top: 0;
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0 18px; margin: 12px 0 0; padding-top: 0; border-top: 0;
   }
   .deck .deck-actions > .icon-button.labelled {
     height: 36px; padding: 0; gap: 8px; border-radius: 0; background: none; color: var(--ink);
@@ -186,6 +186,8 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   }
   .deck .deck-actions > .icon-button:not(.labelled) { width: 34px; height: 34px; border-radius: 3px; color: var(--ink); }
   .deck .deck-actions > .icon-button:not(.labelled):hover { background: var(--wash); }
+  /* The stars and the heart keep to the right; in a narrow deck (or with Mini player there) they
+     take the next line rather than running past the deck's edge. */
   .deck-set { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; margin-right: -8px; }
   .deck-set .deck-rating { margin: 0; }
   .deck-set .deck-rating button { padding: 2px 1px; }
@@ -197,7 +199,9 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   .deck-set .favorite:hover { background: var(--wash); }
 
   /* Deck foot: Next card, honest 2-stop Signal path, quiet footer links */
-  .deck-foot { margin-top: auto; display: flex; flex-direction: column; }
+  /* The foot takes the deck's spare room: the lyrics fill it when there are lines to show, and
+     otherwise the next song and the signal path sit at the bottom. */
+  .deck-foot { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end; }
   .deck-foot .up-next { margin: 14px 0 0; padding-top: 14px; border-top: 1px solid var(--line); }
   .deck-foot .up-next-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .deck-foot .next-song { display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; }
