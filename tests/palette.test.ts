@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { blend, contrast, isStandIn, MARK_CONTRAST, neutral, paletteFromPixels, selectedTint, TEXT_CONTRAST, type Palette } from '../apps/desktop/renderer/src/app/palette';
+import { blend, contrast, isStandIn, LINE_ALPHA, MARK_CONTRAST, neutral, paletteFromPixels, selectedTint, TEXT_CONTRAST, type Palette } from '../apps/desktop/renderer/src/app/palette';
 
 // A 48 x 48 sleeve, as paletteFromImage samples it, filled with the given colors in bands.
 function sleeve(...colors: [number, number, number][]) {
@@ -13,6 +13,7 @@ function sleeve(...colors: [number, number, number][]) {
 
 function expectReadable(palette: Palette) {
   const grounds = [palette.ground, selectedTint(palette)];
+  if (palette.deck) grounds.push(palette.deck, blend(palette.deck, palette.ink, LINE_ALPHA));
   for (const ground of grounds) {
     expect(contrast(palette.ink, ground), `ink on ${ground}`).toBeGreaterThanOrEqual(TEXT_CONTRAST);
     expect(contrast(palette.soft, ground), `soft on ${ground}`).toBeGreaterThanOrEqual(TEXT_CONTRAST);
@@ -80,7 +81,52 @@ describe('palette contrast', () => {
   });
 
   it('meets the same rules with the neutral palette used before any art loads', () => {
+    expect(neutral.deck).toBeDefined();
+    expect(neutral.neutralAccent).toBe(true);
     expectReadable(neutral);
+  });
+
+  it('opens light sleeves into tinted light rooms with a deeper deck and dark ink', () => {
+    const lightWarm = paletteFromPixels(sleeve([235, 224, 198], [235, 224, 198], [235, 224, 198], [190, 90, 45]));
+    expect(lightWarm.scheme).toBe('light');
+    expect(lightWarm.deck).toBeDefined();
+    expect(contrast('#000000', lightWarm.ground)).toBeGreaterThan(contrast('#ffffff', lightWarm.ground));
+    expect(contrast('#000000', lightWarm.deck!)).toBeGreaterThan(contrast('#ffffff', lightWarm.deck!));
+    // Deck sits deeper than ground in a light room.
+    expect(contrast('#ffffff', lightWarm.deck!)).toBeGreaterThan(contrast('#ffffff', lightWarm.ground));
+    expectReadable(lightWarm);
+
+    const lightNeutral = paletteFromPixels(sleeve([240, 240, 240]));
+    expect(lightNeutral.scheme).toBe('light');
+    expect(lightNeutral.neutralAccent).toBe(true);
+    expectReadable(lightNeutral);
+  });
+
+  it('adopts a secondary vivid hue for the deck when the sleeve carries two colour families', () => {
+    // 75% deep teal + 25% vivid burnt orange: ground stays teal, deck adopts warm orange-brown hue.
+    const twoTone = paletteFromPixels(sleeve([18, 86, 98], [18, 86, 98], [18, 86, 98], [218, 96, 32]));
+    expect(twoTone.scheme).toBe('dark');
+    expect(twoTone.deck).toBeDefined();
+    expect(twoTone.neutralAccent).toBe(false);
+    const groundHue = hueOf(twoTone.ground);
+    const deckHue = hueOf(twoTone.deck!);
+    const gap = Math.min(Math.abs(groundHue - deckHue), 360 - Math.abs(groundHue - deckHue));
+    expect(gap, `ground ${twoTone.ground} (${groundHue.toFixed(1)}°) vs deck ${twoTone.deck} (${deckHue.toFixed(1)}°)`).toBeGreaterThan(45);
+    expectReadable(twoTone);
+  });
+
+  it('marks neutralAccent on grey and monochrome sleeves and clears it on vivid sleeves', () => {
+    for (const color of [[0, 0, 0], [60, 60, 60], [128, 128, 128], [200, 200, 200], [255, 255, 255]] as [number, number, number][]) {
+      const palette = paletteFromPixels(sleeve(color));
+      expect(palette.neutralAccent, `grey ${color.join(',')}`).toBe(true);
+      expect(palette.accent).toBe(palette.ink);
+      expect(palette.accentText).toBe(palette.ink);
+      expectReadable(palette);
+    }
+    const vivid = paletteFromPixels(sleeve([30, 30, 30], [30, 30, 30], [220, 40, 60]));
+    expect(vivid.neutralAccent).toBe(false);
+    expect(vivid.accent).not.toBe(vivid.ink);
+    expectReadable(vivid);
   });
 });
 
