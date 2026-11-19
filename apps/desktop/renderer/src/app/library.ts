@@ -36,7 +36,9 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
   const session = epoch;
   const mine: Promise<Result<T>> = !kept ? asked : new Promise(resolve => {
     let shown: Result<T> | null = null;
-    const keeping = kept().catch(unreachable<T>);
+    const ask = kept;
+    // Not asked once the server has answered while it waited for a turn.
+    const keeping = keptSlot(() => shown ? Promise.resolve(unreachable<T>()) : ask()).catch(unreachable<T>);
     void keeping.then(answer => { if (!shown && answer.ok) resolve(shown = answer); });
     void asked.then(async fresh => {
       // A failure that comes first (away answers at once) waits for what was kept, which shows
@@ -54,20 +56,27 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
     if (cache.get(key) !== entry) return;
     if (result.ok) settled.set(key, result); else cache.delete(key);
   });
-  while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); stale.delete(oldest); }
+  while (cache.size > LIMIT) { const oldest = cache.keys().next().value!; cache.delete(oldest); settled.delete(oldest); stale.delete(oldest); wholes.delete(oldest); }
   return entry as Promise<Result<T>>;
 }
-// Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
-// would otherwise ask for dozens at once (the desktop refuses past 32 requests in flight, and the
-// server has its own limits). A record already read comes from load's cache without waiting.
-const ALBUMS_AT_ONCE = 6;
-let albumsReading = 0;
-const albumWaiting: (() => void)[] = [];
-async function albumSlot<T>(task: () => Promise<T>) {
-  // A finished read hands its slot straight to the next waiting one, so none slips in between.
-  if (albumsReading < ALBUMS_AT_ONCE) albumsReading++; else await new Promise<void>(resolve => albumWaiting.push(resolve));
-  try { return await task(); } finally { const next = albumWaiting.shift(); if (next) next(); else albumsReading--; }
+// Reads that take turns, `size` at a time; a finished one hands its turn straight to the next
+// waiting, so none slips in between.
+function turns(size: number) {
+  let running = 0;
+  const waiting: (() => void)[] = [];
+  return async <T,>(task: () => Promise<T>) => {
+    if (running < size) running++; else await new Promise<void>(resolve => waiting.push(resolve));
+    try { return await task(); } finally { const next = waiting.shift(); if (next) next(); else running--; }
+  };
 }
+// Records' songs, read a few at a time across the whole page: Home's mixes and an artist's menu
+// would otherwise ask for dozens at once (the desktop refuses past 32 requests in flight, a Pause
+// among them, and the server has its own limits). A record already read comes from load's cache
+// without waiting.
+const albumSlot = turns(6);
+// What the host kept is read a few at a time too: an artist's forty records would otherwise ask
+// for forty kept answers at once, beside the six asked of the server.
+const keptSlot = turns(6);
 // A record the host kept answers at once (an artist's Play, a mix), and is read again in turn.
 export const albumDetail = (id: string) => load(`album:${id}`, () => albumSlot(() => api.album(id)), stored ? () => stored.album(id) : undefined);
 export const albumDetails = (ids: readonly string[]) => Promise.all(ids.map(albumDetail));
@@ -91,6 +100,22 @@ export const peek = <T,>(key: string) => settled.get(key) as Result<T> | undefin
 export function prime<T>(key: string, result: Result<T>) {
   cache.set(key, Promise.resolve(result)); settled.set(key, result);
   listeners.forEach(listener => listener(key));
+  for (const [whole, { parts, join }] of [...wholes]) {
+    if (!cache.has(whole)) { wholes.delete(whole); continue; }
+    if (whole === key || !parts.includes(key)) continue;
+    const held = parts.map(part => settled.get(part));
+    if (held.every(Boolean)) prime(whole, join(held as Result<unknown>[]));
+  }
+}
+// Answers put together from others, such as an artist's songs from their records': when the
+// server's answer to a part takes the place of what the host kept (prime), the whole is put
+// together again from the parts as now held, so its play counts aren't a session behind.
+// `answers`: the parts as they came; one refreshed since stands in for its part. Remembered only
+// while `key`'s own answer is being read or held.
+const wholes = new Map<string, { parts: readonly string[]; join(parts: Result<unknown>[]): Result<unknown> }>();
+export function assemble<P, T>(key: string, parts: readonly string[], answers: readonly Result<P>[], join: (parts: Result<P>[]) => Result<T>): Result<T> {
+  if (cache.has(key)) wholes.set(key, { parts, join: join as (parts: Result<unknown>[]) => Result<unknown> });
+  return join(parts.map((part, i) => (settled.get(part) as Result<P> | undefined) ?? answers[i]));
 }
 
 // Everything the renderer remembers about one account. A different server or user must not
@@ -100,7 +125,7 @@ export const onLibraryReset = (reset: () => void) => { resets.add(reset); return
 let epoch = 0;
 const epochListeners = new Set<() => void>();
 export function resetLibraryCaches() {
-  cache.clear(); settled.clear(); stale.clear(); changed.clear();
+  cache.clear(); settled.clear(); stale.clear(); changed.clear(); wholes.clear();
   playlistEditors.clear();
   resets.forEach(reset => reset());
   epoch++;

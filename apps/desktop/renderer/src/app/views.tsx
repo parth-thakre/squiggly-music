@@ -604,14 +604,24 @@ let playedFound: boolean | null = null;
 // push the records down when they arrive.
 const TOGETHER_MS = 700;
 const MOST_PLAYED = 6;
+// Past this many records (Various Artists, say) Most played would read every one of them on
+// opening the page; it isn't shown, and All songs reads them when asked.
+const MOST_PLAYED_RECORDS = 50;
+// Whether a song credits this artist, not only someone on a record of theirs (with participations,
+// a compilation they guest on is one of their records).
+const creditsArtist = (track: Track, artist: Pick<Artist, 'id' | 'name'>) =>
+  track.artistId || track.artists?.some(a => a.id)
+    ? track.artistId === artist.id || !!track.artists?.some(a => a.id === artist.id)
+    : track.artist.toLocaleLowerCase() === artist.name.toLocaleLowerCase();
 export function ArtistPage({ id }: { id: string }) {
   const result = useKept(`artist:${id}`, from => from.artist(id));
   const info = useKept(`artistInfo:${id}`, from => from.artistInfo(id));
   // The same songs All songs lists, under the same key; asked for once the artist's name is known.
   const name = result?.ok ? result.value.artist.name : null;
-  const songs = useResource(name !== null ? `artistTracks:${id}` : null, () => tracksOf({ kind: 'artist', artist: { id, name: name ?? '' } }));
-  const mostPlayed = useMemo(() => !songs?.ok ? [] : songs.value.filter(t => (t.playCount ?? 0) > 0)
-    .sort((a, b) => b.playCount! - a.playCount! || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' })).slice(0, MOST_PLAYED), [songs]);
+  const ranked = result?.ok ? result.value.albums.length <= MOST_PLAYED_RECORDS : false;
+  const songs = useResource(name !== null && ranked ? `artistTracks:${id}` : null, () => tracksOf({ kind: 'artist', artist: { id, name: name ?? '' } }));
+  const mostPlayed = useMemo(() => !songs?.ok || name === null ? [] : songs.value.filter(t => (t.playCount ?? 0) > 0 && creditsArtist(t, { id, name }))
+    .sort((a, b) => b.playCount! - a.playCount! || a.title.localeCompare(b.title, 'en', { sensitivity: 'base' })).slice(0, MOST_PLAYED), [songs, id, name]);
   if (songs?.ok) playedFound = playedFound || mostPlayed.length > 0;
   const [waited, setWaited] = useState<string | null>(null);
   const arrived = !!result;
@@ -620,7 +630,7 @@ export function ArtistPage({ id }: { id: string }) {
     const timer = setTimeout(() => setWaited(id), TOGETHER_MS);
     return () => clearTimeout(timer);
   }, [arrived, id]);
-  const together = waited === id || songs !== undefined;
+  const together = waited === id || songs !== undefined || (!!result?.ok && !ranked);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const playAll = async (artist: Pick<Artist, 'id' | 'name'>, shuffle: boolean) => {
@@ -666,7 +676,7 @@ export function ArtistPage({ id }: { id: string }) {
           <TrackTable tracks={mostPlayed} albumArtist={artist.name} leadingCover columns={2}
             noteOf={t => t.playCount ? plural(t.playCount, 'play') : null} />
         </section>}
-        {songs === undefined && playedFound !== false && <section className="artist-top" aria-busy="true"><h2>Most played</h2>
+        {ranked && songs === undefined && playedFound !== false && <section className="artist-top" aria-busy="true"><h2>Most played</h2>
           <p className="status loading popular-waiting">Counting what you play of theirs</p></section>}
         {albums.length > 0 && <>
           <SquiggleRule seed={`${artist.name} records`} className="artist-break" />

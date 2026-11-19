@@ -141,6 +141,33 @@ test.describe('editorial pages', () => {
     await expect(app.heading).toHaveText('Quiet Harbor');
   });
 
+  test('an artist\'s Most played ranks only songs that credit them, not everyone on their records', async ({ app, page }) => {
+    // With participations a compilation Ada Brass guests on is one of their records; its other
+    // performers' songs are no song of theirs. A song with no artist ids at all is matched by name.
+    await page.route('**/api/album', async route => {
+      const response = await route.fetch();
+      const result = await response.json() as { ok: boolean; value?: { tracks: Record<string, unknown>[] } };
+      if (result.ok && result.value) result.value.tracks = result.value.tracks.map(t =>
+        t.id === 'tr-1-2' ? { ...t, playCount: 9 }
+        // Someone else's song, played most of all.
+        : t.id === 'tr-7-2' ? { ...t, artist: 'Hob Nail', artistId: 'ar-hob', artists: [{ id: 'ar-hob', name: 'Hob Nail' }], playCount: 40 }
+        // Gale Guest's duet with Ada Brass: theirs too.
+        : t.id === 'tr-7-1' ? { ...t, playCount: 5 }
+        // No ids: by name, whatever its case; and a stranger's, by name too.
+        : t.id === 'tr-13-1' ? { ...t, artist: 'ADA BRASS', artistId: null, artists: undefined, playCount: 4 }
+        : t.id === 'tr-13-2' ? { ...t, artist: 'Someone Else', artistId: null, artists: undefined, playCount: 30 }
+        : t);
+      await route.fulfill({ response, json: result });
+    });
+    await app.section('Artists').click();
+    await app.main.getByRole('button', { name: /^Ada Brass/ }).first().click();
+    await expect(app.heading).toHaveText('Ada Brass');
+    const most = app.main.getByRole('region', { name: 'Most played' });
+    await expect.poll(() => app.titles(most)).toEqual(['Lyric Line', 'Opening 7', 'Opening 13']);
+    await expect(most).not.toContainText('Second Wind 7');
+    await expect(most).not.toContainText('Second Wind 13');
+  });
+
   test('a record\'s liner notes say who is on which song and what the server says the files are', async ({ app }) => {
     await app.openAlbum('Quiet Harbor');
     const credits = app.main.getByRole('region', { name: 'Credits' });

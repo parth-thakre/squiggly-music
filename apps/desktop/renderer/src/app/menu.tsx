@@ -3,7 +3,7 @@ import { isStation } from '../../../../../packages/core/stations';
 import type { Playlist, Result, Track } from '../../../../../packages/core/contracts';
 import { firstArtistId } from './credits';
 import { isStarred, setStarred } from './favorites';
-import { albumDetails, api, invalidate, load, playlistEditor } from './library';
+import { albumDetails, api, assemble, invalidate, load, playlistEditor } from './library';
 import { current, getPlayer, isAway, player, type PlayerState } from './player';
 import { forget, isContainerKept, isKept, keep, keptSupported } from './keptState';
 import { showNowPlaying } from './nowPlaying';
@@ -114,13 +114,17 @@ export async function tracksOf(target: MenuTarget): Promise<Result<Track[]>> {
   if (!artist.ok) return artist;
   // No records of their own: the songs that credit them (ArtistDetail.appearsOn).
   if (!artist.value.albums.length) return { ok: true, value: artist.value.appearsOn?.tracks ?? [] };
-  const details = await albumDetails(artist.value.albums.map(album => album.id));
+  const ids = artist.value.albums.map(album => album.id);
+  const details = await albumDetails(ids);
   const missing = details.filter(detail => !detail.ok);
   if (missing.length) {
     const first = missing[0] as Extract<Result, { ok: false }>;
     return { ok: false, error: `${plural(missing.length, 'record')} by ${target.artist.name} could not be loaded, so nothing was changed. ${first.error}` };
   }
-  return { ok: true, value: details.flatMap(detail => detail.ok ? detail.value.tracks : []) };
+  // On the desktop the records answer first with what was kept; as the server's answers come,
+  // the artist's songs (Most played, All songs) are put together again from them.
+  return assemble(`artistTracks:${target.artist.id}`, ids.map(id => `album:${id}`), details,
+    (held): Result<Track[]> => ({ ok: true, value: held.flatMap(detail => detail.ok ? detail.value.tracks : []) }));
 }
 
 export function ContextMenu() {

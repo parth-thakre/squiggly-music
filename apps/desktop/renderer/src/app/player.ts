@@ -11,7 +11,7 @@ import { isStation, repeatFor, stationIdOf } from '../../../../../packages/core/
 import { onDisconnected, onSignedOut, webReach, webSession, type WebSessionStatus } from '../bridge/previewLibrary';
 import { isKept, keptSupported } from './keptState';
 import { VolumeCommandCoalescer } from '../volumeCommands';
-import { api, resetLibraryCaches } from './library';
+import { api, forget, resetLibraryCaches } from './library';
 import { clearSearches, searchesFor } from './searches';
 import { getSettings, subscribeSettings } from './settings';
 
@@ -141,6 +141,20 @@ export function usePlayer<T>(select: (s: PlayerState) => T): T {
   return useSyncExternalStore(subscribe, () => select(state));
 }
 export const current = (s: PlayerState) => s.queue[s.index] as Track | undefined;
+// A play that counts, as it is reported (desktop main's plays.ts, listened below), changes its
+// song's play count: the next look at its record or at an artist's songs (Most played) reads
+// them again. Pages showing them now stay as they are.
+let counted = '';
+subscribe(() => {
+  const track = current(state);
+  if (!track || track.source !== 'navidrome' || !state.playId || counted === state.playId || !getSettings().reportPlays) return;
+  const threshold = finishThreshold(state.duration > 0 ? state.duration : track.duration ?? 0, getSettings().playCountsAt);
+  if (threshold === null || state.position < threshold) return;
+  counted = state.playId;
+  // Every artist's: the record's artist may not be the song's.
+  if (track.albumId) forget(`album:${track.albumId}`);
+  forget('artistTracks:');
+});
 export const currentEntry = (s: PlayerState) => s.entryIds[s.index] as string | undefined;
 // The position right now, not as of the last report. The browser asks its audio element; the
 // desktop counts forward from the engine's last report (every 250 ms), at most one second ahead.
