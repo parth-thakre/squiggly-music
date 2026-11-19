@@ -18,6 +18,12 @@ import './kept.css';
 
 // Song rows are --row-height tall, or --row-two where rows also show the artists or the record
 // under the name (compact themes shorten both); windowing uses the same number.
+// Each song's place on its disc, from 1: what a record's song with no number of its own goes by,
+// in the tracklist and the liner notes alike (2-2, not 5, under disc two).
+export function discPlaces(tracks: readonly Track[]): number[] {
+  const placed = new Map<number, number>();
+  return tracks.map(t => { const disc = t.discNumber || 1, place = (placed.get(disc) ?? 0) + 1; placed.set(disc, place); return place; });
+}
 const rowHeight = (two: boolean) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(two ? '--row-two' : '--row-height')) || (two ? 56 : 44);
 const WINDOWED = 120;
 const tapped = (event: ReactMouseEvent) => {
@@ -112,6 +118,8 @@ export function TrackTable({
   const twoCol = wide && !windowed && !groups.length && !bookIndex && (columns === 2 || (columns === 'auto' && tracks.length >= 4));
   const isLarge = wide && !windowed && !showAlbum && !bookIndex && !leadingCover && (large === true || (large === 'auto' && tracks.length > 0 && tracks.length <= 3));
 
+  // A record's song with no number of its own goes by its place on its disc, as the liner notes say.
+  const places = useMemo(() => numbered === 'track' ? discPlaces(tracks) : null, [numbered, tracks]);
   // Precompute book-index initial letters so windowed rows still know when a new letter opens.
   const initials = useMemo(() => {
     if (!bookIndex || !lettered || tracks.length < 24) return null;
@@ -259,7 +267,7 @@ export function TrackTable({
         const hiddenHero = hideIndex >= 0 && index === hideIndex;
         const num = queue ? (index > nowIndex ? index - nowIndex : '')
           : numbered === 'none' ? ''
-          : numbered === 'track' ? track.trackNumber ?? index + 1
+          : numbered === 'track' ? track.trackNumber ?? places![index]
           : index + 1;
         const row = <TrackRow key={key} track={track} index={index} rowKey={key} isNow={isNow} hiddenHero={hiddenHero}
           number={num} initial={initials ? initials[index] : undefined}

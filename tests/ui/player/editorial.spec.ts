@@ -1,4 +1,4 @@
-import { expect, test } from '../fixtures/test';
+import { expect, test, trackOf } from '../fixtures/test';
 
 // The editorial pages: an artist's All songs, the order menu from the keyboard, the queue's record
 // dividers, and a record's liner notes.
@@ -244,6 +244,8 @@ test.describe('editorial pages', () => {
     await app.openAlbum('Low Tide Radio');
     const credits = app.main.getByRole('region', { name: 'Credits' });
     await expect(credits.locator('.credits-cast')).toHaveText('Bell Tower (every song), Gale Guest (1-3, 2-2)');
+    // The tracklist numbers it as the liner notes do: 2 under disc two, not 5.
+    await expect(app.row(trackOf('tr-8-5').title).locator('.n-mark')).toHaveText('2');
     // A size only for a group whose every file says its own: not the one song's 4 MB as the whole.
     const rows = credits.locator('.credits-file-row');
     await expect(rows).toHaveText(['Audio, 2 songs', 'WAV, 16-bit, 8 kHz, 3 songs, 3.0 MB']);
