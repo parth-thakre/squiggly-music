@@ -1541,8 +1541,9 @@ export function Home() {
   const leadFromRecent = recentList.length > 0;
   const pool = leadFromRecent ? recentList : newestList;
   const lead = pool.length > 1 && pool[0].id === playingAlbumId ? pool[1] : pool[0] ?? null;
+  // The lead shows once on the page: not again among the records played lately or the arrivals.
   const lately = recentList.filter(r => r.id !== lead?.id).slice(0, 6);
-  const arrivals = leadFromRecent ? newestList : newestList.filter(r => r.id !== lead?.id);
+  const arrivals = newestList.filter(r => r.id !== lead?.id);
 
   const showMost = !frequent || !frequent.ok || frequentList.length > 0;
   const showLately = !recent || !recent.ok || lately.length > 0;
