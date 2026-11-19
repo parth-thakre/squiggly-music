@@ -1100,9 +1100,13 @@ export function Queue() {
     if (queue.length <= QUEUE_FOLD_LIMIT) {
       const recordOf = (track: Track) => isStation(track) ? '' : track.albumId ?? track.album;
       let prevKey = nowTrack ? recordOf(nowTrack) : '';
+      // Where the last headed run ended: a song there that heads nothing gets a bare rule, so it
+      // doesn't read as one of the run's songs.
+      let headEnd = -1;
       for (let i = index + 1; i < queue.length; i++) {
         const track = queue[i];
         const recKey = recordOf(track);
+        const ruled = i === headEnd && !addedAt.has(i);
         if (recKey && recKey !== prevKey && !addedAt.has(i)) {
           let end = i + 1;
           while (end < queue.length && recordOf(queue[end]) === recKey && !addedAt.has(end)) end++;
@@ -1120,8 +1124,10 @@ export function Queue() {
                 sub: [track.albumArtist ?? track.artist, recTitle.extra, plural(run.length, 'song'), dur > 0 ? length(dur) : null].filter(Boolean).join(', '),
               },
             });
+            headEnd = end;
           }
         }
+        if (ruled && headEnd <= i) parts.push({ at: i, label: '', rule: true });
         prevKey = recKey;
       }
     }

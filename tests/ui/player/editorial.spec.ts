@@ -126,6 +126,17 @@ test.describe('editorial pages', () => {
     await expect(records.locator('.queue-record-name')).toHaveText('Quiet Harbor');
     await expect(records.locator('.queue-record-by')).toContainText('Bell Tower, 2 songs');
     expect(await app.titles()).toEqual(['Long Run', 'Lyric Line', 'Short Stop', 'Thirty Two', 'Tail Light', 'Opening 2', 'Second Wind 2', 'Opening 3']);
+    // Quiet Harbor's heading ends where its songs end: a bare rule, with no words, comes before
+    // Amber Field's lone song, which gets no heading of its own.
+    const items = app.main.locator('ol.tracks > li');
+    const order = await items.evaluateAll(lis => lis.map(li => li.classList.contains('rule') ? '—'
+      : li.classList.contains('group-record') ? `# ${li.querySelector('.queue-record-name')?.textContent}`
+      : li.querySelector('.title .name')?.textContent ?? ''));
+    expect(order.slice(-5)).toEqual(['# Quiet Harbor', 'Opening 2', 'Second Wind 2', '—', 'Opening 3']);
+    const rule = app.main.locator('ol.tracks > li.group-head.rule');
+    await expect(rule).toHaveCount(1);
+    await expect(rule).toHaveAttribute('aria-hidden', 'true');
+    await expect(rule).toHaveText('');
     await records.getByRole('button').click();
     await expect(app.heading).toHaveText('Quiet Harbor');
   });

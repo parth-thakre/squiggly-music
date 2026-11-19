@@ -31,11 +31,13 @@ function occurrenceKeys(tracks: Track[]) {
 }
 
 // A heading between rows: discs on a multi-disc record, quiet autoplay labels, or record-change
-// dividers in the queue (with the record's sleeve, title, and artist/count).
+// dividers in the queue (with the record's sleeve, title, and artist/count). A rule is a bare
+// line with no words, closing a record's run in the queue before a song from elsewhere.
 export interface TrackGroup {
   at: number;
   label: string;
   quiet?: boolean;
+  rule?: true;
   record?: { id?: string | null; name: string; sub: string; coverArt?: string | null };
 }
 const noGroups: TrackGroup[] = [];
@@ -264,7 +266,9 @@ export function TrackTable({
           keptMarks={keptMarks} handlers={handlers} />;
         const group = groups.length ? groups.find(g => g.at === index) : undefined;
         if (!group) return row;
-        const head = group.record ? <li key={`group-${index}`} className="group-head group-record"
+        const head = group.rule ? <li key={`group-${index}`} className="group-head rule" aria-hidden="true"
+          style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined} />
+        : group.record ? <li key={`group-${index}`} className="group-head group-record"
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined}>
           {group.record.id ? <button type="button" className="queue-record" data-warm={`album:${group.record.id}`}
             onClick={() => nav.go({ view: 'album', id: group.record!.id! })}>
