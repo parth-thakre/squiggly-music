@@ -67,7 +67,7 @@ On Debian and Ubuntu, `sudo apt install ./squiggly-music_<version>_amd64.deb` in
 
 On other distributions, make `Squiggly-Music-<version>-x86_64.AppImage` executable (`chmod +x`) and run it. It doesn't include libmpv, so install your distribution's (`libmpv2` on Debian and Ubuntu, `mpv-libs` on Fedora, `mpv` on Arch); without one, the player says which to install. It needs FUSE 2 (`libfuse2`) to start, or run it with `--appimage-extract-and-run`.
 
-Only libmpv 0.41, Fedora's, has been tested. Debian and Ubuntu ship older versions.
+Fedora 45's and Ubuntu 26.04's libmpv 0.41 have been tested; Debian and older Ubuntu ship older versions.
 
 On Android 7 or later, the Android app is currently in beta on the [0.3.0-beta.4 pre-release](https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4): open `Squiggly-Music-0.3.0-beta.4-android.apk` on the phone and allow your file manager to install apps when Android asks.
 
