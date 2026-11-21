@@ -26,7 +26,7 @@ The AppImage doesn't include libmpv either. It uses whichever the system has, th
 
 Bundling libmpv in the AppImage was measured and rejected. Fedora's libmpv 0.41 pulls in 320 shared libraries (about 250 MB); leaving out the ones the AppImage exclude list expects every system to have still leaves 290 (about 232 MB) from 181 source packages, under more than 40 license expressions, including GPL-3.0-or-later ones (Fedora's FFmpeg, Samba's client libraries, libcdio). 74 of those libraries need glibc 2.43, newer than Debian 13 (2.41) or Ubuntu 24.04 (2.39), so the bundle wouldn't run where it is most needed. A libmpv built for the AppImage, audio only like the Windows one, would avoid that, but it doesn't exist yet. `scripts/release-notices.mjs` fails if a Linux package bundles a libmpv, so one can't be added without its licenses.
 
-Only libmpv 0.41 (Fedora's `mpv-libs`) has been tested. Debian's and Ubuntu's libmpv are older (0.34 to 0.40), and the audio host refuses one that rejects an option it needs, with a message saying which.
+Fedora 45's (`mpv-libs`) and Ubuntu 26.04's (`libmpv2`) libmpv 0.41 have been tested. Debian and older Ubuntu ship older versions (0.34 to 0.40), and the audio host refuses one that rejects an option it needs, with a message saying which.
 
 The AppImage uses electron-builder's default runtime, which needs FUSE 2 (`libfuse2`) to mount itself. Ubuntu 24.04 doesn't install it by default. Without it, `--appimage-extract-and-run` runs the AppImage from a temporary copy instead. AppRun adds `--no-sandbox` by itself when the system doesn't allow the user namespaces Chromium's sandbox needs.
 
