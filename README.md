@@ -9,12 +9,12 @@ Squiggly plays your own music from Navidrome. It asks the server for the origina
 
 It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Linux (Fedora, Debian and Ubuntu, and other distributions as an AppImage), and on Android phones, and a browser version works on phones too. There is a macOS build as well, but it hasn't been tested on a Mac yet.
 
-![Squiggly in use: a search for The Knife, the record's name in a song's row opens it, and Play turns the window the sleeve's pink and plum, opens the queue, and starts the lyrics under the deck; the artist's name opens their page, with their picture](docs/screenshots/demo.gif)
+![Squiggly in use: a search for The Knife opens Shaking The Habitual, Play tints the window to the sleeve's pink and plum and opens the queue, and The Knife's name opens their artist page with Most played and their discography](docs/screenshots/demo.gif)
 
 ## What it does
 
-- Browse records, artists, tracks, genres, playlists, and favorites on your server, or play files from your computer. Records filter by decade, artists show a biography and similar artists when the server has them, and records with more than one disc show each disc.
-- Open at Home: the saved queue to pick up, records played lately, the newest and most played, your automatic playlists, and what other people on the server are playing. The wordmark and G then H go back to it.
+- Browse records, artists, tracks, genres, playlists, and favorites on your server, or play files from your computer. Records filter by decade (grouped by year), record pages include liner notes and multi-disc tracklists, and artist pages show ranked most-played songs, chronological discographies, an All songs view, and similar artists when the server has them.
+- Open at Home: a lead record for what you played last, Most played and Played lately side by side, New arrivals, your automatic playlists, and what other people on the server are playing. The wordmark and G then H go back to it.
 - Rate songs, records, and artists from one to five stars, and list the records and tracks you rate highest.
 - Edit the queue and your playlists. The queue follows you between devices through the server.
 - Drag records, artists, songs, and playlists onto the queue or a playlist, and drop audio files from your computer onto the desktop app's window to play them.
@@ -35,7 +35,7 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 - Extensions can also put a line in the deck and the mini player, and a section on the Playlists page.
 - Keep records, playlists, and a mix's songs on the desktop or Android device. Kept songs play from the device, online or not, which also saves bandwidth. When your server is out of reach, Home shows what is kept and the rest of the app says so. The Kept page is also on the Playlists page and at G then K. The browser version can't keep songs.
 
-![Squiggly's Records page while The Polish Ambassador's Pushing Through The Pavement plays: the sleeve and controls on the left, a grid of records on the right, and the window tinted to the playing record's sleeve](docs/screenshots/desktop-records.webp)
+![Squiggly's Records page while The Polish Ambassador's Pushing Through The Pavement plays: the full-bleed sleeve and controls on the left, a grid of records with an order menu on the right, and the window tinted to the playing record's sleeve](docs/screenshots/desktop-records.webp)
 
 ![Synced lyrics for Diablo Swing Orchestra's Velvet Embracer, the second line filling in word by word](docs/screenshots/desktop-lyrics.webp)
 
@@ -69,7 +69,7 @@ On other distributions, make `Squiggly-Music-<version>-x86_64.AppImage` executab
 
 Only libmpv 0.41, Fedora's, has been tested. Debian and Ubuntu ship older versions.
 
-On Android 7 or later, open `Squiggly-Music-<version>-android.apk` on the phone and allow your file manager to install apps when Android asks.
+On Android 7 or later, the Android app is currently in beta on the [0.3.0-beta.4 pre-release](https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4): open `Squiggly-Music-0.3.0-beta.4-android.apk` on the phone and allow your file manager to install apps when Android asks.
 
 Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe, the Mac builds, the RPM, the deb, and the AppImage can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
 

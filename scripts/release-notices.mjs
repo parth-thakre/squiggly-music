@@ -137,6 +137,13 @@ function checkNotices(appDir, platform, resources, shippedRoot, shippedLabel) {
         const bundled = existsSync(dir) ? readdirSync(dir).filter(file => /^libmpv[.-]/.test(file)) : [];
         if (bundled.length) problems.push(`A Linux package bundles ${bundled.join(', ')} in ${dir}, but no notice covers libmpv or its libraries. Add their licenses here first.`);
       }
+      // AppImages must not carry electron-builder's six unused usr/lib desktop libraries
+      // (libindicator is GPL-3.0-only). scripts/package-linux.mjs stages an empty lib/x64.
+      const usrLib = join(appDir, 'usr', 'lib');
+      if (existsSync(usrLib)) {
+        const extra = readdirSync(usrLib);
+        if (extra.length) problems.push(`Linux AppImage bundles unreviewed libraries in usr/lib: ${extra.join(', ')}. Package with npm run package:linux.`);
+      }
     }
   }
   // macOS uses the user's Homebrew libmpv, so a bundle that carries one has a license nobody has reviewed.
