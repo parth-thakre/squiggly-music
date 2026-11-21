@@ -30,7 +30,7 @@ Only libmpv 0.41 (Fedora's `mpv-libs`) has been tested. Debian's and Ubuntu's li
 
 The AppImage uses electron-builder's default runtime, which needs FUSE 2 (`libfuse2`) to mount itself. Ubuntu 24.04 doesn't install it by default. Without it, `--appimage-extract-and-run` runs the AppImage from a temporary copy instead. AppRun adds `--no-sandbox` by itself when the system doesn't allow the user namespaces Chromium's sandbox needs.
 
-electron-builder puts six desktop libraries in every AppImage's `usr/lib`: libappindicator, libindicator, libgconf-2, libnotify, libXss, and libXtst. Electron links none of them, and it looks for libnotify only to show notifications, which Squiggly doesn't. Their license texts aren't in the AppImage yet, and libindicator is GPL-3.0-only in Fedora's package of it, so its source would have to be offered too. electron-builder has no setting to leave them out. THIRD-PARTY-NOTICES.md lists them as not yet included. Resolve this before publishing an AppImage.
+electron-builder's AppImage toolset normally puts six desktop libraries in every AppImage's `usr/lib`: libappindicator, libindicator, libgconf-2, libnotify, libXss, and libXtst. Electron links none of them, Squiggly doesn't use libnotify, and libindicator is GPL-3.0-only in Fedora's package of it. `scripts/package-linux.mjs` stages the pinned `appimage-12.0.1` toolset into `.local/appimage-tools` with `lib/x64` and `lib/ia32` emptied and passes `APPIMAGE_TOOLS_PATH` to electron-builder, so none of those libraries ship in the AppImage (and the system's `mpv-libs` loads the system's `libXss` instead of an older bundled copy). `scripts/release-notices.mjs` fails if an extracted AppImage's `usr/lib` contains any file. Always build Linux packages with `npm run package:linux`, not a bare `electron-builder --linux`.
 
 ## Windows libmpv
 
@@ -174,11 +174,12 @@ git commit -am "release: v$(node -p "require('./package.json').version")"
 npm ci && npm run check && npm run test:ui
 npm run libmpv:build                     # or keep .local/libmpv-windows; package:win verifies it
 npm run package:win && npm run package:linux && npm run package:mac
-npm run android:build                    # needs the Android toolchain and release key (docs/android.md)
+npm run android:build                    # when shipping Android; needs the Android toolchain and release key (docs/android.md)
 node scripts/smoke-runtime.mjs dist/win-unpacked   # under Wine: wine dist/win-unpacked/resources/runtime/node.exe ...
 node scripts/smoke-runtime.mjs dist/mac-arm64 && node scripts/smoke-runtime.mjs dist/mac   # static checks off a Mac
 mkdir release && cp dist/*.exe dist/*.exe.blockmap dist/latest.yml dist/*.rpm dist/*.deb dist/*.AppImage dist/latest-linux.yml release/
 cp dist/*-macos-*.zip dist/*-macos-*.zip.blockmap dist/latest-mac.yml release/
+# When shipping Android too:
 cp dist/android/squiggly-$(node -p "require('./package.json').version")-release.apk "release/Squiggly-Music-$(node -p "require('./package.json').version")-android.apk"
 cp .local/libmpv-windows/libmpv-windows-x64-source.tar "release/Squiggly-Music-$(node -p "require('./package.json').version")-libmpv-windows-x64-source.tar"
 node scripts/release-checksums.mjs release   # stops if anything was built with diagnostics

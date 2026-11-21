@@ -1,6 +1,6 @@
 {
   "name": "squiggly-music",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "An inspectable, audiophile-first desktop music player",
   "type": "module",
@@ -17,7 +17,7 @@
     "check": "npm run typecheck && npm test",
     "package:win": "npm run build && node scripts/fetch-windows-runtime.mjs && electron-builder --win --publish never",
     "web": "vite build && vite preview --host 127.0.0.1 --port 5173 --strictPort",
-    "package:linux": "npm run build && node scripts/fetch-linux-runtime.mjs && electron-builder --linux --publish never",
+    "package:linux": "npm run build && node scripts/fetch-linux-runtime.mjs && node scripts/package-linux.mjs",
     "package:mac": "npm run build && node scripts/fetch-macos-runtime.mjs && node scripts/package-macos.mjs",
     "icons": "bash scripts/generate-icons.sh",
     "release:checksums": "node scripts/release-checksums.mjs",

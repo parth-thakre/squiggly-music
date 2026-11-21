@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createRequire } from 'node:module';
 
 // js-yaml comes with electron-updater, a production dependency, and has no type declarations here.
@@ -13,6 +16,24 @@ describe('Linux packages', () => {
     expect(builder.linux.target).toEqual([{ target: 'rpm', arch: 'x64' }, { target: 'deb', arch: 'x64' }, { target: 'AppImage', arch: 'x64' }]);
     expect(builder.deb.artifactName).toBe('squiggly-music_${version}_amd64.${ext}');
     expect(builder.appImage.artifactName).toBe('Squiggly-Music-${version}-x86_64.${ext}');
+  });
+
+  it('packages Linux through package-linux.mjs so AppImage usr/lib stays empty', () => {
+    const pkg = JSON.parse(read('package.json'));
+    expect(pkg.scripts['package:linux']).toContain('scripts/package-linux.mjs');
+    const dir = mkdtempSync(join(tmpdir(), 'squiggly-usrlib-test-'));
+    try {
+      mkdirSync(join(dir, 'resources', 'app'), { recursive: true });
+      mkdirSync(join(dir, 'resources', 'runtime'), { recursive: true });
+      mkdirSync(join(dir, 'resources', 'licenses'), { recursive: true });
+      mkdirSync(join(dir, 'usr', 'lib'), { recursive: true });
+      writeFileSync(join(dir, 'usr', 'lib', 'libindicator.so.7'), '');
+      const res = spawnSync(process.execPath, ['scripts/release-notices.mjs', dir, 'linux'], { encoding: 'utf8' });
+      expect(res.status).not.toBe(0);
+      expect(res.stderr).toMatch(/bundles unreviewed libraries in usr\/lib: libindicator\.so\.7/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('depends on the distribution\'s libmpv and never ships one', () => {
