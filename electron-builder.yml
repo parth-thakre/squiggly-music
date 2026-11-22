@@ -85,6 +85,12 @@ publish:
 win:
   # Generated from apps/desktop/renderer/public/icon.svg by `npm run icons`.
   icon: build/icon.ico
+  # Releases are signed through SignPath Foundation after electron-builder runs (docs/signing.md),
+  # so electron-builder can't read the publisher from a certificate. This goes into
+  # resources/app-update.yml, and electron-updater installs an update only if its signer's common
+  # name matches. Without it, electron-updater doesn't check the signature at all.
+  signtoolOptions:
+    publisherName: SignPath Foundation
   target:
     - target: nsis
       arch: x64
