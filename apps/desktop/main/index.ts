@@ -62,8 +62,6 @@ if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-h
 const disabledFeatures = ['SpareRendererForSitePerProcess', 'BackForwardCache'];
 if (process.platform === 'win32') disabledFeatures.push('CalculateNativeWinOcclusion');
 app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
-// Keep renderer V8 heaps compact instead of letting Chromium grow lazily to hundreds of MB.
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=256');
 // Windows names the app in the media flyout and notifications by finding a Start menu shortcut
 // with this id (appId in electron-builder.yml; the installer's shortcuts carry it). Without one it
 // says "Unknown app". Set before Chromium creates its windows, which take the id they start with.
@@ -219,7 +217,7 @@ const queueSync = new QueueSync((saved, generation) => {
   const client = generation === connectionGeneration ? server : generation === finalSession?.generation ? finalSession.client : null;
   if (!client || !settings.value.syncQueue) return Promise.resolve();
   // The server's copy is about to change; the one read earlier no longer describes it.
-  savedQueues.clear();
+  savedQueues.clear(); savedQueueRead = null;
   return Effect.runPromise(metrics.measure('sync.save-queue', semaphores.sync.withPermits(1)(client.saveQueue(saved.trackIds, saved.currentIndex, saved.positionSeconds))));
 });
 function rememberTracks(tracks: readonly Track[]) {
@@ -453,6 +451,7 @@ async function serverCover(client: SubsonicClient, id: string, size: number, pri
   const larger = [...sizes.keys()].filter(have => have > size).sort((a, b) => a - b)[0];
   if (larger !== undefined) {
     const from = await sizes.get(larger)!;
+    if (server !== client) return null;
     if (from) return server === client ? (larger <= 600 ? from : shrinkCover(from, size)) : null;
   }
   // Register the promise synchronously so concurrent requests for this cover at <= size share it.
@@ -645,7 +644,7 @@ async function launchPlayer() {
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
     },
-    execArgv: ['--max-old-space-size=96'], windowsHide: true,
+    windowsHide: true,
     stdio: ['ignore', remote.enabled ? 'pipe' : 'ignore', output, 'ipc'],
   });
   if (process.env.SQUIGGLY_SMOKE_TEST === '1') child.stderr?.on('data', data => process.stderr.write(data));
@@ -1130,7 +1129,7 @@ function installHandlers() {
     if (deviceChanged) yield* send({ type: 'device', id: next.outputDevice });
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
-    if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); }
+    if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); savedQueueRead = null; }
     // Songs already queued stream at the new quality from the next one on. The one playing keeps its
     // stream: switching it would start it again.
     if (next.streamQuality !== previous.streamQuality && server && host !== null && state.player.engine === 'ready') {

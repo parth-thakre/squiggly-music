@@ -53,6 +53,8 @@ onLibraryReset(() => standIns.clear());
 export const Cover = memo(function Cover({ id, name, size, className, portrait = false, eager = false }: { id: string | null | undefined; name: string; size: number; className?: string; portrait?: boolean; eager?: boolean }) {
   const [failedId, setFailedId] = useState<string | null>(null);
   const [plainId, setPlainId] = useState<string | null>(null);
+  // A cover that failed is retried once the component shows another one and comes back.
+  if (failedId !== null && failedId !== id) setFailedId(null);
   const failed = !!id && failedId === id;
   const known = portrait && !!id && standIns.get(id) === true;
   const plain = known || (portrait && !!id && plainId === id);

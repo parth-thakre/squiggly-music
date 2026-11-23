@@ -68,11 +68,17 @@ export class LyricsCache {
     this.asking.clear();
     this.hot.clear();
     this.files = null;
+    const late = this.listedLate = new Set();
     for (const other of await readdir(this.base).catch(() => [] as string[])) {
       if (other !== name) await rm(join(this.base, other), { recursive: true, force: true }).catch(() => undefined);
     }
     const existing = (await readdir(folder).catch(() => [] as string[])).filter(file => file.endsWith('.json'));
-    if (this.folder === folder) this.files = new Set(existing);
+    if (this.folder === folder) { this.files = new Set([...existing, ...late]); this.listedLate = null; }
+  }
+  // Files read or written while bind lists the folder are added once it has.
+  private listedLate: Set<string> | null = null;
+  private noteFile(fileName: string) {
+    if (this.files) this.files.add(fileName); else this.listedLate?.add(fileName);
   }
   async clear() {
     this.folder = null;
@@ -128,7 +134,7 @@ export class LyricsCache {
       const decoded = Schema.decodeUnknownEither(EntrySchema)(JSON.parse(await readFile(path, 'utf8')));
       if (Either.isLeft(decoded) || decoded.right.id !== id) return null;
       if (folder === this.folder) {
-        this.files?.add(fileName);
+        this.noteFile(fileName);
         this.rememberHot(fileName, info.mtimeMs, info.size, decoded.right);
       }
       // Shown again: last to be removed, non-blocking and throttled.
@@ -147,7 +153,7 @@ export class LyricsCache {
     await writeAtomic(path, text).catch(() => undefined);
     // Signed out or switched accounts while writing: it isn't this account's to keep.
     if (folder !== this.folder) { await rm(path, { force: true }).catch(() => undefined); return; }
-    this.files?.add(fileName);
+    this.noteFile(fileName);
     this.hot.delete(fileName);
     if (++this.writes % 50 === 0) await this.trim(folder);
   }

@@ -50,6 +50,9 @@ export class CoverCache {
     const names = await readdir(folder).catch(() => [] as string[]);
     if (this.folder !== folder) return;
     for (const entry of names) {
+      // A write cut short by a crash or quit (store.ts writeAtomic), never counted against the budget.
+      const partial = /\.(\d+)\.tmp$/.exec(entry);
+      if (partial && Number(partial[1]) !== process.pid) { void rm(join(folder, entry), { force: true }).catch(() => undefined); continue; }
       const match = ENTRY.exec(entry);
       if (!match) continue;
       const size = Number(match[2]);

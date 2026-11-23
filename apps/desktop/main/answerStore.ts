@@ -35,7 +35,8 @@ export class AnswerStore {
     }
     const existing = (await readdir(folder).catch(() => [] as string[])).filter(file => file.endsWith('.json'));
     if (this.folder !== folder) return;
-    this.files = new Set(existing);
+    // With those read or written while the folder was listed (each records its hash).
+    this.files = new Set([...existing, ...this.hashes.keys()]);
     // Past the limit from earlier sessions too, not only after this one's writes.
     await this.trim(folder);
   }

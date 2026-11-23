@@ -47,7 +47,7 @@ npm ci && npm run dev
 - [Signal path](docs/audio.md): what the readout can and can't tell you
 - [Extensions](docs/extensions.md)
 - [Android](docs/android.md): building, signing, and the Flip
-- [Contributing](docs/CONTRIBUTING.md): dev setup, tests, and the rest of the internals docs
+- [Contributing](docs/CONTRIBUTING.md): dev setup and the rest of the internals docs
 
 ## License
 
