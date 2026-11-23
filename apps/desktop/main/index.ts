@@ -429,9 +429,13 @@ function evictServerCovers() {
     serverCoverTotalBytes = Math.max(0, serverCoverTotalBytes - first[1].bytes);
   }
 }
-// Counts a sleeve's bytes against the budget, unless its cover was evicted meanwhile.
-function chargeServerCover(id: string, bucket: { bytes: number }, bytes: number) {
-  if (serverCovers.get(id) !== bucket) return;
+// Counts a sleeve's bytes against the budget, once (one buffer can serve two sizes), unless its
+// cover was evicted meanwhile.
+const chargedCovers = new WeakSet<Uint8Array>();
+function chargeServerCover(id: string, bucket: { bytes: number }, sleeve: Uint8Array) {
+  if (serverCovers.get(id) !== bucket || chargedCovers.has(sleeve)) return;
+  chargedCovers.add(sleeve);
+  const bytes = sleeve.byteLength;
   bucket.bytes += bytes;
   serverCoverTotalBytes += bytes;
   evictServerCovers();
@@ -460,7 +464,7 @@ async function serverCover(client: SubsonicClient, id: string, size: number, pri
     if (kept) {
       if (kept.size > size && !sizes.has(kept.size)) {
         sizes.set(kept.size, Promise.resolve(kept.sleeve));
-        chargeServerCover(id, bucket, kept.sleeve.bytes.byteLength);
+        chargeServerCover(id, bucket, kept.sleeve.bytes);
       }
       return kept.size <= 600 ? kept.sleeve : shrinkCover(kept.sleeve, size);
     }
@@ -476,7 +480,7 @@ async function serverCover(client: SubsonicClient, id: string, size: number, pri
     if (sizes.get(size) === wanted) sizes.delete(size);
     // A cover with nothing fetched isn't kept, so missing covers don't crowd out real ones.
     if (!sizes.size && serverCovers.get(id) === bucket) serverCovers.delete(id);
-  } else chargeServerCover(id, bucket, cover.bytes.byteLength);
+  } else chargeServerCover(id, bucket, cover.bytes);
   return server === client ? cover : null;
 }
 function shrinkCover(cover: CoverBytes, size: number): CoverBytes {
@@ -823,18 +827,16 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear(); unverified = null;
     const key = keyOf(candidate.baseUrl, connection.username);
-    // The answers kept switch with the client, so none of the last account's can answer for this one.
+    // The answers, lyrics, and covers kept switch with the client (each bind takes its new folder at
+    // once), so none of the last account's can answer for this one while its kept songs are forgotten.
     void answers?.bind(key);
+    const caches = Promise.all([lyricsCache?.bind(key), coverCache?.bind(key)]);
     const session = ++connectionGeneration; resetSessionState();
     reach.leave();
     state.server = { ...state.server, connected: true, name: hostName(candidate, info.name), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
     if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
     // Bind independent per-account stores in parallel to cut startup/connect latency.
-    yield* Effect.promise(() => Promise.all([
-      keptStore?.bind(key).catch(() => undefined),
-      lyricsCache?.bind(key),
-      coverCache?.bind(key),
-    ]));
+    yield* Effect.promise(() => Promise.all([keptStore?.bind(key).catch(() => undefined), caches]));
     keptPush();
     reports?.bind(key);
     void reports?.flush();
@@ -1306,8 +1308,9 @@ function createWindow(mini: boolean) {
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   target.webContents.on('will-navigate', event => event.preventDefault());
   target.on('show', () => sendSnapshot(target.webContents));
-  // A reloaded page starts with no sleep timer.
-  target.webContents.on('did-start-loading', () => followingHidden.delete(target.webContents));
+  // A reloaded page starts with no sleep timer. did-navigate is a new document only; in-app
+  // navigation (pushState) fires did-start-loading and did-navigate-in-page instead.
+  target.webContents.on('did-navigate', () => followingHidden.delete(target.webContents));
   // electron-vite's dev server. A packaged build only loads its own page, since this one gets the preload bridge.
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void target.loadFile(join(directory, '../renderer/index.html'));
