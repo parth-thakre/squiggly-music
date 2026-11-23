@@ -10,7 +10,7 @@ export const api: LibraryApi = (typeof window !== 'undefined' && (window.squiggl
 const stored: StoredLibrary | null = (typeof window !== 'undefined' && (window.squiggly?.stored ?? window.squigglyAndroid?.stored)) || null;
 
 // A bounded cache of library responses: going back is instant, memory stays flat.
-const LIMIT = 240;
+const LIMIT = 80;
 const cache = new Map<string, Promise<Result<unknown>>>();
 // Answers that have already arrived, readable synchronously so revisits render at once.
 const settled = new Map<string, Result<unknown>>();
@@ -23,6 +23,24 @@ const changed = new Set<string>();
 // Called with the key that changed, or '*' when everything did (a new session).
 const listeners = new Set<(key: string) => void>();
 const unreachable = <T,>(): Result<T> => ({ ok: false, error: 'Could not reach the library. Check your connection and try again.' });
+
+// Fast structural equality for comparing cached vs fresh library payloads without JSON.stringify
+// allocations on the renderer thread.
+function sameValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (!sameValue(a[i], b[i])) return false;
+    return true;
+  }
+  if (Array.isArray(b)) return false;
+  const objA = a as Record<string, unknown>, objB = b as Record<string, unknown>;
+  const keysA = Object.keys(objA), keysB = Object.keys(objB);
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) if (!(key in objB) || !sameValue(objA[key], objB[key])) return false;
+  return true;
+}
 
 // `kept`: the same request answered with what the host kept, shown if it comes first; the
 // server's answer then takes its place when it differs.
@@ -47,7 +65,7 @@ export function load<T>(key: string, loader: () => Promise<Result<T>>, kept?: ()
       if (!shown) { shown = fresh; resolve(fresh); return; }
       if (cache.get(key) !== mine || epoch !== session) return;
       if (!fresh.ok) stale.add(key);
-      else if (JSON.stringify(fresh.value) !== JSON.stringify((shown as { value: T }).value)) prime(key, fresh);
+      else if (!sameValue(fresh.value, (shown as { value: T }).value)) prime(key, fresh);
     });
   });
   entry = mine;

@@ -107,8 +107,27 @@ const kept: KeptApi = {
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
-    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => listener(snapshot);
+    let last: AppSnapshot | null = null;
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => {
+      if (!last && !Array.isArray(snapshot.player?.queue)) {
+        ipcRenderer.send('squiggly:snapshot-ready');
+        return;
+      }
+      const merged: AppSnapshot = last ? {
+        ...snapshot,
+        diagnostics: snapshot.diagnostics ?? last.diagnostics,
+        player: snapshot.player ? {
+          ...snapshot.player,
+          queue: snapshot.player.queue ?? last.player.queue,
+          entryIds: snapshot.player.entryIds ?? last.player.entryIds,
+          devices: snapshot.player.devices ?? last.player.devices,
+        } : last.player,
+      } : snapshot;
+      last = merged;
+      listener(merged);
+    };
     ipcRenderer.on('squiggly:snapshot', handler);
+    ipcRenderer.send('squiggly:snapshot-ready');
     return () => ipcRenderer.removeListener('squiggly:snapshot', handler);
   },
   onPlayReported: listener => listen<PlayReported>('squiggly:play-reported', listener),

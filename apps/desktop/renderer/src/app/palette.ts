@@ -144,20 +144,28 @@ const angleGap = (a: number, b: number) => {
   return d > 180 ? 360 - d : d;
 };
 
-// The hue of the sleeve's most vivid family of colours when the largest patch is a dark shadow
-// far from it: a yellow sleeve with a purple-black shadow gets a warm yellow room, not a purple one.
-function groundHue(data: Uint8ClampedArray, h: number, s: number, total: number): Oklch | null {
-  if (s < .06) return null;
-  const bins = Array.from({ length: 18 }, () => ({ weight: 0, count: 0, x: 0, y: 0, ox: 0, oy: 0, C: 0, L: 0 }));
+interface HueBin { weight: number; count: number; x: number; y: number; ox: number; oy: number; C: number; L: number }
+
+function vividBins(data: Uint8ClampedArray): HueBin[] {
+  const bins: HueBin[] = Array.from({ length: 18 }, () => ({ weight: 0, count: 0, x: 0, y: 0, ox: 0, oy: 0, C: 0, L: 0 }));
   for (let i = 0; i < data.length; i += 4) {
     const [ph, ps, pl] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
     if (ps < .3 || pl < .18 || pl > .82) continue;
     const [oL, oC, oH] = rgbToOklch(data[i], data[i + 1], data[i + 2]);
     const bin = bins[Math.floor(ph / 20) % 18];
-    bin.count++; bin.weight += ps; bin.x += Math.cos(ph * Math.PI / 180); bin.y += Math.sin(ph * Math.PI / 180);
-    bin.ox += Math.cos(oH * Math.PI / 180); bin.oy += Math.sin(oH * Math.PI / 180);
+    bin.count++; bin.weight += ps;
+    const phRad = ph * Math.PI / 180, oHRad = oH * Math.PI / 180;
+    bin.x += Math.cos(phRad); bin.y += Math.sin(phRad);
+    bin.ox += Math.cos(oHRad); bin.oy += Math.sin(oHRad);
     bin.C += oC; bin.L += oL;
   }
+  return bins;
+}
+
+// The hue of the sleeve's most vivid family of colours when the largest patch is a dark shadow
+// far from it: a yellow sleeve with a purple-black shadow gets a warm yellow room, not a purple one.
+function groundHue(bins: readonly HueBin[], h: number, s: number, total: number): Oklch | null {
+  if (s < .06) return null;
   const top = bins.filter(b => b.count / total > .2).sort((a, b) => b.weight - a.weight)[0];
   if (!top) return null;
   const hue = (Math.atan2(top.y, top.x) * 180 / Math.PI + 360) % 360;
@@ -185,8 +193,10 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
   const [L0, C0, H0] = colors[0]?.oklch ?? [0.335, 0, 65];
   const dark = l0 < .58;
 
+  // Vivid hue families computed once and shared by ground-hue override, deck, and accent.
+  const bins = vividBins(data);
   // Resolve the room's ground hue & chroma in OKLCH.
-  const vividGround = groundHue(data, h0, s0, total);
+  const vividGround = groundHue(bins, h0, s0, total);
   const gH = vividGround ? vividGround[2] : H0;
   const gRawC = vividGround ? vividGround[1] : C0;
   const isNeutralGround = !vividGround && (s0 < .06 || C0 < 0.022);
@@ -210,18 +220,6 @@ export function paletteFromPixels(data: Uint8ClampedArray): Palette {
     groundC = isNeutralGround ? 0 : Math.min(0.072, Math.max(0.045, gRawC * 0.65));
   }
 
-  // Vivid hue families for accent and secondary deck colour.
-  const bins = Array.from({ length: 18 }, () => ({ weight: 0, count: 0, x: 0, y: 0, ox: 0, oy: 0, C: 0, L: 0 }));
-  for (let i = 0; i < data.length; i += 4) {
-    const [ph, ps, pl] = rgbToHsl(data[i], data[i + 1], data[i + 2]);
-    if (ps < .3 || pl < .18 || pl > .82) continue;
-    const [oL, oC, oH] = rgbToOklch(data[i], data[i + 1], data[i + 2]);
-    const bin = bins[Math.floor(ph / 20) % 18];
-    bin.count++; bin.weight += ps;
-    bin.x += Math.cos(ph * Math.PI / 180); bin.y += Math.sin(ph * Math.PI / 180);
-    bin.ox += Math.cos(oH * Math.PI / 180); bin.oy += Math.sin(oH * Math.PI / 180);
-    bin.C += oC; bin.L += oL;
-  }
   const candidates = bins.filter(b => b.count / total > .015).map(b => ({
     share: b.count / total,
     weight: b.weight,
@@ -296,13 +294,23 @@ export function isStandIn(pixels: Uint8ClampedArray | readonly number[]): boolea
   if ((first + second) / count < .85) return false;
   return tone >= 5 && (second === 0 || (other >= 5 && Math.abs(tone - other) <= 2));
 }
+// Reusable scratch canvases avoid allocating 2D contexts on every image sample or colour check.
+let standInCtx: CanvasRenderingContext2D | null | undefined;
+let paletteCtx: CanvasRenderingContext2D | null | undefined;
+let hexCtx: CanvasRenderingContext2D | null | undefined;
+function scratchContext(size: number, readFrequently: boolean) {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  return canvas.getContext('2d', readFrequently ? { willReadFrequently: true } : undefined);
+}
+
 // Reads a picture the page has already loaded (with crossOrigin set), so nothing is fetched for it.
 export function standInOf(image: HTMLImageElement): boolean {
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 32;
-  const context = canvas.getContext('2d', { willReadFrequently: true });
+  if (standInCtx === undefined) standInCtx = scratchContext(32, true);
+  const context = standInCtx;
   if (!context) return false;
   try {
+    context.clearRect(0, 0, 32, 32);
     context.drawImage(image, 0, 0, 32, 32);
     return isStandIn(context.getImageData(0, 0, 32, 32).data);
   } catch { return false; }
@@ -313,16 +321,17 @@ export async function paletteFromImage(url: string): Promise<Palette> {
   image.crossOrigin = 'anonymous';
   image.src = url;
   await image.decode();
-  const canvas = document.createElement('canvas');
-  canvas.width = canvas.height = 48;
-  const context = canvas.getContext('2d', { willReadFrequently: true })!;
+  if (paletteCtx === undefined) paletteCtx = scratchContext(48, true);
+  const context = paletteCtx!;
+  context.clearRect(0, 0, 48, 48);
   context.drawImage(image, 0, 0, 48, 48);
   return paletteFromPixels(context.getImageData(0, 0, 48, 48).data);
 }
 
 // Any CSS colour as #rrggbb, which is what the window's buttons and frame take. A canvas normalises it.
 export function asHex(color: string) {
-  const context = document.createElement('canvas').getContext('2d');
+  if (hexCtx === undefined) hexCtx = scratchContext(1, false);
+  const context = hexCtx;
   if (!context) return color;
   context.fillStyle = '#000'; context.fillStyle = color;
   return context.fillStyle;

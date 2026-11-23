@@ -47,7 +47,7 @@ function Playing({ track, palette, show }: { track: Track; palette: Palette; sho
   const byline = useByline(track);
   return <>
     <div className="flip-stage" ref={stage}>
-      <Cover key={track.id} id={track.coverArt} name={track.album} size={400} className="flip-sleeve" />
+      <Cover key={track.id} id={track.coverArt} name={track.album} size={400} className="flip-sleeve" eager />
       <div className="flip-text">
         <h1 className="flip-title" title={name}>{name}</h1>
         <p className="flip-artist" title={byline}>{byline}</p>

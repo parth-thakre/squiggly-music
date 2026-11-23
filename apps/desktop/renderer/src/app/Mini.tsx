@@ -49,7 +49,7 @@ export function Mini() {
   const sleeve = useArrivedCover(track?.coverArt ?? null);
   return <div className="mini" style={paletteStyle(palette)}>
     {/* The sleeve is the window's left edge, its full height, and a handle to drag it by. */}
-    {track ? <Cover id={sleeve} name={track.album} size={SLEEVE} className="mini-cover" /> : <div className="cover cover-empty mini-cover" />}
+    {track ? <Cover id={sleeve} name={track.album} size={SLEEVE} className="mini-cover" eager /> : <div className="cover cover-empty mini-cover" />}
     <div className="mini-text">
       <p className="mini-title">{name ?? 'Nothing playing'}</p>
       {/* One line either way: the artist (and extensions' quiet lines), or what went wrong (in

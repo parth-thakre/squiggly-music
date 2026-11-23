@@ -83,9 +83,9 @@ export function TrackTable({
   // Filled with the list's move (Mover).
   mover?: { current: Mover | null };
 }) {
-  useActiveTheme();
+  const theme = useActiveTheme();
   const twoLine = useMemo(() => bookIndex || leadingCover || showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist, bookIndex, leadingCover, showAlbum]);
-  const ROW = rowHeight(twoLine);
+  const ROW = useMemo(() => rowHeight(twoLine), [twoLine, theme]);
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);
   const playing = usePlayer(s => s.playing);
@@ -149,19 +149,39 @@ export function TrackTable({
     if (!windowed) return;
     const scroller = nav.scroller;
     if (!scroller) return;
+    let frame = 0;
     const update = () => {
-      const top = table.current!.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+      frame = 0;
+      const el = table.current;
+      if (!el) return;
+      const top = el.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
       const first = Math.max(0, Math.floor(-top / ROW) - 10 - groups.length);
       const last = Math.min(tracks.length, Math.ceil((scroller.clientHeight - top) / ROW) + 10);
       setRange(r => r[0] === first && r[1] === last ? r : [first, last]);
     };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
     update();
-    scroller.addEventListener('scroll', update, { passive: true });
-    addEventListener('resize', update);
-    return () => { scroller.removeEventListener('scroll', update); removeEventListener('resize', update); };
+    scroller.addEventListener('scroll', schedule, { passive: true });
+    addEventListener('resize', schedule);
+    return () => { cancelAnimationFrame(frame); scroller.removeEventListener('scroll', schedule); removeEventListener('resize', schedule); };
   }, [windowed, tracks.length, ROW, groups.length]);
 
-  const slot = (index: number, heading = false) => index + groups.filter(group => heading ? group.at < index : group.at <= index).length;
+  const groupIndex = useMemo(() => {
+    if (!groups.length) return null;
+    const byAt = new Map<number, TrackGroup>();
+    for (const g of groups) if (!byAt.has(g.at)) byAt.set(g.at, g);
+    const ats = groups.map(g => g.at).sort((a, b) => a - b);
+    const count = (target: number, inclusive: boolean) => {
+      let lo = 0, hi = ats.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (inclusive ? ats[mid] <= target : ats[mid] < target) lo = mid + 1; else hi = mid;
+      }
+      return lo;
+    };
+    return { byAt, count };
+  }, [groups]);
+  const slot = (index: number, heading = false) => index + (groupIndex ? groupIndex.count(index, !heading) : 0);
   const [first, last] = windowed ? range : [0, tracks.length];
   const selectedIndexes = () => [...selected].map(key => positions.get(key)).filter((i): i is number => i !== undefined).sort((a, b) => a - b);
   const move: Mover = (from, to, focus = true) => {
@@ -279,7 +299,7 @@ export function TrackTable({
           showAlbum={showAlbum} leadingCover={leadingCover} bookIndex={bookIndex}
           note={noteOf ? noteOf(track) : null}
           keptMarks={keptMarks} handlers={handlers} />;
-        const group = groups.length ? groups.find(g => g.at === index) : undefined;
+        const group = groupIndex?.byAt.get(index);
         if (!group) return row;
         const head = group.rule ? <li key={`group-${index}`} className="group-head rule" aria-hidden="true"
           style={windowed ? { position: 'absolute', top: slot(index, true) * ROW, left: 0, right: 0 } : undefined} />

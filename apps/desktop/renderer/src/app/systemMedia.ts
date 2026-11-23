@@ -38,13 +38,14 @@ export function startSystemMedia() {
   }
 
   function metadata(state: SystemMediaState) {
-    const artwork = art?.coverArt === state.coverArt && art.url ? [{ src: art.url, sizes: '512x512' }] : [];
+    const artwork = art?.coverArt === state.coverArt && art.url ? [{ src: art.url, sizes: '600x600' }] : [];
     session.metadata = new MediaMetadata({ title: state.title, artist: state.artist, album: state.album, artwork });
   }
   // Chromium only takes http, data, and blob artwork, so the cover is fetched into a blob.
+  // Uses the deck's 600px size so it shares the same cached cover instead of fetching a second size.
   async function fetchArt(coverArt: string) {
     art = { coverArt, url: null };
-    const url = await fetch(bridge!.library.coverUrl(coverArt, 512))
+    const url = await fetch(bridge!.library.coverUrl(coverArt, 600))
       .then(response => response.ok ? response.blob() : null).then(blob => blob && URL.createObjectURL(blob), () => null);
     if (art.coverArt !== coverArt) { if (url) URL.revokeObjectURL(url); return; }
     art.url = url;

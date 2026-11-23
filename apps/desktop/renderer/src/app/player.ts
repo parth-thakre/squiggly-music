@@ -112,6 +112,9 @@ let state: PlayerState = {
 const listeners = new Set<() => void>();
 // When the position last arrived, so livePosition() can count forward between reports.
 let positionAt = performance.now();
+// Last livePosition() handed out while playing a playId: absorbs small (< 0.5 s) backwards jitter
+// between 4 Hz host reports so synced lyrics never flicker back; cleared on pause, seek, or track change.
+let lastLive: { playId: string; position: number } | null = null;
 // A desktop seek the host hasn't reported yet. Its snapshots come four times a second, so for a
 // moment after a seek they still carry the old position; until one reports a position near the
 // seek (or SEEK_SETTLE_MS pass, a seek mpv never made) the page shows the seek's instead, so the
@@ -127,7 +130,14 @@ const set = (patch: Partial<PlayerState>) => {
   if (state.playing && !state.buffering) heard = state.playId;
   const starting = state.buffering && state.index >= 0 && state.playId !== heard;
   if (starting !== state.starting) state = { ...state, starting };
-  if ('position' in patch || state.playing !== before.playing) positionAt = performance.now();
+  const posChanged = 'position' in patch && state.position !== before.position;
+  const playChanged = state.playing !== before.playing || state.buffering !== before.buffering || state.playId !== before.playId || state.index !== before.index;
+  // Ignore unrelated snapshots carrying an unchanged stale position (e.g. 1 Hz diagnostics ticks),
+  // which would otherwise rewind livePosition() by up to 250 ms every second.
+  if (posChanged || playChanged) positionAt = performance.now();
+  if (!state.playing || state.playId !== before.playId || state.index !== before.index || (posChanged && state.position < before.position - 0.5)) {
+    lastLive = null;
+  }
   // The native player gets every change to the queue, before any command that names an entry.
   if (android && state.entryIds !== before.entryIds) android.player.sync(state.queue, state.entryIds);
   listeners.forEach(listener => listener());
@@ -147,8 +157,13 @@ export const currentEntry = (s: PlayerState) => s.entryIds[s.index] as string | 
 export function livePosition() {
   if (web && state.index >= 0 && Number.isFinite(web.active.currentTime)) return web.active.currentTime;
   if (!state.playing) return state.position;
-  const ahead = Math.min((performance.now() - positionAt) / 1000, 1);
-  return state.duration > 0 ? Math.min(state.duration, state.position + ahead) : state.position + ahead;
+  const ahead = state.buffering ? 0 : Math.min((performance.now() - positionAt) / 1000, 1);
+  const raw = state.duration > 0 ? Math.min(state.duration, state.position + ahead) : state.position + ahead;
+  if (lastLive && lastLive.playId === state.playId && raw < lastLive.position && lastLive.position - raw < 0.5) {
+    return lastLive.position;
+  }
+  lastLive = { playId: state.playId, position: raw };
+  return raw;
 }
 
 const report = (result: Result) => { if (!result.ok) set({ error: result.error }); return result; };
@@ -252,9 +267,9 @@ if (desktop) {
       streamKbps: p.streamKbps ?? null,
       reach: sameReach(state.reach, reach) ? state.reach : reach,
       queuedPlays: snapshot.server.queuedPlays ?? 0,
-      // Its figures change once a second, but each snapshot (four a second) brings a fresh copy:
-      // the Diagnostics page redraws only when they change.
-      error, diagnostics: JSON.stringify(state.diagnostics) === JSON.stringify(snapshot.diagnostics) ? state.diagnostics : snapshot.diagnostics,
+      // Its figures change once a second, but each snapshot (four a second) brings a fresh copy
+      // when not delta-merged: short-circuit on reference equality before falling back to JSON.
+      error, diagnostics: state.diagnostics === snapshot.diagnostics || JSON.stringify(state.diagnostics) === JSON.stringify(snapshot.diagnostics) ? state.diagnostics : snapshot.diagnostics,
       repeat: p.repeat ?? 'off', shuffle: p.shuffle ?? false,
       stationTitle: p.stationTitle ?? null,
     });
@@ -1039,6 +1054,8 @@ export const player = {
     // A station is live: there is no position to seek to.
     if (!track || isStation(track) || (entryId !== undefined && entryId !== currentEntry(state))) return;
     held = null;
+    lastLive = null;
+    positionAt = performance.now();
     if (android) {
       android.player.seek(currentEntry(state)!, seconds);
       plays.lastPosition = seconds; set({ position: seconds }); saveSoon(); return;

@@ -76,6 +76,7 @@ class Download {
   readonly ready: Promise<Shape>;
   settle!: { resolve(shape: Shape): void; reject(error: Error): void };
   private waiting: (() => void)[] = [];
+  private pacing = new Set<() => void>();
   constructor(readonly path: string, readonly file: Promise<FileHandle>) {
     this.ready = new Promise<Shape>((resolve, reject) => { this.settle = { resolve, reject }; });
     this.ready.catch(() => {});
@@ -83,6 +84,16 @@ class Download {
   // Wakes every read waiting for more (or for the end).
   moved() { const waiting = this.waiting; this.waiting = []; for (const wake of waiting) wake(); }
   next() { return new Promise<void>(resolve => this.waiting.push(resolve)); }
+  // Wakes a paced background prefetch at once when a reader starts playing this song.
+  wakePace() { for (const wake of this.pacing) wake(); this.pacing.clear(); }
+  waitPace(ms: number, signal: AbortSignal) {
+    return new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); this.pacing.delete(done); resolve(); };
+      const timer = setTimeout(done, ms);
+      signal.addEventListener('abort', done, { once: true });
+      this.pacing.add(done);
+    });
+  }
 }
 
 export interface RelayEvent { name: 'stream.stalled' | 'stream.downloaded' | 'stream.failed'; key: string | null; bytes: number; ms?: number }
@@ -211,6 +222,7 @@ export async function startStreamRelay(fetchSong: typeof fetch = fetch, options:
     if (!download || download.failed) { drop(song); download = create(song); }
     const reading = download;
     reading.readers++; reading.used = Date.now();
+    reading.wakePace();
     response.once('close', () => { reading.readers--; reading.used = Date.now(); schedule(); });
     schedule();
     let shape: Shape;
@@ -326,6 +338,14 @@ export async function startStreamRelay(fetchSong: typeof fetch = fetch, options:
     outer.addEventListener('abort', stop, { once: true });
     try {
       const signal = control.signal;
+      // Background prefetch yields before opening a connection while someone waits on pages or
+      // covers; if the song starts playing (readers > 0), wakePace() resumes it immediately.
+      if (pace?.when) {
+        while (download.readers === 0 && pace.when() && !signal.aborted) {
+          await download.waitPace(200, signal);
+        }
+        if (signal.aborted) return 'ended';
+      }
       // A stream with no offsets starts again from the top; reads following it wait to catch up.
       if (song.shape?.kind === 'whole' && download.have > 0) { download.have = 0; await file.truncate(0); }
       if (download.have === 0) {
@@ -363,15 +383,20 @@ export async function startStreamRelay(fetchSong: typeof fetch = fetch, options:
         }
         if ((download.length !== null && download.have >= download.length) || signal.aborted) break;
         // Ahead of the pace: wait until it catches up, looking again often, since the pace may lift.
-        if (pace && audioRate) {
+        // Background prefetch (readers === 0) yields while someone waits on pages or covers.
+        if (pace && (audioRate || (download.readers === 0 && pace.when))) {
           for (;;) {
             if (pace.when && !pace.when()) { since = { at: Date.now(), have: download.have }; break; }
+            if (download.readers === 0 && pace.when) {
+              await download.waitPace(200, signal);
+              if (signal.aborted) break;
+              since = { at: Date.now(), have: download.have };
+              continue;
+            }
+            if (!audioRate) break;
             const allowed = Math.max(from + audioRate * pace.leadSeconds, since.have + audioRate * pace.speed * (Date.now() - since.at) / 1000);
             if (download.have <= allowed || signal.aborted) break;
-            await new Promise<void>(resolve => {
-              const timer = setTimeout(resolve, Math.min(250, (download.have - allowed) / (audioRate * pace.speed) * 1000));
-              signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, { once: true });
-            });
+            await download.waitPace(Math.min(250, (download.have - allowed) / (audioRate * pace.speed) * 1000), signal);
           }
           if (signal.aborted) break;
         }
@@ -561,7 +586,7 @@ class Body {
     while (!this.ended) {
       const { done, value } = await this.read();
       if (done) { this.ended = true; return; }
-      yield Buffer.from(value);
+      yield Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     }
   }
   cancel() { this.ended = true; void this.reader.cancel().catch(() => {}); }

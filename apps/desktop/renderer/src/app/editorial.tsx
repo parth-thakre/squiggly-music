@@ -90,46 +90,60 @@ export function FitTitle({ children, className, sizes = [110, 96, 84, 72], wrapp
   title?: string;
 }) {
   const ref = useRef<HTMLHeadingElement>(null);
+  const latest = useRef({ sizes, wrapped, maxHeightOf });
+  latest.current = { sizes, wrapped, maxHeightOf };
+  const sizeKey = sizes.join(',');
+  const wrappedKey = wrapped.join(',');
+  const textKey = title ?? (typeof children === 'string' || typeof children === 'number' ? String(children) : '');
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
-    const fit = () => {
+    let lastWidth = -1, lastLimit = -1;
+    const fit = (force = false) => {
       // On narrow phones let the responsive CSS handle sizing.
       if (typeof matchMedia === 'function' && matchMedia('(max-width: 760px)').matches) {
         node.style.fontSize = '';
         node.style.whiteSpace = '';
+        lastWidth = -1; lastLimit = -1;
         return;
       }
-      const fitsHeight = () => {
-        if (!maxHeightOf) return true;
-        const { box, limit } = maxHeightOf();
-        return !box || !limit || box.offsetHeight <= limit.offsetHeight + 2;
-      };
+      const { sizes: oneLine, wrapped: multiLine, maxHeightOf: heightOf } = latest.current;
+      const bounds = heightOf?.();
+      const limitHeight = bounds?.limit?.offsetHeight ?? -1;
+      const width = (node.parentElement ?? node).clientWidth;
+      if (!force && width === lastWidth && limitHeight === lastLimit) return;
+      lastWidth = width; lastLimit = limitHeight;
+      const box = bounds?.box ?? null;
+      const fitsHeight = () => !box || limitHeight < 0 || box.offsetHeight <= limitHeight + 2;
+      // Measure the line-height ratio once instead of calling getComputedStyle on every step.
+      const computed = getComputedStyle(node);
+      const baseFont = parseFloat(computed.fontSize) || 1;
+      const lhRatio = (parseFloat(computed.lineHeight) || baseFont) / baseFont;
       const tryOne = (checkHeight: boolean) => {
         node.style.whiteSpace = 'nowrap';
-        for (const px of sizes) {
+        for (const px of oneLine) {
           node.style.fontSize = `${px}px`;
           if (node.scrollWidth <= node.clientWidth + 1 && (!checkHeight || fitsHeight())) return true;
         }
         node.style.whiteSpace = '';
         for (let lines = 2; lines <= maxLines; lines++) {
-          for (const px of wrapped) {
+          for (const px of multiLine) {
             node.style.fontSize = `${px}px`;
-            const lh = parseFloat(getComputedStyle(node).lineHeight) || px;
+            const lh = px * lhRatio;
             if (node.scrollWidth <= node.clientWidth + 1 && node.offsetHeight <= lh * lines + 3 && (!checkHeight || fitsHeight())) return true;
           }
         }
         return false;
       };
-      if (!tryOne(true) && maxHeightOf) tryOne(false);
+      if (!tryOne(true) && heightOf) tryOne(false);
     };
-    fit();
-    const observer = new ResizeObserver(fit);
+    fit(true);
+    const observer = new ResizeObserver(() => fit(false));
     observer.observe(node.parentElement ?? node);
     let live = true;
-    document.fonts?.ready.then(() => { if (live) fit(); }, () => undefined);
+    document.fonts?.ready.then(() => { if (live) fit(true); }, () => undefined);
     return () => { live = false; observer.disconnect(); };
-  }, [children, sizes, wrapped, maxLines]);
+  }, [textKey, sizeKey, wrappedKey, maxLines]);
   const Heading = level === 1 ? 'h1' : 'h2';
   return <Heading ref={ref} className={`display${className ? ` ${className}` : ''}`} title={title}>{children}</Heading>;
 }

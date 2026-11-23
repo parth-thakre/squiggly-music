@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type ReactNode, type RefObject } from 'react';
 import type { Album, AlbumListType, Artist, Playlist, Result, Track, TrackSort } from '../../../../../packages/core/contracts';
 import type { ArtistInfo, DiscTitle, Genre } from '../../../../../packages/core/contracts';
 import type { RadioStation } from '../../../../../packages/core/contracts';
@@ -84,7 +84,9 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
   useLayoutEffect(() => {
     const scroller = nav.scroller, element = list.current;
     if (!scroller || !element) return;
+    let frame = 0;
     const update = () => {
+      frame = 0;
       const top = element.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
       const from = -top - scroller.clientHeight, to = -top + scroller.clientHeight * 2;
       let first = 0, high = rows;
@@ -93,10 +95,11 @@ function useVisibleRows(list: RefObject<HTMLElement | null>, offsets: number[]):
       while (last < rows && offsets[last] < to) last++;
       setRange(r => r[0] === first && r[1] === last ? r : [first, last]);
     };
+    const schedule = () => { if (!frame) frame = requestAnimationFrame(update); };
     update();
-    scroller.addEventListener('scroll', update, { passive: true });
-    addEventListener('resize', update);
-    return () => { scroller.removeEventListener('scroll', update); removeEventListener('resize', update); };
+    scroller.addEventListener('scroll', schedule, { passive: true });
+    addEventListener('resize', schedule);
+    return () => { cancelAnimationFrame(frame); scroller.removeEventListener('scroll', schedule); removeEventListener('resize', schedule); };
   }, [offsets]);
   return [Math.min(range[0], rows), Math.min(range[1], rows)];
 }
@@ -118,17 +121,13 @@ onInvalidate(prefix => {
   for (const [list, p] of paged) if (p.keys.some(key => key.startsWith(prefix))) { paged.delete(list); any = true; }
   if (any) dropped.forEach(listener => listener());
 });
-// Genres can number thousands, so only the few genre lists visited last are kept, the others
-// dropped oldest first. Records and Tracks keep theirs.
-// Searches' tabs are bounded the same way.
-const GENRE_LISTS = 8;
+// Bound cached paged lists (records, tracks, genres, searches) so switching across many sorts
+// or genres doesn't retain tens of thousands of Track/Album objects in renderer memory.
+const PAGED_LISTS = 8;
 function touchPaged(list: string) {
-  const kind = ['genre:', 'search:'].find(prefix => list.startsWith(prefix));
-  if (!kind) return;
   const p = paged.get(list);
   if (p) { paged.delete(list); paged.set(list, p); }
-  const genres = [...paged.keys()].filter(key => key.startsWith(kind));
-  for (const key of genres.slice(0, Math.max(0, genres.length - GENRE_LISTS))) paged.delete(key);
+  while (paged.size > PAGED_LISTS) paged.delete(paged.keys().next().value!);
 }
 type PageRequest<T> = (offset: number, seed: number) => [key: string, fetch: () => Promise<Result<T[]>>];
 function usePaged<T extends { id: string }>(list: string, size: number, request: PageRequest<T>, once = false) {
@@ -291,27 +290,32 @@ export function AlbumGrid({ albums, cols, sub = 'artist', wideSingle = false }: 
     ...(active ? { paddingTop: first * active.stride, paddingBottom: (rows - last) * active.stride } : {}),
   };
   return <ul ref={list} className={`grid${cols ? ' shelf-cols' : ''}${wide ? ' shelf-wide-one' : ''}${windowed ? ' windowed' : ''}`} style={Object.keys(style).length ? style : undefined}>
-    {shown.map(album => {
-      const title = splitTitle(album.name);
-      return <li key={album.id} className={`playable${wide ? ' sleeve-wide' : ''}`}>
-        <PlayOver label={title.main} play={() => playTarget({ kind: 'album', album })} />
-        <button type="button" data-warm={`album:${album.id}`} onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
-          onContextMenu={event => openMenu(event, { kind: 'album', album })}
-          draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
-          <Cover id={album.coverArt} name={album.name} size={300} className={album.id === morph.id ? 'morph' : undefined} />
-          <span className="sleeve-words">
-            <span className="grid-name">{album.id === nowAlbum && <Wave playing={playing} />}<span>{title.main}</span></span>
-            {title.extra && <span className="grid-tail">{title.extra}</span>}
-            {sub === 'year' && album.year ? <span className="grid-sub grid-year">{album.year}</span> : null}
-            {wide && <span className="grid-sub">{[sub === 'year' ? null : album.year, album.songCount ? plural(album.songCount, 'song') : null].filter(Boolean).join(', ')}</span>}
-          </span>
-          <ContainerMark kind="album" id={album.id} />
-        </button>
-        {sub === 'artist' && <span className="grid-sub"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} /></span>}
-      </li>;
-    })}
+    {shown.map(album => <AlbumCard key={album.id} album={album} sub={sub} wide={wide} drags={drags}
+      isNow={album.id === nowAlbum} playing={album.id === nowAlbum && playing} morphing={album.id === morph.id} />)}
   </ul>;
 }
+
+const AlbumCard = memo(function AlbumCard({ album, sub, wide, drags, isNow, playing, morphing }: {
+  album: Album; sub: 'artist' | 'year'; wide: boolean; drags: boolean; isNow: boolean; playing: boolean; morphing: boolean;
+}) {
+  const title = splitTitle(album.name);
+  return <li className={`playable${wide ? ' sleeve-wide' : ''}`}>
+    <PlayOver label={title.main} play={() => playTarget({ kind: 'album', album })} />
+    <button type="button" data-warm={`album:${album.id}`} onClick={event => { travel(album.id, event.currentTarget); nav.go({ view: 'album', id: album.id }); }}
+      onContextMenu={event => openMenu(event, { kind: 'album', album })}
+      draggable={drags} onDragStart={event => startDrag(event, { kind: 'album', album })}>
+      <Cover id={album.coverArt} name={album.name} size={300} className={morphing ? 'morph' : undefined} />
+      <span className="sleeve-words">
+        <span className="grid-name">{isNow && <Wave playing={playing} />}<span>{title.main}</span></span>
+        {title.extra && <span className="grid-tail">{title.extra}</span>}
+        {sub === 'year' && album.year ? <span className="grid-sub grid-year">{album.year}</span> : null}
+        {wide && <span className="grid-sub">{[sub === 'year' ? null : album.year, album.songCount ? plural(album.songCount, 'song') : null].filter(Boolean).join(', ')}</span>}
+      </span>
+      <ContainerMark kind="album" id={album.id} />
+    </button>
+    {sub === 'artist' && <span className="grid-sub"><Credits text={album.artist} artistId={album.artistId} artists={album.artists} /></span>}
+  </li>;
+});
 
 // One click to play a record, playlist, or artist without opening it. It shows over the cover
 // (beside an artist's name) on hover or keyboard focus; the rest of the card still opens the page.
@@ -333,7 +337,7 @@ export function AlbumPage({ id }: { id: string }) {
     const facts = [album.year, album.genre, plural(tracks.length, 'song'), length(tracks.reduce((sum, t) => sum + (t.duration ?? 0), 0))].filter(Boolean).join(', ');
     return <div className="record-page">
       <header className={`head with-cover feature record-head${playingHere ? ' on-deck' : ''}`}>
-        <Cover id={album.coverArt} name={album.name} size={600} className="head-cover record-sleeve" />
+        <Cover id={album.coverArt} name={album.name} size={600} className="head-cover record-sleeve" eager />
         <div className="head-text record-title">
           <FitTitle title={title.main}>{title.main}</FitTitle>
           {title.extra && <p className="qualifier display-tail">{title.extra}</p>}
@@ -406,11 +410,14 @@ function RecordCredits({ albumId, tracks }: { albumId: string; tracks: Track[] }
     <SquiggleRule seed={`${albumId} notes`} className="record-break" />
     <section className="credits" aria-label="Credits">
       {cast.length > 0 && <p className="credits-cast">
-        {cast.map((c, i) => <span key={c.name} className="who">
+        {/* Each name stays whole with its songs; the line breaks after the comma between them. */}
+        {cast.map((c, i) => <Fragment key={c.name}>
           {i > 0 && ', '}
-          {c.id ? <button type="button" className="link" data-warm={`artist:${c.id}`} onClick={() => nav.go({ view: 'artist', id: c.id! })}>{c.name}</button> : c.name}
-          {' '}<span className="on">({c.on})</span>
-        </span>)}
+          <span className="who">
+            {c.id ? <button type="button" className="link" data-warm={`artist:${c.id}`} onClick={() => nav.go({ view: 'artist', id: c.id! })}>{c.name}</button> : c.name}
+            {' '}<span className="on">({c.on})</span>
+          </span>
+        </Fragment>)}
       </p>}
       {files.length > 0 && <p className="credits-files">
         {files.map((f, i) => <span key={f.kind} className="credits-file-row">
@@ -1006,7 +1013,7 @@ function PlaylistEditor({ view, playlist }: { view: PlaylistView; playlist: Play
   // Records, artists, and songs dropped on the page join the end; onto the list, before that song.
   const drop = useDropTarget(payload => void dropOnPlaylist(playlist, payload, null), { enabled: editable });
   return <div className={`drop-area${drop.over ? ' drop-over' : ''}`} {...drop.handlers}>
-    <Head title={playlist.name} cover={<Cover id={playlist.coverArt} name={playlist.name} size={600} className="head-cover" />}>
+    <Head title={playlist.name} cover={<Cover id={playlist.coverArt} name={playlist.name} size={600} className="head-cover" eager />}>
       {renaming && <form className="inline-form" onSubmit={event => {
         event.preventDefault();
         const value = String(new FormData(event.currentTarget).get('name') ?? '').trim();
@@ -1673,7 +1680,7 @@ function HomeLead({ album, reason }: { album: Album; reason: string }) {
       <button type="button" className="home-sleeve-btn" data-warm={`album:${album.id}`} title={album.name} onClick={open}
         onContextMenu={event => openMenu(event, { kind: 'album', album })}
         draggable={canDrag()} onDragStart={event => startDrag(event, { kind: 'album', album })}>
-        <Cover id={album.coverArt} name={album.name} size={600} className={`home-art${album.id === morph.id ? ' morph' : ''}`} />
+        <Cover id={album.coverArt} name={album.name} size={600} className={`home-art${album.id === morph.id ? ' morph' : ''}`} eager />
       </button>
     </div>
   </div>;

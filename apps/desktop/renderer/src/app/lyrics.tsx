@@ -2,7 +2,7 @@ import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { isStation } from '../../../../../packages/core/stations';
 import type { LyricLine, LyricWord, Lyrics as LyricsData, Track } from '../../../../../packages/core/contracts';
 import { timeWords } from '../../../../../packages/lyrics/words';
-import { useKept } from './library';
+import { api, useKept, useResource } from './library';
 import { current, getPlayer, livePosition, player, usePlayer } from './player';
 import { nav, useRoute } from './route';
 import { updateSettings, useSettings } from './settings';
@@ -51,11 +51,16 @@ function scrollerOf(element: HTMLElement) {
 }
 
 // A song's lyrics, shared by the sheet and the deck (one lookup for both).
+const desktopLyrics = typeof window !== 'undefined' && Boolean(window.squiggly);
 function useLyrics(track: Track) {
   const { lyricsLookup } = useSettings();
-  // The desktop keeps lyrics itself (lyricsCache.ts); the phone keeps them with its other answers.
-  const result = useKept(`lyrics:${track.id}:${lyricsLookup}`, from => from.lyrics(
-    { id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration }, lyricsLookup));
+  const key = `lyrics:${track.id}:${lyricsLookup}`;
+  const query = { id: track.id, title: track.title, artist: track.artist, album: track.album, duration: track.duration };
+  // The desktop serves lyrics directly from main's LyricsCache (AnswerStore never holds lyrics);
+  // the Android app keeps them in its stored answer cache.
+  const result = desktopLyrics
+    ? useResource(key, () => api.lyrics(query, lyricsLookup))
+    : useKept(key, from => from.lyrics(query, lyricsLookup));
   const raw = result?.ok ? result.value : null;
   // Lyrics from an older bridge may lack word times; complete them the same way the server does.
   const lyrics = useMemo((): LyricsData | null => raw && raw.wordTiming === undefined ? { ...raw, ...timeWords(raw) } : raw, [raw]);
@@ -67,6 +72,7 @@ function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
   const playing = usePlayer(s => s.playing);
   // Only a paused position matters here; while playing, the loop below reads the live clock.
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
+  const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLOListElement>(null);
   const [active, setActive] = useState(-1);
   const [browsing, setBrowsing] = useState(false);
@@ -77,6 +83,19 @@ function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
     setBrowsing(true);
   };
   useEffect(() => () => clearTimeout(browseTimer.current), []);
+
+  // Fade the top edge under the header only once the page has scrolled past the title, so the song
+  // name at the top of the sheet stays crisp and uncut at scrollTop === 0.
+  useEffect(() => {
+    if (compact) return;
+    const el = root.current;
+    const view = el?.closest<HTMLElement>('.page');
+    if (!el || !view) return;
+    const sync = () => { el.classList.toggle('scrolled', view.scrollTop > 8); };
+    sync();
+    view.addEventListener('scroll', sync, { passive: true });
+    return () => { view.removeEventListener('scroll', sync); };
+  }, [compact]);
 
   // One animation frame loop while playing and visible. It picks the current line (a React
   // update only when the line changes) and writes each of its words' progress straight to the
@@ -137,7 +156,7 @@ function LyricSheet({ track, compact }: { track: Track; compact: boolean }) {
 
   const name = splitTitle(track.title, track.album).main;
   const empty = !!result?.ok && !lyrics;
-  return <div className={`lyrics${compact ? ' compact' : ''}${browsing ? ' browsing' : ''}${empty ? ' empty' : ''}`} onWheel={browse} onTouchMove={browse}>
+  return <div ref={root} className={`lyrics${compact ? ' compact' : ''}${browsing ? ' browsing' : ''}${empty ? ' empty' : ''}`} onWheel={browse} onTouchMove={browse}>
     {!compact && <header className="lyrics-head"><h1>{name}</h1><p>{track.artist}</p></header>}
     {!result ? <p className="status loading">Finding the words</p>
       : !result.ok ? <p className="status">{result.error}</p>
@@ -305,7 +324,12 @@ function DeckLines({ track }: { track: Track }) {
     const place = () => {
       const line = ol.children[Math.max(0, active)] as HTMLElement | undefined;
       const height = (ol.children[0] as HTMLElement | undefined)?.offsetHeight ?? Infinity;
-      setRoom(view.clientHeight >= GAP + height * ROOM_LINES);
+      const need = GAP + height * ROOM_LINES;
+      // Include `.deck-lyrics:not(.no-room)`'s 10px bottom margin (app.css) with small hysteresis
+      // so hovering near the threshold never oscillates between showing and hiding on every frame.
+      const margin = parseFloat(getComputedStyle(view).marginBottom) || 0;
+      const available = view.clientHeight + margin;
+      setRoom(was => (was ? available >= need + 8 : available >= need + 12));
       if (!line) return;
       const shift = Math.min(GAP, Math.round(view.clientHeight * .42 - line.offsetTop - line.offsetHeight / 2));
       ol.style.transform = `translateY(${shift}px)`;

@@ -1,5 +1,5 @@
 import type { Genre, Result, Track } from '../../../../../packages/core/contracts';
-import { albumDetails, api, libraryEpoch, load, onLibraryReset, peek, prime } from './library';
+import { albumDetails, api, libraryEpoch, loadKept, onLibraryReset, peek, prime } from './library';
 import { signedInAccount } from './searches';
 import { shuffled } from './ui';
 
@@ -18,7 +18,10 @@ async function fromAlbums(type: 'newest' | 'frequent' | 'recent', count: number,
   return { ok: true, value: mix ? shuffled(tracks).slice(0, 80) : tracks };
 }
 
-const albumList = (type: 'newest' | 'frequent' | 'recent', count: number) => load(`albums:${type}:0:${count}`, () => api.albums(type, 0, count));
+// Reuse Home's 12-album shelves (and disk cache) so mixes don't fire separate size=10 requests.
+const albumList = (type: 'newest' | 'frequent' | 'recent', count: number) =>
+  loadKept(`albums:${type}:0:12`, from => from.albums(type, 0, 12)).then(result =>
+    result.ok && result.value.length > count ? { ok: true as const, value: result.value.slice(0, count) } : result);
 async function albumCovers(type: 'newest' | 'frequent' | 'recent', count: number): Promise<Result<string[]>> {
   const albums = await albumList(type, count);
   return albums.ok ? { ok: true, value: albums.value.flatMap(album => album.coverArt ? [album.coverArt] : []) } : albums;
