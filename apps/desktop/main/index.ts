@@ -482,7 +482,10 @@ const followingHidden = new WeakSet<WebContents>();
 // IPC and merged back by preload with their exact previous references, avoiding 4 Hz structured
 // clones of up to 1,000 tracks. Nothing is pushed (or tracked as sent) until the window's preload
 // signals `squiggly:snapshot-ready`, so a newly created window (like the mini player) never misses
-// its initial full snapshot and then receives a partial delta.
+// its initial full snapshot and then receives a partial delta. Deltas carry `delta: true`; a page
+// that gets one before any full snapshot (it was just reloaded) asks for a full one again.
+// Readiness is never cleared on `did-start-loading`: Chromium fires that for every pushState too,
+// which would stop all updates to a window after its first in-app navigation.
 const snapshotReady = new WeakSet<WebContents>();
 const sentSnapshots = new WeakMap<WebContents, { player: AppSnapshot['player']; queue: Track[]; entryIds: string[]; devices: AppSnapshot['player']['devices']; diagnostics: AppSnapshot['diagnostics'] }>();
 function sendSnapshot(target: WebContents) {
@@ -499,6 +502,7 @@ function sendSnapshot(target: WebContents) {
     diagnostics: state.diagnostics === prev.diagnostics ? undefined : state.diagnostics,
     server: state.server,
     update: state.update,
+    delta: true as const,
   } : state;
   sentSnapshots.set(target, { player: p, queue: p.queue, entryIds: p.entryIds, devices: p.devices, diagnostics: state.diagnostics });
   target.send('squiggly:snapshot', payload);
@@ -1289,8 +1293,8 @@ function createWindow(mini: boolean) {
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   target.webContents.on('will-navigate', event => event.preventDefault());
   target.on('show', () => sendSnapshot(target.webContents));
-  // A reloaded page starts with no sleep timer and needs a full first snapshot.
-  target.webContents.on('did-start-loading', () => { followingHidden.delete(target.webContents); snapshotReady.delete(target.webContents); sentSnapshots.delete(target.webContents); });
+  // A reloaded page starts with no sleep timer.
+  target.webContents.on('did-start-loading', () => followingHidden.delete(target.webContents));
   // electron-vite's dev server. A packaged build only loads its own page, since this one gets the preload bridge.
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void target.loadFile(join(directory, '../renderer/index.html'));

@@ -108,12 +108,14 @@ const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
     let last: AppSnapshot | null = null;
-    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => {
-      if (!last && !Array.isArray(snapshot.player?.queue)) {
+    // A delta (main/index.ts sendSnapshot) omits what didn't change; it can only be merged onto a
+    // full snapshot this page already has. Without one, ask main for a full snapshot instead.
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot & { delta?: true }) => {
+      if (snapshot.delta && !last) {
         ipcRenderer.send('squiggly:snapshot-ready');
         return;
       }
-      const merged: AppSnapshot = last ? {
+      const merged: AppSnapshot = snapshot.delta && last ? {
         ...snapshot,
         diagnostics: snapshot.diagnostics ?? last.diagnostics,
         player: snapshot.player ? {
