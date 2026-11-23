@@ -456,7 +456,7 @@ async function serverCover(client: SubsonicClient, id: string, size: number, pri
   if (larger !== undefined) {
     const from = await sizes.get(larger)!;
     if (server !== client) return null;
-    if (from) return server === client ? (larger <= 600 ? from : shrinkCover(from, size)) : null;
+    if (from) return larger <= 600 ? from : shrinkCover(from, size);
   }
   // Register the promise synchronously so concurrent requests for this cover at <= size share it.
   const wanted: Promise<CoverBytes | null> = (async () => {

@@ -73,7 +73,8 @@ export class LyricsCache {
       if (other !== name) await rm(join(this.base, other), { recursive: true, force: true }).catch(() => undefined);
     }
     const existing = (await readdir(folder).catch(() => [] as string[])).filter(file => file.endsWith('.json'));
-    if (this.folder === folder) { this.files = new Set([...existing, ...late]); this.listedLate = null; }
+    // A later bind (even to the same folder) has its own list; this one's is out of date.
+    if (this.folder === folder && this.listedLate === late) { this.files = new Set([...existing, ...late]); this.listedLate = null; }
   }
   // Files read or written while bind lists the folder are added once it has.
   private listedLate: Set<string> | null = null;
