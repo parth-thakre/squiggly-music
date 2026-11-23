@@ -7,33 +7,19 @@
 
 Squiggly plays your own music from Navidrome. It asks the server for the original files, plays them through libmpv, and tells you what it knows about the signal path and what it can't know. The window takes its colours from the record that's playing.
 
-It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.com). It runs on Windows and Linux (Fedora, Debian and Ubuntu, and other distributions as an AppImage), and on Android phones, and a browser version works on phones too. There is a macOS build as well, but it hasn't been tested on a Mac yet.
+It's early software. Windows, Linux, Android, and a browser version that works on phones. There's a macOS build too, untested on a real Mac. Website: [squiggly.psthl.com](https://squiggly.psthl.com).
 
 ![Squiggly in use: a search for The Knife opens Shaking The Habitual, Play tints the window to the sleeve's pink and plum and opens the queue, and The Knife's name opens their artist page with Most played and their discography](docs/screenshots/demo.gif)
 
-## What it does
+## What's different
 
-- Browse records, artists, tracks, genres, playlists, and favorites on your server, or play files from your computer. Records filter by decade (grouped by year), record pages include liner notes and multi-disc tracklists, and artist pages show ranked most-played songs, chronological discographies, an All songs view, and similar artists when the server has them.
-- Open at Home: a lead record for what you played last, Most played and Played lately side by side, New arrivals, your automatic playlists, and what other people on the server are playing. The wordmark and G then H go back to it.
-- Rate songs, records, and artists from one to five stars, and list the records and tracks you rate highest.
-- Edit the queue and your playlists. The queue follows you between devices through the server.
-- Drag records, artists, songs, and playlists onto the queue or a playlist, and drop audio files from your computer onto the desktop app's window to play them.
-- Repeat the queue or one song, and shuffle what's left to play (`r` and `s`).
-- Start a radio station from any song, record, or artist.
-- Keep the music going when the queue runs out: with autoplay on (Settings, off at first), up to ten songs like the last one join the queue as the song before it starts, in time for a server that's slow to answer. When the server knows nothing like it, they come from its genre, or from anywhere on the server.
-- Export a playlist or the queue as an M3U file, and share songs, records, and playlists as public links when the server allows sharing.
-- Listen to the internet radio stations your server lists, from the Playlists page. They play live, and on the desktop the line under the station says what it's playing when the station says.
-- Star the playing song from the controls or with F. G then C opens its record, and G then . its artist.
-- Set a sleep timer from Ctrl+K: it pauses in 15, 30, or 60 minutes, or after this song.
-- Build automatic playlists from your library by genre, by decade, and from what's new, all on one Mixes page (G then M).
-- Show synced lyrics from your files, filling in word by word. Looking up missing lyrics on LRCLIB is off until you turn it on.
-- Run as a mini player or from the tray. Media keys and the system media controls work: MPRIS on Linux, the media flyout on Windows. Pressing play with nothing loaded picks up the queue saved on the server.
-- Ask Windows for exclusive output. The app reports what mpv accepted and doesn't claim more. On Linux it reports what PipeWire or PulseAudio says it runs the sink at, and whether that means it resamples what mpv sends.
-- Find any action with Ctrl+K. Change its keys in `keybindings.json` and add colour themes as files in the config folder (`~/.config/squiggly`, `%APPDATA%\Squiggly` on Windows, or `~/Library/Application Support/Squiggly` on macOS); saved changes apply at once.
-- Search the library from the bar. All shows a few artists, records, and songs, and See all lists the rest of one kind. Enter goes to the first result, Escape goes back, and the searches you used wait under the empty field.
-- Add your own commands, menu items, pages, and themes with extensions: folders of TypeScript in the config folder that reload when you save.
-- Extensions can also put a line in the deck and the mini player, and a section on the Playlists page.
-- Keep records, playlists, and a mix's songs on the desktop or Android device. Kept songs play from the device, online or not, which also saves bandwidth. When your server is out of reach, Home shows what is kept and the rest of the app says so. The Kept page is also on the Playlists page and at G then K. The browser version can't keep songs.
+- No EQ, crossfade, or loudness levelling. It plays the original file and says when something changes it: volume below 100%, a sink that resamples, Windows refusing exclusive mode.
+- Lyrics fill in word by word, on the lyrics page, in the deck, and in the mini player.
+- Everything is on the keyboard. Ctrl+K finds any action, and `keybindings.json`, themes, and TypeScript extensions in the config folder reload when you save.
+- Keep records and playlists on a desktop or phone, and they play from disk even when the server is up.
+- The Android app is built for the Galaxy Z Flip, with Flex Mode and its own cover-screen view.
+
+The rest is in [docs/features.md](docs/features.md).
 
 ![Squiggly's Records page while The Polish Ambassador's Pushing Through The Pavement plays: the full-bleed sleeve and controls on the left, a grid of records with an order menu on the right, and the window tinted to the playing record's sleeve](docs/screenshots/desktop-records.webp)
 
@@ -41,101 +27,28 @@ It's early software. The website is [squiggly.psthl.com](https://squiggly.psthl.
 
 ![The browser version on a phone: a record's page with the saved song in a strip at the bottom, the now-playing sheet, and lyrics in the sheet](docs/screenshots/phone.webp)
 
-The recording and screenshots use [Navidrome's demo server](https://demo.navidrome.org), whose music its artists released under Creative Commons and other free licences. Lyrics shown come from LRCLIB.
-
-It doesn't do EQ, crossfade, or loudness levelling. It leaves the signal alone, and if you turn the volume below 100% the line under the song says so.
+<sub>The recording and screenshots use [Navidrome's demo server](https://demo.navidrome.org), whose music its artists released under Creative Commons and other free licences. Lyrics come from LRCLIB.</sub>
 
 ## Install
 
-Download a build from [Releases](https://github.com/parth-thakre/squiggly-music/releases), along with `SHA256SUMS` from the same release, and check it:
+Grab a build from [Releases](https://github.com/parth-thakre/squiggly-music/releases). [docs/installing.md](docs/installing.md) has the per-platform steps, checksums, sign-in, and updates.
+
+To run from source, you need Node 22.16+ and libmpv:
 
 ```bash
-sha256sum --ignore-missing -c SHA256SUMS
+npm ci && npm run dev
 ```
 
-On Windows, run the setup program or the portable exe. They aren't signed yet, so SmartScreen will warn you. Choose More info, then Run anyway.
+## Docs
 
-On macOS 13 or later, open `Squiggly-Music-<version>-macos-arm64.zip` (Apple silicon) or `-macos-x64.zip` (Intel) and move Squiggly Music to Applications. It plays through Homebrew's libmpv, so run `brew install mpv` too. The app isn't signed: on macOS 15 and later, open it once, then choose Open Anyway in System Settings, Privacy & Security; on earlier versions, Control-click it and choose Open. The Mac builds are made on Linux and haven't been tried on a Mac yet. To check the download there, use `shasum`:
-
-```bash
-grep ' Squiggly-Music-.*-macos-arm64.zip$' SHA256SUMS | shasum -a 256 -c
-```
-
-On Fedora, `sudo dnf install ./squiggly-music-<version>.x86_64.rpm` installs Squiggly and pulls in `mpv-libs`.
-
-On Debian and Ubuntu, `sudo apt install ./squiggly-music_<version>_amd64.deb` installs Squiggly and pulls in `libmpv2` (`libmpv1` on Ubuntu 22.04).
-
-On other distributions, make `Squiggly-Music-<version>-x86_64.AppImage` executable (`chmod +x`) and run it. It doesn't include libmpv, so install your distribution's (`libmpv2` on Debian and Ubuntu, `mpv-libs` on Fedora, `mpv` on Arch); without one, the player says which to install. It needs FUSE 2 (`libfuse2`) to start, or run it with `--appimage-extract-and-run`.
-
-Fedora 45's and Ubuntu 26.04's libmpv 0.41 have been tested; Debian and older Ubuntu ship older versions.
-
-On Android 7 or later, the Android app is currently in beta on the [0.3.0-beta.4 pre-release](https://github.com/parth-thakre/squiggly-music/releases/tag/v0.3.0-beta.4): open `Squiggly-Music-0.3.0-beta.4-android.apk` on the phone and allow your file manager to install apps when Android asks.
-
-Squiggly checks this repository's releases for a newer version at launch and every six hours. The installed Windows app downloads it in the background and installs it when you restart or quit. The portable exe, the Mac builds, the RPM, the deb, and the AppImage can't replace themselves, so they say a new version is out and link to it. Nothing about you is sent. Settings › Updates turns the check off.
-
-To connect, enter your Navidrome address with any port or subpath (`music.example.com/navidrome` works; without `https://` or `http://`, Squiggly tries HTTPS and asks before using plain HTTP), your username, and your password. Squiggly remembers the sign-in and reconnects at launch, keeping the password only as your system encrypts it (Windows' user-account encryption, the macOS Keychain, or the Linux keyring). Without a keyring it keeps the password in memory for the session only. Disconnecting in Settings forgets it.
-
-## Run from source
-
-You need Node 22.16 or newer and libmpv (`mpv-libs` on Fedora, `libmpv2` on Debian and Ubuntu, `brew install mpv` on macOS).
-
-```bash
-npm ci
-npm run dev
-```
-
-If libmpv isn't on the loader path, set `SQUIGGLY_LIBMPV_PATH` to the library file. Audio runs in a separate Node process that uses the `node` on your PATH, or `SQUIGGLY_NODE_PATH`. Installed builds bring their own Node and ignore both variables. The separate process exists because libmpv crashed inside Electron's utility process.
-
-## Browser version
-
-```bash
-npm run web
-```
-
-This serves the app on 127.0.0.1:5173. The page asks for your Navidrome server the way the desktop app does: the address (without `https://` or `http://`, the host tries HTTPS first, then HTTP), your username, and your password. The password goes once to the host serving the page, which keeps the connection in its memory for that browser until it restarts, a day passes without using it, or you disconnect in Settings. Nothing is written to disk, and the page never sees it again. Each browser keeps one connection, and the host keeps 32 at most; when it's full, one left unused for 10 minutes makes room. A failed connection says only that it failed, and repeated failures make the page wait before trying again.
-
-The host can also start with a server of its own, which every browser uses until it connects to another. Here the address needs its `https://` or `http://`:
-
-```bash
-SQUIGGLY_PREVIEW_NAVIDROME_URL=https://music.example.com \
-SQUIGGLY_PREVIEW_NAVIDROME_USER=you \
-SQUIGGLY_PREVIEW_NAVIDROME_PASSWORD='your navidrome password' \
-SQUIGGLY_WEB_PASSWORD='a long password for this page' \
-npm run web
-```
-
-Anyone who can open the page acts as that account, or can connect the host to any server, so it won't serve other devices unless `SQUIGGLY_WEB_PASSWORD` is set to 12 or more characters. To reach it from your phone over Tailscale, set it and run `tailscale serve --bg 5173`. The browser plays the audio here, not libmpv.
-
-The page needs its host: the browser caches nothing, not even the page, and keeps no songs. When your server is out of reach, the page says so and offers Retry.
-
-## Android
-
-The Android app connects to your Navidrome server itself and plays with the screen off, with controls in the notification and on the lock screen. It's made for the Galaxy Z Flip (the main screen, Flex Mode, and a view of its own on the Flip 5, 6, and 7 cover screens). Each release includes the APK. To build it yourself, you need a JDK 21 and the Android SDK, which [docs/android.md](docs/android.md) sets up without root:
-
-```bash
-npm run android:keystore   # once: the key that signs your release APK
-npm run android:build      # dist/android/squiggly-<version>-release.apk and -debug.apk
-```
-
-It remembers the sign-in with the password sealed by the Android Keystore, and keeps it for the session only when the Keystore can't be used. Disconnecting in Settings forgets it.
-
-## Tests
-
-```bash
-npm run check     # typecheck, build, unit and integration tests
-npm run test:ui   # the real interface in Chromium, against a fake Navidrome
-```
-
-The libmpv tests only decode audio when `SQUIGGLY_LIBMPV_PATH` points at a library. Otherwise they skip. [docs/development.md](docs/development.md) has the rest.
-
-## More
-
-- [docs/packaging.md](docs/packaging.md) covers installers, pinned runtimes, releases, and checksums.
-- [docs/android.md](docs/android.md) covers the Android app: how it's built, signing, and testing on an emulator.
-- [docs/audio.md](docs/audio.md) explains what the signal-path readout can and can't tell you.
-- [docs/ui-handoff.md](docs/ui-handoff.md) describes how the interface is put together.
-- [docs/extensions.md](docs/extensions.md) covers writing extensions and what trusting one means.
+- [Installing](docs/installing.md)
+- [Features](docs/features.md)
+- [Browser version](docs/web.md): self-hosting, and reaching it from your phone
+- [Signal path](docs/audio.md): what the readout can and can't tell you
+- [Extensions](docs/extensions.md)
+- [Android](docs/android.md): building, signing, and the Flip
+- [Contributing](docs/CONTRIBUTING.md): dev setup, tests, and the rest of the internals docs
 
 ## License
 
-Squiggly is [MIT](LICENSE) licensed. The installers include other people's software under their own licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[MIT](LICENSE). The installers include other people's software under their own licenses, listed in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
