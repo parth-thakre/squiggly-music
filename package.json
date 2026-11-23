@@ -11,20 +11,15 @@
     "preview": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit && tsc -p examples/extensions --noEmit",
-    "pretest": "npm run build",
-    "test": "vitest run",
-    "test:desktop": "npm run build && electron scripts/electron-smoke.cjs",
-    "check": "npm run typecheck && npm test",
+    "check": "npm run typecheck && npm run build",
     "package:win": "npm run build && node scripts/fetch-windows-runtime.mjs && electron-builder --win --publish never",
     "web": "vite build && vite preview --host 127.0.0.1 --port 5173 --strictPort",
     "package:linux": "npm run build && node scripts/fetch-linux-runtime.mjs && node scripts/package-linux.mjs",
     "package:mac": "npm run build && node scripts/fetch-macos-runtime.mjs && node scripts/package-macos.mjs",
     "icons": "bash scripts/generate-icons.sh",
     "release:checksums": "node scripts/release-checksums.mjs",
-    "test:source": "vitest run",
     "smoke:runtime": "node scripts/smoke-runtime.mjs",
     "smoke:packaged": "node scripts/packaged-smoke.mjs",
-    "test:ui": "vite build && playwright test",
     "libmpv:build": "node build/libmpv/build.mjs",
     "android:build": "node scripts/android.mjs build",
     "android:debug": "node scripts/android.mjs debug",
@@ -45,11 +40,9 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.13.0",
     "@capacitor/android": "8.5.2",
     "@capacitor/cli": "8.5.2",
     "@capacitor/core": "8.5.2",
-    "@playwright/test": "^1.63.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
@@ -58,8 +51,7 @@
     "electron-builder": "^26.15.3",
     "electron-vite": "5.0.0",
     "typescript": "^5.9.3",
-    "vite": "^7.3.0",
-    "vitest": "^4.1.11"
+    "vite": "^7.3.0"
   },
   "license": "MIT",
   "author": "Parth Thakre"

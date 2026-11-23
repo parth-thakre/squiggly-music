@@ -257,9 +257,9 @@ const Deck = memo(function Deck() {
       {expanded && sheetLyrics ? <Lyrics compact />
         : track.albumId && !isStation(track)
           ? <button type="button" className="deck-sleeve-btn" aria-label={`Open ${splitTitle(track.album).main}`} data-warm={`album:${track.albumId}`} onClick={() => nav.go({ view: 'album', id: track.albumId! })}>
-              <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />
+              <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" eager />
             </button>
-          : <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" />}
+          : <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover" eager />}
     </div>
     <div className="deck-bottom">
       <div className="deck-text">
@@ -299,7 +299,7 @@ const Deck = memo(function Deck() {
         {/* The next song: compact sleeve, title, artist. Label stays screen-reader accessible. */}
         {upNext && <p className="up-next"><span className="up-next-label">Next: </span><button type="button" className="link next-song" onClick={() => nav.go({ view: 'queue' })}>
           {!upNext.coverArt || nextAsked || upNext.coverArt === track.coverArt
-            ? <Cover id={upNext.coverArt} name={upNext.album || upNext.title} size={upNext.coverArt ? 600 : 80} /> : <span className="cover" />}
+            ? <Cover id={upNext.coverArt} name={upNext.album || upNext.title} size={upNext.coverArt ? 600 : 80} eager /> : <span className="cover" />}
           <span className="next-text"><span className="next-title">{splitTitle(upNext.title).main}</span>{!isStation(upNext) && upNext.artist && <span className="next-artist">{upNext.artist}</span>}</span>
         </button></p>}
         {!upNext && missed && <p className="up-next">Autoplay found nothing new like this song.</p>}
@@ -375,7 +375,7 @@ function Resume({ fallback }: { fallback: ReactNode }) {
   if (!saved || !track) return fallback;
   const minutes = Math.floor(saved.positionSeconds / 60), seconds = Math.floor(saved.positionSeconds % 60);
   return <>
-    <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover resume-cover" />
+    <Cover key={track.id} id={track.coverArt} name={track.album || track.title} size={600} className="deck-cover resume-cover" eager />
     <div className="resume">
       <p className="resume-label">Pick up where you left off</p>
       <h2 className="deck-title">{splitTitle(track.title, track.album).main}</h2>

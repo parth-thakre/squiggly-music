@@ -250,7 +250,7 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   .tracks-head-bar .actions > .play-action .disc { width: 22px; height: 22px; background: none; color: inherit; }
   .head .actions > .play-action .disc svg,
   .home-first .actions > .play-action .disc svg,
-  .tracks-head-bar .actions > .play-action .disc svg { width: 22px; margin-left: 2px; }
+  .tracks-head-bar .actions > .play-action .disc svg { width: 22px; }
   .home-first .actions > .play-action { width: 56px; height: 56px; }
   .home-first .actions > .play-action .disc, .home-first .actions > .play-action .disc svg { width: 25px; height: 25px; }
   .tracks-head-bar .actions > .play-action { width: 40px; height: 40px; }
@@ -303,6 +303,10 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
 .tracks li {
   position: relative; display: flex; align-items: flex-start; height: auto; min-height: 0; padding: 9px 0;
 }
+/* A printed listing's row grows with a credit that wraps; app.css's fixed two-line height is for
+   windowed rows only, which keep their credit to one line. */
+.tracks:not(.windowed) li:not(.group-head) { height: auto; }
+.tracks.two-line:not(.windowed) li:not(.group-head, .group-record) { min-height: var(--row-two, 56px); }
 .tracks.windowed li { height: var(--row-height, 44px); padding: 0; align-items: center; }
 .tracks.windowed.two-line li { height: var(--row-two, 56px); }
 .tracks li.hidden-hero { display: none; }
@@ -469,7 +473,7 @@ p.facts strong, p.facts b, p.facts .link { color: var(--ink); font-weight: 600; 
   .record-title { min-width: 0; padding-bottom: 2px; }
   .record-title .facts { margin-top: 16px; }
   .record-title .display-tail + .facts { margin-top: 9px; }
-  .record-title .facts .link { margin-right: 12px; }
+  .record-title .facts .artist-credit { margin-right: 12px; }
 }
 .record-songs { margin-top: 34px; }
 .record-break { margin: 26px 0 24px; }

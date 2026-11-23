@@ -84,6 +84,11 @@ export class NativePlayer {
         // An MP3 without a seek index (one Navidrome converted, through the stream relay) is
         // sought by its bitrate, one request, rather than read through to the position.
         'demuxer-lavf-o': 'fflags=+fastseek',
+        // mpv defaults to a 150 MiB forward + 50 MiB backward demuxer cache sized for video.
+        // Audio-only playback (with streamRelay already caching whole songs on local disk) needs
+        // only a fraction of that: 16 MiB + 4 MiB still holds ~2 min of lossless FLAC in RAM.
+        'demuxer-max-bytes': '16MiB',
+        'demuxer-max-back-bytes': '4MiB',
       };
       for (const [name, value] of Object.entries(options)) {
         if (this.option(this.handle, name, value) < 0) throw new Error(`libmpv rejected required option: ${name}`);
@@ -91,17 +96,12 @@ export class NativePlayer {
       // No youtube-dl lookups for URLs. The option exists only in builds with Lua, so a build
       // without it (the Windows one) rejects the name and has no ytdl hook to turn off.
       this.option(this.handle, 'ytdl', 'no');
-      // Only the smoke test may request a null output. Never used as an app fallback.
+      // Only the packaged smoke checks (scripts/smoke-runtime.mjs, packaged-smoke.mjs) request a
+      // null output. Never used as an app fallback.
       if (process.env.SQUIGGLY_TEST_NULL_AUDIO === '1') {
         this.option(this.handle, 'ao', 'null');
-        // The null output otherwise simulates a large device buffer. Keep its
-        // timing deterministic enough for transport tests, not hardware claims.
+        // The null output otherwise simulates a large device buffer.
         this.option(this.handle, 'ao-null-buffer', '0.01');
-        // Tests of gapless playback read what mpv output from a WAV file instead.
-        if (process.env.SQUIGGLY_TEST_PCM_FILE) {
-          this.option(this.handle, 'ao', 'pcm');
-          this.option(this.handle, 'ao-pcm-file', process.env.SQUIGGLY_TEST_PCM_FILE);
-        }
       }
       if (this.initialize(this.handle) < 0) throw new Error('libmpv initialization failed. Check audio-device availability.');
     } catch (error) { this.close(); throw error; }

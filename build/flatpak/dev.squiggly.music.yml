@@ -1,8 +1,8 @@
 # Flatpak manifest for Squiggly Music.
 #
 # Untested: flatpak-builder wasn't available when this was written, so nothing here has been
-# built or run. The YAML, the metainfo, and the desktop file were validated, and
-# tests/packaging.test.ts checks the pins. docs/packaging.md says how to try it.
+# built or run. The YAML, the metainfo, and the desktop file were validated.
+# docs/packaging.md says how to try it.
 #
 # The app is the unpacked electron-builder output (dist/linux-unpacked from
 # `npm run package:linux`), which carries its own Node for the audio process in

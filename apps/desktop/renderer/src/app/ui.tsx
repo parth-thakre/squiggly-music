@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { memo, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api, onLibraryReset } from './library';
 import { neutral, paletteFromImage, standInOf, type Palette } from './palette';
 
@@ -7,7 +7,8 @@ export { neutral };
 
 export function Glyph({ kind }: { kind: 'play' | 'pause' | 'prev' | 'next' | 'volume' | 'star' | 'starred' | 'heart' | 'hearted' }) {
   const paths = {
-    play: <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" />,
+    // Its box sits right of centre by 0.09 of its width, as Spotify's does: the triangle then reads as centred in a disc.
+    play: <path d="M6.9 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L8.4 4.64A1 1 0 0 0 6.9 5.5z" />,
     pause: <><rect x="6.5" y="5" width="4" height="14" rx="1" /><rect x="13.5" y="5" width="4" height="14" rx="1" /></>,
     prev: <><rect x="5" y="5" width="2.4" height="14" rx="1" /><path d="M19 6.2v11.6a.9.9 0 0 1-1.38.76L9.3 12.76a.9.9 0 0 1 0-1.52l8.32-5.8A.9.9 0 0 1 19 6.2z" /></>,
     next: <><rect x="16.6" y="5" width="2.4" height="14" rx="1" /><path d="M5 6.2v11.6a.9.9 0 0 0 1.38.76l8.32-5.8a.9.9 0 0 0 0-1.52L6.38 5.44A.9.9 0 0 0 5 6.2z" /></>,
@@ -48,15 +49,22 @@ onLibraryReset(() => standIns.clear());
 
 // `portrait`: an artist's picture. The server's stock picture gives way to the artist's initial,
 // so every artist without a picture looks the same.
-export function Cover({ id, name, size, className, portrait = false }: { id: string | null | undefined; name: string; size: number; className?: string; portrait?: boolean }) {
-  const [failed, setFailed] = useState(false);
+// `eager`: above-the-fold hero or deck art, loaded immediately at high priority.
+export const Cover = memo(function Cover({ id, name, size, className, portrait = false, eager = false }: { id: string | null | undefined; name: string; size: number; className?: string; portrait?: boolean; eager?: boolean }) {
+  const [failedId, setFailedId] = useState<string | null>(null);
+  const [plainId, setPlainId] = useState<string | null>(null);
+  // A cover that failed is retried once the component shows another one and comes back.
+  if (failedId !== null && failedId !== id) setFailedId(null);
+  const failed = !!id && failedId === id;
   const known = portrait && !!id && standIns.get(id) === true;
-  const [plain, setPlain] = useState(known);
-  useEffect(() => { setFailed(false); setPlain(known); }, [id, known]);
+  const plain = known || (portrait && !!id && plainId === id);
   const classes = `cover${className ? ` ${className}` : ''}`;
   if (!id || failed || plain) return <div className={`${classes} cover-type${size <= 160 ? ' initial' : ''}`} role="img" aria-label={`${name}, no cover art`}><span>{size <= 160 ? Array.from(name.trim())[0]?.toUpperCase() : splitTitle(name).main}</span></div>;
-  if (!portrait) return <img className={classes} src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)} />;
-  return <img className={classes} crossOrigin="anonymous" src={api.coverUrl(id, size)} alt="" loading="lazy" decoding="async" onError={() => setFailed(true)}
+  const loading = eager ? 'eager' : 'lazy';
+  const fetchPriority = eager ? 'high' : undefined;
+  if (!portrait) return <img className={classes} src={api.coverUrl(id, size)} alt="" loading={loading} fetchPriority={fetchPriority} decoding="async"
+    onLoad={size >= 600 ? () => markCoverWarm(id) : undefined} onError={() => setFailedId(id)} />;
+  return <img className={classes} crossOrigin="anonymous" src={api.coverUrl(id, size)} alt="" loading={loading} fetchPriority={fetchPriority} decoding="async" onError={() => setFailedId(id)}
     onLoad={event => {
       let stock = standIns.get(id);
       if (stock === undefined) {
@@ -64,9 +72,9 @@ export function Cover({ id, name, size, className, portrait = false }: { id: str
         standIns.set(id, stock);
         if (standIns.size > 400) standIns.delete(standIns.keys().next().value!);
       }
-      if (stock) setPlain(true);
+      if (stock) setPlainId(id);
     }} />;
-}
+});
 
 // Palettes are keyed by cover art id, which only means something on one server.
 const palettes = new Map<string, Promise<Palette>>();
@@ -92,29 +100,40 @@ function paletteOf(coverArt: string) {
 }
 
 // The next song's sleeve and colours, fetched while this one plays, so they change with the music
-// rather than seconds after it on a slow connection. It waits a few seconds, after the song playing
-// has its own art and its stream has started. The image is held so the page keeps it.
-let early: HTMLImageElement | null = null;
-let earlyArt: string | null = null;
+// rather than seconds after it on a slow connection. A brief delay lets the current song's own
+// cover and stream start first; already-warmed covers show immediately. The 600px sleeve is asked
+// for before the 64px palette so the desktop main process serves both from one upstream request.
+const earlyImages: HTMLImageElement[] = [];
+const warmedCovers = new Set<string>();
 const earlyListeners = new Set<() => void>();
 const onEarly = (listener: () => void) => { earlyListeners.add(listener); return () => { earlyListeners.delete(listener); }; };
+onLibraryReset(() => { warmedCovers.clear(); earlyImages.length = 0; });
+function markCoverWarm(coverArt: string) {
+  if (warmedCovers.has(coverArt)) return;
+  warmedCovers.add(coverArt);
+  if (warmedCovers.size > 160) warmedCovers.delete(warmedCovers.values().next().value!);
+  for (const listener of earlyListeners) listener();
+}
 export function useNextCover(coverArt: string | null | undefined, size: number) {
   useEffect(() => {
     if (!coverArt) return;
-    const timer = setTimeout(() => {
+    const warm = () => {
+      const img = new Image();
+      img.decoding = 'async';
+      img.src = api.coverUrl(coverArt, size);
+      earlyImages.push(img);
+      if (earlyImages.length > 4) earlyImages.shift();
       void paletteOf(coverArt);
-      early = new Image();
-      early.decoding = 'async';
-      early.src = api.coverUrl(coverArt, size);
-      earlyArt = coverArt;
-      for (const listener of earlyListeners) listener();
-    }, 4000);
+      markCoverWarm(coverArt);
+    };
+    if (warmedCovers.has(coverArt)) { void paletteOf(coverArt); return; }
+    const timer = setTimeout(warm, 350);
     return () => clearTimeout(timer);
   }, [coverArt, size]);
 }
-// Whether the next song's sleeve has been asked for yet, so showing it small (the deck's next
-// song) waits its turn too rather than asking the moment a song starts.
-export const useNextCoverAsked = (coverArt: string | null | undefined) => useSyncExternalStore(onEarly, () => !!coverArt && earlyArt === coverArt);
+// Whether the next song's sleeve has been asked for (or already loaded at full deck size), so it
+// shows at once when warm and waits only briefly behind the current song when cold.
+export const useNextCoverAsked = (coverArt: string | null | undefined) => useSyncExternalStore(onEarly, () => !!coverArt && warmedCovers.has(coverArt));
 
 // Real titles carry qualifiers: "(Original Motion Picture Soundtrack)", "- Single", "[From "Film"]".
 // Only recognised release qualifiers split off, so "I'm Gonna Be (500 Miles)" stays whole.

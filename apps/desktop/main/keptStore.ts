@@ -10,7 +10,7 @@ import { IdSchema } from '../../../packages/core/validation';
 import { writeAtomic } from './store';
 
 // The kept index and folder on the desktop: <userData>/kept/index.json and one file per song and
-// cover. Node only, no Electron, so the tests run it against real folders.
+// cover. Node only, no Electron.
 //
 // Two orders are never broken. A file is written, checked, synced and renamed before its entry
 // is added, so an entry always names a whole file. Forgetting removes the entries and writes the

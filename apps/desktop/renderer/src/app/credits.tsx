@@ -11,17 +11,29 @@ export const firstArtistId = (item: { artistId?: string | null; artists?: Artist
 // pages, become links inside it. A credit the server keeps whole links to its one artist.
 export function Credits({ text, artistId, artists, strong = false }: { text: string; artistId?: string | null; artists?: ArtistRef[]; strong?: boolean }) {
   const link = (id: string, name: string) => <button key={id} type="button" className="link" data-warm={`artist:${id}`} onClick={() => nav.go({ view: 'artist', id })}>{name}</button>;
-  if (!artists || artists.length < 2) return artistId ? link(artistId, text) : strong ? <strong>{text}</strong> : <>{text}</>;
-  const parts: ReactNode[] = [];
+  if (!artists || artists.length < 2) {
+    return <span className="artist-credit">{artistId ? link(artistId, text) : strong ? <strong>{text}</strong> : text}</span>;
+  }
+  const found: number[] = [];
   let at = 0;
   for (const artist of artists) {
-    const found = text.indexOf(artist.name, at);
+    const index = text.indexOf(artist.name, at);
     // A name the display text doesn't spell out: list the artists plainly instead.
-    if (found < 0) return <>{artists.map((a, i) => <span key={a.id}>{i > 0 && ', '}{link(a.id, a.name)}</span>)}</>;
-    if (found > at) parts.push(text.slice(at, found));
-    parts.push(link(artist.id, artist.name));
-    at = found + artist.name.length;
+    if (index < 0) return <span className="artist-credit">{artists.map((a, i) => <span key={a.id}>{i > 0 && ', '}{link(a.id, a.name)}</span>)}</span>;
+    found.push(index);
+    at = index + artist.name.length;
   }
-  if (at < text.length) parts.push(text.slice(at));
-  return <>{parts}</>;
+  // Each name keeps the separator after it ("Chauhan &", "Singh •", "Ingle,"), so a credit that
+  // wraps ends a line with the separator instead of starting the next one with it.
+  const parts: ReactNode[] = [];
+  if (found[0] > 0) parts.push(text.slice(0, found[0]));
+  artists.forEach((artist, i) => {
+    const end = found[i] + artist.name.length;
+    const between = text.slice(end, i + 1 < artists.length ? found[i + 1] : text.length);
+    const mark = between.match(/^\s*[^\s\p{L}\p{N}]+/u);
+    const lead = mark ? mark[0] : '';
+    parts.push(<span key={`${artist.id}-${i}`} className="credit-name">{link(artist.id, artist.name)}{lead.replace(/\s/g, '\u00a0')}</span>);
+    if (between.length > lead.length) parts.push(between.slice(lead.length));
+  });
+  return <span className="artist-credit">{parts}</span>;
 }

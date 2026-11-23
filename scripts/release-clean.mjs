@@ -12,7 +12,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-// scripts/diagnostics-build.ts, DIAGNOSTICS_MARKER (tests/diagnosticsBuild.test.ts keeps them equal).
+// Must equal DIAGNOSTICS_MARKER in scripts/diagnostics-build.ts, or diagnostics builds pass this check.
 export const MARKER = 'squiggly-diagnostics-build';
 const SCRIPTS = /\.(?:c|m)?js$/;
 // Inside an archive: the app's code, not its media or native libraries.

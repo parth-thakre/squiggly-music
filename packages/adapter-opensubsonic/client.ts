@@ -199,13 +199,22 @@ type Params = Record<string, string | readonly string[]>;
 export const coverTypes: ReadonlySet<string> = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif', 'image/bmp']);
 const clamp = (value: number, min: number, max: number) => Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : min;
 // Response bodies as one byte array, and as text. The BOM is kept, as Node's Buffer did.
-function concatBytes(chunks: readonly Uint8Array[], total: number) {
+const EMPTY_BYTES = new Uint8Array(0);
+const utf8Decoder = new TextDecoder('utf-8', { ignoreBOM: true });
+function concatBytes(chunks: readonly Uint8Array[], total: number): Uint8Array<ArrayBuffer> {
+  if (total === 0) return EMPTY_BYTES;
+  if (chunks.length === 1) {
+    const only = chunks[0];
+    if (only.buffer instanceof ArrayBuffer && only.byteOffset === 0 && only.byteLength === only.buffer.byteLength) {
+      return only as Uint8Array<ArrayBuffer>;
+    }
+  }
   const body = new Uint8Array(total);
   let offset = 0;
   for (const chunk of chunks) { body.set(chunk, offset); offset += chunk.byteLength; }
   return body;
 }
-const utf8 = (body: Uint8Array<ArrayBuffer>) => new TextDecoder('utf-8', { ignoreBOM: true }).decode(body);
+const utf8 = (body: Uint8Array<ArrayBuffer>) => utf8Decoder.decode(body);
 
 // Only locally authored messages can cross the desktop boundary. Server error
 // text and fetch errors may contain credentials or authenticated URLs.
@@ -368,16 +377,19 @@ export function sortHere(songs: readonly Song[], sort: TrackSort, seed: string):
   const text = (a: string | undefined, b: string | undefined) => collator.compare(a ?? '', b ?? '');
   const order = (keep: ((song: Song) => boolean) | null, compare: (a: Song, b: Song) => number) =>
     (keep ? songs.filter(keep) : [...songs]).sort((a, b) => compare(a, b) || byId(a, b));
+  const byKey = <K,>(list: readonly Song[], keyOf: (song: Song) => K, compare: (a: K, b: K) => number) =>
+    list.map(song => ({ song, key: keyOf(song) })).sort((a, b) => compare(a.key, b.key) || byId(a.song, b.song)).map(item => item.song);
   switch (sort) {
-    case 'newest': return order(null, (a, b) => when(b.created) - when(a.created));
+    case 'newest': return byKey(songs, song => when(song.created), (a, b) => b - a);
     case 'alphabeticalByName': return order(null, (a, b) => text(a.title, b.title));
     case 'alphabeticalByArtist': return order(null, (a, b) => text(a.artist, b.artist) || text(a.album, b.album)
       || (a.discNumber ?? 0) - (b.discNumber ?? 0) || (a.track ?? 0) - (b.track ?? 0));
     // Played and rated tracks only, as Navidrome's lists are (played() above).
-    case 'frequent': return order(song => times(song.playCount) > 0, (a, b) => times(b.playCount) - times(a.playCount) || when(b.played) - when(a.played));
-    case 'recent': return order(song => when(song.played) > 0, (a, b) => when(b.played) - when(a.played));
+    case 'frequent': return byKey(songs.filter(song => times(song.playCount) > 0),
+      song => [times(song.playCount), when(song.played)] as const, (a, b) => b[0] - a[0] || b[1] - a[1]);
+    case 'recent': return byKey(songs.filter(song => when(song.played) > 0), song => when(song.played), (a, b) => b - a);
     case 'highest': return order(song => rated(song.userRating).userRating !== undefined, (a, b) => (b.userRating ?? 0) - (a.userRating ?? 0));
-    case 'random': return order(null, (a, b) => shuffleKey(seed, a.id) - shuffleKey(seed, b.id));
+    case 'random': return byKey(songs, song => shuffleKey(seed, song.id), (a, b) => a - b);
   }
 }
 const playlistEditMessages: Record<number, string> = {
@@ -537,6 +549,8 @@ export class SubsonicClient {
         try {
           const accepted = accept(response);
           // Cap response sizes before parsing untrusted server data.
+          const declared = Number(response.headers.get('content-length'));
+          if (Number.isFinite(declared) && declared > limitMB * 1024 * 1024) throw new ServerError(`Server response exceeded ${limitMB} MB.`);
           reader = response.body?.getReader();
           if (!reader) throw new ServerError('Server returned an empty response.');
           const chunks: Uint8Array[] = [];

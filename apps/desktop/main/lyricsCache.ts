@@ -45,8 +45,14 @@ const digest = (text: string) => createHash('sha256').update(text).digest('hex')
 const answers = (entry: Entry, lookup: boolean) => entry.lyrics ? entry.lyrics.source === 'server' || lookup
   : !lookup || (entry.lookup && entry.matching === LRCLIB_MATCHING);
 
+const HOT_LYRICS = 32;
+const TOUCH_AFTER_MS = 3_600_000;
+const STAT_BATCH = 32;
+
 export class LyricsCache {
   private folder: string | null = null;
+  private files: Set<string> | null = null;
+  private hot = new Map<string, { mtimeMs: number; size: number; entry: Entry }>();
   // One lookup per song and lookup setting at a time: the deck, the sheet, and the next song's
   // warming ask together.
   private asking = new Map<string, Promise<{ lyrics: Lyrics | null; failed: unknown }>>();
@@ -57,16 +63,36 @@ export class LyricsCache {
   // Lyrics are kept for this account from now on; any other account's are removed.
   async bind(account: string) {
     const name = digest(account);
-    this.folder = join(this.base, name);
+    const folder = join(this.base, name);
+    this.folder = folder;
     this.asking.clear();
+    this.hot.clear();
+    this.files = null;
+    const late = this.listedLate = new Set();
     for (const other of await readdir(this.base).catch(() => [] as string[])) {
       if (other !== name) await rm(join(this.base, other), { recursive: true, force: true }).catch(() => undefined);
     }
+    const existing = (await readdir(folder).catch(() => [] as string[])).filter(file => file.endsWith('.json'));
+    // A later bind (even to the same folder) has its own list; this one's is out of date.
+    if (this.folder === folder && this.listedLate === late) { this.files = new Set([...existing, ...late]); this.listedLate = null; }
+  }
+  // Files read or written while bind lists the folder are added once it has.
+  private listedLate: Set<string> | null = null;
+  private noteFile(fileName: string) {
+    if (this.files) this.files.add(fileName); else this.listedLate?.add(fileName);
   }
   async clear() {
     this.folder = null;
+    this.files = null;
+    this.hot.clear();
     this.asking.clear();
     await rm(this.base, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  private rememberHot(fileName: string, mtimeMs: number, size: number, entry: Entry) {
+    this.hot.delete(fileName);
+    this.hot.set(fileName, { mtimeMs, size, entry });
+    if (this.hot.size > HOT_LYRICS) this.hot.delete(this.hot.keys().next().value!);
   }
 
   // A song's lyrics: kept ones while fresh (or while away, however old), otherwise ask's answer,
@@ -95,33 +121,60 @@ export class LyricsCache {
   }
 
   private async read(folder: string, id: string): Promise<Entry | null> {
-    const path = join(folder, `${digest(id)}.json`);
+    const fileName = `${digest(id)}.json`;
+    if (this.files && folder === this.folder && !this.files.has(fileName)) return null;
+    const path = join(folder, fileName);
     try {
-      if ((await stat(path)).size > MAX_BYTES) return null;
+      const info = await stat(path);
+      if (info.size > MAX_BYTES) return null;
+      const cached = this.hot.get(fileName);
+      if (cached && cached.mtimeMs === info.mtimeMs && cached.size === info.size && cached.entry.id === id) {
+        this.rememberHot(fileName, info.mtimeMs, info.size, cached.entry);
+        return cached.entry;
+      }
       const decoded = Schema.decodeUnknownEither(EntrySchema)(JSON.parse(await readFile(path, 'utf8')));
       if (Either.isLeft(decoded) || decoded.right.id !== id) return null;
-      // Shown again: last to be removed.
-      const now = new Date();
-      await utimes(path, now, now).catch(() => undefined);
+      if (folder === this.folder) {
+        this.noteFile(fileName);
+        this.rememberHot(fileName, info.mtimeMs, info.size, decoded.right);
+      }
+      // Shown again: last to be removed, non-blocking and throttled.
+      if (Date.now() - info.mtimeMs > TOUCH_AFTER_MS) {
+        const now = new Date();
+        void utimes(path, now, now).catch(() => undefined);
+      }
       return decoded.right;
     } catch { return null; }
   }
   private async write(folder: string, entry: Entry) {
-    const path = join(folder, `${digest(entry.id)}.json`);
+    const fileName = `${digest(entry.id)}.json`;
+    const path = join(folder, fileName);
     const text = JSON.stringify(entry);
     if (text.length > MAX_BYTES || folder !== this.folder) return;
     await writeAtomic(path, text).catch(() => undefined);
     // Signed out or switched accounts while writing: it isn't this account's to keep.
     if (folder !== this.folder) { await rm(path, { force: true }).catch(() => undefined); return; }
+    this.noteFile(fileName);
+    this.hot.delete(fileName);
     if (++this.writes % 50 === 0) await this.trim(folder);
   }
   // Past KEEP songs, the least recently shown are removed.
   async trim(folder = this.folder) {
     if (!folder) return;
-    const names = (await readdir(folder).catch(() => [] as string[])).filter(name => name.endsWith('.json'));
+    const names = this.files && folder === this.folder
+      ? [...this.files]
+      : (await readdir(folder).catch(() => [] as string[])).filter(name => name.endsWith('.json'));
     if (names.length <= KEEP) return;
-    const dated = await Promise.all(names.map(async name => ({ name, at: await stat(join(folder, name)).then(info => info.mtimeMs, () => 0) })));
+    const dated: { name: string; at: number }[] = [];
+    for (let i = 0; i < names.length; i += STAT_BATCH) {
+      const chunk = names.slice(i, i + STAT_BATCH);
+      const stats = await Promise.all(chunk.map(async name => ({ name, at: await stat(join(folder, name)).then(info => info.mtimeMs, () => 0) })));
+      dated.push(...stats);
+    }
     dated.sort((a, b) => a.at - b.at);
-    for (const { name } of dated.slice(0, dated.length - KEEP)) await rm(join(folder, name), { force: true }).catch(() => undefined);
+    for (const { name } of dated.slice(0, dated.length - KEEP)) {
+      await rm(join(folder, name), { force: true }).catch(() => undefined);
+      if (folder === this.folder) { this.files?.delete(name); this.hot.delete(name); }
+    }
   }
 }

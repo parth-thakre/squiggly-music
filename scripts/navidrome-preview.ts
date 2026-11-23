@@ -436,10 +436,68 @@ async function handleSession(auth: Auth | null, connections: Connections, server
   json(response, 200, { ok: true });
 }
 
+type CachedCover = { contentType: string; bytes: Uint8Array<ArrayBuffer> };
+type CoverBucket = { sizes: Map<number, Promise<CachedCover | null>>; bytes: number };
+const PREVIEW_COVERS = 120;
+const PREVIEW_COVER_BYTES = 12 * 1024 * 1024;
+const previewCovers = new WeakMap<SubsonicClient, { map: Map<string, CoverBucket>; totalBytes: number }>();
+
+function coverStoreFor(client: SubsonicClient) {
+  let store = previewCovers.get(client);
+  if (!store) previewCovers.set(client, store = { map: new Map(), totalBytes: 0 });
+  return store;
+}
+
+async function fetchCachedCover(client: SubsonicClient, id: string, requested: number): Promise<Either.Either<CachedCover, Error>> {
+  const size = Math.min(1200, Math.max(32, Math.round(requested) || 300));
+  const store = coverStoreFor(client);
+  let bucket = store.map.get(id);
+  if (!bucket) bucket = { sizes: new Map(), bytes: 0 };
+  store.map.delete(id); store.map.set(id, bucket);
+  evictPreviewCovers(store);
+  const exact = bucket.sizes.get(size);
+  if (exact) {
+    const found = await exact;
+    if (found) return Either.right(found);
+  }
+  // Reuse any in-flight or cached cover already fetched at a larger size <= 600px.
+  const larger = [...bucket.sizes.keys()].filter(have => have > size && have <= 600).sort((a, b) => a - b)[0];
+  if (larger !== undefined) {
+    const found = await bucket.sizes.get(larger)!;
+    if (found) return Either.right(found);
+  }
+  let failure: Error | null = null;
+  const pending = Effect.runPromise(Effect.either(client.coverArt(id, size))).then(result => {
+    if (Either.isLeft(result)) { failure = result.left; return null; }
+    return result.right;
+  });
+  bucket.sizes.set(size, pending);
+  const cover = await pending;
+  if (!cover) {
+    if (bucket.sizes.get(size) === pending) bucket.sizes.delete(size);
+    if (!bucket.sizes.size && store.map.get(id) === bucket) store.map.delete(id);
+    return Either.left(failure ?? new Error('Cover art is not available.'));
+  }
+  if (store.map.get(id) === bucket) {
+    bucket.bytes += cover.bytes.byteLength;
+    store.totalBytes += cover.bytes.byteLength;
+    evictPreviewCovers(store);
+  }
+  return Either.right(cover);
+}
+function evictPreviewCovers(store: { map: Map<string, CoverBucket>; totalBytes: number }) {
+  while (store.map.size > PREVIEW_COVERS || store.totalBytes > PREVIEW_COVER_BYTES) {
+    const oldest = store.map.entries().next().value;
+    if (!oldest) break;
+    store.map.delete(oldest[0]);
+    store.totalBytes = Math.max(0, store.totalBytes - oldest[1].bytes);
+  }
+}
+
 async function sendCover(client: SubsonicClient, response: ServerResponse, searchParams: URLSearchParams) {
   const id = searchParams.get('id') ?? '';
   if (!id || id.length > 256) return json(response, 404, { ok: false, error: 'Cover art is not available.' });
-  const result = await Effect.runPromise(Effect.either(client.coverArt(id, Number(searchParams.get('size') ?? 300))));
+  const result = await fetchCachedCover(client, id, Number(searchParams.get('size') ?? 300));
   if (Either.isLeft(result)) return json(response, 404, { ok: false, error: result.left.message });
   response.setHeader('content-type', result.right.contentType);
   response.setHeader('cache-control', 'private, max-age=86400');

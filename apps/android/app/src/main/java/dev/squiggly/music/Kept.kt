@@ -20,8 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * and cover, and the index beside them (index.json). Native code owns the index, not the page,
  * because the player has to find kept files while the page is asleep or gone (Playback.items).
  *
- * The index has the desktop's shape and bounds (packages/core/kept.ts; tests/fixtures/
- * kept-index.json shows it). Two orders are never broken: a file is written, synced, and renamed
+ * The index has the desktop's shape and bounds (packages/core/kept.ts). Two orders are never broken: a file is written, synced, and renamed
  * before its entry exists, and an entry is gone (and the index written) before its file is
  * deleted. Only names matching [FILE] and partial files are ever deleted. The index holds no
  * addresses or credentials: song addresses live in the running keep's memory only.

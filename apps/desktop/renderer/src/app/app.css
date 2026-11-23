@@ -186,8 +186,9 @@ img:is(.deck-cover, .head-cover) {
 .signal { margin: 14px 0 0; font-size: calc(13px * var(--text)); line-height: 1.55; color: var(--soft); }
 
 /* Page */
-/* Lyrics fade in under the header rather than being sliced by it. */
-.page:has(.lyrics:not(.compact)) { -webkit-mask-image: linear-gradient(transparent 16px, #000 96px, #000 calc(100% - 130px), transparent calc(100% - 12px)); mask-image: linear-gradient(transparent 16px, #000 96px, #000 calc(100% - 130px), transparent calc(100% - 12px)); }
+/* Lyrics fade out at the bottom, and fade in under the header once scrolled past the title. */
+.page:has(.lyrics:not(.compact)) { -webkit-mask-image: linear-gradient(#000 0, #000 calc(100% - 130px), transparent calc(100% - 12px)); mask-image: linear-gradient(#000 0, #000 calc(100% - 130px), transparent calc(100% - 12px)); }
+.page:has(.lyrics:not(.compact).scrolled) { -webkit-mask-image: linear-gradient(transparent 0, #000 72px, #000 calc(100% - 130px), transparent calc(100% - 12px)); mask-image: linear-gradient(transparent 0, #000 72px, #000 calc(100% - 130px), transparent calc(100% - 12px)); }
 .page { min-width: 0; overflow-y: auto; padding: 18px 48px 72px 36px; outline: none; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
 .status { margin: 0; padding: 20px 0; color: var(--soft); }
 /* Room for an artist's popular songs (ArtistPage): fewer than ten, often, in a personal library. */
@@ -229,7 +230,10 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
 }
 .qualifier { margin: 8px 0 0; font-size: calc(16px * var(--text)); color: var(--soft); }
 .byline { margin: 12px 0 0; color: var(--soft); }
-.byline strong, .byline .link { color: var(--ink); font-weight: 600; margin-right: .3em; }
+.byline strong, .byline .link { color: var(--ink); font-weight: 600; }
+.byline .artist-credit { margin-right: .3em; }
+/* A credited name and the separator after it ("Chauhan &") wrap as one (Credits in credits.tsx). */
+.credit-name { white-space: nowrap; }
 .note { margin: 8px 0 0; font-size: calc(14px * var(--text)); color: var(--soft); max-width: 60ch; }
 .choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
 .choices button { min-height: 32px; padding: 0 14px; border-radius: 999px; font-size: calc(14px * var(--text)); font-weight: 500; }
@@ -247,6 +251,9 @@ img.head-cover.portrait { object-fit: cover; border-radius: 50%; filter: none; b
   background: var(--ink); color: var(--ground); font-size: calc(15px * var(--text)); font-weight: 600; }
 .primary-button:hover:not(:disabled) { background: color-mix(in srgb, var(--ink) 88%, var(--ground)); }
 .head .actions > .text-button { min-height: 36px; padding: 0 16px; border: 1px solid color-mix(in srgb, var(--ink) 42%, transparent); border-radius: 999px; font-size: calc(14px * var(--text)); }
+/* An icon and its word sit on one centred line (Shuffle, Radio), as Play's and the heart's do. */
+.head .actions > .text-button.icon-action { display: inline-flex; align-items: center; gap: 7px; }
+.head .actions > .text-button.icon-action svg { flex: none; width: 18px; height: 18px; }
 .head .actions > .text-button:hover:not(:disabled) { text-decoration: none; background: color-mix(in srgb, var(--ink) 8%, transparent); }
 .head .actions > .text-button.quiet { border-color: transparent; padding: 0 8px; }
 .head .actions > .text-button.star-text { padding-left: 13px; }

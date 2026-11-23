@@ -1,6 +1,6 @@
 /// <reference types="electron-vite/node" />
 import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
-import type { IpcMainInvokeEvent, WebContents } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
@@ -57,10 +57,11 @@ remote.installEarly();
 
 // Native Wayland where the session offers it (Fedora's default), XWayland otherwise. Must precede ready.
 if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform-hint', 'auto');
-// Windows: Chromium stops painting a window it decides other windows cover, and Alt+Tab's
-// switcher covers them all, so its preview showed the window frozen until it came to the front.
-// Without the occlusion tracker only a minimized or hidden window stops. Must precede ready.
-if (process.platform === 'win32') app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+// Skip Chromium's idle spare renderer process (~40–60 MB) and multi-document BFCache (unused by
+// this SPA). On Windows, also disable CalculateNativeWinOcclusion so Alt+Tab previews stay live.
+const disabledFeatures = ['SpareRendererForSitePerProcess', 'BackForwardCache'];
+if (process.platform === 'win32') disabledFeatures.push('CalculateNativeWinOcclusion');
+app.commandLine.appendSwitch('disable-features', disabledFeatures.join(','));
 // Windows names the app in the media flyout and notifications by finding a Start menu shortcut
 // with this id (appId in electron-builder.yml; the installer's shortcuts carry it). Without one it
 // says "Unknown app". Set before Chromium creates its windows, which take the id they start with.
@@ -118,7 +119,6 @@ const semaphores = {
   library: Effect.runSync(Effect.makeSemaphore(6)),
   // Answers kept on this computer, read from disk while the library's requests are out.
   stored: Effect.runSync(Effect.makeSemaphore(8)),
-  art: Effect.runSync(Effect.makeSemaphore(6)),
   settings: Effect.runSync(Effect.makeSemaphore(1)),
   window: Effect.runSync(Effect.makeSemaphore(1)),
   // Background play reports and queue saves. They never hold a renderer-facing permit.
@@ -217,7 +217,7 @@ const queueSync = new QueueSync((saved, generation) => {
   const client = generation === connectionGeneration ? server : generation === finalSession?.generation ? finalSession.client : null;
   if (!client || !settings.value.syncQueue) return Promise.resolve();
   // The server's copy is about to change; the one read earlier no longer describes it.
-  savedQueues.clear();
+  savedQueues.clear(); savedQueueRead = null;
   return Effect.runPromise(metrics.measure('sync.save-queue', semaphores.sync.withPermits(1)(client.saveQueue(saved.trackIds, saved.currentIndex, saved.positionSeconds))));
 });
 function rememberTracks(tracks: readonly Track[]) {
@@ -235,8 +235,9 @@ const radio = new Radio<SubsonicClient>({
   append: (client, tracks) => send({ type: 'queue-add', tracks: tracks.map(track => playable(client, track)), where: 'end' }),
   // Already one request at a time, so it never takes a sync permit from the final queue save.
   background: task => Effect.runPromise(Effect.either(metrics.measure('sync.radio-top-up', task))),
-  // The next host snapshot carries the change to the windows (several a second while playing).
-  changed: () => { state.player = { ...state.player, radio: radio.view, autoplay: radio.autoplayView }; },
+  // The next host snapshot carries the change to the windows (several a second while playing);
+  // broadcast now too so starting or stopping radio while paused updates the deck at once.
+  changed: () => { state.player = { ...state.player, radio: radio.view, autoplay: radio.autoplayView }; broadcast(); },
   autoplay: () => settings.value.autoplay && !sleepsAfterSong(),
   next: still => transport({ type: 'next' }, still),
 }, QUEUE_LIMIT);
@@ -268,10 +269,14 @@ const streamKey = (id: string, kbps: number | null) => kbps === null ? id : `${i
 // Songs queued after the one playing download ahead (the relay's want), so a slow or dropped
 // connection later doesn't stall them. Kept songs and stations don't download.
 const DOWNLOAD_AHEAD = 3;
+let lastAhead: { queue: readonly Track[]; key: string } | null = null;
 function downloadAhead() {
   if (!relay) return;
   const { queue, currentIndex, repeat, engine } = state.player;
   const kbps = reducedKbps(settings.value.streamQuality);
+  const key = `${engine}:${!!server}:${currentIndex}:${repeat}:${kbps ?? ''}:${keptStore?.revision ?? 0}`;
+  if (lastAhead && lastAhead.queue === queue && lastAhead.key === key) return;
+  lastAhead = { queue, key };
   const keys: string[] = [];
   if (engine === 'ready' && server && currentIndex >= 0 && repeat !== 'one') {
     for (let step = 1; step < queue.length && keys.length < DOWNLOAD_AHEAD; step++) {
@@ -341,14 +346,14 @@ async function serveCover(request: Request): Promise<Response> {
 }
 // A cover's bytes. A local file's (localFiles.ts) is scaled down to the size asked for, since
 // embedded pictures are often several thousand pixels across; the server scales its own.
-async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8Array<ArrayBuffer>; contentType: string } | null> {
+async function coverBytes(id: string, requested: number, priority: 'high' | 'normal' = requested >= 512 || requested <= 64 ? 'high' : 'normal'): Promise<{ bytes: Uint8Array<ArrayBuffer>; contentType: string } | null> {
   const size = Math.min(1200, Math.max(32, Math.round(requested) || 300));
   if (isLocalCover(id)) {
-    const cover = await semaphores.art.withPermits(1)(Effect.promise(() => readLocalCover(id))).pipe(Effect.runPromise);
+    const cover = await artGate(priority, () => readLocalCover(id));
     if (!cover) return null;
     const image = nativeImage.createFromBuffer(cover.bytes);
     if (image.isEmpty() || image.getSize().width <= size) return { bytes: new Uint8Array(cover.bytes), contentType: cover.contentType };
-    return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
+    return { bytes: new Uint8Array(image.resize({ width: size, quality: 'good' }).toJPEG(90)), contentType: 'image/jpeg' };
   }
   // A kept cover first: it works with the server away, and saves asking. Kept covers are 600 px.
   const kept = keptStore && (size <= 600 || away()) ? await keptStore.cover(id) : null;
@@ -356,41 +361,132 @@ async function coverBytes(id: string, requested: number): Promise<{ bytes: Uint8
   if (away()) return null;
   const client = server;
   if (!client) return null;
-  return serverCover(client, id, size);
+  return serverCover(client, id, size, priority);
+}
+
+// Bounded cover-art concurrency with priority: deck, next-song, hero, palette, and media-session
+// covers jump ahead of grid and list thumbnails so playback art never queues behind a full page.
+// While the audio engine is actively buffering, normal-priority thumbnails yield briefly so the
+// music stream keeps full Navidrome/Tailscale precedence.
+const ART_CONCURRENCY = 6;
+const ART_BUFFER_YIELD_MS = 2000;
+let artRunning = 0;
+let artBufferingSince = 0;
+let artYieldTimer: ReturnType<typeof setTimeout> | null = null;
+const artHigh: (() => void)[] = [];
+const artNormal: (() => void)[] = [];
+const artNormalPaused = () => {
+  if (!state.player.audio.buffering) { artBufferingSince = 0; return false; }
+  if (!artBufferingSince) artBufferingSince = Date.now();
+  return Date.now() - artBufferingSince < ART_BUFFER_YIELD_MS;
+};
+function drainArtGate() {
+  if (artYieldTimer) { clearTimeout(artYieldTimer); artYieldTimer = null; }
+  while (artRunning < ART_CONCURRENCY) {
+    const next = artHigh.shift() ?? (!artNormalPaused() ? artNormal.shift() : undefined);
+    if (!next) break;
+    artRunning++;
+    next();
+  }
+  if (artRunning < ART_CONCURRENCY && artNormal.length && artNormalPaused()) {
+    const wait = Math.max(50, ART_BUFFER_YIELD_MS - (Date.now() - artBufferingSince));
+    artYieldTimer = setTimeout(() => { artYieldTimer = null; drainArtGate(); }, wait);
+    artYieldTimer.unref?.();
+  }
+}
+async function artGate<A>(priority: 'high' | 'normal', task: () => Promise<A>): Promise<A> {
+  if (artRunning < ART_CONCURRENCY && (priority === 'high' || !artNormalPaused())) {
+    artRunning++;
+  } else {
+    await new Promise<void>(resolve => {
+      (priority === 'high' ? artHigh : artNormal).push(resolve);
+      drainArtGate();
+    });
+  }
+  try { return await task(); }
+  finally {
+    artRunning--;
+    drainArtGate();
+  }
 }
 
 // Server covers this session has fetched, newest last, by id and then size. A window, the mini
 // player, the system's media controls, and the next song fetched early all ask for one sleeve at
 // different sizes; over a slow connection each crossing costs seconds, and the audio shares it. So
-// a size this already has, or is fetching, larger is cut from that one here instead. A failed
-// fetch isn't kept, so the next ask tries again.
+// a size this already has, or is fetching, larger is reused here instead (without synchronous
+// main-thread re-encoding when the cached sleeve is already <= 600 px, just as kept covers do).
+// A failed fetch isn't kept, so the next ask tries again.
 type CoverBytes = { bytes: Uint8Array<ArrayBuffer>; contentType: string };
-const serverCovers = new Map<string, Map<number, Promise<CoverBytes | null>>>();
-async function serverCover(client: SubsonicClient, id: string, size: number): Promise<CoverBytes | null> {
-  const sizes = serverCovers.get(id) ?? new Map<number, Promise<CoverBytes | null>>();
-  serverCovers.delete(id); serverCovers.set(id, sizes);
-  if (serverCovers.size > 40) serverCovers.delete(serverCovers.keys().next().value!);
-  const larger = [...sizes.keys()].filter(have => have >= size).sort((a, b) => a - b)[0];
-  const from = larger === undefined ? null : await sizes.get(larger)!;
-  if (from && larger === size) return from;
-  // Then one kept on disk (coverCache.ts), then the server, keeping what it sends.
-  const wanted = from ? Promise.resolve(shrinkCover(from, size)) : (async () => {
-    const kept = await coverCache?.read(id, size);
-    if (kept) return kept;
-    const result = await Effect.runPromise(Effect.either(awaited(semaphores.art.withPermits(1)(client.coverArt(id, size)))));
+const MAX_SERVER_COVERS = 80;
+const MAX_SERVER_COVER_BYTES = 6 * 1024 * 1024;
+const serverCovers = new Map<string, { sizes: Map<number, Promise<CoverBytes | null>>; bytes: number }>();
+let serverCoverTotalBytes = 0;
+function evictServerCovers() {
+  while (serverCovers.size > MAX_SERVER_COVERS || serverCoverTotalBytes > MAX_SERVER_COVER_BYTES) {
+    const first = serverCovers.entries().next().value;
+    if (!first) break;
+    serverCovers.delete(first[0]);
+    serverCoverTotalBytes = Math.max(0, serverCoverTotalBytes - first[1].bytes);
+  }
+}
+// Counts a sleeve's bytes against the budget, once (one buffer can serve two sizes), unless its
+// cover was evicted meanwhile.
+const chargedCovers = new WeakSet<Uint8Array>();
+function chargeServerCover(id: string, bucket: { bytes: number }, sleeve: Uint8Array) {
+  if (serverCovers.get(id) !== bucket || chargedCovers.has(sleeve)) return;
+  chargedCovers.add(sleeve);
+  const bytes = sleeve.byteLength;
+  bucket.bytes += bytes;
+  serverCoverTotalBytes += bytes;
+  evictServerCovers();
+}
+async function serverCover(client: SubsonicClient, id: string, size: number, priority: 'high' | 'normal', interactive = true): Promise<CoverBytes | null> {
+  let bucket = serverCovers.get(id);
+  if (!bucket) bucket = { sizes: new Map(), bytes: 0 };
+  serverCovers.delete(id); serverCovers.set(id, bucket);
+  evictServerCovers();
+  const { sizes } = bucket;
+  const exact = sizes.get(size);
+  if (exact) {
+    const found = await exact;
+    // Checked after the wait: a sign-out while it was fetching keeps it from the next account.
+    return server === client ? found : null;
+  }
+  const larger = [...sizes.keys()].filter(have => have > size).sort((a, b) => a - b)[0];
+  if (larger !== undefined) {
+    const from = await sizes.get(larger)!;
+    if (server !== client) return null;
+    if (from) return larger <= 600 ? from : shrinkCover(from, size);
+  }
+  // Register the promise synchronously so concurrent requests for this cover at <= size share it.
+  const wanted: Promise<CoverBytes | null> = (async () => {
+    const kept = await coverCache?.readAtLeast(id, size);
+    if (kept) {
+      if (kept.size > size && !sizes.has(kept.size)) {
+        sizes.set(kept.size, Promise.resolve(kept.sleeve));
+        chargeServerCover(id, bucket, kept.sleeve.bytes);
+      }
+      return kept.size <= 600 ? kept.sleeve : shrinkCover(kept.sleeve, size);
+    }
+    const fetchCover = interactive ? awaited(client.coverArt(id, size)) : client.coverArt(id, size);
+    const result = await artGate(priority, () => Effect.runPromise(Effect.either(fetchCover)));
     if (Either.isLeft(result)) return null;
     if (server === client) void coverCache?.write(id, size, result.right);
     return result.right;
   })();
   sizes.set(size, wanted);
   const cover = await wanted;
-  if (!cover && sizes.get(size) === wanted) sizes.delete(size);
+  if (!cover) {
+    if (sizes.get(size) === wanted) sizes.delete(size);
+    // A cover with nothing fetched isn't kept, so missing covers don't crowd out real ones.
+    if (!sizes.size && serverCovers.get(id) === bucket) serverCovers.delete(id);
+  } else chargeServerCover(id, bucket, cover.bytes);
   return server === client ? cover : null;
 }
 function shrinkCover(cover: CoverBytes, size: number): CoverBytes {
   const image = nativeImage.createFromBuffer(Buffer.from(cover.bytes));
   if (image.isEmpty() || image.getSize().width <= size) return cover;
-  return { bytes: new Uint8Array(image.resize({ width: size, quality: 'best' }).toJPEG(90)), contentType: 'image/jpeg' };
+  return { bytes: new Uint8Array(image.resize({ width: size, quality: 'good' }).toJPEG(90)), contentType: 'image/jpeg' };
 }
 
 const alive = (target: BrowserWindow | null): target is BrowserWindow => target !== null && !target.isDestroyed();
@@ -398,14 +494,44 @@ const appWindows = () => [windows.main, windows.mini].filter(alive);
 // Hidden windows catch up when shown (see createWindow) instead of receiving 4 Hz updates, unless
 // they asked to follow while hidden (the sleep timer waiting for the song to end).
 const followingHidden = new WeakSet<WebContents>();
+// Per-window last-sent references for large snapshot fields. When unchanged, they are omitted over
+// IPC and merged back by preload with their exact previous references, avoiding 4 Hz structured
+// clones of up to 1,000 tracks. Nothing is pushed (or tracked as sent) until the window's preload
+// signals `squiggly:snapshot-ready`, so a newly created window (like the mini player) never misses
+// its initial full snapshot and then receives a partial delta. Deltas carry `delta: true`; a page
+// that gets one before any full snapshot (it was just reloaded) asks for a full one again.
+// Readiness is never cleared on `did-start-loading`: Chromium fires that for every pushState too,
+// which would stop all updates to a window after its first in-app navigation.
+const snapshotReady = new WeakSet<WebContents>();
+const sentSnapshots = new WeakMap<WebContents, { player: AppSnapshot['player']; queue: Track[]; entryIds: string[]; devices: AppSnapshot['player']['devices']; diagnostics: AppSnapshot['diagnostics'] }>();
+function sendSnapshot(target: WebContents) {
+  if (target.isDestroyed() || !snapshotReady.has(target)) return;
+  const prev = sentSnapshots.get(target);
+  const p = state.player;
+  const payload = prev ? {
+    player: p === prev.player ? undefined : {
+      ...p,
+      ...(p.queue === prev.queue ? { queue: undefined } : {}),
+      ...(p.entryIds === prev.entryIds ? { entryIds: undefined } : {}),
+      ...(p.devices === prev.devices ? { devices: undefined } : {}),
+    },
+    diagnostics: state.diagnostics === prev.diagnostics ? undefined : state.diagnostics,
+    server: state.server,
+    update: state.update,
+    delta: true as const,
+  } : state;
+  sentSnapshots.set(target, { player: p, queue: p.queue, entryIds: p.entryIds, devices: p.devices, diagnostics: state.diagnostics });
+  target.send('squiggly:snapshot', payload);
+}
 function broadcast() {
   for (const target of appWindows()) {
-    if ((target.isVisible() || followingHidden.has(target.webContents)) && !target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state);
+    if ((target.isVisible() || followingHidden.has(target.webContents)) && !target.webContents.isDestroyed()) sendSnapshot(target.webContents);
   }
 }
 // Background consumers of each native snapshot: tray, OS media controls, play reports, queue sync.
 function observePlayer() {
   const player = state.player;
+  if (!player.audio.buffering) drainArtGate();
   updateTray(); updateMedia(); updateSystemMedia();
   // Radio and autoplay need the server; they wait while it's away.
   if (!away()) void radio.topUp();
@@ -440,10 +566,12 @@ async function sendReport(trackId: string, event: 'started' | 'finished', at?: n
 }
 // Per-session state that must not carry across an account switch or disconnect.
 function resetSessionState() {
-  queueSync.reset(); plays.reset(); savedSong = null; savedQueues.clear();
+  queueSync.reset(); plays.reset(); savedSong = null; savedQueues.clear(); savedQueueRead = null;
   relay?.forget();
   warmed = null;
+  lastAhead = null;
   serverCovers.clear();
+  serverCoverTotalBytes = 0;
   artRequest = null;
   if (art) void rm(art.path, { force: true }).catch(() => undefined);
   art = null;
@@ -520,17 +648,33 @@ async function launchPlayer() {
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
     },
-    execArgv: [], windowsHide: true,
+    windowsHide: true,
     stdio: ['ignore', remote.enabled ? 'pipe' : 'ignore', output, 'ipc'],
   });
   if (process.env.SQUIGGLY_SMOKE_TEST === '1') child.stderr?.on('data', data => process.stderr.write(data));
   remote.hostSpawn(child, { execPath, script, libmpv: libmpvPath });
   host = child;
+  let cachedQueueBytes = 2;
+  const sameStrings = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((item, i) => item === b[i]);
+  const sameDevices = (a: AppSnapshot['player']['devices'], b: AppSnapshot['player']['devices']) =>
+    a.length === b.length && a.every((item, i) => item.name === b[i].name && item.description === b[i].description);
   child.on('message', (message: HostMessage) => {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
-    messages++; bytes += Buffer.byteLength(JSON.stringify(message));
+    messages++;
     if (message.type === 'snapshot') {
-      state.player = { ...message.player, radio: radio.view, autoplay: radio.observe(message.player), audio: { ...message.player.audio, sink: sinks.view(message.player.audio) } };
+      const prev = state.player;
+      const incoming = message.player;
+      const queueUnchanged = sameStrings(prev.entryIds, incoming.entryIds);
+      const devicesUnchanged = sameDevices(prev.devices, incoming.devices);
+      if (!queueUnchanged) cachedQueueBytes = Buffer.byteLength(JSON.stringify(incoming.queue)) + Buffer.byteLength(JSON.stringify(incoming.entryIds));
+      bytes += cachedQueueBytes + 400;
+      state.player = {
+        ...incoming,
+        queue: queueUnchanged ? prev.queue : incoming.queue,
+        entryIds: queueUnchanged ? prev.entryIds : incoming.entryIds,
+        devices: devicesUnchanged ? prev.devices : incoming.devices,
+        radio: radio.view, autoplay: radio.observe(incoming), audio: { ...incoming.audio, sink: sinks.view(incoming.audio) },
+      };
       hostResources = message.resources; broadcast(); observePlayer();
       remote.hostSnapshot(state.player);
       if (message.player.engine === 'crashed') {
@@ -539,6 +683,7 @@ async function launchPlayer() {
         void terminateHost(child).catch(() => undefined);
       }
     } else {
+      bytes += Buffer.byteLength(JSON.stringify(message));
       const request = pending.get(message.id);
       if (!request) return;
       clearTimeout(request.timer); pending.delete(message.id);
@@ -550,15 +695,14 @@ async function launchPlayer() {
     if (host !== child || retiredHosts.has(child) || quitting) return;
     host = null;
     rejectPending('Audio process exited.'); endRadio();
-    state.player.engine = 'crashed'; state.player.playing = false;
-    state.player.error = 'The audio process exited. Restart the audio engine to continue.';
+    // A new object, not an edit in place: windows get only a player that changed by reference (sendSnapshot).
+    state.player = { ...state.player, engine: 'crashed', playing: false, error: 'The audio process exited. Restart the audio engine to continue.' };
     broadcast(); observePlayer();
   });
   child.on('error', () => {
     if (host !== child || retiredHosts.has(child) || quitting) return;
     retiredHosts.add(child); rejectPending('Audio host could not start.'); endRadio();
-    state.player.engine = 'unavailable'; state.player.playing = false;
-    state.player.error = 'Could not start the Node audio host. Install Node 22.16+ or set SQUIGGLY_NODE_PATH to its executable.';
+    state.player = { ...state.player, engine: 'unavailable', playing: false, error: 'Could not start the Node audio host. Install Node 22.16+ or set SQUIGGLY_NODE_PATH to its executable.' };
     broadcast(); observePlayer();
   });
   broadcast();
@@ -573,8 +717,7 @@ function send(action: HostRequest['action']) {
       const id = ++sequence;
       const timer = setTimeout(() => {
         unresponsiveHosts.add(child);
-        state.player.engine = 'unavailable'; state.player.playing = false;
-        state.player.error = unresponsiveError;
+        state.player = { ...state.player, engine: 'unavailable', playing: false, error: unresponsiveError };
         rejectPending(unresponsiveError); broadcast();
       }, 8000);
       pending.set(id, { resolve, reject, timer });
@@ -683,16 +826,17 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     endRadio();
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear(); unverified = null;
-    // The answers kept switch with the client, so none of the last account's can answer for this one.
-    void answers?.bind(keyOf(candidate.baseUrl, connection.username));
+    const key = keyOf(candidate.baseUrl, connection.username);
+    // The answers, lyrics, and covers kept switch with the client (each bind takes its new folder at
+    // once), so none of the last account's can answer for this one while its kept songs are forgotten.
+    void answers?.bind(key);
+    const caches = Promise.all([lyricsCache?.bind(key), coverCache?.bind(key)]);
     const session = ++connectionGeneration; resetSessionState();
     reach.leave();
     state.server = { ...state.server, connected: true, name: hostName(candidate, info.name), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
-    const key = keyOf(candidate.baseUrl, connection.username);
     if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
-    if (keptStore) yield* Effect.promise(() => keptStore!.bind(key).catch(() => undefined));
-    if (lyricsCache) yield* Effect.promise(() => lyricsCache!.bind(key));
-    if (coverCache) yield* Effect.promise(() => coverCache!.bind(key));
+    // Bind independent per-account stores in parallel to cut startup/connect latency.
+    yield* Effect.promise(() => Promise.all([keptStore?.bind(key).catch(() => undefined), caches]));
     keptPush();
     reports?.bind(key);
     void reports?.flush();
@@ -762,12 +906,12 @@ function seekTo(seconds: number) {
 // Requests someone is waiting on: the library's answers and the server's sleeves. While any is out,
 // and for a moment after (pages ask in bursts), song downloads keep to their pace (startStreamRelay).
 let waitedOn = 0, lastWaited = 0;
-const WAITING_LINGERS_MS = 3000;
+const WAITING_LINGERS_MS = 1500;
 const someoneWaits = () => waitedOn > 0 || Date.now() - lastWaited < WAITING_LINGERS_MS;
 const awaited = <A, E, R>(task: Effect.Effect<A, E, R>) => Effect.acquireUseRelease(
   Effect.sync(() => { waitedOn++; }), () => task, () => Effect.sync(() => { waitedOn--; lastWaited = Date.now(); }));
 
-function assertSender(event: IpcMainInvokeEvent) {
+function assertSender(event: IpcMainEvent | IpcMainInvokeEvent) {
   const trusted = appWindows().some(target => event.sender === target.webContents && event.senderFrame === target.webContents.mainFrame);
   if (!trusted) throw new Error('Untrusted IPC sender.');
 }
@@ -803,12 +947,22 @@ function handle<A>(channel: string, task: (value: unknown, generation: number) =
       remote.ipcFailed(channel, `Unexpected: ${error instanceof Error ? error.stack ?? error.message : String(error)}`, performance.now() - began);
       return { ok: false, error: 'Invalid request or unexpected desktop error.' };
     }
-    finally { ipcCount--; broadcast(); }
+    finally {
+      ipcCount--;
+      // Pure reads (library, stored, kept) never mutate AppSnapshot; skip redundant broadcasts.
+      if (lane !== 'library' && lane !== 'stored' && lane !== 'kept') broadcast();
+    }
   });
 }
 
 function installHandlers() {
   ipcMain.handle('squiggly:get-snapshot', event => { assertSender(event); return state; });
+  ipcMain.on('squiggly:snapshot-ready', event => {
+    try { assertSender(event); } catch { return; }
+    snapshotReady.add(event.sender);
+    sentSnapshots.delete(event.sender);
+    sendSnapshot(event.sender);
+  });
   handle('command', value => Effect.gen(function* () {
     const command = yield* Schema.decodeUnknown(CommandSchema)(value).pipe(Effect.mapError(() => new Error('Invalid player command.')));
     if (heldNext(command.type)) return;
@@ -868,11 +1022,16 @@ function installHandlers() {
     if ((method === 'saveQueue' || method === 'savedQueue') && !settings.value.syncQueue) return yield* Effect.fail(new Error('Queue sync is turned off in Settings.'));
     const client = server;
     // The deck's Resume offer reads the saved queue; Resume may play this copy (resumeSaved).
-    if (method === 'saveQueue') savedQueues.clear();
-    const keep = method === 'savedQueue' ? savedQueues.reading(client) : null;
+    if (method === 'saveQueue') { savedQueues.clear(); savedQueueRead = null; }
+    if (method === 'savedQueue') {
+      const saved = yield* Effect.promise(() => fetchSavedQueue(client));
+      if (Either.isLeft(saved)) return yield* Effect.fail(saved.left);
+      if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
+      rememberTracks(saved.right?.tracks ?? []);
+      return saved.right;
+    }
     const result = yield* libraryCall(client, method, value);
     if (server !== client) return yield* Effect.fail(new Error('Server session changed. Refresh the library.'));
-    keep?.(result.value as SavedQueue | null);
     rememberTracks(result.tracks);
     const key = storedKey(method, value as unknown[]);
     if (key) void answers?.write(key, result.value);
@@ -972,7 +1131,7 @@ function installHandlers() {
     if (deviceChanged) yield* send({ type: 'device', id: next.outputDevice });
     yield* Effect.tryPromise({ try: () => settings.save(next), catch: () => new Error('Could not save settings. Check that the app data folder is writable.') }).pipe(
       Effect.tapError(() => exclusiveChanged ? Effect.ignore(send({ type: 'exclusive', on: previous.exclusiveOutput })) : Effect.void));
-    if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); }
+    if (!next.syncQueue) { queueSync.reset(); savedQueues.clear(); savedQueueRead = null; }
     // Songs already queued stream at the new quality from the next one on. The one playing keeps its
     // stream: switching it would start it again.
     if (next.streamQuality !== previous.streamQuality && server && host !== null && state.player.engine === 'ready') {
@@ -1132,7 +1291,7 @@ function createWindow(mini: boolean) {
     ...(process.platform === 'linux' ? { icon: iconPath } : {}),
     webPreferences: {
       preload: join(directory, '../preload/index.cjs'),
-      contextIsolation: true, nodeIntegration: false, sandbox: true,
+      contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false,
       // The preload reads the config folder's path from here, so ConfigApi.dir is ready at once.
       // Only the main window, which lives as long as the app, hosts the system media session.
       additionalArguments: [
@@ -1148,9 +1307,10 @@ function createWindow(mini: boolean) {
   remote.watchWindow(target, mini ? 'mini' : 'main');
   target.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   target.webContents.on('will-navigate', event => event.preventDefault());
-  target.on('show', () => { if (!target.webContents.isDestroyed()) target.webContents.send('squiggly:snapshot', state); });
-  // A reloaded page starts with no sleep timer.
-  target.webContents.on('did-start-loading', () => followingHidden.delete(target.webContents));
+  target.on('show', () => sendSnapshot(target.webContents));
+  // A reloaded page starts with no sleep timer. did-navigate is a new document only; in-app
+  // navigation (pushState) fires did-start-loading and did-navigate-in-page instead.
+  target.webContents.on('did-navigate', () => followingHidden.delete(target.webContents));
   // electron-vite's dev server. A packaged build only loads its own page, since this one gets the preload bridge.
   if (!app.isPackaged && process.env.ELECTRON_RENDERER_URL) void target.loadURL(process.env.ELECTRON_RENDERER_URL);
   else void target.loadFile(join(directory, '../renderer/index.html'));
@@ -1204,17 +1364,33 @@ function createMiniWindow() {
   }));
   // Closing the mini player returns to the full window rather than quitting.
   mini.on('close', event => { if (quitting) return; event.preventDefault(); showMain(); });
-  mini.on('closed', () => { clearTimeout(timer); if (windows.mini === mini) windows.mini = null; });
+  mini.on('closed', () => { clearTimeout(timer); cancelMiniIdleDestroy(); if (windows.mini === mini) windows.mini = null; });
   return mini;
+}
+let miniIdleTimer: ReturnType<typeof setTimeout> | null = null;
+const MINI_IDLE_DESTROY_MS = 15_000;
+function cancelMiniIdleDestroy() {
+  if (miniIdleTimer) { clearTimeout(miniIdleTimer); miniIdleTimer = null; }
+}
+function scheduleMiniIdleDestroy(mini: BrowserWindow) {
+  cancelMiniIdleDestroy();
+  // Destroy the hidden mini window after a brief grace period so it doesn't keep a 130+ MB
+  // Chromium renderer process resident forever once you return to the main window.
+  miniIdleTimer = setTimeout(() => {
+    miniIdleTimer = null;
+    if (!quitting && windows.mini === mini && !mini.isDestroyed() && !mini.isVisible()) mini.destroy();
+  }, MINI_IDLE_DESTROY_MS);
+  miniIdleTimer.unref?.();
 }
 function showMain() {
   const main = alive(windows.main) ? windows.main : createMainWindow();
   if (main.isMinimized()) main.restore();
   main.show(); main.focus();
-  if (alive(windows.mini)) windows.mini.hide();
+  if (alive(windows.mini)) { windows.mini.hide(); scheduleMiniIdleDestroy(windows.mini); }
 }
 function toggleMini() {
   if (alive(windows.mini) && windows.mini.isVisible()) { showMain(); return; }
+  cancelMiniIdleDestroy();
   const mini = alive(windows.mini) ? windows.mini : createMiniWindow();
   mini.show();
   if (alive(windows.main)) windows.main.hide();
@@ -1281,7 +1457,7 @@ async function fetchArt(coverArt: string, directory: string) {
   // A server's cover belongs to that session; a local one to no session.
   const client = isLocalCover(coverArt) ? null : server;
   const stale = () => artRequest !== coverArt || (client !== null && server !== client);
-  const cover = await metrics.measure('shell.media-art', Effect.promise(() => coverBytes(coverArt, 512))).pipe(Effect.runPromise);
+  const cover = await metrics.measure('shell.media-art', Effect.promise(() => coverBytes(coverArt, 600, 'high'))).pipe(Effect.runPromise);
   if (!cover || stale()) return;
   const extension = cover.contentType.split('/')[1]?.replace(/[^a-z0-9]/g, '') || 'img';
   const path = join(directory, `cover-${++artFiles}.${extension}`);
@@ -1319,13 +1495,26 @@ function applyMediaKeys() {
 // no session and the media keys come here instead. With nothing loaded, the session shows the song
 // saved on the server, paused, so a play key right after connecting resumes it.
 let savedSong: { track: Track; position: number } | null = null;
+// Deduplicate concurrent savedQueue reads at launch between loadSavedSong() and the renderer's Resume offer.
+let savedQueueRead: { client: SubsonicClient; at: number; promise: Promise<Either.Either<SavedQueue | null, Error>> } | null = null;
+function fetchSavedQueue(client: SubsonicClient, metric?: string): Promise<Either.Either<SavedQueue | null, Error>> {
+  const existing = savedQueueRead;
+  if (existing && existing.client === client && performance.now() - existing.at < 5_000) return existing.promise;
+  const keep = savedQueues.reading(client);
+  const task = metric ? metrics.measure(metric, semaphores.sync.withPermits(1)(client.savedQueue())) : client.savedQueue();
+  const promise = Effect.runPromise(Effect.either(task)).then(result => {
+    if (Either.isRight(result) && server === client) keep(result.right);
+    else if (savedQueueRead?.promise === promise) savedQueueRead = null;
+    return result;
+  });
+  savedQueueRead = { client, at: performance.now(), promise };
+  return promise;
+}
 async function loadSavedSong(client: SubsonicClient) {
   savedSong = null;
   if (process.platform === 'linux' || !settings.value.syncQueue || away()) return;
-  const keep = savedQueues.reading(client);
-  const saved = await Effect.runPromise(Effect.either(metrics.measure('shell.saved-song', semaphores.sync.withPermits(1)(client.savedQueue()))));
+  const saved = await fetchSavedQueue(client, 'shell.saved-song');
   if (Either.isLeft(saved) || server !== client) return;
-  keep(saved.right);
   if (!saved.right?.tracks.length) return;
   const track = saved.right.tracks[Math.min(Math.max(0, Math.trunc(saved.right.currentIndex) || 0), saved.right.tracks.length - 1)];
   savedSong = { track, position: Number.isFinite(saved.right.positionSeconds) ? Math.max(0, saved.right.positionSeconds) : 0 };
@@ -1351,7 +1540,7 @@ function updateSystemMedia() {
     position: saved ? saved.position : p.position, playing: saved ? false : p.playing,
   } : null;
   const expected = systemMediaClock.position + (systemMediaClock.playing ? (now - systemMediaClock.at) / 1000 : 0);
-  const key = next ? JSON.stringify({ ...next, position: 0 }) : '';
+  const key = next ? `${next.index}\0${next.entryId}\0${next.trackId}\0${next.title}\0${next.album}\0${next.artist}\0${next.coverArt ?? ''}\0${next.duration}\0${next.playing ? 1 : 0}` : '';
   if (key === systemMediaKey && (!next || Math.abs(next.position - expected) <= 1.5)) return;
   systemMediaKey = key;
   systemMediaClock = { position: next?.position ?? 0, at: now, playing: next?.playing ?? false };
@@ -1378,26 +1567,30 @@ app.whenReady().then(async () => {
   settings = new JsonStore(join(userData, 'settings.json'), SettingsFileSchema, defaultSettings());
   windowState = new JsonStore(join(userData, 'window-state.json'), WindowStateSchema, {});
   account = new Account(join(userData, 'account.json'), safeStorage);
-  await Promise.all([settings.load(), windowState.load(), account.load()]);
   playModes = new JsonStore(join(userData, 'play-modes.json'), PlayModesSchema, playModes.value);
-  await playModes.load();
-  relay = await startStreamRelay(fetch, {
-    cacheDir: join(userData, 'song-cache'),
-    // While someone waits on a page or a sleeve: half a minute at once, then twice as fast as it
-    // plays, so a song can't run dry and a slow connection keeps room for them. Otherwise, full speed.
-    pace: { leadSeconds: 30, speed: 2, when: someoneWaits },
-    onEvent: ({ name, ...data }) => remote.event(name, { ...data }, name === 'stream.failed'),
-  }).catch(() => null);
-  state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
-  // What is kept, and plays waiting, are read before reconnecting: they decide whether the app
-  // opens away when the server doesn't answer.
   keptStore = new KeptStore(join(userData, 'kept'));
   lyricsCache = new LyricsCache(join(userData, 'lyrics'));
   coverCache = new CoverCache(join(userData, 'covers'));
   answers = new AnswerStore(join(userData, 'library'), app.getVersion());
-  await keptStore.load().catch(() => undefined);
   playsStore = new JsonStore(join(userData, 'plays.json'), PlaysFileSchema, playsStore.value, { maxBytes: 256 * 1024, compact: true });
-  await playsStore.load();
+  const [, , , , , , startedRelay] = await Promise.all([
+    settings.load(),
+    windowState.load(),
+    account.load(),
+    playModes.load(),
+    keptStore.load().catch(() => undefined),
+    playsStore.load(),
+    startStreamRelay(fetch, {
+      cacheDir: join(userData, 'song-cache'),
+      // While someone waits on a page or a sleeve: 12 seconds at once, then twice as fast as it
+      // plays, so a song can't run dry and a slow connection keeps room for them; background
+      // prefetch yields while someone waits. Otherwise, full speed.
+      pace: { leadSeconds: 12, speed: 2, when: someoneWaits },
+      onEvent: ({ name, ...data }) => remote.event(name, { ...data }, name === 'stream.failed'),
+    }).catch(() => null),
+  ]);
+  relay = startedRelay;
+  state.server = { ...state.server, saved: account.saved, canRemember: account.canRemember };
   reports = new PlayReports({
     send: sendReport, away, failed: () => reach.failed(),
     load: () => playsStore.value, save: value => { void playsStore.save({ version: 1, ...value }).catch(() => undefined); },
@@ -1411,8 +1604,7 @@ app.whenReady().then(async () => {
     cover: async id => {
       const client = server;
       if (!client) return null;
-      const result = await Effect.runPromise(Effect.either(semaphores.art.withPermits(1)(client.coverArt(id, 600))));
-      return Either.isRight(result) ? result.right : null;
+      return serverCover(client, id, 600, 'normal', false);
     },
     known: id => knownTracks.get(id),
     limitBytes: () => settings.value.keptLimitMb * MB,
@@ -1438,6 +1630,8 @@ app.whenReady().then(async () => {
   let sampledAt = performance.now();
   const timer = setInterval(() => {
     const now = performance.now(); const seconds = (now - sampledAt) / 1000; sampledAt = now;
+    const anyVisible = appWindows().some(target => target.isVisible());
+    if (!anyVisible && !remote.live) { messages = 0; bytes = 0; loop.reset(); return; }
     state.diagnostics = {
       ...state.diagnostics, uptimeSeconds: (now - started) / 1000,
       playerMessagesPerSecond: messages / seconds, playerBytesPerSecond: bytes / seconds,
@@ -1448,7 +1642,8 @@ app.whenReady().then(async () => {
       })), ...(host ? [{ name: 'Native audio host', ...hostResources }] : [])],
       operations: metrics.snapshot(),
     };
-    messages = 0; bytes = 0; loop.reset(); broadcast();
+    messages = 0; bytes = 0; loop.reset();
+    if (anyVisible) broadcast();
   }, 1000);
   app.on('before-quit', event => {
     event.preventDefault();

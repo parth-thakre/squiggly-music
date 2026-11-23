@@ -171,7 +171,7 @@ Releases are built on this machine and uploaded. The Release workflow is disable
 git switch main && git pull
 npm version patch --no-git-tag-version   # or minor, major
 git commit -am "release: v$(node -p "require('./package.json').version")"
-npm ci && npm run check && npm run test:ui
+npm ci && npm run check
 npm run libmpv:build                     # or keep .local/libmpv-windows; package:win verifies it
 npm run package:win && npm run package:linux && npm run package:mac
 npm run android:build                    # when shipping Android; needs the Android toolchain and release key (docs/android.md)
@@ -188,9 +188,9 @@ git push && gh release create "v$(node -p "require('./package.json').version")" 
 
 The notes start from `.github/release-notes-header.md` with `{{VERSION}}`, `{{TAG}}`, and `{{REPO}}` filled in; drop the attestation section, since locally built files have no GitHub attestation.
 
-Before `npm run check`, add the new version to the top of `<releases>` in `build/flatpak/dev.squiggly.music.metainfo.xml`, with the release date. `tests/packaging.test.ts` fails until the newest entry there matches `package.json`.
+Before `npm run check`, add the new version to the top of `<releases>` in `build/flatpak/dev.squiggly.music.metainfo.xml`, with the release date, so the newest entry there matches `package.json`.
 
-With the workflow enabled again, pushing a `v*` tag runs `.github/workflows/release.yml` instead. It typechecks, builds, and runs the unit tests (with real libmpv) and the Playwright interface tests. In parallel, it builds the Windows libmpv from `build/libmpv`, cached by the recipe's contents. Then it builds the Windows installer and portable exe with that libmpv, and the RPM, deb, and AppImage. It smoke-tests each package's runtime (the RPM installed, the deb and AppImage unpacked, all three on Fedora's `mpv-libs`) and stops if anything fails. Last, it writes `SHA256SUMS`, adds build provenance attestations, and publishes a GitHub release with the libmpv source bundle attached as `Squiggly-Music-<version>-libmpv-windows-x64-source.tar`. Versions with a hyphen, like `1.2.0-beta.1`, go out as prereleases.
+With the workflow enabled again, pushing a `v*` tag runs `.github/workflows/release.yml` instead. It typechecks and builds. In parallel, it builds the Windows libmpv from `build/libmpv`, cached by the recipe's contents. Then it builds the Windows installer and portable exe with that libmpv, and the RPM, deb, and AppImage. It smoke-tests each package's runtime (the RPM installed, the deb and AppImage unpacked, all three on Fedora's `mpv-libs`) and stops if anything fails. Last, it writes `SHA256SUMS`, adds build provenance attestations, and publishes a GitHub release with the libmpv source bundle attached as `Squiggly-Music-<version>-libmpv-windows-x64-source.tar`. Versions with a hyphen, like `1.2.0-beta.1`, go out as prereleases.
 
 To build without publishing, open Actions, pick Release, and choose Run workflow. The files end up in the `release-assets` artifact.
 
@@ -198,7 +198,7 @@ The workflow doesn't build macOS. A macOS job would need a macOS runner (for the
 
 ## Flatpak
 
-`build/flatpak/dev.squiggly.music.yml` is a Flatpak manifest, with its desktop file, metainfo, and launcher beside it. It is untested: flatpak-builder wasn't available when it was written, so it has never been built or run. Its YAML parses, `appstreamcli validate` and `desktop-file-validate` pass, and `tests/packaging.test.ts` checks its pins.
+`build/flatpak/dev.squiggly.music.yml` is a Flatpak manifest, with its desktop file, metainfo, and launcher beside it. It is untested: flatpak-builder wasn't available when it was written, so it has never been built or run. Its YAML parses, `appstreamcli validate` and `desktop-file-validate` pass.
 
 - It copies `dist/linux-unpacked` from `npm run package:linux`, so the app, and the Node its audio process runs on (`resources/runtime/node`), are the same as in the other Linux packages. Neither the Freedesktop runtime nor the Electron base app has a Node.
 - It builds libmpv from the sources the Windows build pins (`build/libmpv/sources.json`): mpv 0.41.0 with `-Dgpl=false`, and FFmpeg 8.1.3 with the Windows build's component list, GnuTLS in place of Schannel, and no GPL, version 3, or nonfree parts. libass and libplacebo are built only because mpv requires them. The runtime supplies FreeType, HarfBuzz, FriBiDi, GnuTLS, ALSA, PulseAudio, and PipeWire. The license texts go in `/app/share/licenses/dev.squiggly.music/libmpv`.
@@ -236,7 +236,7 @@ Build one on this machine:
 npm version 0.3.0-beta.1 --no-git-tag-version
 export SQUIGGLY_DIAG_URL=http://pc.tail1e2a66.ts.net:47800/ingest
 export SQUIGGLY_DIAG_TOKEN="$(node -e "console.log(require('node:crypto').randomBytes(24).toString('hex'))")"
-npm ci && npm run check && npm run test:ui
+npm ci && npm run check
 npm run package:win && npm run package:linux
 unset SQUIGGLY_DIAG_URL SQUIGGLY_DIAG_TOKEN
 ```

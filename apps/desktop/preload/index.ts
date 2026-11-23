@@ -107,8 +107,29 @@ const kept: KeptApi = {
 const bridge: DesktopBridge = {
   snapshot: () => ipcRenderer.invoke('squiggly:get-snapshot'),
   subscribe: listener => {
-    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot) => listener(snapshot);
+    let last: AppSnapshot | null = null;
+    // A delta (main/index.ts sendSnapshot) omits what didn't change; it can only be merged onto a
+    // full snapshot this page already has. Without one, ask main for a full snapshot instead.
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: AppSnapshot & { delta?: true }) => {
+      if (snapshot.delta && !last) {
+        ipcRenderer.send('squiggly:snapshot-ready');
+        return;
+      }
+      const merged: AppSnapshot = snapshot.delta && last ? {
+        ...snapshot,
+        diagnostics: snapshot.diagnostics ?? last.diagnostics,
+        player: snapshot.player ? {
+          ...snapshot.player,
+          queue: snapshot.player.queue ?? last.player.queue,
+          entryIds: snapshot.player.entryIds ?? last.player.entryIds,
+          devices: snapshot.player.devices ?? last.player.devices,
+        } : last.player,
+      } : snapshot;
+      last = merged;
+      listener(merged);
+    };
     ipcRenderer.on('squiggly:snapshot', handler);
+    ipcRenderer.send('squiggly:snapshot-ready');
     return () => ipcRenderer.removeListener('squiggly:snapshot', handler);
   },
   onPlayReported: listener => listen<PlayReported>('squiggly:play-reported', listener),
