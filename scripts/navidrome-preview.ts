@@ -454,6 +454,7 @@ async function fetchCachedCover(client: SubsonicClient, id: string, requested: n
   let bucket = store.map.get(id);
   if (!bucket) bucket = { sizes: new Map(), bytes: 0 };
   store.map.delete(id); store.map.set(id, bucket);
+  evictPreviewCovers(store);
   const exact = bucket.sizes.get(size);
   if (exact) {
     const found = await exact;
@@ -474,19 +475,23 @@ async function fetchCachedCover(client: SubsonicClient, id: string, requested: n
   const cover = await pending;
   if (!cover) {
     if (bucket.sizes.get(size) === pending) bucket.sizes.delete(size);
+    if (!bucket.sizes.size && store.map.get(id) === bucket) store.map.delete(id);
     return Either.left(failure ?? new Error('Cover art is not available.'));
   }
   if (store.map.get(id) === bucket) {
     bucket.bytes += cover.bytes.byteLength;
     store.totalBytes += cover.bytes.byteLength;
-    while (store.map.size > PREVIEW_COVERS || store.totalBytes > PREVIEW_COVER_BYTES) {
-      const oldest = store.map.entries().next().value;
-      if (!oldest) break;
-      store.map.delete(oldest[0]);
-      store.totalBytes = Math.max(0, store.totalBytes - oldest[1].bytes);
-    }
+    evictPreviewCovers(store);
   }
   return Either.right(cover);
+}
+function evictPreviewCovers(store: { map: Map<string, CoverBucket>; totalBytes: number }) {
+  while (store.map.size > PREVIEW_COVERS || store.totalBytes > PREVIEW_COVER_BYTES) {
+    const oldest = store.map.entries().next().value;
+    if (!oldest) break;
+    store.map.delete(oldest[0]);
+    store.totalBytes = Math.max(0, store.totalBytes - oldest[1].bytes);
+  }
 }
 
 async function sendCover(client: SubsonicClient, response: ServerResponse, searchParams: URLSearchParams) {

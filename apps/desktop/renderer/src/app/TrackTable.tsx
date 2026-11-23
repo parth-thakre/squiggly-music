@@ -83,9 +83,10 @@ export function TrackTable({
   // Filled with the list's move (Mover).
   mover?: { current: Mover | null };
 }) {
-  const theme = useActiveTheme();
+  useActiveTheme();
   const twoLine = useMemo(() => bookIndex || leadingCover || showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist, bookIndex, leadingCover, showAlbum]);
-  const ROW = useMemo(() => rowHeight(twoLine), [twoLine, theme]);
+  // Read each render, not memoized: the theme sets the density after this renders.
+  const ROW = rowHeight(twoLine);
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);
   const playing = usePlayer(s => s.playing);

@@ -225,7 +225,7 @@ const queueSync = new QueueSync((saved, generation) => {
 function rememberTracks(tracks: readonly Track[]) {
   for (const track of tracks) {
     knownTracks.delete(track.id); knownTracks.set(track.id, track);
-    if (knownTracks.size > 8_000) knownTracks.delete(knownTracks.keys().next().value!);
+    if (knownTracks.size > 20_000) knownTracks.delete(knownTracks.keys().next().value!);
   }
 }
 
@@ -431,13 +431,25 @@ function evictServerCovers() {
     serverCoverTotalBytes = Math.max(0, serverCoverTotalBytes - first[1].bytes);
   }
 }
+// Counts a sleeve's bytes against the budget, unless its cover was evicted meanwhile.
+function chargeServerCover(id: string, bucket: { bytes: number }, bytes: number) {
+  if (serverCovers.get(id) !== bucket) return;
+  bucket.bytes += bytes;
+  serverCoverTotalBytes += bytes;
+  evictServerCovers();
+}
 async function serverCover(client: SubsonicClient, id: string, size: number, priority: 'high' | 'normal', interactive = true): Promise<CoverBytes | null> {
   let bucket = serverCovers.get(id);
   if (!bucket) bucket = { sizes: new Map(), bytes: 0 };
   serverCovers.delete(id); serverCovers.set(id, bucket);
+  evictServerCovers();
   const { sizes } = bucket;
   const exact = sizes.get(size);
-  if (exact) return server === client ? await exact : null;
+  if (exact) {
+    const found = await exact;
+    // Checked after the wait: a sign-out while it was fetching keeps it from the next account.
+    return server === client ? found : null;
+  }
   const larger = [...sizes.keys()].filter(have => have > size).sort((a, b) => a - b)[0];
   if (larger !== undefined) {
     const from = await sizes.get(larger)!;
@@ -447,7 +459,10 @@ async function serverCover(client: SubsonicClient, id: string, size: number, pri
   const wanted: Promise<CoverBytes | null> = (async () => {
     const kept = await coverCache?.readAtLeast(id, size);
     if (kept) {
-      if (kept.size > size && !sizes.has(kept.size)) sizes.set(kept.size, Promise.resolve(kept.sleeve));
+      if (kept.size > size && !sizes.has(kept.size)) {
+        sizes.set(kept.size, Promise.resolve(kept.sleeve));
+        chargeServerCover(id, bucket, kept.sleeve.bytes.byteLength);
+      }
       return kept.size <= 600 ? kept.sleeve : shrinkCover(kept.sleeve, size);
     }
     const fetchCover = interactive ? awaited(client.coverArt(id, size)) : client.coverArt(id, size);
@@ -460,11 +475,9 @@ async function serverCover(client: SubsonicClient, id: string, size: number, pri
   const cover = await wanted;
   if (!cover) {
     if (sizes.get(size) === wanted) sizes.delete(size);
-  } else if (serverCovers.get(id) === bucket) {
-    bucket.bytes += cover.bytes.byteLength;
-    serverCoverTotalBytes += cover.bytes.byteLength;
-    evictServerCovers();
-  }
+    // A cover with nothing fetched isn't kept, so missing covers don't crowd out real ones.
+    if (!sizes.size && serverCovers.get(id) === bucket) serverCovers.delete(id);
+  } else chargeServerCover(id, bucket, cover.bytes.byteLength);
   return server === client ? cover : null;
 }
 function shrinkCover(cover: CoverBytes, size: number): CoverBytes {
@@ -811,12 +824,13 @@ function adopt(candidate: SubsonicClient, info: { name: string }, connection: Co
     if (server) yield* send({ type: 'clear-session' });
     server = candidate; knownTracks.clear(); unverified = null;
     const key = keyOf(candidate.baseUrl, connection.username);
+    // The answers kept switch with the client, so none of the last account's can answer for this one.
+    void answers?.bind(key);
     const session = ++connectionGeneration; resetSessionState();
     reach.leave();
     state.server = { ...state.server, connected: true, name: hostName(candidate, info.name), sessionId: randomUUID(), account: `${candidate.baseUrl}\n${connection.username}`, reconnectError: null };
     if (keptStore && keeper && keptStore.account !== null && keptStore.account !== key) yield* Effect.promise(() => keeper!.forgetAll());
     // Bind independent per-account stores in parallel to cut startup/connect latency.
-    void answers?.bind(key);
     yield* Effect.promise(() => Promise.all([
       keptStore?.bind(key).catch(() => undefined),
       lyricsCache?.bind(key),

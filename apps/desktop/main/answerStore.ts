@@ -95,9 +95,11 @@ export class AnswerStore {
       return;
     }
     const file = join(folder, fileName);
-    await writeAtomic(file, text).catch(() => undefined);
+    const written = await writeAtomic(file, text).then(() => true, () => false);
     // Signed out or switched accounts while writing: it isn't this account's to keep.
     if (folder !== this.folder) { await rm(file, { force: true }).catch(() => undefined); return; }
+    // A failed write (a full disk) records no hash, so the same answer is written again next time.
+    if (!written) { this.rememberHot(fileName, value); return; }
     this.files?.add(fileName);
     this.hashes.set(fileName, hash);
     this.rememberHot(fileName, value);
