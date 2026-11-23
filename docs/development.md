@@ -30,23 +30,11 @@ SQUIGGLY_LIBMPV_PATH="$PWD/.local/runtime/usr/lib64/libmpv.so.2" \
 LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run dev
 ```
 
-## Tests
+## Checks
 
-`npm run check` typechecks, builds, and runs every Vitest suite. `npm run test:source` skips the build, which is quicker while editing, but `tests/native.test.ts` forks the built `out/main/player.js`. After changing `packages/player-mpv`, build first or that test runs stale code.
+`npm run check` typechecks and builds. To see what the sound server says on your machine, play something and open the Diagnostics page. Don't set `SQUIGGLY_TEST_NULL_AUDIO=1` for listening: it sends audio to mpv's null output, for the packaged smoke checks only.
 
-`tests/sinks.test.ts` reads recorded `pw-dump` and `pactl` output (`tests/sinkFixtures.ts`) and never runs the real tools. To see what the sound server says on your machine, play something and open the Diagnostics page.
-
-The native decoding tests skip unless `SQUIGGLY_LIBMPV_PATH` is set. They decode generated PCM to mpv's null output, so they never touch a real DAC. Don't set `SQUIGGLY_TEST_NULL_AUDIO=1` for listening. It silences output on purpose.
-
-`npm run test:ui` builds the browser version and drives it in Chromium against a fake Navidrome with generated covers and audio. It runs desktop and phone layouts. The same run loads the website (`site/`) with a faked GitHub release (`tests/ui/site`). It checks the download buttons, so that a Mac whose browser can't say its CPU, as in Safari and Firefox, gets a button for Apple silicon and one for Intel, and that the download list keeps what each file needs.
-
-The Android app's pure parts run with the rest: `tests/androidQueue.test.ts` checks how the page's queue is mirrored to the native player. [android.md](android.md) covers the emulator.
-
-Keeping songs and offline mode have their own suites. `tests/kept-store.test.ts` and `tests/kept-manager.test.ts` run the desktop's kept index and downloads against real temporary folders and a fake server. `tests/kept-validation.test.ts` checks the index's shape against `tests/fixtures/kept-index.json`, which is also the Android app's. `tests/reach.test.ts` covers when the app decides the server is out of reach and when it comes back, `tests/reports.test.ts` the plays that wait meanwhile, and `tests/offline.test.ts` the pages it shows and the browser build's calls. In `npm run test:ui`, `kept.spec.ts` drives the interface against a fake main process in the page (`installDesktopBridge` with `server` and `kept`), and `offline-web.spec.ts` the browser build's real host with `fake.unreachable` set.
-
-`npm run test:desktop` starts the real Electron app and checks the preload bridge and process isolation. It needs Electron's own binary and a display (a graphical session, or Xvfb on Linux), so it can't run on a machine without either. `npm run smoke:packaged -- <executable>` does the same for a packaged build; [packaging.md](packaging.md) has the details. `tests/packagedSmoke.test.ts` runs that script against a stand-in app whose page crashes, stalls, or reloads, and checks it still fails in time and deletes its profile.
-
-`tests/packaging.test.ts` checks the Linux packaging config: the RPM, deb, and AppImage targets, their libmpv dependencies, and the Flatpak manifest's pins against `build/libmpv/sources.json`.
+`npm run smoke:packaged -- <executable>` starts a packaged build and checks its preload bridge and process isolation; [packaging.md](packaging.md) has the details.
 
 ## Limits
 

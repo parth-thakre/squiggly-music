@@ -62,7 +62,6 @@ export class KeepManager {
   private active = new Set<Promise<void>>();
   private inFlightBytes = new Map<string, number>();
   private pending = new Map<string, Orphan>();
-  private waiters: (() => void)[] = [];
   private readonly concurrency: number;
   private readonly now: () => number;
 
@@ -156,7 +155,6 @@ export class KeepManager {
     for (const controller of job.controllers) controller.abort();
     job.songs = []; job.covers = [];
     this.jobs = this.jobs.filter(j => j !== job);
-    this.settle();
   }
 
   async forget(kind: KeepKind, id: string): Promise<Result> {
@@ -212,29 +210,17 @@ export class KeepManager {
     await Promise.allSettled([...this.active]);
     await this.d.store.flush().catch(() => undefined);
   }
-  // Resolves when nothing is being fetched. For tests.
-  idle(): Promise<void> {
-    if (!this.active.size && !this.runnable()) return Promise.resolve();
-    return new Promise(resolve => this.waiters.push(resolve));
-  }
-  private settle() {
-    if (this.active.size || this.runnable()) return;
-    const waiters = this.waiters; this.waiters = [];
-    waiters.forEach(resolve => resolve());
-  }
-  private runnable() { return this.jobs.some(job => job.state !== 'paused' && job.state !== 'stopped' && (job.songs.some(t => !this.downloading.has(t)) || (!job.songs.length && job.covers.length))); }
 
   // The queue: the first job with work, song by song, then its covers.
   private pump() {
     while (this.active.size < this.concurrency) {
       const next = this.next();
       if (!next) break;
-      const task = next.run().finally(() => { next.job.working--; this.active.delete(task); this.finishJobs(); this.pump(); this.settle(); });
+      const task = next.run().finally(() => { next.job.working--; this.active.delete(task); this.finishJobs(); this.pump(); });
       next.job.working++;
       this.active.add(task);
     }
     this.finishJobs();
-    this.settle();
   }
   private next(): { job: Job; run: () => Promise<void> } | null {
     for (const job of this.jobs) {

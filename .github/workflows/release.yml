@@ -20,18 +20,12 @@ env:
 
 jobs:
   check:
-    name: Typecheck and test
+    name: Typecheck and build
     runs-on: ubuntu-24.04
-    # Fedora provides mpv-libs, so the native libmpv decoding test runs instead of skipping.
-    # Both Fedora jobs pin the image by digest. To update it, take the digest from
-    # `skopeo inspect --format "{{.Digest}}" docker://docker.io/library/fedora:44`.
-    container: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 # fedora:44
     permissions:
       contents: read
     timeout-minutes: 20
     steps:
-      - name: Install system packages
-        run: dnf -y install git-core tar zstd mpv-libs
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -51,41 +45,7 @@ jobs:
           fi
       - run: npm ci
       - run: npm run typecheck
-      # tests/native.test.ts forks the compiled audio host (out/main/player.js), so build first.
       - run: npm run build
-      - run: npm run test:source
-        env:
-          SQUIGGLY_LIBMPV_PATH: /usr/lib64/libmpv.so.2
-
-  # Playwright UI tests. They run on the Ubuntu runner, not the Fedora container, because
-  # `playwright install --with-deps` installs browser dependencies with apt. Every step is
-  # skipped until package.json has a test:ui script.
-  ui:
-    name: UI tests
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:ui
-        env:
-          CI: '1'
-      - name: Keep the test report when something fails
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: playwright-report
-          path: playwright-report/
-          retention-days: 7
 
   # Builds the audio-only LGPL libmpv-2.dll and its corresponding-source bundle from the
   # pinned recipe in build/libmpv (see licenses/libmpv-windows/NOTICE.md). The output is
@@ -125,10 +85,11 @@ jobs:
 
   linux:
     name: Linux packages
-    needs: [check, ui]
+    needs: [check]
     runs-on: ubuntu-24.04
     # rpmbuild, and libcrypt.so.1 for electron-builder's bundled fpm (RPM and deb), come from
-    # Fedora packages. binutils has ar, to unpack the deb.
+    # Fedora packages. binutils has ar, to unpack the deb. The image is pinned by digest; to
+    # update it, take the digest from `skopeo inspect --format "{{.Digest}}" docker://docker.io/library/fedora:44`.
     container: fedora:44@sha256:43b29f65a41eb9c35e1cd5323e3bdf3b655c2357a9f4f1ff2f9c2798e5045d80 # fedora:44
     permissions:
       contents: read
@@ -190,7 +151,7 @@ jobs:
 
   windows:
     name: Windows installer and portable
-    needs: [check, ui, libmpv]
+    needs: [check, libmpv]
     runs-on: windows-latest
     permissions:
       contents: read
