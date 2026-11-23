@@ -83,10 +83,13 @@ export function TrackTable({
   // Filled with the list's move (Mover).
   mover?: { current: Mover | null };
 }) {
-  useActiveTheme();
+  const theme = useActiveTheme();
   const twoLine = useMemo(() => bookIndex || leadingCover || showAlbum || tracks.some(t => t.artist !== albumArtist), [tracks, albumArtist, bookIndex, leadingCover, showAlbum]);
-  // Read each render, not memoized: the theme sets the density after this renders.
   const ROW = rowHeight(twoLine);
+  // A new theme sets its density in a layout effect (transport.tsx) after this has rendered; read
+  // the height again once it has (passive effects run after every layout effect), so rows don't overlap.
+  const [, reread] = useState(0);
+  useEffect(() => { if (rowHeight(twoLine) !== ROW) reread(n => n + 1); }, [theme, twoLine, ROW]);
   const nowId = usePlayer(s => current(s)?.id);
   const nowIndex = usePlayer(s => s.index);
   const playing = usePlayer(s => s.playing);
