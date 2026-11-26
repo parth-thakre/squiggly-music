@@ -39,6 +39,7 @@ import { Account } from './account';
 import { initialUpdateState, Updates } from './updates';
 import { AUDIO_EXTENSIONS, checkAudioPaths, isLocalCover, readLocalCover } from './localFiles';
 import { localLocation, openLocalFiles, withLocalPaths } from './localPaths';
+import { withAdds } from './restoreQueue';
 import { configDirectory } from './config';
 import { startConfigFolder } from './configBridge';
 import { extensionScheme, startExtensions } from './extensions/electron';
@@ -817,17 +818,11 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
     const position = !same || kept[at].item.track.source === 'station' ? 0 : before.position;
-    // Songs added while the engine started went into its empty queue, which this one replaces: they
-    // come along in it, in their order, after the song playing (Play next) or at the end. Any added
-    // after this goes out reach the engine after it. Past the queue's limit, the deck says so.
-    const tracks = kept.map(({ item }) => item);
-    for (const add of added) {
-      if (add.where === 'next') tracks.splice(at + 1, 0, ...add.tracks); else tracks.push(...add.tracks);
-    }
-    const over = tracks.length - QUEUE_LIMIT;
-    if (over > 0) tracks.length = QUEUE_LIMIT;
+    // Songs added while the engine started come along in it (restoreQueue.ts); any added after this
+    // goes out reach the engine after it. Those past the queue's limit, the deck names.
+    const { queue: tracks, left } = withAdds(kept.map(({ item }) => item), at, added, QUEUE_LIMIT);
     yield* send({ type: 'queue', tracks, startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
-    if (over > 0) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
+    if (left) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
     return true;
   }).pipe(Effect.ensuring(Effect.sync(() => { addedDuringRelaunch = null; })));
 }

@@ -614,9 +614,10 @@ export const remote = new RemoteDiagnostics({
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
 
-// What's sent of a song: its id and its audio, never names (a station's may be its address).
+// What's sent of a song: its id and its audio, never names. A station's name and id come from the
+// server as its administrators entered them, and either may be its address, so neither is sent.
 const trackFacts = (track: Track | undefined) => track
-  ? { id: track.id, source: track.source, format: track.sourceFormat, sampleRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth, duration: track.duration } : null;
+  ? { id: track.source === 'station' ? null : track.id, source: track.source, format: track.sourceFormat, sampleRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth, duration: track.duration } : null;
 
 // A log line cut at its first address, kept up to its ://. A host given a station sends no log at
 // all; this keeps the relay's addresses out as well, and anything else that names one. What libmpv
