@@ -296,9 +296,12 @@ export function SungLine({ track }: { track: Track }) {
     if (!element) return;
     // The row may be shorter than its lines when the window is too short for every line (app.css):
     // then fewer show, or none.
+    // The lines' own box gets as many lines as show (--lines), so a line still sits in the middle.
     const trim = () => {
       const fit = Math.floor((element.clientHeight + 2) / parseFloat(getComputedStyle(element).lineHeight));
+      const room = parseFloat(getComputedStyle(element.parentElement ?? element).getPropertyValue('--lines')) || 1;
       element.style.visibility = fit > 0 ? '' : 'hidden';
+      element.style.setProperty('--lines', String(Math.max(1, Math.min(room, fit))));
       for (const each of element.children) hideOverflow(each as HTMLElement, fit);
     };
     trim();

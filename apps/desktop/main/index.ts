@@ -111,9 +111,9 @@ const RECOVERY_WINDOW_MS = 10 * 60_000;
 const recoveries: number[] = [];
 // When the current host last sent anything (performance.now()).
 let heardAt = 0;
-// Counts the queues sent to a host and the songs added to one, so a replacement (relaunch) doesn't
-// put back an old queue over what was sent meanwhile from another lane (a record played while it
-// was starting).
+// Counts the queues sent to a host, so a replacement (relaunch) doesn't put back an old queue over
+// one sent meanwhile from another lane (a record played while it was starting). Songs added
+// meanwhile don't count: they'd cost the whole queue its return, so they go with the old host's.
 let queuesSent = 0;
 // How late a timer may fire before this process counts as held up too (the computer slept, or
 // main was busy): the host then gets a fresh wait instead of the blame.
@@ -742,7 +742,7 @@ function send(action: HostRequest['action']) {
       if (child && unresponsiveHosts.has(child)) return reject(new Error(unresponsiveError));
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
-      if (action.type === 'queue' || action.type === 'queue-add') queuesSent++;
+      if (action.type === 'queue') queuesSent++;
       let due = performance.now() + 8000;
       const expire = () => {
         const request = pending.get(id);
@@ -792,14 +792,16 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     if ((host !== replacing && host !== null) || quitting) return false;
     const sent = queuesSent;
     yield* Effect.tryPromise({ try: () => launchPlayer(), catch: error => error instanceof Error ? error : new Error('The audio engine could not restart.') });
-    if (quitting || !host) return true;
+    if (quitting) return true;
+    if (!host) return yield* Effect.fail(new Error('The audio engine could not restart.'));
     if (before.volume !== 100) yield* send({ type: 'volume', percent: before.volume });
     const client = generation === connectionGeneration ? server : null;
     const items = yield* Effect.forEach(before.queue, (track, index) => track.source === 'local'
       ? Effect.succeed({ index, item: localPlayable(track) })
       : client ? playableOf(client, track).pipe(Effect.map(item => ({ index, item })), Effect.orElseSucceed(() => ({ index, item: null }))) : Effect.succeed({ index, item: null }));
     const kept = items.flatMap(({ index, item }) => item ? [{ index, item }] : []);
-    if (!kept.length || queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return true;
+    if (queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return true;
+    if (!kept.length) return before.queue.length ? yield* Effect.fail(new Error('The queue could not be put back.')) : true;
     // The song that was playing, or the next one that came back.
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
