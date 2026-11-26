@@ -7,7 +7,7 @@ import { release } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { format } from 'node:util';
-import type { AppSnapshot, ExtensionInfo, PlayerSnapshot } from '../../../packages/core/contracts';
+import type { AppSnapshot, ExtensionInfo, PlayerSnapshot, Track } from '../../../packages/core/contracts';
 
 // BETA BUILDS ONLY. Streams the main process's logs and state to a collector
 // (scripts/diag-collector.mjs) so a real install can be debugged live.
@@ -431,7 +431,7 @@ export class RemoteDiagnostics {
         currentIndex: player.currentIndex, queueLength: player.queue.length, repeat: player.repeat, shuffle: player.shuffle, radio: player.radio !== null,
         deviceCount: player.devices.length, selectedDevice: player.audio.requestedDevice,
         settingsDevice: source.outputDevice(), exclusiveOutput: source.exclusiveOutput(), audio: player.audio,
-        track: track ? { id: track.id, source: track.source, format: track.sourceFormat, sampleRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth, duration: track.duration } : null,
+        track: trackFacts(track),
       },
       // Never the saved sign-in: no username, no server URL.
       server: { connected: server.connected, name: server.name, reconnecting: server.reconnecting, reconnectError: server.reconnectError, canRemember: server.canRemember },
@@ -526,7 +526,7 @@ export class RemoteDiagnostics {
     const facts = {
       pid: info.pid, noticed: info.noticed, silentMs: info.silentMs,
       engine: player.engine, playing: player.playing, currentIndex: player.currentIndex, queueLength: player.queue.length,
-      position: player.position, duration: player.duration, track: player.queue[player.currentIndex] ?? null, audio: player.audio,
+      position: player.position, duration: player.duration, track: trackFacts(player.queue[player.currentIndex]), audio: player.audio,
       mpvLog: this.mpvLogPath,
     };
     const path = this.mpvLogPath;
@@ -613,6 +613,10 @@ export const remote = new RemoteDiagnostics({
   url: typeof __SQUIGGLY_DIAG_URL__ === 'string' ? __SQUIGGLY_DIAG_URL__ : '',
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
+
+// What's sent of a song: its id and its audio, never names (a station's may be its address).
+const trackFacts = (track: Track | undefined) => track
+  ? { id: track.id, source: track.source, format: track.sourceFormat, sampleRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth, duration: track.duration } : null;
 
 // A log line cut at its first address, kept up to its ://. A host given a station sends no log at
 // all; this keeps the relay's addresses out as well, and anything else that names one. What libmpv

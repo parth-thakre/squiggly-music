@@ -116,8 +116,8 @@ const recoveries: number[] = [];
 let heardAt = 0;
 // Counts the queues sent to a host, so a replacement (relaunch) doesn't put back an old queue over
 // one sent meanwhile from another lane (a record played while it was starting). Songs added
-// meanwhile are kept here instead, until a queue goes out, and added again once the old queue is
-// back: those sent after it reach the host after it, so they're in already.
+// meanwhile are kept here instead, until a queue goes out, and go into the old queue as it's put
+// back: those sent after it reach the host after it, so they're added to it there.
 let queuesSent = 0;
 let addedDuringRelaunch: Extract<HostRequest['action'], { type: 'queue-add' }>[] | null = null;
 // How late a timer may fire before this process counts as held up too (the computer slept, or
@@ -817,15 +817,17 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
     const position = !same || kept[at].item.track.source === 'station' ? 0 : before.position;
-    yield* send({ type: 'queue', tracks: kept.map(({ item }) => item), startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
-    // Songs added while the engine started went into its empty queue, which this one replaced. Not
-    // over a queue sent since this one, and the queue's limit may leave some out: the deck says so.
-    let lost = 0;
+    // Songs added while the engine started went into its empty queue, which this one replaces: they
+    // come along in it, in their order, after the song playing (Play next) or at the end. Any added
+    // after this goes out reach the engine after it. Past the queue's limit, the deck says so.
+    const tracks = kept.map(({ item }) => item);
     for (const add of added) {
-      if (queuesSent !== sent + 1) return true;
-      if (Either.isLeft(yield* Effect.either(send({ ...add, where: typeof add.where === 'number' ? 'end' : add.where })))) lost++;
+      if (add.where === 'next') tracks.splice(at + 1, 0, ...add.tracks); else tracks.push(...add.tracks);
     }
-    if (lost && queuesSent === sent + 1) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
+    const over = tracks.length - QUEUE_LIMIT;
+    if (over > 0) tracks.length = QUEUE_LIMIT;
+    yield* send({ type: 'queue', tracks, startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
+    if (over > 0) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
     return true;
   }).pipe(Effect.ensuring(Effect.sync(() => { addedDuringRelaunch = null; })));
 }
