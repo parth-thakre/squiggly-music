@@ -502,7 +502,7 @@ export class RemoteDiagnostics {
   // when diagnostics are off. libmpv writes it from its own thread, so it keeps going while the
   // host is stuck in a call. One file per host, the newest MPV_LOGS kept. Streams reach libmpv
   // through the relay's local addresses, so the log holds no server credentials. A station's
-  // address goes as the server lists it, so what's sent of the log is cut at each address.
+  // address goes as the server lists it: the log of a host given one is never sent (hostStuck).
   mpvLog(): string | undefined {
     this.mpvLogPath = null;
     if (!this.live || !this.directory) return undefined;
@@ -518,8 +518,9 @@ export class RemoteDiagnostics {
   }
 
   // The audio host stopped answering (main's hostStuck): what it last reported, and the end of
-  // libmpv's log, which says what libmpv was doing when it stopped.
-  hostStuck(info: { pid: number | null; noticed: 'command' | 'silence'; silentMs: number; player: PlayerSnapshot }) {
+  // libmpv's log, which says what libmpv was doing when it stopped. Not the log of a host that was
+  // given a station (`stations`): a station's address can carry a key anywhere, in any form.
+  hostStuck(info: { pid: number | null; noticed: 'command' | 'silence'; silentMs: number; player: PlayerSnapshot; stations: boolean }) {
     if (!this.live) return;
     const { player } = info;
     const facts = {
@@ -529,7 +530,7 @@ export class RemoteDiagnostics {
       mpvLog: this.mpvLogPath,
     };
     const path = this.mpvLogPath;
-    if (!path) { this.event('host.stuck', { ...facts, mpvTail: null }, true); return; }
+    if (!path || info.stations) { this.event('host.stuck', { ...facts, mpvTail: null, mpvTailWithheld: info.stations }, true); return; }
     void tail(path, MPV_TAIL_BYTES).then(
       lines => this.event('host.stuck', { ...facts, mpvTail: lines.slice(-MPV_TAIL_LINES).map(bareAddresses) }, true),
       error => this.event('host.stuck', { ...facts, mpvTail: null, mpvTailError: errorFields(error) }, true),
@@ -613,10 +614,13 @@ export const remote = new RemoteDiagnostics({
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
 
-// A log line cut after the scheme of its first address. A station's address reaches libmpv as the
-// server lists it, and may carry a key anywhere, even where its host would be, and where it ends
-// can't be told; the relay's addresses look the same. What libmpv was doing comes before it.
-const bareAddresses = (line: string) => line.replace(/([a-z][a-z\d+.-]*:\/\/)[\s\S]*$/i, '$1…');
+// A log line cut at its first address, kept up to its ://. A host given a station sends no log at
+// all; this keeps the relay's addresses out as well, and anything else that names one. What libmpv
+// was doing comes before the address.
+const bareAddresses = (line: string) => {
+  const at = line.indexOf('://');
+  return at < 0 ? line : `${line.slice(0, at + 3)}…`;
+};
 
 // The last lines of a file, up to `bytes` of it; a line cut by the start is dropped.
 async function tail(path: string, bytes: number): Promise<string[]> {

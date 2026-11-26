@@ -97,6 +97,9 @@ let media: MediaSession | null = null;
 let host: ChildProcess | null = null;
 const retiredHosts = new WeakSet<ChildProcess>();
 const unresponsiveHosts = new WeakSet<ChildProcess>();
+// Hosts given a station: its address goes to libmpv as the server lists it, so their libmpv log
+// may hold a key, and none of it is sent (remote.hostStuck). Songs reach libmpv through the relay.
+const stationHosts = new WeakSet<ChildProcess>();
 const terminations = new WeakMap<ChildProcess, Promise<void>>();
 const unresponsiveError = 'Audio engine is not responding. Restart the engine.';
 // A ready host polls mpv four times a second and sends a snapshot each time (host.ts), so one
@@ -745,6 +748,7 @@ function send(action: HostRequest['action']) {
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
       if (action.type === 'queue') { queuesSent++; addedDuringRelaunch = null; }
+      if ((action.type === 'queue' || action.type === 'queue-add') && action.tracks.some(item => item.track.source === 'station')) stationHosts.add(child);
       if (action.type === 'queue-add') addedDuringRelaunch?.push(action);
       let due = performance.now() + 8000;
       const expire = () => {
@@ -770,7 +774,7 @@ function hostStuck(child: ChildProcess, noticed: 'command' | 'silence') {
   if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child) || quitting) return;
   unresponsiveHosts.add(child);
   const before = state.player;
-  remote.hostStuck({ pid: child.pid ?? null, noticed, silentMs: Math.round(performance.now() - heardAt), player: before });
+  remote.hostStuck({ pid: child.pid ?? null, noticed, silentMs: Math.round(performance.now() - heardAt), player: before, stations: stationHosts.has(child) });
   state.player = { ...state.player, engine: 'unavailable', playing: false, error: unresponsiveError };
   rejectPending(unresponsiveError); broadcast();
   const now = Date.now();
@@ -816,10 +820,12 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     yield* send({ type: 'queue', tracks: kept.map(({ item }) => item), startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
     // Songs added while the engine started went into its empty queue, which this one replaced. Not
     // over a queue sent since this one, and the queue's limit may leave some out: the deck says so.
-    if (queuesSent !== sent + 1) return true;
     let lost = 0;
-    for (const add of added) if (Either.isLeft(yield* Effect.either(send({ ...add, where: typeof add.where === 'number' ? 'end' : add.where })))) lost++;
-    if (lost) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
+    for (const add of added) {
+      if (queuesSent !== sent + 1) return true;
+      if (Either.isLeft(yield* Effect.either(send({ ...add, where: typeof add.where === 'number' ? 'end' : add.where })))) lost++;
+    }
+    if (lost && queuesSent === sent + 1) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
     return true;
   }).pipe(Effect.ensuring(Effect.sync(() => { addedDuringRelaunch = null; })));
 }
