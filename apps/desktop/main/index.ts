@@ -113,7 +113,8 @@ const recoveries: number[] = [];
 let heardAt = 0;
 // Counts the queues sent to a host, so a replacement (relaunch) doesn't put back an old queue over
 // one sent meanwhile from another lane (a record played while it was starting). Songs added
-// meanwhile are kept here instead, and added again once the old queue is back.
+// meanwhile are kept here instead, until a queue goes out, and added again once the old queue is
+// back: those sent after it reach the host after it, so they're in already.
 let queuesSent = 0;
 let addedDuringRelaunch: Extract<HostRequest['action'], { type: 'queue-add' }>[] | null = null;
 // How late a timer may fire before this process counts as held up too (the computer slept, or
@@ -743,7 +744,7 @@ function send(action: HostRequest['action']) {
       if (child && unresponsiveHosts.has(child)) return reject(new Error(unresponsiveError));
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
-      if (action.type === 'queue') queuesSent++;
+      if (action.type === 'queue') { queuesSent++; addedDuringRelaunch = null; }
       if (action.type === 'queue-add') addedDuringRelaunch?.push(action);
       let due = performance.now() + 8000;
       const expire = () => {
@@ -804,17 +805,21 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
       ? Effect.succeed({ index, item: localPlayable(track) })
       : client ? playableOf(client, track).pipe(Effect.map(item => ({ index, item })), Effect.orElseSucceed(() => ({ index, item: null }))) : Effect.succeed({ index, item: null }));
     const kept = items.flatMap(({ index, item }) => item ? [{ index, item }] : []);
-    // Another queue was sent, or the session changed (the sign-in screen says why): nothing to put back.
-    if (queuesSent !== sent || generation !== connectionGeneration || (client && server !== client)) return true;
-    if (!kept.length) return before.queue.length ? yield* Effect.fail(new Error('The queue could not be put back.')) : true;
+    // Another queue was sent, or the session changed while the server's songs were looked up:
+    // nothing to put back. A session that had changed before leaves only songs from this computer.
+    if (queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return true;
+    if (!kept.length) return before.queue.length && generation === connectionGeneration ? yield* Effect.fail(new Error('The queue could not be put back.')) : true;
     // The song that was playing, or the next one that came back.
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
     const position = !same || kept[at].item.track.source === 'station' ? 0 : before.position;
     yield* send({ type: 'queue', tracks: kept.map(({ item }) => item), startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
-    // Songs added while the engine started went into its empty queue, which this one replaced.
-    addedDuringRelaunch = null;
-    for (const add of added) yield* send({ ...add, where: typeof add.where === 'number' ? 'end' : add.where });
+    // Songs added while the engine started went into its empty queue, which this one replaced. Not
+    // over a queue sent since this one, and the queue's limit may leave some out: the deck says so.
+    if (queuesSent !== sent + 1) return true;
+    let lost = 0;
+    for (const add of added) if (Either.isLeft(yield* Effect.either(send({ ...add, where: typeof add.where === 'number' ? 'end' : add.where })))) lost++;
+    if (lost) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
     return true;
   }).pipe(Effect.ensuring(Effect.sync(() => { addedDuringRelaunch = null; })));
 }
