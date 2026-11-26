@@ -121,6 +121,10 @@ let heardAt = 0;
 // back: those sent after it reach the host after it, so they're added to it there.
 let queuesSent = 0;
 let addedDuringRelaunch: Extract<HostRequest['action'], { type: 'queue-add' }>[] | null = null;
+// The queue a replacement is to put back, from its launch until it reports it: one stuck before
+// then has reported none, and its own replacement takes this one instead (hostStuck). Any other
+// queue sent meanwhile supersedes it.
+let restoring: { child: ChildProcess; before: PlayerSnapshot } | null = null;
 // How late a timer may fire before this process counts as held up too (the computer slept, or
 // main was busy): the host then gets a fresh wait instead of the blame.
 const LATE_MS = 2500;
@@ -694,6 +698,7 @@ async function launchPlayer() {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
     heardAt = performance.now();
     messages++;
+    if (restoring?.child === child && message.type === 'snapshot' && message.player.queue.length) restoring = null;
     if (message.type === 'snapshot') {
       const prev = state.player;
       const incoming = message.player;
@@ -748,7 +753,7 @@ function send(action: HostRequest['action']) {
       if (child && unresponsiveHosts.has(child)) return reject(new Error(unresponsiveError));
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
-      if (action.type === 'queue') { queuesSent++; addedDuringRelaunch = null; }
+      if (action.type === 'queue') { queuesSent++; addedDuringRelaunch = null; if (!action.restore) restoring = null; }
       if ((action.type === 'queue' || action.type === 'queue-add') && action.tracks.some(item => item.track.source === 'station')) stationHosts.add(child);
       if (action.type === 'queue-add') addedDuringRelaunch?.push(action);
       let due = performance.now() + 8000;
@@ -774,7 +779,8 @@ function send(action: HostRequest['action']) {
 function hostStuck(child: ChildProcess, noticed: 'command' | 'silence') {
   if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child) || quitting) return;
   unresponsiveHosts.add(child);
-  const before = state.player;
+  const before = restoring?.child === child && !state.player.queue.length ? restoring.before : state.player;
+  if (restoring?.child === child) restoring = null;
   remote.hostStuck({ pid: child.pid ?? null, noticed, silentMs: Math.round(performance.now() - heardAt), player: before, stations: stationHosts.has(child) });
   state.player = { ...state.player, engine: 'unavailable', playing: false, error: unresponsiveError };
   rejectPending(unresponsiveError); broadcast();
@@ -803,6 +809,9 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     yield* Effect.tryPromise({ try: () => launchPlayer(), catch: error => error instanceof Error ? error : new Error('The audio engine could not restart.') });
     if (quitting) return true;
     if (!host) return yield* Effect.fail(new Error('The audio engine could not restart.'));
+    const launched = host;
+    if (before.queue.length) restoring = { child: launched, before };
+    const nothing = () => { if (restoring?.child === launched) restoring = null; return true; };
     // Sent even at 100: its answer is the new engine saying it started.
     yield* send({ type: 'volume', percent: before.volume });
     const client = generation === connectionGeneration ? server : null;
@@ -812,8 +821,8 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     const kept = items.flatMap(({ index, item }) => item ? [{ index, item }] : []);
     // Another queue was sent, or the session changed while the server's songs were looked up:
     // nothing to put back. A session that had changed before leaves only songs from this computer.
-    if (queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return true;
-    if (!kept.length) return before.queue.length && generation === connectionGeneration ? yield* Effect.fail(new Error('The queue could not be put back.')) : true;
+    if (queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return nothing();
+    if (!kept.length) return before.queue.length && generation === connectionGeneration ? yield* Effect.fail(new Error('The queue could not be put back.')) : nothing();
     // The song that was playing, or the next one that came back.
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
@@ -821,7 +830,7 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
     // Songs added while the engine started come along in it (restoreQueue.ts); any added after this
     // goes out reach the engine after it. Those past the queue's limit, the deck names.
     const { queue: tracks, left } = withAdds(kept.map(({ item }) => item), at, added, QUEUE_LIMIT);
-    yield* send({ type: 'queue', tracks, startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
+    yield* send({ type: 'queue', tracks, startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true, restore: true });
     if (left) yield* Effect.ignore(send({ type: 'notice', text: 'Songs added while the audio engine restarted could not all be added back.' }));
     return true;
   }).pipe(Effect.ensuring(Effect.sync(() => { addedDuringRelaunch = null; })));
