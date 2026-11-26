@@ -242,7 +242,7 @@ function useLineNow(synced: readonly LyricLine[] | null, playing: boolean, pause
 // word times it fills word by word as the sheet does: while the line is sung (and only then), each
 // word's progress goes straight to its span as --p once a frame, and nothing re-renders. Once the
 // last word is full it looks only every CHECK_MS, so a seek back into the line fills it again.
-export function SungLine({ track, below = false }: { track: Track; below?: boolean }) {
+export function SungLine({ track }: { track: Track }) {
   const { lyrics } = useLyrics(track);
   const playing = usePlayer(s => s.playing);
   const pausedAt = usePlayer(s => s.playing ? -1 : s.position);
@@ -253,6 +253,7 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
   const line = synced?.[active];
   const words = line?.words?.length ? line.words : null;
   const box = useRef<HTMLSpanElement>(null);
+  const shelf = useRef<HTMLParagraphElement>(null);
   // A new line scrolls in from below as the last one scrolls out above (app.css). The last one is
   // kept, as it was sung, until its way out has played; reduced motion simply swaps them.
   const [shown, setShown] = useState<{ index: number; line: LyricLine | undefined }>({ index: active, line });
@@ -286,17 +287,53 @@ export function SungLine({ track, below = false }: { track: Track; below?: boole
     document.addEventListener('visibilitychange', wake);
     return () => { cancelAnimationFrame(frame); clearTimeout(timer); document.removeEventListener('visibilitychange', wake); };
   }, [words, playing, pausedAt]);
+  // The line is cut short here rather than by a clamp: Chromium paints a clamped line's hidden
+  // lines under the clipped box, whose tall marks and headline show as specks in the padding kept
+  // for this line's own marks (app.css), and draws its ellipsis in the timed words' transparent
+  // colour. Again whenever the room changes, or a font arrives.
+  useLayoutEffect(() => {
+    const element = shelf.current;
+    if (!element) return;
+    const trim = () => { for (const each of element.children) hideOverflow(each as HTMLElement); };
+    trim();
+    const watch = new ResizeObserver(trim);
+    watch.observe(element);
+    document.fonts.addEventListener('loadingdone', trim);
+    return () => { watch.disconnect(); document.fonts.removeEventListener('loadingdone', trim); };
+  }, [active, leaving, synced]);
   if (!synced) return null;
   const text = line?.text ?? '';
-  return <p className={`mini-lyric${below ? ' below' : ''}`} aria-hidden="true" title={text || undefined}>
+  return <p ref={shelf} className="mini-lyric" aria-hidden="true" title={text || undefined}>
     {leaving && <span key={`leaving-${leaving.index}`} className="leaving" onAnimationEnd={() => setLeaving(null)}>{sungWords(leaving.line, true)}</span>}
     <span key={active} ref={box}>{sungWords(line, false)}</span>
   </p>;
 }
-// A line's words as spans for the fill (--p), all of them full for a line already sung; its text
-// where it has no words.
+// Cuts a line short past the lines its box allows (--lines in app.css): the words past them are
+// hidden, and the last one shown is marked for an ellipsis, with room left for it. A line cut short
+// fills its lines rather than balancing them, or it would be balanced over more lines than show.
+function hideOverflow(line: HTMLElement) {
+  const words = Array.from(line.children) as HTMLElement[];
+  for (const word of words) { word.style.visibility = ''; word.classList.remove('cut'); }
+  line.classList.remove('long');
+  const style = getComputedStyle(line);
+  const lines = parseFloat(style.getPropertyValue('--lines')), height = parseFloat(style.lineHeight);
+  if (!words.length || !(lines > 0) || !(height > 0)) return;
+  const past = (word: HTMLElement) => word.offsetTop > words[0].offsetTop + (lines - .5) * height;
+  if (!words.some(past)) return;
+  line.classList.add('long');
+  let shown = words.findIndex(past) - 1;
+  const room = parseFloat(style.fontSize), right = line.clientWidth;
+  while (shown > 0 && words[shown].offsetLeft + words[shown].offsetWidth + room > right) shown--;
+  words.forEach((word, k) => { if (k > shown) word.style.visibility = 'hidden'; });
+  words[shown]?.classList.add('cut');
+}
+// A line's words as spans: for the fill (--p) where the lyrics time them, all of them full for a
+// line already sung, and plain where they don't, so those past the clamp can go (hideOverflow).
+// Plain ones are split as the language breaks lines: at a hyphen too, and between the words of a
+// language written without spaces, so no span runs on past a line break.
+const segmenter = new Intl.Segmenter(undefined, { granularity: 'word' });
 function sungWords(line: LyricLine | undefined, sung: boolean) {
-  if (!line?.words?.length) return line?.text ?? '';
+  if (!line?.words?.length) return Array.from(segmenter.segment(line?.text ?? ''), ({ segment }, k) => /^\s+$/.test(segment) ? segment : <span key={k}>{segment}</span>);
   return line.words.map((word, k) => {
     const [, said, space] = /^([\s\S]*?)(\s*)$/.exec(word.text)!;
     return <Fragment key={k}><span className="word" style={sung ? { '--p': 1 } as CSSProperties : undefined}>{said}</span>{space}</Fragment>;

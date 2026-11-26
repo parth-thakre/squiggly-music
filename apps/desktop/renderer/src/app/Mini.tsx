@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Maximize2, Pin } from 'lucide-react';
 import { current, player, usePlayer } from './player';
 import { useSettings } from './settings';
@@ -8,14 +8,6 @@ import { api } from './library';
 import { useMiniCommandKeys } from './commands';
 import { DeckSlots, ExtensionNotices } from './extensions';
 import { SungLine } from './lyrics';
-
-// Room for the line being sung between the song and the buttons: what the window has beside the
-// sleeve, which is as wide as the window is tall up to a third or so of its width (app.css).
-// Without it the line takes a row of its own under them, across the width.
-const LYRIC_ROOM = 460;
-const roomForLyric = () => typeof innerWidth === 'number' && innerWidth - Math.min(innerHeight, innerWidth * .36) >= LYRIC_ROOM;
-const onResize = (listener: () => void) => { addEventListener('resize', listener); return () => removeEventListener('resize', listener); };
-const useRoomForLyric = () => useSyncExternalStore(onResize, roomForLyric);
 
 // The mini player: its own small window, for when another app owns the screen.
 // The window is dragged by its background; the controls opt out of dragging.
@@ -42,7 +34,6 @@ export function Mini() {
   const failed = engine === 'unavailable' || engine === 'crashed';
   const problem = failed ? error ?? 'The audio engine stopped.' : error ?? pinError;
   const name = track ? splitTitle(track.title, track.album).main : null;
-  const lyricRoom = useRoomForLyric();
   // The main window, hidden while this one shows, gets no snapshots and fetches nothing ahead:
   // the next song's sleeve and palette are fetched early from here.
   useNextCover(usePlayer(s => s.queue[s.index + 1]?.coverArt ?? null), SLEEVE);
@@ -50,8 +41,22 @@ export function Mini() {
   return <div className="mini" style={paletteStyle(palette)}>
     {/* The sleeve is the window's left edge, its full height, and a handle to drag it by. */}
     {track ? <Cover id={sleeve} name={track.album} size={SLEEVE} className="mini-cover" eager /> : <div className="cover cover-empty mini-cover" />}
+    {/* Down the rest of the width, a line each: the song (with the window's own buttons at its
+        end), the artist, the line being sung, and the deck: the buttons, the squiggle, shuffle and
+        repeat. Nothing shares a line with the name but the window's buttons. */}
     <div className="mini-text">
-      <p className="mini-title">{name ?? 'Nothing playing'}</p>
+      <div className="mini-head">
+        {/* A name or artist cut short shows in full on hover. */}
+        <p className="mini-title" title={name ?? undefined}>{name ?? 'Nothing playing'}</p>
+        <div className="mini-window">
+          <button type="button" className="icon-button" aria-pressed={onTop} aria-label="Keep on top" title={onTop ? 'Kept above other windows' : 'Keep above other windows'} onClick={() => void pin()}>
+            <Pin aria-hidden="true" />
+          </button>
+          <button type="button" className="icon-button" aria-label="Full window" title="Full window" onClick={() => void window.squiggly?.window.toggleMini()}>
+            <Maximize2 aria-hidden="true" />
+          </button>
+        </div>
+      </div>
       {/* One line either way: the artist (and extensions' quiet lines), or what went wrong (in
           full on hover) with what to do about it. */}
       {problem ? <p className="mini-sub" role="alert">
@@ -59,27 +64,15 @@ export function Mini() {
         {failed ? <button type="button" className="link" onClick={() => void window.squiggly?.command({ type: 'restart' })}>Restart audio</button>
           : <button type="button" className="link" onClick={() => { player.dismissError(); setPinError(null); }}>Dismiss</button>}
       </p> : <p className={`mini-sub${track ? '' : ' waiting'}`}>
-        <span>{track ? byline : 'Pick something in the full window.'}</span>
+        <span title={track ? byline : undefined}>{track ? byline : 'Pick something in the full window.'}</span>
         <span className="mini-slots"><DeckSlots placement="quiet-line" track={track} /></span>
       </p>}
     </div>
-    {track && <SungLine key={`lyrics:${track.id}`} track={track} below={!lyricRoom} />}
-    <div className="mini-controls">
-      <TransportButtons playing={playing} />
-    </div>
-    {/* The squiggle, shuffle and repeat, and the window's own buttons share the last line, across
-        the whole width. */}
+    {track && <SungLine key={`lyrics:${track.id}`} track={track} />}
     <div className="mini-foot">
+      <div className="mini-controls"><TransportButtons playing={playing} /></div>
       {track ? <div className="mini-position"><Position track={track} palette={palette} /></div> : <span className="mini-position" />}
       <span className="mini-modes"><PlayModes /></span>
-      <div className="mini-window">
-        <button type="button" className="icon-button" aria-pressed={onTop} aria-label="Keep on top" title={onTop ? 'Kept above other windows' : 'Keep above other windows'} onClick={() => void pin()}>
-          <Pin aria-hidden="true" />
-        </button>
-        <button type="button" className="icon-button" aria-label="Full window" title="Full window" onClick={() => void window.squiggly?.window.toggleMini()}>
-          <Maximize2 aria-hidden="true" />
-        </button>
-      </div>
     </div>
     <ExtensionNotices />
     {window.squiggly?.window.ownResize && <ResizeEdges />}
