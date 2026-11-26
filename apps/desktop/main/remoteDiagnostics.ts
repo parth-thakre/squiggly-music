@@ -613,11 +613,12 @@ export const remote = new RemoteDiagnostics({
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
 
-// A log line with each address cut to its scheme and host. A station's address reaches libmpv as
-// the server lists it, and may carry a key anywhere: in its query under any name (which scrub
-// wouldn't know), in its path or after a ;, or before an @. A station on this computer looks like
-// the relay's addresses, so those are cut too.
-const bareAddresses = (line: string) => line.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/#'"]*@)?([^\s/?#;'"]*)([^\s'"]*)/gi,
+// A log line cut at its first address, after the scheme and host. A station's address reaches
+// libmpv as the server lists it, and may carry a key anywhere: in its query under any name (which
+// scrub wouldn't know), in its path (with spaces or quotes in it, so where it ends can't be told),
+// after a ;, or before an @. A station on this computer looks like the relay's addresses, so those
+// are cut too. What libmpv was doing comes before the address.
+const bareAddresses = (line: string) => line.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/#]*@)?([^\s/?#;'"\\]*)(.*)$/i,
   (_match, scheme: string, authority: string, rest: string) => `${scheme}${authority}${rest ? '/…' : ''}`);
 
 // The last lines of a file, up to `bytes` of it; a line cut by the start is dropped.

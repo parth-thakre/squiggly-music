@@ -113,8 +113,9 @@ const recoveries: number[] = [];
 let heardAt = 0;
 // Counts the queues sent to a host, so a replacement (relaunch) doesn't put back an old queue over
 // one sent meanwhile from another lane (a record played while it was starting). Songs added
-// meanwhile don't count: they'd cost the whole queue its return, so they go with the old host's.
+// meanwhile are kept here instead, and added again once the old queue is back.
 let queuesSent = 0;
+let addedDuringRelaunch: Extract<HostRequest['action'], { type: 'queue-add' }>[] | null = null;
 // How late a timer may fire before this process counts as held up too (the computer slept, or
 // main was busy): the host then gets a fresh wait instead of the blame.
 const LATE_MS = 2500;
@@ -743,6 +744,7 @@ function send(action: HostRequest['action']) {
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
       if (action.type === 'queue') queuesSent++;
+      if (action.type === 'queue-add') addedDuringRelaunch?.push(action);
       let due = performance.now() + 8000;
       const expire = () => {
         const request = pending.get(id);
@@ -791,24 +793,30 @@ function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
   return Effect.gen(function* () {
     if ((host !== replacing && host !== null) || quitting) return false;
     const sent = queuesSent;
+    const added: NonNullable<typeof addedDuringRelaunch> = addedDuringRelaunch = [];
     yield* Effect.tryPromise({ try: () => launchPlayer(), catch: error => error instanceof Error ? error : new Error('The audio engine could not restart.') });
     if (quitting) return true;
     if (!host) return yield* Effect.fail(new Error('The audio engine could not restart.'));
-    if (before.volume !== 100) yield* send({ type: 'volume', percent: before.volume });
+    // Sent even at 100: its answer is the new engine saying it started.
+    yield* send({ type: 'volume', percent: before.volume });
     const client = generation === connectionGeneration ? server : null;
     const items = yield* Effect.forEach(before.queue, (track, index) => track.source === 'local'
       ? Effect.succeed({ index, item: localPlayable(track) })
       : client ? playableOf(client, track).pipe(Effect.map(item => ({ index, item })), Effect.orElseSucceed(() => ({ index, item: null }))) : Effect.succeed({ index, item: null }));
     const kept = items.flatMap(({ index, item }) => item ? [{ index, item }] : []);
-    if (queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return true;
+    // Another queue was sent, or the session changed (the sign-in screen says why): nothing to put back.
+    if (queuesSent !== sent || generation !== connectionGeneration || (client && server !== client)) return true;
     if (!kept.length) return before.queue.length ? yield* Effect.fail(new Error('The queue could not be put back.')) : true;
     // The song that was playing, or the next one that came back.
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
     const position = !same || kept[at].item.track.source === 'station' ? 0 : before.position;
     yield* send({ type: 'queue', tracks: kept.map(({ item }) => item), startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
+    // Songs added while the engine started went into its empty queue, which this one replaced.
+    addedDuringRelaunch = null;
+    for (const add of added) yield* send({ ...add, where: typeof add.where === 'number' ? 'end' : add.where });
     return true;
-  });
+  }).pipe(Effect.ensuring(Effect.sync(() => { addedDuringRelaunch = null; })));
 }
 const localPlayable = (track: Track): PlayableTrack | null => {
   const location = localLocation(track.id);
