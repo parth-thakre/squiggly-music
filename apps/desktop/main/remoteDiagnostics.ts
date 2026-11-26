@@ -1,8 +1,8 @@
 import { app, powerMonitor, type BrowserWindow, type WebContents } from 'electron';
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { appendFile } from 'node:fs/promises';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { appendFile, open } from 'node:fs/promises';
 import { release } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
@@ -68,6 +68,10 @@ const BATCH = 500;
 const MAX_LINES = 20_000;
 const URGENT_GAP = 250;
 // Noisy streams: at most this many events per kind in each window, then a count of the rest.
+// libmpv logs (mpvLog) kept on disk, and how much of the stuck host's goes out with host.stuck.
+const MPV_LOGS = 5;
+const MPV_TAIL_BYTES = 48 * 1024;
+const MPV_TAIL_LINES = 300;
 const NOISY = new Set(['main.console', 'renderer.console', 'host.stderr', 'host.stdout']);
 const NOISE_LIMIT = 300;
 const NOISE_WINDOW = 10_000;
@@ -130,6 +134,8 @@ export class RemoteDiagnostics {
   private fileErrors = 0;
   // Change tracking.
   private hostState: { engine: string; error: string | null } | null = null;
+  // The current audio host's libmpv log (mpvLog), in the same folder as the local copy.
+  private mpvLogPath: string | null = null;
   private extensionState: Map<string, { version: string; enabled: boolean; error: string | null }> | null = null;
   private ipcCalls = new Map<string, number>();
   private ipcFailures = new Map<string, number>();
@@ -490,6 +496,48 @@ export class RemoteDiagnostics {
     stream.on('error', () => undefined);
   }
 
+  // A path for the next audio host's libmpv log (mpv's log-file option, verbose), or undefined
+  // when diagnostics are off. libmpv writes it from its own thread, so it keeps going while the
+  // host is stuck in a call. One file per host, the newest MPV_LOGS kept. Streams reach libmpv
+  // through the relay's local addresses, so the log holds no server credentials.
+  mpvLog(): string | undefined {
+    this.mpvLogPath = null;
+    if (!this.live || !this.directory) return undefined;
+    const directory = this.directory;
+    try {
+      const old = readdirSync(directory).filter(name => /^mpv-\d{8}-\d{6}-\d{3}\.log$/.test(name)).sort();
+      // One a stuck host still holds open can't go on Windows; it goes next time.
+      for (const name of old.slice(0, Math.max(0, old.length - (MPV_LOGS - 1)))) try { unlinkSync(join(directory, name)); } catch { /* Next time. */ }
+    } catch { this.fileErrors++; }
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').replace('.', '-').slice(0, 19);
+    this.mpvLogPath = join(directory, `mpv-${stamp}.log`);
+    return this.mpvLogPath;
+  }
+
+  // The audio host stopped answering (main's hostStuck): what it last reported, and the end of
+  // libmpv's log, which says what libmpv was doing when it stopped.
+  hostStuck(info: { pid: number | null; noticed: 'command' | 'silence'; silentMs: number; player: PlayerSnapshot }) {
+    if (!this.live) return;
+    const { player } = info;
+    const facts = {
+      pid: info.pid, noticed: info.noticed, silentMs: info.silentMs,
+      engine: player.engine, playing: player.playing, currentIndex: player.currentIndex, queueLength: player.queue.length,
+      position: player.position, duration: player.duration, track: player.queue[player.currentIndex] ?? null, audio: player.audio,
+      mpvLog: this.mpvLogPath,
+    };
+    const path = this.mpvLogPath;
+    if (!path) { this.event('host.stuck', { ...facts, mpvTail: null }, true); return; }
+    void tail(path, MPV_TAIL_BYTES).then(
+      lines => this.event('host.stuck', { ...facts, mpvTail: lines.slice(-MPV_TAIL_LINES) }, true),
+      error => this.event('host.stuck', { ...facts, mpvTail: null, mpvTailError: errorFields(error) }, true),
+    );
+  }
+  // How replacing a stuck host went: null when the new one took the queue back.
+  hostRecovered(error: string | null) {
+    if (!this.live) return;
+    this.event('host.recovered', { ok: error === null, error }, true);
+  }
+
   // Every host snapshot where the engine or its error changed.
   hostSnapshot(player: PlayerSnapshot) {
     if (!this.enabled) return;
@@ -560,3 +608,17 @@ export const remote = new RemoteDiagnostics({
   url: typeof __SQUIGGLY_DIAG_URL__ === 'string' ? __SQUIGGLY_DIAG_URL__ : '',
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
+
+// The last lines of a file, up to `bytes` of it; a line cut by the start is dropped.
+async function tail(path: string, bytes: number): Promise<string[]> {
+  const file = await open(path, 'r');
+  try {
+    const { size } = await file.stat();
+    const length = Math.min(size, bytes);
+    const buffer = Buffer.alloc(length);
+    await file.read(buffer, 0, length, size - length);
+    const lines = buffer.toString('utf8').split(/\r?\n/);
+    if (length < size) lines.shift();
+    return lines.filter(line => line.trim());
+  } finally { await file.close(); }
+}

@@ -1,5 +1,5 @@
 /// <reference types="electron-vite/node" />
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, powerMonitor, protocol, safeStorage, screen, session, shell, Tray } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, WebContents } from 'electron';
 import { fork, type ChildProcess } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -24,7 +24,7 @@ import { defaultPlayModes, OpenPathsSchema, PlayModesSchema, PlaysFileSchema } f
 import { buildM3u, m3uFileName } from '../../../packages/core/m3u';
 import { stationIdOf } from '../../../packages/core/stations';
 import { NOT_STORED, storedKey } from '../../../packages/core/stored';
-import type { AppSnapshot, Connection, Lyrics, PlayReported, Result, PlayerCommand, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
+import type { AppSnapshot, Connection, Lyrics, PlayReported, Result, PlayerCommand, PlayerSnapshot, SavedQueue, Settings, SystemMediaState, Track } from '../../../packages/core/contracts';
 import type { HostMessage, HostRequest, PlayableTrack } from '../../../packages/player-mpv/protocol';
 import { Metrics } from '../../../packages/core/metrics';
 import { SubsonicClient, isLibraryMethod, libraryCall, libraryMethods, libraryTracks, reachOf, resolveServerAddress, ServerError, Unreachable, type LibraryMethod } from '../../../packages/adapter-opensubsonic/client';
@@ -99,6 +99,18 @@ const retiredHosts = new WeakSet<ChildProcess>();
 const unresponsiveHosts = new WeakSet<ChildProcess>();
 const terminations = new WeakMap<ChildProcess, Promise<void>>();
 const unresponsiveError = 'Audio engine is not responding. Restart the engine.';
+// A ready host polls mpv four times a second and sends a snapshot each time (host.ts), so one
+// that's said nothing for this long is stuck inside a libmpv call, which no command can reach. On
+// Windows libmpv once stopped answering just after a skip and never came back, and the music
+// stopped until the app was restarted. Now the host is replaced and the queue put back (recoverHost).
+const HOST_SILENT_MS = 6000;
+// Automatic replacements allowed in RECOVERY_WINDOW_MS. A song that stalls libmpv every time it
+// opens would otherwise restart the engine forever; past this, the error asks for a restart.
+const MAX_RECOVERIES = 2;
+const RECOVERY_WINDOW_MS = 10 * 60_000;
+const recoveries: number[] = [];
+// When the current host last sent anything (performance.now()).
+let heardAt = 0;
 let hostResources = { cpuPercent: 0, memoryMB: 0 };
 let server: SubsonicClient | null = null;
 let sequence = 0;
@@ -593,11 +605,14 @@ function terminateHost(child: ChildProcess): Promise<void> {
       reject(new Error('Audio process did not exit. Close the app before trying again.'));
     };
     child.once('exit', onExit);
-    timer = setTimeout(() => {
-      // Native calls can block the host's JavaScript SIGTERM handler.
+    const kill = () => {
       timer = setTimeout(fail, 2500);
       try { child.kill('SIGKILL'); } catch { fail(); }
-    }, 2500);
+    };
+    // Native calls can block the host's JavaScript SIGTERM handler. One already stuck in a native
+    // call (hostStuck) can't run it at all, so it's killed at once.
+    if (unresponsiveHosts.has(child)) { kill(); return; }
+    timer = setTimeout(kill, 2500);
     try { child.kill('SIGTERM'); } catch { fail(); }
   }).then(() => {
     if (host === child) host = null;
@@ -647,19 +662,24 @@ async function launchPlayer() {
       SQUIGGLY_AUDIO_EXCLUSIVE: settings.value.exclusiveOutput ? '1' : '0',
       SQUIGGLY_AUDIO_DEVICE: settings.value.outputDevice,
       SQUIGGLY_REPEAT: playModes.value.repeat, SQUIGGLY_SHUFFLE: playModes.value.shuffle ? '1' : '0',
+      // Diagnostics builds only: libmpv's own log, for when it stops answering (remote.hostStuck).
+      // Only with the relay, whose local addresses are all libmpv sees: without it, stream URLs
+      // carrying the account's token would go to mpv, and into the log.
+      SQUIGGLY_MPV_LOG: relay ? remote.mpvLog() : undefined,
     },
     windowsHide: true,
     stdio: ['ignore', remote.enabled ? 'pipe' : 'ignore', output, 'ipc'],
   });
   if (process.env.SQUIGGLY_SMOKE_TEST === '1') child.stderr?.on('data', data => process.stderr.write(data));
   remote.hostSpawn(child, { execPath, script, libmpv: libmpvPath });
-  host = child;
+  host = child; heardAt = performance.now();
   let cachedQueueBytes = 2;
   const sameStrings = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((item, i) => item === b[i]);
   const sameDevices = (a: AppSnapshot['player']['devices'], b: AppSnapshot['player']['devices']) =>
     a.length === b.length && a.every((item, i) => item.name === b[i].name && item.description === b[i].description);
   child.on('message', (message: HostMessage) => {
     if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child)) return;
+    heardAt = performance.now();
     messages++;
     if (message.type === 'snapshot') {
       const prev = state.player;
@@ -716,9 +736,8 @@ function send(action: HostRequest['action']) {
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
       const timer = setTimeout(() => {
-        unresponsiveHosts.add(child);
-        state.player = { ...state.player, engine: 'unavailable', playing: false, error: unresponsiveError };
-        rejectPending(unresponsiveError); broadcast();
+        hostStuck(child, 'command');
+        if (pending.delete(id)) reject(new Error(unresponsiveError));
       }, 8000);
       pending.set(id, { resolve, reject, timer });
       try { child.send({ id, action } satisfies HostRequest, error => {
@@ -728,6 +747,62 @@ function send(action: HostRequest['action']) {
     }),
     catch: error => error instanceof Error ? error : new Error('Audio command failed.'),
   });
+}
+
+// The host stopped answering: a command went unanswered, or a ready host went quiet (watchHost).
+// It's set aside, and while automatic restarts are left, replaced with the queue as it was.
+function hostStuck(child: ChildProcess, noticed: 'command' | 'silence') {
+  if (host !== child || retiredHosts.has(child) || unresponsiveHosts.has(child) || quitting) return;
+  unresponsiveHosts.add(child);
+  const before = state.player;
+  remote.hostStuck({ pid: child.pid ?? null, noticed, silentMs: Math.round(performance.now() - heardAt), player: before });
+  state.player = { ...state.player, engine: 'unavailable', playing: false, error: unresponsiveError };
+  rejectPending(unresponsiveError); broadcast();
+  const now = Date.now();
+  while (recoveries.length && now - recoveries[0] > RECOVERY_WINDOW_MS) recoveries.shift();
+  if (recoveries.length >= MAX_RECOVERIES) return;
+  recoveries.push(now);
+  void recoverHost(before);
+}
+// A new host with the queue `before` had, at its song and position, playing if it was playing.
+// Radio ends, as with any restart. The caller holds the audio lane.
+function relaunch(before: PlayerSnapshot) {
+  const generation = connectionGeneration;
+  return Effect.gen(function* () {
+    yield* Effect.tryPromise({ try: () => launchPlayer(), catch: error => error instanceof Error ? error : new Error('The audio engine could not restart.') });
+    const client = server;
+    if (!client || generation !== connectionGeneration || quitting || !before.queue.length) return;
+    const start = Math.min(Math.max(0, before.currentIndex), before.queue.length - 1);
+    const tracks = yield* Effect.forEach(before.queue, track => playableOf(client, track));
+    if (server !== client || generation !== connectionGeneration) return;
+    const position = before.queue[start].source === 'station' || before.currentIndex < 0 ? 0 : before.position;
+    yield* send({ type: 'queue', tracks, startIndex: start, startPosition: position, paused: !before.playing, ordered: true });
+  });
+}
+// A new host in place of a stuck one (relaunch), as the old one last reported. Commands that
+// come meanwhile wait their turn on the audio lane behind it.
+async function recoverHost(before: PlayerSnapshot) {
+  const result = await Effect.runPromise(Effect.either(metrics.measure('shell.recover-host', semaphores.audio.withPermits(1)(relaunch(before)))));
+  const failure = Either.isLeft(result) ? (result.left instanceof Error ? result.left.message : 'The queue could not be put back.') : null;
+  remote.hostRecovered(failure);
+  // The old process wouldn't exit (launchPlayer's message says to close the app), or the queue
+  // couldn't be put back: the deck says which.
+  if (failure && !quitting) { state.player = { ...state.player, error: failure }; broadcast(); }
+}
+// Every second, whether a ready host has gone quiet (HOST_SILENT_MS). A tick that comes late means
+// this process was held up as well (the computer slept, or main was busy), so the host gets a fresh
+// window instead of the blame. A host whose engine never started doesn't poll, so it isn't watched.
+function watchHost() {
+  let tick = performance.now();
+  powerMonitor.on('resume', () => { heardAt = performance.now(); });
+  setInterval(() => {
+    const now = performance.now();
+    const late = now - tick > 2500; tick = now;
+    if (late) { heardAt = now; return; }
+    const child = host;
+    if (!child || state.player.engine !== 'ready' || now - heardAt < HOST_SILENT_MS) return;
+    hostStuck(child, 'silence');
+  }, 1000).unref();
 }
 
 // Next on the last song while autoplay finds what follows waits for its songs (Radio.holdNext),
@@ -966,7 +1041,9 @@ function installHandlers() {
   handle('command', value => Effect.gen(function* () {
     const command = yield* Schema.decodeUnknown(CommandSchema)(value).pipe(Effect.mapError(() => new Error('Invalid player command.')));
     if (heldNext(command.type)) return;
-    if (command.type === 'restart') { yield* Effect.tryPromise(() => launchPlayer()); return; }
+    // The queue comes back where it was. After a stuck or crashed engine, that's paused, since
+    // neither shows as playing.
+    if (command.type === 'restart') { yield* relaunch(state.player); return; }
     // Play with nothing loaded (the system media controls after launch) resumes the saved queue.
     if (command.type === 'play' && canResume()) { yield* resumeSaved(); return; }
     if (command.type === 'repeat' || command.type === 'shuffle') { yield* setPlayMode(command); return; }
@@ -1627,6 +1704,7 @@ app.whenReady().then(async () => {
   void reconnect();
   updates.start();
   await launchPlayer();
+  watchHost();
   let sampledAt = performance.now();
   const timer = setInterval(() => {
     const now = performance.now(); const seconds = (now - sampledAt) / 1000; sampledAt = now;
