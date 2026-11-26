@@ -12,7 +12,7 @@ import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 let native: NativePlayer | null = null;
 // libmpv's own log, in diagnostics builds (main's remote.mpvLog). Only its end is ever read, so
 // past MPV_LOG_MAX it starts again: setting log-file afresh has libmpv truncate it.
-const mpvLog = process.env.SQUIGGLY_MPV_LOG || undefined;
+let mpvLog = process.env.SQUIGGLY_MPV_LOG || undefined;
 const MPV_LOG_MAX = 8 * 1024 * 1024;
 function capLog() {
   if (!native || !mpvLog) return;
@@ -553,6 +553,8 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         break;
       }
       case 'volume': native.set('volume', String(action.percent)); break;
+      case 'notice': showNotice(action.text); break;
+      case 'mpv-log-off': if (mpvLog) { native.set('log-file', ''); mpvLog = undefined; } break;
       case 'device':
         // Listed afresh, so an output plugged in since the last poll counts and an unplugged one doesn't.
         player.devices = native.devices();

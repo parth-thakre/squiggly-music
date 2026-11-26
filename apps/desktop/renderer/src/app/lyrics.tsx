@@ -321,7 +321,9 @@ function hideOverflow(line: HTMLElement) {
   const past = (word: HTMLElement) => word.offsetTop > words[0].offsetTop + (lines - .5) * height;
   if (!words.some(past)) return;
   line.classList.add('long');
+  // Filling the lines may be enough on its own.
   let shown = words.findIndex(past) - 1;
+  if (shown < 0) return;
   const room = parseFloat(style.fontSize), right = line.clientWidth;
   while (shown > 0 && words[shown].offsetLeft + words[shown].offsetWidth + room > right) shown--;
   words.forEach((word, k) => { if (k > shown) word.style.visibility = 'hidden'; });

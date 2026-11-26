@@ -22,7 +22,10 @@ export type HostRequest = {
     // New locations for queued songs, by entry id, after Settings › Streaming quality changed. Each
     // keeps its id and place; the song playing keeps its stream, and one gone since is skipped.
     | { type: 'queue-relocate'; entries: { entryId: string; item: PlayableTrack }[] }
-    | { type: 'clear-session' } | { type: 'exclusive'; on: boolean } | QueueEdit | PlayerCommand;
+    | { type: 'clear-session' } | { type: 'exclusive'; on: boolean } | QueueEdit | PlayerCommand
+    // An error from the shell to show until the next command (main's recoverHost), and libmpv's
+    // own log stopped when diagnostics are turned off.
+    | { type: 'notice'; text: string } | { type: 'mpv-log-off' };
 };
 export type HostMessage =
   | { type: 'snapshot'; player: PlayerSnapshot; clientApiVersion: string | null; resources: { cpuPercent: number; memoryMB: number } }

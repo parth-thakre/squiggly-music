@@ -499,7 +499,8 @@ export class RemoteDiagnostics {
   // A path for the next audio host's libmpv log (mpv's log-file option, verbose), or undefined
   // when diagnostics are off. libmpv writes it from its own thread, so it keeps going while the
   // host is stuck in a call. One file per host, the newest MPV_LOGS kept. Streams reach libmpv
-  // through the relay's local addresses, so the log holds no server credentials.
+  // through the relay's local addresses, so the log holds no server credentials. A station's
+  // address goes as the server lists it, so what's sent of the log has addresses bared.
   mpvLog(): string | undefined {
     this.mpvLogPath = null;
     if (!this.live || !this.directory) return undefined;
@@ -528,7 +529,7 @@ export class RemoteDiagnostics {
     const path = this.mpvLogPath;
     if (!path) { this.event('host.stuck', { ...facts, mpvTail: null }, true); return; }
     void tail(path, MPV_TAIL_BYTES).then(
-      lines => this.event('host.stuck', { ...facts, mpvTail: lines.slice(-MPV_TAIL_LINES) }, true),
+      lines => this.event('host.stuck', { ...facts, mpvTail: lines.slice(-MPV_TAIL_LINES).map(bareAddresses) }, true),
       error => this.event('host.stuck', { ...facts, mpvTail: null, mpvTailError: errorFields(error) }, true),
     );
   }
@@ -608,6 +609,11 @@ export const remote = new RemoteDiagnostics({
   url: typeof __SQUIGGLY_DIAG_URL__ === 'string' ? __SQUIGGLY_DIAG_URL__ : '',
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
+
+// A log line with each address's query and sign-in part taken out. A station's address reaches
+// libmpv as the server lists it, and may carry a key under any name, which scrub wouldn't know.
+const bareAddresses = (line: string) => line.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#@'"]*@)?([^\s?#'"]*)(?:[?#][^\s'"]*)?/gi,
+  (_match, scheme: string, rest: string) => `${scheme}${rest}`);
 
 // The last lines of a file, up to `bytes` of it; a line cut by the start is dropped.
 async function tail(path: string, bytes: number): Promise<string[]> {
