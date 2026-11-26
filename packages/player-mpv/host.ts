@@ -432,6 +432,12 @@ try {
 publish();
 
 port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
+  // Housekeeping, not a command: what the deck shows stays as it is.
+  if (action.type === 'mpv-log-off') {
+    if (mpvLog) { try { native?.set('log-file', ''); } catch { /* It ends with this process. */ } mpvLog = undefined; }
+    port.postMessage({ type: 'reply', id, error: null });
+    return;
+  }
   // Commands that load something else, or move within the song: each cancels a resume in progress
   // and the start option, and a refused seek, skip, or jump puts them back.
   const moving = ['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous'].includes(action.type);
@@ -554,7 +560,6 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
       }
       case 'volume': native.set('volume', String(action.percent)); break;
       case 'notice': showNotice(action.text); break;
-      case 'mpv-log-off': if (mpvLog) { native.set('log-file', ''); mpvLog = undefined; } break;
       case 'device':
         // Listed afresh, so an output plugged in since the last poll counts and an unplugged one doesn't.
         player.devices = native.devices();

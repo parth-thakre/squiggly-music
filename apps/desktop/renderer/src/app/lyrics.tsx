@@ -294,7 +294,13 @@ export function SungLine({ track }: { track: Track }) {
   useLayoutEffect(() => {
     const element = shelf.current;
     if (!element) return;
-    const trim = () => { for (const each of element.children) hideOverflow(each as HTMLElement); };
+    // The row may be shorter than its lines when the window is too short for every line (app.css):
+    // then fewer show, or none.
+    const trim = () => {
+      const fit = Math.floor((element.clientHeight + 2) / parseFloat(getComputedStyle(element).lineHeight));
+      element.style.visibility = fit > 0 ? '' : 'hidden';
+      for (const each of element.children) hideOverflow(each as HTMLElement, fit);
+    };
     trim();
     const watch = new ResizeObserver(trim);
     watch.observe(element);
@@ -308,15 +314,16 @@ export function SungLine({ track }: { track: Track }) {
     <span key={active} ref={box}>{sungWords(line, false)}</span>
   </p>;
 }
-// Cuts a line short past the lines its box allows (--lines in app.css): the words past them are
-// hidden, and the last one shown is marked for an ellipsis, with room left for it. A line cut short
-// fills its lines rather than balancing them, or it would be balanced over more lines than show.
-function hideOverflow(line: HTMLElement) {
+// Cuts a line short past the lines its box allows (--lines in app.css, or `fit` when its row is
+// shorter): the words past them are hidden, and the last one shown is marked for an ellipsis, with
+// room left for it. A line cut short fills its lines rather than balancing them, or it would be
+// balanced over more lines than show.
+function hideOverflow(line: HTMLElement, fit: number) {
   const words = Array.from(line.children) as HTMLElement[];
   for (const word of words) { word.style.visibility = ''; word.classList.remove('cut'); }
   line.classList.remove('long');
   const style = getComputedStyle(line);
-  const lines = parseFloat(style.getPropertyValue('--lines')), height = parseFloat(style.lineHeight);
+  const lines = Math.min(parseFloat(style.getPropertyValue('--lines')), fit), height = parseFloat(style.lineHeight);
   if (!words.length || !(lines > 0) || !(height > 0)) return;
   const past = (word: HTMLElement) => word.offsetTop > words[0].offsetTop + (lines - .5) * height;
   if (!words.some(past)) return;

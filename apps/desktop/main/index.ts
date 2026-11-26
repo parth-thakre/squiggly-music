@@ -111,8 +111,9 @@ const RECOVERY_WINDOW_MS = 10 * 60_000;
 const recoveries: number[] = [];
 // When the current host last sent anything (performance.now()).
 let heardAt = 0;
-// Counts the queues sent to a host, so a replacement (relaunch) doesn't put back an old queue over
-// one sent meanwhile from another lane (a record played while it was starting).
+// Counts the queues sent to a host and the songs added to one, so a replacement (relaunch) doesn't
+// put back an old queue over what was sent meanwhile from another lane (a record played while it
+// was starting).
 let queuesSent = 0;
 // How late a timer may fire before this process counts as held up too (the computer slept, or
 // main was busy): the host then gets a fresh wait instead of the blame.
@@ -741,7 +742,7 @@ function send(action: HostRequest['action']) {
       if (child && unresponsiveHosts.has(child)) return reject(new Error(unresponsiveError));
       if (!child || retiredHosts.has(child) || quitting) return reject(new Error('Audio process is not running. Restart the audio engine.'));
       const id = ++sequence;
-      if (action.type === 'queue') queuesSent++;
+      if (action.type === 'queue' || action.type === 'queue-add') queuesSent++;
       let due = performance.now() + 8000;
       const expire = () => {
         const request = pending.get(id);
@@ -778,30 +779,33 @@ function hostStuck(child: ChildProcess, noticed: 'command' | 'silence') {
   void recoverHost(before, child);
 }
 // A new host in place of `replacing` (the host when the restart was asked for), with the queue
-// `before` had, at its song and position, playing if it was playing, at its volume. Nothing
-// happens if another host has taken its place meanwhile (a disconnect, or a restart before this
-// one), and an old queue isn't put over one sent since. Songs from this computer come back from
-// where they were opened (localPaths.ts); without a server, only those. Radio ends, as with any
-// restart. The caller holds the audio lane.
+// `before` had, at its song and position, playing if it was playing, at its volume. False when
+// another host has taken its place meanwhile (a disconnect, or a restart before this one): then
+// nothing happens. One that has only exited is replaced. An old queue isn't put over one sent
+// since. Songs from this computer come back from where they were opened (localPaths.ts); without
+// a server, only those, and a station the server no longer has is left out. When the song that
+// was playing doesn't come back, the queue comes back paused. Radio ends, as with any restart.
+// The caller holds the audio lane.
 function relaunch(before: PlayerSnapshot, replacing: ChildProcess | null) {
   const generation = connectionGeneration;
   return Effect.gen(function* () {
-    if (host !== replacing || quitting) return;
-    yield* Effect.tryPromise({ try: () => launchPlayer(), catch: error => error instanceof Error ? error : new Error('The audio engine could not restart.') });
-    if (quitting || !host) return;
-    if (before.volume !== 100) yield* send({ type: 'volume', percent: before.volume });
+    if ((host !== replacing && host !== null) || quitting) return false;
     const sent = queuesSent;
+    yield* Effect.tryPromise({ try: () => launchPlayer(), catch: error => error instanceof Error ? error : new Error('The audio engine could not restart.') });
+    if (quitting || !host) return true;
+    if (before.volume !== 100) yield* send({ type: 'volume', percent: before.volume });
     const client = generation === connectionGeneration ? server : null;
     const items = yield* Effect.forEach(before.queue, (track, index) => track.source === 'local'
       ? Effect.succeed({ index, item: localPlayable(track) })
-      : client ? playableOf(client, track).pipe(Effect.map(item => ({ index, item }))) : Effect.succeed({ index, item: null }));
+      : client ? playableOf(client, track).pipe(Effect.map(item => ({ index, item })), Effect.orElseSucceed(() => ({ index, item: null }))) : Effect.succeed({ index, item: null }));
     const kept = items.flatMap(({ index, item }) => item ? [{ index, item }] : []);
-    if (!kept.length || queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return;
+    if (!kept.length || queuesSent !== sent || (client && (server !== client || generation !== connectionGeneration))) return true;
     // The song that was playing, or the next one that came back.
     const at = Math.max(0, kept.findIndex(({ index }) => index >= before.currentIndex));
     const same = kept[at].index === before.currentIndex;
     const position = !same || kept[at].item.track.source === 'station' ? 0 : before.position;
-    yield* send({ type: 'queue', tracks: kept.map(({ item }) => item), startIndex: at, startPosition: position, paused: !before.playing, ordered: true });
+    yield* send({ type: 'queue', tracks: kept.map(({ item }) => item), startIndex: at, startPosition: position, paused: !before.playing || !same, ordered: true });
+    return true;
   });
 }
 const localPlayable = (track: Track): PlayableTrack | null => {
@@ -813,13 +817,13 @@ const localPlayable = (track: Track): PlayableTrack | null => {
 async function recoverHost(before: PlayerSnapshot, stuck: ChildProcess) {
   const result = await Effect.runPromise(Effect.either(metrics.measure('shell.recover-host', semaphores.audio.withPermits(1)(relaunch(before, stuck)))));
   const failure = Either.isLeft(result) ? (result.left instanceof Error ? result.left.message : 'The queue could not be put back.') : null;
-  remote.hostRecovered(failure);
+  remote.hostRecovered(failure, Either.isRight(result) && !result.right);
   if (!failure || quitting) return;
   // The old process wouldn't exit (launchPlayer's message says to close the app), or the queue
   // couldn't be put back: the deck says which. A new host keeps it shown until the next command;
   // without one, nothing replaces it.
   state.player = { ...state.player, error: failure }; broadcast();
-  if (host && state.player.engine === 'ready') await Effect.runPromise(Effect.ignore(send({ type: 'notice', text: failure })));
+  if (host && state.player.engine !== 'unavailable' && state.player.engine !== 'crashed') await Effect.runPromise(Effect.ignore(send({ type: 'notice', text: failure })));
 }
 // Every second, whether a ready host has gone quiet (HOST_SILENT_MS). A tick that comes late means
 // this process was held up as well (the computer slept, or main was busy), so the host gets a fresh
@@ -1259,7 +1263,8 @@ function installHandlers() {
     // Betas with diagnostics: off stops sending and writing at once; on picks up again.
     if (next.diagnostics !== previous.diagnostics) { remote.setActive(next.diagnostics); tray?.setToolTip(`Squiggly Music${remote.titleSuffix}`); }
     // libmpv's log too: the running host stops writing it (the next one starts it again if on).
-    if (!next.diagnostics && previous.diagnostics && host && state.player.engine === 'ready') yield* Effect.ignore(send({ type: 'mpv-log-off' }));
+    // One still starting reads it once libmpv is up.
+    if (!next.diagnostics && previous.diagnostics && host) yield* Effect.ignore(send({ type: 'mpv-log-off' }));
     applyMiniOnTop(); applyMediaKeys(); updateTray(); updateMedia(); updateSystemMedia();
     if (next.checkForUpdates && !previous.checkForUpdates) updates.check();
     // Turned on during the last song: that song's turn starts now.

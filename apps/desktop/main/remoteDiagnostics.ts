@@ -163,6 +163,8 @@ export class RemoteDiagnostics {
     this.active = on;
     if (!on) {
       this.queue = []; this.lines = [];
+      // The running host stops its libmpv log (main's mpv-log-off), so its tail would be stale.
+      this.mpvLogPath = null;
       if (this.urgentTimer) { clearTimeout(this.urgentTimer); this.urgentTimer = null; }
       this.failures = 0; this.retryAt = 0; this.lastError = null;
     } else if (this.started) {
@@ -533,10 +535,11 @@ export class RemoteDiagnostics {
       error => this.event('host.stuck', { ...facts, mpvTail: null, mpvTailError: errorFields(error) }, true),
     );
   }
-  // How replacing a stuck host went: null when the new one took the queue back.
-  hostRecovered(error: string | null) {
+  // How replacing a stuck host went: null when the new one took the queue back. Skipped when
+  // another host had taken its place first (a restart or a disconnect).
+  hostRecovered(error: string | null, skipped: boolean) {
     if (!this.live) return;
-    this.event('host.recovered', { ok: error === null, error }, true);
+    this.event('host.recovered', { ok: error === null, error, skipped }, true);
   }
 
   // Every host snapshot where the engine or its error changed.
@@ -610,10 +613,14 @@ export const remote = new RemoteDiagnostics({
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
 
-// A log line with each address's query and sign-in part taken out. A station's address reaches
-// libmpv as the server lists it, and may carry a key under any name, which scrub wouldn't know.
-const bareAddresses = (line: string) => line.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#@'"]*@)?([^\s?#'"]*)(?:[?#][^\s'"]*)?/gi,
-  (_match, scheme: string, rest: string) => `${scheme}${rest}`);
+// A log line with each address cut to its scheme and host. A station's address reaches libmpv as
+// the server lists it, and may carry a key anywhere: in its query under any name (which scrub
+// wouldn't know), in its path, or before an @. The relay's own addresses (this computer) keep
+// their paths, which are random and name nothing, without a query.
+const LOOPBACK = /^(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?$/i;
+const bareAddresses = (line: string) => line.replace(/\b([a-z][a-z\d+.-]*:\/\/)(?:[^\s/?#'"]*@)?([^\s/?#'"]*)([^\s'"]*)/gi,
+  (_match, scheme: string, authority: string, rest: string) => LOOPBACK.test(authority)
+    ? `${scheme}${authority}${rest.replace(/[?#].*$/, '')}` : `${scheme}${authority}${rest ? '/…' : ''}`);
 
 // The last lines of a file, up to `bytes` of it; a line cut by the start is dropped.
 async function tail(path: string, bytes: number): Promise<string[]> {
