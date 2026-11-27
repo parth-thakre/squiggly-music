@@ -1,13 +1,13 @@
 import { app, powerMonitor, type BrowserWindow, type WebContents } from 'electron';
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
-import { appendFile } from 'node:fs/promises';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { appendFile, open } from 'node:fs/promises';
 import { release } from 'node:os';
 import { join } from 'node:path';
 import type { Readable } from 'node:stream';
 import { format } from 'node:util';
-import type { AppSnapshot, ExtensionInfo, PlayerSnapshot } from '../../../packages/core/contracts';
+import type { AppSnapshot, ExtensionInfo, PlayerSnapshot, Track } from '../../../packages/core/contracts';
 
 // BETA BUILDS ONLY. Streams the main process's logs and state to a collector
 // (scripts/diag-collector.mjs) so a real install can be debugged live.
@@ -68,6 +68,10 @@ const BATCH = 500;
 const MAX_LINES = 20_000;
 const URGENT_GAP = 250;
 // Noisy streams: at most this many events per kind in each window, then a count of the rest.
+// libmpv logs (mpvLog) kept on disk, and how much of the stuck host's goes out with host.stuck.
+const MPV_LOGS = 5;
+const MPV_TAIL_BYTES = 48 * 1024;
+const MPV_TAIL_LINES = 300;
 const NOISY = new Set(['main.console', 'renderer.console', 'host.stderr', 'host.stdout']);
 const NOISE_LIMIT = 300;
 const NOISE_WINDOW = 10_000;
@@ -130,6 +134,8 @@ export class RemoteDiagnostics {
   private fileErrors = 0;
   // Change tracking.
   private hostState: { engine: string; error: string | null } | null = null;
+  // The current audio host's libmpv log (mpvLog), in the same folder as the local copy.
+  private mpvLogPath: string | null = null;
   private extensionState: Map<string, { version: string; enabled: boolean; error: string | null }> | null = null;
   private ipcCalls = new Map<string, number>();
   private ipcFailures = new Map<string, number>();
@@ -157,6 +163,8 @@ export class RemoteDiagnostics {
     this.active = on;
     if (!on) {
       this.queue = []; this.lines = [];
+      // The running host stops its libmpv log (main's mpv-log-off), so its tail would be stale.
+      this.mpvLogPath = null;
       if (this.urgentTimer) { clearTimeout(this.urgentTimer); this.urgentTimer = null; }
       this.failures = 0; this.retryAt = 0; this.lastError = null;
     } else if (this.started) {
@@ -423,7 +431,7 @@ export class RemoteDiagnostics {
         currentIndex: player.currentIndex, queueLength: player.queue.length, repeat: player.repeat, shuffle: player.shuffle, radio: player.radio !== null,
         deviceCount: player.devices.length, selectedDevice: player.audio.requestedDevice,
         settingsDevice: source.outputDevice(), exclusiveOutput: source.exclusiveOutput(), audio: player.audio,
-        track: track ? { id: track.id, source: track.source, format: track.sourceFormat, sampleRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth, duration: track.duration } : null,
+        track: trackFacts(track),
       },
       // Never the saved sign-in: no username, no server URL.
       server: { connected: server.connected, name: server.name, reconnecting: server.reconnecting, reconnectError: server.reconnectError, canRemember: server.canRemember },
@@ -488,6 +496,51 @@ export class RemoteDiagnostics {
     });
     stream.on('end', () => { if (partial.trim()) this.event(kind, { pid, line: partial }); partial = ''; });
     stream.on('error', () => undefined);
+  }
+
+  // A path for the next audio host's libmpv log (mpv's log-file option, verbose), or undefined
+  // when diagnostics are off. libmpv writes it from its own thread, so it keeps going while the
+  // host is stuck in a call. One file per host, the newest MPV_LOGS kept. Streams reach libmpv
+  // through the relay's local addresses, so the log holds no server credentials. A station's
+  // address goes as the server lists it: the log of a host given one is never sent (hostStuck).
+  mpvLog(): string | undefined {
+    this.mpvLogPath = null;
+    if (!this.live || !this.directory) return undefined;
+    const directory = this.directory;
+    try {
+      const old = readdirSync(directory).filter(name => /^mpv-\d{8}-\d{6}-\d{3}\.log$/.test(name)).sort();
+      // One a stuck host still holds open can't go on Windows; it goes next time.
+      for (const name of old.slice(0, Math.max(0, old.length - (MPV_LOGS - 1)))) try { unlinkSync(join(directory, name)); } catch { /* Next time. */ }
+    } catch { this.fileErrors++; }
+    const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').replace('.', '-').slice(0, 19);
+    this.mpvLogPath = join(directory, `mpv-${stamp}.log`);
+    return this.mpvLogPath;
+  }
+
+  // The audio host stopped answering (main's hostStuck): what it last reported, and the end of
+  // libmpv's log, which says what libmpv was doing when it stopped. Not the log of a host that was
+  // given a station (`stations`): a station's address can carry a key anywhere, in any form.
+  hostStuck(info: { pid: number | null; noticed: 'command' | 'silence'; silentMs: number; player: PlayerSnapshot; stations: boolean }) {
+    if (!this.live) return;
+    const { player } = info;
+    const facts = {
+      pid: info.pid, noticed: info.noticed, silentMs: info.silentMs,
+      engine: player.engine, playing: player.playing, currentIndex: player.currentIndex, queueLength: player.queue.length,
+      position: player.position, duration: player.duration, track: trackFacts(player.queue[player.currentIndex]), audio: player.audio,
+      mpvLog: this.mpvLogPath,
+    };
+    const path = this.mpvLogPath;
+    if (!path || info.stations) { this.event('host.stuck', { ...facts, mpvTail: null, mpvTailWithheld: info.stations }, true); return; }
+    void tail(path, MPV_TAIL_BYTES).then(
+      lines => this.event('host.stuck', { ...facts, mpvTail: lines.slice(-MPV_TAIL_LINES).map(bareAddresses) }, true),
+      error => this.event('host.stuck', { ...facts, mpvTail: null, mpvTailError: errorFields(error) }, true),
+    );
+  }
+  // How replacing a stuck host went: null when the new one took the queue back. Skipped when
+  // another host had taken its place first (a restart or a disconnect).
+  hostRecovered(error: string | null, skipped: boolean) {
+    if (!this.live) return;
+    this.event('host.recovered', { ok: error === null, error, skipped }, true);
   }
 
   // Every host snapshot where the engine or its error changed.
@@ -560,3 +613,30 @@ export const remote = new RemoteDiagnostics({
   url: typeof __SQUIGGLY_DIAG_URL__ === 'string' ? __SQUIGGLY_DIAG_URL__ : '',
   token: typeof __SQUIGGLY_DIAG_TOKEN__ === 'string' ? __SQUIGGLY_DIAG_TOKEN__ : '',
 });
+
+// What's sent of a song: its id and its audio, never names. A station's name and id come from the
+// server as its administrators entered them, and either may be its address, so neither is sent.
+const trackFacts = (track: Track | undefined) => track
+  ? { id: track.source === 'station' ? null : track.id, source: track.source, format: track.sourceFormat, sampleRate: track.sourceSampleRate, bitDepth: track.sourceBitDepth, duration: track.duration } : null;
+
+// A log line cut at its first address, kept up to its ://. A host given a station sends no log at
+// all; this keeps the relay's addresses out as well, and anything else that names one. What libmpv
+// was doing comes before the address.
+const bareAddresses = (line: string) => {
+  const at = line.indexOf('://');
+  return at < 0 ? line : `${line.slice(0, at + 3)}…`;
+};
+
+// The last lines of a file, up to `bytes` of it; a line cut by the start is dropped.
+async function tail(path: string, bytes: number): Promise<string[]> {
+  const file = await open(path, 'r');
+  try {
+    const { size } = await file.stat();
+    const length = Math.min(size, bytes);
+    const buffer = Buffer.alloc(length);
+    await file.read(buffer, 0, length, size - length);
+    const lines = buffer.toString('utf8').split(/\r?\n/);
+    if (length < size) lines.shift();
+    return lines.filter(line => line.trim());
+  } finally { await file.close(); }
+}

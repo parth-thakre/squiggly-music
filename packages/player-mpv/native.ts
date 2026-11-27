@@ -34,7 +34,7 @@ export class NativePlayer {
   private waitEvent;
   private destroy;
 
-  constructor(libraryPath?: string) {
+  constructor(libraryPath?: string, logFile?: string) {
     const candidates = libmpvCandidates(process.platform, libraryPath);
     let library: ReturnType<typeof koffi.load> | undefined;
     for (const candidate of candidates) {
@@ -93,6 +93,10 @@ export class NativePlayer {
       for (const [name, value] of Object.entries(options)) {
         if (this.option(this.handle, name, value) < 0) throw new Error(`libmpv rejected required option: ${name}`);
       }
+      // Diagnostics builds only (main's remote.mpvLog): libmpv's own verbose log, written from its
+      // own thread, so it still shows what libmpv was doing if a call into it never returns.
+      // Optional: a refused path costs only the log.
+      if (logFile) this.option(this.handle, 'log-file', logFile);
       // No youtube-dl lookups for URLs. The option exists only in builds with Lua, so a build
       // without it (the Windows one) rejects the name and has no ytdl hook to turn off.
       this.option(this.handle, 'ytdl', 'no');

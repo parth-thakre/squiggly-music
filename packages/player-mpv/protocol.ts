@@ -16,13 +16,17 @@ export type HostRequest = {
   action:
     // startPosition restores a saved queue, playing once it's there unless `paused`. With shuffle
     // on, the songs after startIndex are put in random order unless `ordered` (radio, a saved queue).
-    | { type: 'queue'; tracks: PlayableTrack[]; startIndex?: number; startPosition?: number; paused?: boolean; ordered?: boolean }
+    // `restore` marks a queue put back in a new engine (main's relaunch); the engine takes it as any other.
+    | { type: 'queue'; tracks: PlayableTrack[]; startIndex?: number; startPosition?: number; paused?: boolean; ordered?: boolean; restore?: true }
     // Plays one queue entry, refused unless entryId still names the entry at that index.
     | { type: 'queue-jump'; index: number; entryId: string }
     // New locations for queued songs, by entry id, after Settings › Streaming quality changed. Each
     // keeps its id and place; the song playing keeps its stream, and one gone since is skipped.
     | { type: 'queue-relocate'; entries: { entryId: string; item: PlayableTrack }[] }
-    | { type: 'clear-session' } | { type: 'exclusive'; on: boolean } | QueueEdit | PlayerCommand;
+    | { type: 'clear-session' } | { type: 'exclusive'; on: boolean } | QueueEdit | PlayerCommand
+    // An error from the shell to show until the next command (main's recoverHost), and libmpv's
+    // own log stopped when diagnostics are turned off.
+    | { type: 'notice'; text: string } | { type: 'mpv-log-off' };
 };
 export type HostMessage =
   | { type: 'snapshot'; player: PlayerSnapshot; clientApiVersion: string | null; resources: { cpuPercent: number; memoryMB: number } }

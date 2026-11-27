@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { statSync } from 'node:fs';
 import { emptyAudio, emptyPlayer, listedDevice, type RepeatMode } from '../core/contracts';
 import { preceding, RESTART_AFTER, shuffleOrder } from '../core/playOrder';
 import { NativePlayer } from './native';
@@ -9,6 +10,15 @@ import type { HostMessage, HostRequest, PlayableTrack } from './protocol';
 // A standalone Node process keeps Chromium and its native libraries out of this
 // address space. Do not move this binding into Electron's main or utility process.
 let native: NativePlayer | null = null;
+// libmpv's own log, in diagnostics builds (main's remote.mpvLog). Only its end is ever read, so
+// past MPV_LOG_MAX it starts again: setting log-file afresh has libmpv truncate it.
+let mpvLog = process.env.SQUIGGLY_MPV_LOG || undefined;
+const MPV_LOG_MAX = 8 * 1024 * 1024;
+function capLog() {
+  if (!native || !mpvLog) return;
+  try { if (statSync(mpvLog).size > MPV_LOG_MAX) { native.set('log-file', ''); native.set('log-file', mpvLog); } }
+  catch { /* Not written yet, or refused: it stays as it is. */ }
+}
 let player = emptyPlayer();
 let clientApiVersion: string | null = null;
 // Each queue entry carries an id, unique within the queue and kept through moves, so two
@@ -395,7 +405,7 @@ const publish = () => {
   } });
 };
 try {
-  native = new NativePlayer(process.env.SQUIGGLY_LIBMPV_PATH);
+  native = new NativePlayer(process.env.SQUIGGLY_LIBMPV_PATH, mpvLog);
   clientApiVersion = native.clientApiVersion;
   player.engine = 'ready';
   player.devices = native.devices();
@@ -422,6 +432,12 @@ try {
 publish();
 
 port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
+  // Housekeeping, not a command: what the deck shows stays as it is.
+  if (action.type === 'mpv-log-off') {
+    if (mpvLog) { try { native?.set('log-file', ''); } catch { /* It ends with this process. */ } mpvLog = undefined; }
+    port.postMessage({ type: 'reply', id, error: null });
+    return;
+  }
   // Commands that load something else, or move within the song: each cancels a resume in progress
   // and the start option, and a refused seek, skip, or jump puts them back.
   const moving = ['queue', 'queue-jump', 'clear-session', 'stop', 'seek', 'next', 'previous'].includes(action.type);
@@ -543,6 +559,7 @@ port.on('message', ({ data: { id, action } }: { data: HostRequest }) => {
         break;
       }
       case 'volume': native.set('volume', String(action.percent)); break;
+      case 'notice': showNotice(action.text); break;
       case 'device':
         // Listed afresh, so an output plugged in since the last poll counts and an unplugged one doesn't.
         player.devices = native.devices();
@@ -653,7 +670,7 @@ timer = setInterval(() => {
     if (notice && --notice.polls <= 0) clearNotice();
     if (hostSeek) hostSeek--;
     restoreSeek(events.seeks);
-    if (++deviceTicks % 20 === 0) { player.devices = native.devices(); followDevices(); }
+    if (++deviceTicks % 20 === 0) { player.devices = native.devices(); followDevices(); capLog(); }
     publish();
   } catch {
     failEngine('Audio engine polling failed. Restart the audio engine.');

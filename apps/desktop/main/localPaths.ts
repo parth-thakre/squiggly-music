@@ -21,6 +21,10 @@ export async function openLocalFiles(paths: readonly string[]): Promise<Playable
   });
 }
 
+// Where a file opened here is, by its track id, or null once forgotten: for a queue put back in a
+// new audio engine (main's relaunch).
+export const localLocation = (id: string) => locations.get(id) ?? null;
+
 // Playlist file entries with local files' paths filled in from here. A path the renderer sent for
 // a local file is never used; one this process didn't open (or has forgotten) is left null, and
 // buildM3u writes artist/album/title.suffix for it.

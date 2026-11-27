@@ -894,7 +894,9 @@ export const player = {
     const playable = playableNow(tracks, 0);
     if (!playable) return 0;
     tracks = playable.items;
-    if (state.index < 0) {
+    // Into an empty queue, adding plays. Not while the engine restarts: its queue is coming back,
+    // and the songs are added to it (main's relaunch).
+    if (state.index < 0 && state.engine === 'ready') {
       if (!await player.play(tracks, 0)) return 0;
       if (tracks.length > QUEUE_LIMIT) set({ error: queueFull(tracks.length - QUEUE_LIMIT) });
       return Math.min(tracks.length, QUEUE_LIMIT);

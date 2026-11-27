@@ -38,4 +38,4 @@ LD_LIBRARY_PATH="$PWD/.local/runtime/usr/lib64" npm run dev
 
 ## Limits
 
-The queue holds up to 1,000 songs. Server requests time out after 15 seconds and responses over 8 MiB are refused. The audio process reports its state every 250 ms, and only the squiggle interpolates between those reports.
+The queue holds up to 1,000 songs. Server requests time out after 15 seconds and responses over 8 MiB are refused. The audio process reports its state every 250 ms, and only the squiggle interpolates between those reports. A ready audio process that sends nothing for 6 seconds is stuck inside a libmpv call, which no command can reach. The app kills it, starts another, and puts the queue back at the same song and position, playing or paused as it was. It does this at most twice in 10 minutes; after that the deck asks for a restart. Restarting the engine by hand also puts the queue back, paused.
